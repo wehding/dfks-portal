@@ -1,0 +1,415 @@
+"use client"
+
+import { createContext, useContext, useState, useCallback, ReactNode } from "react"
+
+export type Locale = "da" | "en"
+
+const translations = {
+    da: {
+        // Navigation
+        "nav.portal": "Medlemsportal",
+        "nav.admin": "Administration",
+        "nav.myWorks": "Mine Værker",
+        "nav.myContracts": "Mine Kontrakter",
+        "nav.economy": "Økonomi",
+        "nav.contracts": "Kontrakter",
+        "nav.validation": "Validering",
+        "nav.payouts": "Udbetalinger",
+        "nav.statistics": "Statistik",
+        "nav.masterData": "Stamdata",
+        "nav.logout": "Log ud",
+        "nav.settings": "Indstillinger",
+
+        // Auth
+        "auth.login": "Log ind",
+        "auth.email": "E-mail",
+        "auth.password": "Adgangskode",
+        "auth.forgotPassword": "Glemt adgangskode?",
+        "auth.welcome": "Velkommen tilbage",
+        "auth.subtitle": "Log ind for at tilgå din portal",
+
+        // Upload
+        "upload.title": "Upload Kontrakt",
+        "upload.dragDrop": "Træk og slip din PDF her",
+        "upload.or": "eller",
+        "upload.browse": "Vælg fil",
+        "upload.maxSize": "Maks 25MB • Kun PDF",
+        "upload.category": "Kategori",
+        "upload.creditedRole": "Krediteret funktion",
+        "upload.duration": "Varighed",
+        "upload.premiereDate": "Premieredato",
+        "upload.title_field": "Titel",
+        "upload.submit": "Upload kontrakt",
+        "upload.uploading": "Uploader...",
+        "upload.episodes": "Afsnit",
+        "upload.addEpisode": "Tilføj afsnit",
+        "upload.episodeTitle": "Afsnitstitel",
+        "upload.episodeNumber": "Afsnit nr.",
+        "upload.matchWork": "Matcher eksisterende værk",
+        "upload.matchWorkHint": "Vælg et eksisterende værk hvis det allerede er registreret",
+        "upload.newWork": "Nyt værk",
+        "upload.existingWork": "Eksisterende værk",
+        "upload.disambiguate": "Flere værker med denne titel — vælg det rigtige:",
+
+        // Categories
+        "cat.feature": "Spillefilm",
+        "cat.short": "Kortfilm",
+        "cat.tvSeries": "TV-Serie",
+        "cat.documentary": "Dokumentarfilm",
+        "cat.docSeries": "Dokumentarserie",
+        "cat.tvEntertainment": "TV-underholdningsprogram",
+        "cat.reality": "Reality",
+        "cat.sport": "Sport",
+
+        // Works
+        "works.title": "Mine Værker",
+        "works.subtitle": "Oversigt over dine krediterede værker",
+        "works.workTitle": "Værktitel",
+        "works.credit": "Min kreditering",
+        "works.sharedCredit": "Delt kreditering",
+        "works.sharedWith": "Delt med",
+        "works.duration": "Varighed",
+        "works.contract": "Kontrakt",
+        "works.rights": "Rettigheder",
+        "works.year": "År",
+        "works.episodes": "Afsnit",
+        "works.yes": "Ja",
+        "works.no": "Nej",
+        "works.noWorks": "Ingen værker endnu",
+        "works.noWorksDesc": "Upload din første kontrakt for at komme i gang.",
+
+        // Economy
+        "econ.title": "Økonomisk Oversigt",
+        "econ.subtitle": "Overblik over dine rettighedsudbetalinger",
+        "econ.totalPaid": "Samlet udbetalt",
+        "econ.adminFee": "Administrationsbidrag",
+        "econ.netPaid": "Netto udbetalt",
+        "econ.svod": "SVOD (Streaming)",
+        "econ.copydan": "Copydan",
+        "econ.royalties": "Royalties",
+        "econ.byWork": "Pr. værk",
+        "econ.bySource": "Pr. kilde",
+        "econ.history": "Historik",
+        "econ.noData": "Ingen udbetalingsdata endnu",
+
+        // Admin - Contracts
+        "admin.contracts.title": "Alle Kontrakter",
+        "admin.contracts.subtitle": "Oversigt over alle uploadede kontrakter",
+        "admin.contracts.member": "Medlem",
+        "admin.contracts.uploaded": "Uploadet",
+        "admin.contracts.status": "Status",
+        "admin.contracts.pending": "Afventer",
+        "admin.contracts.approved": "Godkendt",
+        "admin.contracts.rejected": "Afvist",
+        "admin.contracts.review": "Til gennemsyn",
+
+        // Admin - Validation
+        "admin.validation.title": "Kontraktvalidering",
+        "admin.validation.subtitle": "Gennemgå og godkend AI-udtrukne data",
+        "admin.validation.overview": "Oversigt",
+        "admin.validation.unreviewed": "Nye kontrakter",
+        "admin.validation.reviewed": "Gennemgåede",
+        "admin.validation.review": "Gennemgå",
+        "admin.validation.pdf": "PDF Visning",
+        "admin.validation.extracted": "Udtrukne Data",
+        "admin.validation.salary": "Løn",
+        "admin.validation.salaryUnit": "Enhed",
+        "admin.validation.monthly": "Måned",
+        "admin.validation.weekly": "Uge",
+        "admin.validation.daily": "Dag",
+        "admin.validation.total": "Total",
+        "admin.validation.employment": "Ansættelsestid",
+        "admin.validation.startDate": "Startdato",
+        "admin.validation.endDate": "Slutdato",
+        "admin.validation.supplements": "Tillæg",
+        "admin.validation.pension": "Pensionstillæg",
+        "admin.validation.other": "Andre tillæg",
+        "admin.validation.rights": "Rettighedsforbehold",
+        "admin.validation.distribution": "Distribution",
+        "admin.validation.agreement": "Overenskomst",
+        "admin.validation.gender": "Køn",
+        "admin.validation.specialNotes": "Specielle forhold",
+        "admin.validation.approve": "Godkend",
+        "admin.validation.save": "Gem ændringer",
+        "admin.validation.backToList": "Tilbage til oversigt",
+
+        // Admin - Payouts
+        "admin.payouts.title": "Rettighedsudbetalinger",
+        "admin.payouts.subtitle": "Opret og administrer udbetalinger",
+        "admin.payouts.newPayout": "Ny udbetaling",
+        "admin.payouts.work": "Værk",
+        "admin.payouts.pool": "Pulje (totalbeløb)",
+        "admin.payouts.distribution": "Fordelingsnøgle",
+        "admin.payouts.adminFee": "Administrationsbidrag",
+        "admin.payouts.calculate": "Beregn",
+        "admin.payouts.export": "Eksportér til lønsystem",
+        "admin.payouts.member": "Medlem",
+        "admin.payouts.share": "Andel",
+        "admin.payouts.amount": "Beløb",
+        "admin.payouts.addMember": "Tilføj medlem",
+
+        // Admin - Statistics
+        "admin.stats.title": "Statistik",
+        "admin.stats.subtitle": "Anonymiseret lønstatistik og rettighedsforbehold",
+        "admin.stats.salaryDev": "Lønudvikling",
+        "admin.stats.rightsClauses": "Rettighedsklausuler",
+        "admin.stats.filterCategory": "Filtrer kategori",
+        "admin.stats.filterRole": "Filtrer funktion",
+        "admin.stats.filterGender": "Filtrer køn",
+        "admin.stats.filterYear": "Filtrer år",
+        "admin.stats.dailyRate": "Dagspris",
+        "admin.stats.monthlyRate": "Månedsløn",
+        "admin.stats.all": "Alle",
+        "admin.stats.male": "Mand",
+        "admin.stats.female": "Kvinde",
+
+        // Admin - Master Data
+        "admin.masterData.title": "Stamdata",
+        "admin.masterData.subtitle": "Administrer kategorier og krediteringstyper",
+        "admin.masterData.categories": "Kategorier",
+        "admin.masterData.roles": "Krediterede funktioner",
+        "admin.masterData.addCategory": "Tilføj kategori",
+        "admin.masterData.addRole": "Tilføj funktion",
+        "admin.masterData.name": "Navn",
+        "admin.masterData.active": "Aktiv",
+
+        // Common
+        "common.search": "Søg...",
+        "common.save": "Gem",
+        "common.cancel": "Annuller",
+        "common.delete": "Slet",
+        "common.deleteConfirm": "Er du sikker på at du vil slette dette?",
+        "common.edit": "Rediger",
+        "common.rename": "Omdøb",
+        "common.view": "Vis",
+        "common.download": "Download",
+        "common.back": "Tilbage",
+        "common.next": "Næste",
+        "common.loading": "Indlæser...",
+        "common.noResults": "Ingen resultater",
+        "common.kr": "kr.",
+        "common.minutes": "min",
+        "common.hours": "timer",
+        "common.preview": "Forhåndsvis",
+    },
+    en: {
+        // Navigation
+        "nav.portal": "Member Portal",
+        "nav.admin": "Administration",
+        "nav.myWorks": "My Works",
+        "nav.myContracts": "My Contracts",
+        "nav.economy": "Economy",
+        "nav.contracts": "Contracts",
+        "nav.validation": "Validation",
+        "nav.payouts": "Payouts",
+        "nav.statistics": "Statistics",
+        "nav.masterData": "Master Data",
+        "nav.logout": "Log out",
+        "nav.settings": "Settings",
+
+        // Auth
+        "auth.login": "Log in",
+        "auth.email": "Email",
+        "auth.password": "Password",
+        "auth.forgotPassword": "Forgot password?",
+        "auth.welcome": "Welcome back",
+        "auth.subtitle": "Sign in to access your portal",
+
+        // Upload
+        "upload.title": "Upload Contract",
+        "upload.dragDrop": "Drag and drop your PDF here",
+        "upload.or": "or",
+        "upload.browse": "Browse files",
+        "upload.maxSize": "Max 25MB • PDF only",
+        "upload.category": "Category",
+        "upload.creditedRole": "Credited role",
+        "upload.duration": "Duration",
+        "upload.premiereDate": "Premiere date",
+        "upload.title_field": "Title",
+        "upload.submit": "Upload contract",
+        "upload.uploading": "Uploading...",
+        "upload.episodes": "Episodes",
+        "upload.addEpisode": "Add episode",
+        "upload.episodeTitle": "Episode title",
+        "upload.episodeNumber": "Episode no.",
+        "upload.matchWork": "Matches existing work",
+        "upload.matchWorkHint": "Select an existing work if already registered",
+        "upload.newWork": "New work",
+        "upload.existingWork": "Existing work",
+        "upload.disambiguate": "Multiple works with this title — select the correct one:",
+
+        // Categories
+        "cat.feature": "Feature Film",
+        "cat.short": "Short Film",
+        "cat.tvSeries": "TV Series",
+        "cat.documentary": "Documentary",
+        "cat.docSeries": "Documentary Series",
+        "cat.tvEntertainment": "TV Entertainment",
+        "cat.reality": "Reality",
+        "cat.sport": "Sport",
+
+        // Works
+        "works.title": "My Works",
+        "works.subtitle": "Overview of your credited works",
+        "works.workTitle": "Work Title",
+        "works.credit": "My Credit",
+        "works.sharedCredit": "Shared Credit",
+        "works.sharedWith": "Shared with",
+        "works.duration": "Duration",
+        "works.contract": "Contract",
+        "works.rights": "Rights",
+        "works.year": "Year",
+        "works.episodes": "Episodes",
+        "works.yes": "Yes",
+        "works.no": "No",
+        "works.noWorks": "No works yet",
+        "works.noWorksDesc": "Upload your first contract to get started.",
+
+        // Economy
+        "econ.title": "Economic Overview",
+        "econ.subtitle": "Overview of your rights payments",
+        "econ.totalPaid": "Total paid",
+        "econ.adminFee": "Administration fee",
+        "econ.netPaid": "Net paid",
+        "econ.svod": "SVOD (Streaming)",
+        "econ.copydan": "Copydan",
+        "econ.royalties": "Royalties",
+        "econ.byWork": "By work",
+        "econ.bySource": "By source",
+        "econ.history": "History",
+        "econ.noData": "No payment data yet",
+
+        // Admin - Contracts
+        "admin.contracts.title": "All Contracts",
+        "admin.contracts.subtitle": "Overview of all uploaded contracts",
+        "admin.contracts.member": "Member",
+        "admin.contracts.uploaded": "Uploaded",
+        "admin.contracts.status": "Status",
+        "admin.contracts.pending": "Pending",
+        "admin.contracts.approved": "Approved",
+        "admin.contracts.rejected": "Rejected",
+        "admin.contracts.review": "Under Review",
+
+        // Admin - Validation
+        "admin.validation.title": "Contract Validation",
+        "admin.validation.subtitle": "Review and approve AI-extracted data",
+        "admin.validation.overview": "Overview",
+        "admin.validation.unreviewed": "New contracts",
+        "admin.validation.reviewed": "Reviewed",
+        "admin.validation.review": "Review",
+        "admin.validation.pdf": "PDF Viewer",
+        "admin.validation.extracted": "Extracted Data",
+        "admin.validation.salary": "Salary",
+        "admin.validation.salaryUnit": "Unit",
+        "admin.validation.monthly": "Monthly",
+        "admin.validation.weekly": "Weekly",
+        "admin.validation.daily": "Daily",
+        "admin.validation.total": "Total",
+        "admin.validation.employment": "Employment Period",
+        "admin.validation.startDate": "Start Date",
+        "admin.validation.endDate": "End Date",
+        "admin.validation.supplements": "Supplements",
+        "admin.validation.pension": "Pension supplement",
+        "admin.validation.other": "Other supplements",
+        "admin.validation.rights": "Rights Reservations",
+        "admin.validation.distribution": "Distribution",
+        "admin.validation.agreement": "Collective Agreement",
+        "admin.validation.gender": "Gender",
+        "admin.validation.specialNotes": "Special Notes",
+        "admin.validation.approve": "Approve",
+        "admin.validation.save": "Save Changes",
+        "admin.validation.backToList": "Back to overview",
+
+        // Admin - Payouts
+        "admin.payouts.title": "Rights Payouts",
+        "admin.payouts.subtitle": "Create and manage payouts",
+        "admin.payouts.newPayout": "New Payout",
+        "admin.payouts.work": "Work",
+        "admin.payouts.pool": "Pool (total amount)",
+        "admin.payouts.distribution": "Distribution Key",
+        "admin.payouts.adminFee": "Administration Fee",
+        "admin.payouts.calculate": "Calculate",
+        "admin.payouts.export": "Export to payroll",
+        "admin.payouts.member": "Member",
+        "admin.payouts.share": "Share",
+        "admin.payouts.amount": "Amount",
+        "admin.payouts.addMember": "Add member",
+
+        // Admin - Statistics
+        "admin.stats.title": "Statistics",
+        "admin.stats.subtitle": "Anonymized salary statistics and rights clauses",
+        "admin.stats.salaryDev": "Salary Development",
+        "admin.stats.rightsClauses": "Rights Clauses",
+        "admin.stats.filterCategory": "Filter category",
+        "admin.stats.filterRole": "Filter role",
+        "admin.stats.filterGender": "Filter gender",
+        "admin.stats.filterYear": "Filter year",
+        "admin.stats.dailyRate": "Daily Rate",
+        "admin.stats.monthlyRate": "Monthly Rate",
+        "admin.stats.all": "All",
+        "admin.stats.male": "Male",
+        "admin.stats.female": "Female",
+
+        // Admin - Master Data
+        "admin.masterData.title": "Master Data",
+        "admin.masterData.subtitle": "Manage categories and credit types",
+        "admin.masterData.categories": "Categories",
+        "admin.masterData.roles": "Credited Roles",
+        "admin.masterData.addCategory": "Add category",
+        "admin.masterData.addRole": "Add role",
+        "admin.masterData.name": "Name",
+        "admin.masterData.active": "Active",
+
+        // Common
+        "common.search": "Search...",
+        "common.save": "Save",
+        "common.cancel": "Cancel",
+        "common.delete": "Delete",
+        "common.deleteConfirm": "Are you sure you want to delete this?",
+        "common.edit": "Edit",
+        "common.rename": "Rename",
+        "common.view": "View",
+        "common.download": "Download",
+        "common.back": "Back",
+        "common.next": "Next",
+        "common.loading": "Loading...",
+        "common.noResults": "No results",
+        "common.kr": "DKK",
+        "common.minutes": "min",
+        "common.hours": "hours",
+        "common.preview": "Preview",
+    },
+} as const
+
+type TranslationKey = keyof typeof translations.da
+
+interface I18nContextType {
+    locale: Locale
+    setLocale: (locale: Locale) => void
+    t: (key: TranslationKey) => string
+}
+
+const I18nContext = createContext<I18nContextType | null>(null)
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+    const [locale, setLocale] = useState<Locale>("da")
+
+    const t = useCallback(
+        (key: TranslationKey): string => {
+            return translations[locale][key] || key
+        },
+        [locale]
+    )
+
+    return (
+        <I18nContext.Provider value={{ locale, setLocale, t }}>
+            {children}
+        </I18nContext.Provider>
+    )
+}
+
+export function useI18n() {
+    const context = useContext(I18nContext)
+    if (!context) throw new Error("useI18n must be used within I18nProvider")
+    return context
+}
