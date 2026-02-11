@@ -20,7 +20,7 @@ interface PdfViewerProps {
     url: string
 }
 
-export function PdfViewer({ url }: PdfViewerProps) {
+function PdfViewerInner({ url }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
@@ -141,3 +141,17 @@ export function PdfViewer({ url }: PdfViewerProps) {
         </div>
     )
 }
+
+// Dynamic export to prevent DOMMatrix ReferenceError during SSR/prerendering
+import dynamic from "next/dynamic"
+export const PdfViewer = dynamic(
+    () => Promise.resolve(PdfViewerInner),
+    {
+        ssr: false,
+        loading: () => (
+            <div className="flex items-center justify-center py-24">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
+            </div>
+        ),
+    }
+)
