@@ -51,12 +51,15 @@ function formatKr(n: number) {
     return n.toLocaleString("da-DK") + " kr."
 }
 
-const tooltipStyle = {
+const tooltipStyle: React.CSSProperties = {
     backgroundColor: "hsl(var(--popover))",
     border: "1px solid hsl(var(--border))",
     borderRadius: "8px",
     fontSize: "13px",
+    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
 }
+
+const tooltipWrapperStyle: React.CSSProperties = { zIndex: 50 }
 
 const PIE_COLORS = ["hsl(340, 65%, 55%)", "hsl(210, 65%, 55%)", "hsl(160, 50%, 50%)"]
 
@@ -310,6 +313,7 @@ export default function AdminStatistikPage() {
                                         <YAxis className="text-xs" tickFormatter={(v) => `${v / 1000}k`} />
                                         <Tooltip
                                             contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
                                             formatter={(value) => formatKr(value as number)}
                                         />
                                         <Legend />
@@ -331,7 +335,7 @@ export default function AdminStatistikPage() {
                                             type="monotone"
                                             dataKey="monthlyRate"
                                             name={t("admin.stats.monthlyRate")}
-                                            stroke="hsl(var(--foreground))"
+                                            stroke="hsl(210, 65%, 55%)"
                                             strokeWidth={2}
                                             dot={{ r: 3 }}
                                         />
@@ -339,7 +343,7 @@ export default function AdminStatistikPage() {
                                             type="monotone"
                                             dataKey="dailyRate"
                                             name={t("admin.stats.dailyRate")}
-                                            stroke="hsl(var(--muted-foreground))"
+                                            stroke="hsl(160, 50%, 50%)"
                                             strokeWidth={2}
                                             strokeDasharray="5 5"
                                             dot={{ r: 3 }}
@@ -401,25 +405,26 @@ export default function AdminStatistikPage() {
                                         <YAxis className="text-xs" tickFormatter={(v) => `${v}%`} />
                                         <Tooltip
                                             contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
                                             formatter={(value) => `${value}%`}
                                         />
                                         <Legend />
                                         <Bar
                                             dataKey="svodPercent"
                                             name="SVOD"
-                                            fill="hsl(var(--foreground))"
+                                            fill="hsl(210, 65%, 55%)"
                                             radius={[4, 4, 0, 0]}
                                         />
                                         <Bar
                                             dataKey="copydanPercent"
                                             name="Copydan"
-                                            fill="hsl(var(--muted-foreground))"
+                                            fill="hsl(160, 50%, 50%)"
                                             radius={[4, 4, 0, 0]}
                                         />
                                         <Bar
                                             dataKey="royaltyPercent"
                                             name="Royalty"
-                                            fill="hsl(var(--ring))"
+                                            fill="hsl(340, 65%, 55%)"
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
@@ -461,6 +466,7 @@ export default function AdminStatistikPage() {
                                         />
                                         <Tooltip
                                             contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
                                             formatter={(value, name) =>
                                                 name === t("admin.stats.avgPension")
                                                     ? `${value}%`
@@ -482,7 +488,7 @@ export default function AdminStatistikPage() {
                                             type="monotone"
                                             dataKey="avgPensionPercent"
                                             name={t("admin.stats.avgPension")}
-                                            stroke="hsl(var(--foreground))"
+                                            stroke="hsl(210, 65%, 55%)"
                                             strokeWidth={2}
                                             dot={{ r: 3 }}
                                         />
@@ -491,7 +497,7 @@ export default function AdminStatistikPage() {
                                             type="monotone"
                                             dataKey="avgPersonalSupplement"
                                             name={t("admin.stats.avgPersonalSupp")}
-                                            stroke="hsl(var(--muted-foreground))"
+                                            stroke="hsl(340, 65%, 55%)"
                                             strokeWidth={2}
                                             strokeDasharray="5 5"
                                             dot={{ r: 3 }}
@@ -564,7 +570,8 @@ export default function AdminStatistikPage() {
                                                     />
                                                 ))}
                                             </Pie>
-                                            <Tooltip contentStyle={tooltipStyle} />
+                                            <Tooltip contentStyle={tooltipStyle}
+                                                wrapperStyle={tooltipWrapperStyle} />
                                         </PieChart>
                                     </ResponsiveContainer>
                                 </div>
@@ -586,6 +593,7 @@ export default function AdminStatistikPage() {
                                             <YAxis className="text-xs" tickFormatter={(v) => `${v / 1000}k`} />
                                             <Tooltip
                                                 contentStyle={tooltipStyle}
+                                                wrapperStyle={tooltipWrapperStyle}
                                                 formatter={(value) => formatKr(value as number)}
                                             />
                                             <Bar
@@ -651,6 +659,7 @@ export default function AdminStatistikPage() {
                                         <YAxis className="text-xs" />
                                         <Tooltip
                                             contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
                                             formatter={(value) => `${value} uger`}
                                         />
                                         <Legend />
@@ -665,13 +674,13 @@ export default function AdminStatistikPage() {
                                         <Bar
                                             dataKey="avgWeeks"
                                             name={t("admin.stats.avgWeeks")}
-                                            fill="hsl(var(--foreground))"
+                                            fill="hsl(210, 65%, 55%)"
                                             radius={[4, 4, 0, 0]}
                                         />
                                         <Bar
                                             dataKey="medianWeeks"
                                             name={t("admin.stats.medianWeeks")}
-                                            fill="hsl(var(--muted-foreground))"
+                                            fill="hsl(30, 80%, 55%)"
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
@@ -762,6 +771,7 @@ export default function AdminStatistikPage() {
                                         <YAxis className="text-xs" />
                                         <Tooltip
                                             contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
                                             formatter={(value, name) => [
                                                 `${value} kontrakter`,
                                                 name === "withClause"
