@@ -179,7 +179,7 @@ export default function AdminStatistikPage() {
                         <SelectValue placeholder={t("admin.stats.filterYear")} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">{t("admin.stats.all")} år</SelectItem>
+                        <SelectItem value="all">Alle år</SelectItem>
                         {allYears.map((y) => (
                             <SelectItem key={y} value={y.toString()}>
                                 {y}
@@ -193,7 +193,7 @@ export default function AdminStatistikPage() {
                         <SelectValue placeholder={t("admin.stats.filterCategory")} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">{t("admin.stats.all")}</SelectItem>
+                        <SelectItem value="all">Alle kategorier</SelectItem>
                         <SelectItem value="feature">{t("cat.feature")}</SelectItem>
                         <SelectItem value="tvSeries">{t("cat.tvSeries")}</SelectItem>
                         <SelectItem value="documentary">{t("cat.documentary")}</SelectItem>
@@ -204,7 +204,7 @@ export default function AdminStatistikPage() {
                         <SelectValue placeholder={t("admin.stats.filterRole")} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">{t("admin.stats.all")}</SelectItem>
+                        <SelectItem value="all">Alle roller</SelectItem>
                         <SelectItem value="klipper">Klipper</SelectItem>
                         <SelectItem value="instruktor">Instruktør</SelectItem>
                     </SelectContent>
@@ -214,7 +214,7 @@ export default function AdminStatistikPage() {
                         <SelectValue placeholder={t("admin.stats.filterGender")} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">{t("admin.stats.all")}</SelectItem>
+                        <SelectItem value="all">Alle køn</SelectItem>
                         <SelectItem value="male">{t("admin.stats.male")}</SelectItem>
                         <SelectItem value="female">{t("admin.stats.female")}</SelectItem>
                     </SelectContent>
