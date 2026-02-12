@@ -1,9 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Download, Trash2 } from "lucide-react"
+import { Plus, Download, Trash2, Settings } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
-import { mockPayouts, mockWorks } from "@/lib/mock-data"
+import { mockPayouts, mockWorks, mockPortalSettings } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -39,9 +39,13 @@ function formatKr(n: number) {
 
 export default function AdminUdbetalingerPage() {
     const { t } = useI18n()
+    const [adminFeePercent] = useState(mockPortalSettings.adminFeePercent)
+    const [poolAmount, setPoolAmount] = useState(0)
     const [distributions, setDistributions] = useState([
         { name: "", percent: 0 },
     ])
+
+    const computedAdminFee = Math.round(poolAmount * (adminFeePercent / 100))
 
     const addDistribution = () =>
         setDistributions([...distributions, { name: "", percent: 0 }])
@@ -86,11 +90,29 @@ export default function AdminUdbetalingerPage() {
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <div className="space-y-1.5">
                                         <Label className="text-xs">{t("admin.payouts.pool")}</Label>
-                                        <Input type="number" placeholder="0" />
+                                        <Input
+                                            type="number"
+                                            placeholder="0"
+                                            value={poolAmount || ""}
+                                            onChange={(e) => setPoolAmount(Number(e.target.value))}
+                                        />
                                     </div>
                                     <div className="space-y-1.5">
-                                        <Label className="text-xs">{t("admin.payouts.adminFee")}</Label>
-                                        <Input type="number" placeholder="0" />
+                                        <Label className="text-xs">
+                                            {t("admin.payouts.adminFee")}
+                                        </Label>
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex items-center gap-1 rounded-md border bg-muted/50 px-3 py-2 text-sm tabular-nums flex-1">
+                                                <Settings className="h-3.5 w-3.5 text-muted-foreground mr-1" />
+                                                <span className="font-medium">{adminFeePercent}%</span>
+                                                <span className="text-muted-foreground ml-auto">
+                                                    = {formatKr(computedAdminFee)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] text-muted-foreground">
+                                            Styres centralt fra Stamdata
+                                        </p>
                                     </div>
                                 </div>
 
@@ -186,6 +208,9 @@ export default function AdminUdbetalingerPage() {
                                     <span className="text-muted-foreground">{t("admin.payouts.adminFee")}:</span>{" "}
                                     <span className="font-medium tabular-nums">
                                         −{formatKr(payout.adminFee)}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground ml-1">
+                                        ({adminFeePercent}%)
                                     </span>
                                 </div>
                             </div>

@@ -222,6 +222,7 @@ function MasterDataTable({
 
 export default function AdminStamdataPage() {
     const { t } = useI18n()
+    const [adminFeePercent, setAdminFeePercent] = useState(5)
 
     return (
         <div className="space-y-6">
@@ -238,6 +239,9 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="categories">
                         {t("admin.masterData.categories")}
                     </TabsTrigger>
+                    <TabsTrigger value="settings">
+                        Indstillinger
+                    </TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -246,6 +250,32 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="categories" className="mt-4">
                     <MasterDataTable type="categories" addLabel={t("admin.masterData.addCategory")} />
+                </TabsContent>
+
+                <TabsContent value="settings" className="mt-4">
+                    <div className="max-w-md space-y-6">
+                        <div className="rounded-lg border p-6 space-y-4">
+                            <div>
+                                <h3 className="text-sm font-medium">Administrationsbidrag</h3>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                    Procentsatsen for administrationsbidrag der bruges ved udbetalingsberegning
+                                </p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <Input
+                                    type="number"
+                                    value={adminFeePercent}
+                                    onChange={(e) => setAdminFeePercent(Number(e.target.value))}
+                                    className="w-24"
+                                    step="0.5"
+                                    min="0"
+                                    max="100"
+                                />
+                                <span className="text-sm text-muted-foreground font-medium">%</span>
+                            </div>
+                            <Button size="sm">{t("common.save")}</Button>
+                        </div>
+                    </div>
                 </TabsContent>
             </Tabs>
         </div>

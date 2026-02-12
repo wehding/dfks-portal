@@ -67,8 +67,12 @@ export interface ExtractedContractData {
     salaryUnit?: SalaryUnit
     startDate?: string
     endDate?: string
+    producerName?: string
+    pensionPercent?: number
     pensionSupplement?: number
+    personalSupplement?: number
     otherSupplements?: string
+    workingWeeks?: number
     svod: boolean
     copydan: boolean
     royalty: boolean
@@ -109,6 +113,7 @@ export interface Payment {
     workTitle: string
     source: PaymentSource
     amount: number
+    adminFeePercent: number
     adminFee: number
     netAmount: number
     paidAt: string
@@ -138,6 +143,12 @@ export interface MasterDataItem {
     active: boolean
 }
 
+// ── Settings ────────────────────────────────────────────────
+
+export interface PortalSettings {
+    adminFeePercent: number
+}
+
 // ── Stats ───────────────────────────────────────────────────
 
 export interface SalaryDataPoint {
@@ -151,4 +162,22 @@ export interface RightsClauseStats {
     svodPercent: number
     copydanPercent: number
     royaltyPercent: number
+}
+
+export interface PensionStatsPoint {
+    year: number
+    avgPensionPercent: number
+    avgPersonalSupplement: number
+}
+
+export interface GenderDistribution {
+    gender: string
+    count: number
+    avgSalary: number
+}
+
+export interface WorkingWeeksStats {
+    year: number
+    avgWeeks: number
+    medianWeeks: number
 }

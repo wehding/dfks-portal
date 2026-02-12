@@ -184,6 +184,17 @@ export default function AdminValideringPage() {
                         </div>
 
                         <div className="space-y-5 p-4">
+                            {/* Producer */}
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">{t("admin.validation.producer")}</Label>
+                                <Input
+                                    defaultValue={data?.producerName}
+                                    placeholder="Producentens navn..."
+                                />
+                            </div>
+
+                            <Separator />
+
                             {/* Salary */}
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
@@ -226,13 +237,35 @@ export default function AdminValideringPage() {
 
                             <Separator />
 
-                            {/* Supplements */}
+                            {/* Pension & Supplements */}
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
-                                    <Label className="text-xs">{t("admin.validation.pension")}</Label>
+                                    <Label className="text-xs">{t("admin.validation.pensionPercent")}</Label>
+                                    <div className="flex items-center gap-2">
+                                        <Input
+                                            type="number"
+                                            defaultValue={data?.pensionPercent}
+                                            placeholder="0"
+                                            step="0.1"
+                                        />
+                                        <span className="text-sm text-muted-foreground">%</span>
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs">{t("admin.validation.pension")} ({t("common.kr")})</Label>
                                     <Input
                                         type="number"
                                         defaultValue={data?.pensionSupplement}
+                                        placeholder="0"
+                                    />
+                                </div>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                    <Label className="text-xs">{t("admin.validation.personalSupplement")}</Label>
+                                    <Input
+                                        type="number"
+                                        defaultValue={data?.personalSupplement}
                                         placeholder="0"
                                     />
                                 </div>
@@ -243,6 +276,19 @@ export default function AdminValideringPage() {
                                         placeholder="—"
                                     />
                                 </div>
+                            </div>
+
+                            <Separator />
+
+                            {/* Working weeks */}
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">{t("admin.validation.workingWeeks")}</Label>
+                                <Input
+                                    type="number"
+                                    defaultValue={data?.workingWeeks}
+                                    placeholder="0"
+                                    className="max-w-[120px]"
+                                />
                             </div>
 
                             <Separator />
