@@ -17,6 +17,8 @@ const translations = {
         "nav.payouts": "Udbetalinger",
         "nav.statistics": "Statistik",
         "nav.masterData": "Stamdata",
+        "nav.transparency": "Gennemsigtighed",
+        "nav.credits": "Krediteringer",
         "nav.logout": "Log ud",
         "nav.settings": "Indstillinger",
 
@@ -199,6 +201,39 @@ const translations = {
         "admin.masterData.name": "Navn",
         "admin.masterData.active": "Aktiv",
 
+        // Admin - Transparency Reports
+        "admin.transparency.title": "Gennemsigtighedsrapporter",
+        "admin.transparency.subtitle": "Lovpligtige rapporter om fordeling af rettighedsmidler",
+        "admin.transparency.newReport": "Ny rapport",
+        "admin.transparency.year": "År",
+        "admin.transparency.collected": "Indsamlet",
+        "admin.transparency.distributed": "Fordelt",
+        "admin.transparency.adminCosts": "Adm. omkostninger",
+        "admin.transparency.members": "Medlemmer",
+        "admin.transparency.published": "Publiceret",
+        "admin.transparency.source": "Kilde",
+        "admin.transparency.export": "Eksportér PDF",
+        "admin.transparency.summary": "Resumé",
+        "admin.transparency.breakdown": "Fordeling pr. kilde",
+
+        // Admin - Credits
+        "admin.credits.title": "Krediteringer",
+        "admin.credits.subtitle": "Sporing af korrekte krediteringer for medlemmer",
+        "admin.credits.addCredit": "Tilføj kreditering",
+        "admin.credits.work": "Værk",
+        "admin.credits.member": "Medlem",
+        "admin.credits.role": "Funktion",
+        "admin.credits.producer": "Producent",
+        "admin.credits.verified": "Verificeret",
+        "admin.credits.unverified": "Uverificeret",
+        "admin.credits.imdb": "IMDb",
+        "admin.credits.verify": "Bekræft",
+        "admin.credits.premiere": "Premiere",
+
+        // Admin - Validation extras
+        "admin.validation.aiClause": "AI/Data mining forbehold",
+        "admin.validation.aiClauseDesc": "Klausul om AI/data mining rettigheder",
+
         // Common
         "common.search": "Søg...",
         "common.save": "Gem",
@@ -230,6 +265,8 @@ const translations = {
         "nav.payouts": "Payouts",
         "nav.statistics": "Statistics",
         "nav.masterData": "Master Data",
+        "nav.transparency": "Transparency",
+        "nav.credits": "Credits",
         "nav.logout": "Log out",
         "nav.settings": "Settings",
 
@@ -411,6 +448,39 @@ const translations = {
         "admin.masterData.addRole": "Add role",
         "admin.masterData.name": "Name",
         "admin.masterData.active": "Active",
+
+        // Admin - Transparency Reports
+        "admin.transparency.title": "Transparency Reports",
+        "admin.transparency.subtitle": "Legally required reports on rights fund distribution",
+        "admin.transparency.newReport": "New report",
+        "admin.transparency.year": "Year",
+        "admin.transparency.collected": "Collected",
+        "admin.transparency.distributed": "Distributed",
+        "admin.transparency.adminCosts": "Admin costs",
+        "admin.transparency.members": "Members",
+        "admin.transparency.published": "Published",
+        "admin.transparency.source": "Source",
+        "admin.transparency.export": "Export PDF",
+        "admin.transparency.summary": "Summary",
+        "admin.transparency.breakdown": "Breakdown by source",
+
+        // Admin - Credits
+        "admin.credits.title": "Credits",
+        "admin.credits.subtitle": "Track correct credits for members",
+        "admin.credits.addCredit": "Add credit",
+        "admin.credits.work": "Work",
+        "admin.credits.member": "Member",
+        "admin.credits.role": "Role",
+        "admin.credits.producer": "Producer",
+        "admin.credits.verified": "Verified",
+        "admin.credits.unverified": "Unverified",
+        "admin.credits.imdb": "IMDb",
+        "admin.credits.verify": "Verify",
+        "admin.credits.premiere": "Premiere",
+
+        // Admin - Validation extras
+        "admin.validation.aiClause": "AI/Data mining clause",
+        "admin.validation.aiClauseDesc": "Clause on AI/data mining rights",
 
         // Common
         "common.search": "Search...",

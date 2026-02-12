@@ -74,6 +74,7 @@ function formatRights(c: Contract) {
     if (d.svod) parts.push("SVOD")
     if (d.copydan) parts.push("Copydan")
     if (d.royalty) parts.push(`Royalty ${d.royaltyPercent || 0}%`)
+    if (d.aiDataMiningClause) parts.push("AI-forbehold")
     return parts.length > 0 ? parts.join(", ") : "—"
 }
 

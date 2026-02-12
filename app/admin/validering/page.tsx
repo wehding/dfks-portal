@@ -316,6 +316,16 @@ export default function AdminValideringPage() {
                                         />
                                         <Switch defaultChecked={data?.royalty} />
                                     </div>
+                                    <Separator className="my-1" />
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-sm">{t("admin.validation.aiClause")}</span>
+                                            <p className="text-[10px] text-muted-foreground">
+                                                {t("admin.validation.aiClauseDesc")}
+                                            </p>
+                                        </div>
+                                        <Switch defaultChecked={data?.aiDataMiningClause} />
+                                    </div>
                                 </div>
                             </div>
 

@@ -77,6 +77,7 @@ export interface ExtractedContractData {
     copydan: boolean
     royalty: boolean
     royaltyPercent?: number
+    aiDataMiningClause: boolean
     distribution?: string[]
     collectiveAgreement: boolean
     collectiveAgreementName?: string
@@ -180,4 +181,39 @@ export interface WorkingWeeksStats {
     year: number
     avgWeeks: number
     medianWeeks: number
+}
+
+// ── Transparency Reports ────────────────────────────────────
+
+export interface TransparencyReport {
+    id: string
+    year: number
+    title: string
+    totalCollected: number
+    totalDistributed: number
+    adminCosts: number
+    sources: {
+        name: string // e.g. "Create Denmark", "CopyDan", "SVOD"
+        collected: number
+        distributed: number
+    }[]
+    memberCount: number
+    publishedAt: string
+    fileUrl?: string
+}
+
+// ── Credit Tracking ─────────────────────────────────────────
+
+export interface CreditEntry {
+    id: string
+    workTitle: string
+    category: Category
+    premiereYear: number
+    creditedRole: string
+    memberName: string
+    memberId: string
+    producerName: string
+    verified: boolean
+    imdbUrl?: string
+    notes?: string
 }

@@ -7,6 +7,7 @@ import {
     mockPensionStats,
     mockGenderDistribution,
     mockWorkingWeeksStats,
+    mockContracts,
 } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -107,6 +108,7 @@ export default function AdminStatistikPage() {
                     <TabsTrigger value="pension">{t("admin.stats.pension")}</TabsTrigger>
                     <TabsTrigger value="gender">{t("admin.stats.genderDist")}</TabsTrigger>
                     <TabsTrigger value="weeks">{t("admin.stats.workingWeeks")}</TabsTrigger>
+                    <TabsTrigger value="aiClause">{t("admin.validation.aiClause")}</TabsTrigger>
                 </TabsList>
 
                 {/* ── Salary Development ─────────────────────────── */}
@@ -458,6 +460,134 @@ export default function AdminStatistikPage() {
                             </TableBody>
                         </Table>
                     </div>
+                </TabsContent>
+
+                {/* ── AI Clause Adoption ─────────────────────────── */}
+                <TabsContent value="aiClause" className="mt-4 space-y-4">
+                    {(() => {
+                        const contractsWithData = mockContracts.filter((c) => c.extractedData)
+                        const withClause = contractsWithData.filter(
+                            (c) => c.extractedData?.aiDataMiningClause
+                        )
+                        const pct =
+                            contractsWithData.length > 0
+                                ? Math.round((withClause.length / contractsWithData.length) * 100)
+                                : 0
+
+                        // Group by year
+                        const byYear = contractsWithData.reduce<
+                            Record<number, { total: number; withClause: number }>
+                        >((acc, c) => {
+                            const y = c.premiereYear
+                            if (!acc[y]) acc[y] = { total: 0, withClause: 0 }
+                            acc[y].total++
+                            if (c.extractedData?.aiDataMiningClause) acc[y].withClause++
+                            return acc
+                        }, {})
+
+                        const chartData = Object.entries(byYear)
+                            .map(([year, data]) => ({
+                                year,
+                                withClause: data.withClause,
+                                withoutClause: data.total - data.withClause,
+                                pct: Math.round((data.withClause / data.total) * 100),
+                            }))
+                            .sort((a, b) => Number(a.year) - Number(b.year))
+
+                        return (
+                            <>
+                                <div className="grid gap-4 sm:grid-cols-3">
+                                    <Card>
+                                        <CardContent className="pt-6 text-center">
+                                            <p className="text-4xl font-bold">{pct}%</p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                af kontrakter har AI-forbehold
+                                            </p>
+                                        </CardContent>
+                                    </Card>
+                                    <Card>
+                                        <CardContent className="pt-6 text-center">
+                                            <p className="text-4xl font-bold text-emerald-600">
+                                                {withClause.length}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                med AI-klausul
+                                            </p>
+                                        </CardContent>
+                                    </Card>
+                                    <Card>
+                                        <CardContent className="pt-6 text-center">
+                                            <p className="text-4xl font-bold text-amber-600">
+                                                {contractsWithData.length - withClause.length}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                                uden AI-klausul
+                                            </p>
+                                        </CardContent>
+                                    </Card>
+                                </div>
+
+                                <Card>
+                                    <CardHeader className="pb-2">
+                                        <CardTitle className="text-sm font-medium text-muted-foreground">
+                                            AI/Data mining forbehold pr. år
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="h-[300px]">
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={chartData}>
+                                                    <CartesianGrid
+                                                        strokeDasharray="3 3"
+                                                        className="stroke-border"
+                                                    />
+                                                    <XAxis dataKey="year" className="text-xs" />
+                                                    <YAxis className="text-xs" />
+                                                    <Tooltip
+                                                        contentStyle={tooltipStyle}
+                                                        formatter={(value, name) => [
+                                                            `${value} kontrakter`,
+                                                            name === "withClause"
+                                                                ? "Med AI-klausul"
+                                                                : "Uden AI-klausul",
+                                                        ]}
+                                                    />
+                                                    <Legend
+                                                        formatter={(value) =>
+                                                            value === "withClause"
+                                                                ? "Med AI-klausul"
+                                                                : "Uden AI-klausul"
+                                                        }
+                                                    />
+                                                    <Bar
+                                                        dataKey="withClause"
+                                                        stackId="a"
+                                                        fill="hsl(160, 50%, 50%)"
+                                                        radius={[0, 0, 0, 0]}
+                                                    />
+                                                    <Bar
+                                                        dataKey="withoutClause"
+                                                        stackId="a"
+                                                        fill="hsl(var(--muted-foreground))"
+                                                        radius={[4, 4, 0, 0]}
+                                                    />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </CardContent>
+                                </Card>
+
+                                <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-4">
+                                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                                        <strong>Anbefaling:</strong> DFKS anbefaler at alle nye
+                                        kontrakter inkluderer en AI/data mining klausul for at
+                                        beskytte klipperens rettigheder i forbindelse med
+                                        automatiseret tekst- og dataudvinding.
+                                    </p>
+                                </div>
+                            </>
+                        )
+                    })()}
                 </TabsContent>
             </Tabs>
         </div>

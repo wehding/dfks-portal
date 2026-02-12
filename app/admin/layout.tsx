@@ -10,6 +10,8 @@ import {
     BarChart3,
     Database,
     LogOut,
+    ScrollText,
+    Award,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -63,6 +65,16 @@ export default function AdminLayout({
             label: t("nav.masterData"),
             href: "/admin/stamdata",
             icon: Database,
+        },
+        {
+            label: t("nav.transparency"),
+            href: "/admin/gennemsigtighed",
+            icon: ScrollText,
+        },
+        {
+            label: t("nav.credits"),
+            href: "/admin/krediteringer",
+            icon: Award,
         },
     ]
 
