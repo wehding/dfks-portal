@@ -12,8 +12,6 @@ import {
     LogOut,
     ScrollText,
     Award,
-    CalendarHeart,
-    Baby,
     Users2,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
@@ -79,16 +77,8 @@ export default function AdminLayout({
             href: "/admin/krediteringer",
             icon: Award,
         },
-        {
-            label: t("nav.holidayFund"),
-            href: "/admin/helligdagsfond",
-            icon: CalendarHeart,
-        },
-        {
-            label: t("nav.maternityFund"),
-            href: "/admin/barselspulje",
-            icon: Baby,
-        },
+        // Helligdagsfond & Barselspulje removed from admin nav per Martin's request
+        // Data is tracked via contract validation fields instead
         {
             label: t("nav.users"),
             href: "/admin/brugere",

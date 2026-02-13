@@ -516,6 +516,26 @@ export default function AdminKontrakterPage() {
                                                 </div>
                                             </div>
                                             <Separator />
+                                            {/* Producer contributions */}
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">
+                                                        {t("admin.validation.holidayPay")}
+                                                    </p>
+                                                    <p className="tabular-nums">
+                                                        {viewContract.extractedData.holidayPayRate || 0}%
+                                                    </p>
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">
+                                                        {t("admin.validation.beta")}
+                                                    </p>
+                                                    <p className="tabular-nums">
+                                                        {viewContract.extractedData.betaRate || 0}%
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <Separator />
                                             <div>
                                                 <p className="text-xs text-muted-foreground mb-1">
                                                     {t("admin.validation.agreement")}

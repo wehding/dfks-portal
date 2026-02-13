@@ -298,6 +298,42 @@ export default function AdminValideringPage() {
 
                             <Separator />
 
+                            {/* Producer contributions: Helligdagsbetaling & BETA */}
+                            <div>
+                                <Label className="text-xs mb-3 block">{t("admin.validation.producerContributions")}</Label>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">{t("admin.validation.holidayPay")}</Label>
+                                        <div className="flex items-center gap-2">
+                                            <Input
+                                                type="number"
+                                                defaultValue={data?.holidayPayRate}
+                                                placeholder="12.5"
+                                                step="0.1"
+                                            />
+                                            <span className="text-sm text-muted-foreground">%</span>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-xs">{t("admin.validation.beta")}</Label>
+                                        <div className="flex items-center gap-2">
+                                            <Input
+                                                type="number"
+                                                defaultValue={data?.betaRate}
+                                                placeholder="0.6"
+                                                step="0.01"
+                                            />
+                                            <span className="text-sm text-muted-foreground">%</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground mt-2">
+                                    Satser for producent/arbejdsgivers indbetaling
+                                </p>
+                            </div>
+
+                            <Separator />
+
                             {/* Rights */}
                             <div>
                                 <Label className="text-xs mb-3 block">{t("admin.validation.rights")}</Label>

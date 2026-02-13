@@ -151,6 +151,9 @@ const translations = {
         "admin.validation.agreement": "Overenskomst",
         "admin.validation.gender": "Køn",
         "admin.validation.specialNotes": "Specielle forhold",
+        "admin.validation.producerContributions": "Producentbidrag",
+        "admin.validation.holidayPay": "Helligdagsbetaling",
+        "admin.validation.beta": "BETA (barselsfond)",
         "admin.validation.approve": "Godkend",
         "admin.validation.save": "Gem ændringer",
         "admin.validation.backToList": "Tilbage til oversigt",
@@ -194,6 +197,11 @@ const translations = {
         "admin.stats.all": "Alle",
         "admin.stats.male": "Mand",
         "admin.stats.female": "Kvinde",
+        "admin.stats.producerContributions": "Producentbidrag",
+        "admin.stats.avgHolidayPay": "Gns. helligdagsbetaling",
+        "admin.stats.avgBeta": "Gns. BETA-sats",
+        "admin.stats.totalContributions": "Samlet indbetaling",
+        "admin.stats.contributionsDev": "Producentbidrag pr. år",
 
         // Admin - Master Data
         "admin.masterData.title": "Stamdata",
@@ -466,6 +474,9 @@ const translations = {
         "admin.validation.agreement": "Collective Agreement",
         "admin.validation.gender": "Gender",
         "admin.validation.specialNotes": "Special Notes",
+        "admin.validation.producerContributions": "Producer Contributions",
+        "admin.validation.holidayPay": "Holiday Pay",
+        "admin.validation.beta": "BETA (Maternity Fund)",
         "admin.validation.approve": "Approve",
         "admin.validation.save": "Save Changes",
         "admin.validation.backToList": "Back to overview",
@@ -509,6 +520,11 @@ const translations = {
         "admin.stats.all": "All",
         "admin.stats.male": "Male",
         "admin.stats.female": "Female",
+        "admin.stats.producerContributions": "Producer Contributions",
+        "admin.stats.avgHolidayPay": "Avg. holiday pay",
+        "admin.stats.avgBeta": "Avg. BETA rate",
+        "admin.stats.totalContributions": "Total contributions",
+        "admin.stats.contributionsDev": "Producer contributions per year",
 
         // Admin - Master Data
         "admin.masterData.title": "Master Data",

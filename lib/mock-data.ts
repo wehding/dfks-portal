@@ -10,6 +10,7 @@ import type {
     PensionStatsPoint,
     GenderDistribution,
     WorkingWeeksStats,
+    ProducerContributionStats,
     PortalSettings,
     TransparencyReport,
     CreditEntry,
@@ -262,6 +263,8 @@ export const mockContracts: Contract[] = [
             collectiveAgreement: true,
             collectiveAgreementName: "Dansk Film Overenskomst",
             gender: "female",
+            holidayPayRate: 12.5,
+            betaRate: 0.6,
         },
     },
     {
@@ -296,6 +299,8 @@ export const mockContracts: Contract[] = [
             collectiveAgreement: true,
             collectiveAgreementName: "Dansk Film Overenskomst",
             gender: "male",
+            holidayPayRate: 12.5,
+            betaRate: 0.6,
         },
     },
     {
@@ -346,6 +351,8 @@ export const mockContracts: Contract[] = [
             distribution: ["DR"],
             collectiveAgreement: false,
             gender: "female",
+            holidayPayRate: 12.0,
+            betaRate: 0.6,
         },
     },
     {
@@ -381,6 +388,8 @@ export const mockContracts: Contract[] = [
             collectiveAgreement: true,
             collectiveAgreementName: "Dansk Film Overenskomst",
             gender: "male",
+            holidayPayRate: 12.5,
+            betaRate: 0.65,
             specialNotes: "Ekstra klippeuge i post-produktion aftalt mundtligt.",
         },
     },
@@ -415,6 +424,8 @@ export const mockContracts: Contract[] = [
             collectiveAgreement: true,
             collectiveAgreementName: "TV-Overenskomsten",
             gender: "female",
+            holidayPayRate: 12.0,
+            betaRate: 0.6,
         },
     },
     {
@@ -449,6 +460,8 @@ export const mockContracts: Contract[] = [
             collectiveAgreement: true,
             collectiveAgreementName: "Dansk Film Overenskomst",
             gender: "male",
+            holidayPayRate: 12.5,
+            betaRate: 0.6,
         },
     },
 ]
@@ -583,6 +596,17 @@ export const mockWorkingWeeksStats: WorkingWeeksStats[] = [
     { year: 2023, avgWeeks: 31, medianWeeks: 30 },
     { year: 2024, avgWeeks: 32, medianWeeks: 30 },
     { year: 2025, avgWeeks: 30, medianWeeks: 28 },
+]
+
+// ── Producer Contributions (Helligdagsbetaling & BETA) ──────
+
+export const mockProducerContributionStats: ProducerContributionStats[] = [
+    { year: 2020, avgHolidayPayRate: 11.5, avgBetaRate: 0.5, totalHolidayPayAmount: 2850000, totalBetaAmount: 124000, contractCount: 52 },
+    { year: 2021, avgHolidayPayRate: 12.0, avgBetaRate: 0.55, totalHolidayPayAmount: 3120000, totalBetaAmount: 143000, contractCount: 56 },
+    { year: 2022, avgHolidayPayRate: 12.0, avgBetaRate: 0.55, totalHolidayPayAmount: 3380000, totalBetaAmount: 155000, contractCount: 61 },
+    { year: 2023, avgHolidayPayRate: 12.5, avgBetaRate: 0.6, totalHolidayPayAmount: 3650000, totalBetaAmount: 175000, contractCount: 64 },
+    { year: 2024, avgHolidayPayRate: 12.5, avgBetaRate: 0.6, totalHolidayPayAmount: 3920000, totalBetaAmount: 188000, contractCount: 68 },
+    { year: 2025, avgHolidayPayRate: 12.5, avgBetaRate: 0.6, totalHolidayPayAmount: 4100000, totalBetaAmount: 197000, contractCount: 72 },
 ]
 
 // ── Transparency Reports ────────────────────────────────────

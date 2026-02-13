@@ -86,6 +86,8 @@ export interface ExtractedContractData {
     collectiveAgreement: boolean
     collectiveAgreementName?: string
     gender?: Gender
+    holidayPayRate?: number // Helligdagsbetaling percentage
+    betaRate?: number // BETA (barselsfonden) percentage
     specialNotes?: string
 }
 
@@ -185,6 +187,15 @@ export interface WorkingWeeksStats {
     year: number
     avgWeeks: number
     medianWeeks: number
+}
+
+export interface ProducerContributionStats {
+    year: number
+    avgHolidayPayRate: number
+    avgBetaRate: number
+    totalHolidayPayAmount: number
+    totalBetaAmount: number
+    contractCount: number
 }
 
 // ── Transparency Reports ────────────────────────────────────

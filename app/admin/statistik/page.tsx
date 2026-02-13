@@ -9,6 +9,7 @@ import {
     mockPensionStats,
     mockGenderDistribution,
     mockWorkingWeeksStats,
+    mockProducerContributionStats,
     mockContracts,
 } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -98,6 +99,14 @@ export default function AdminStatistikPage() {
             yearNum
                 ? mockWorkingWeeksStats.filter((d) => d.year === yearNum)
                 : mockWorkingWeeksStats,
+        [yearNum]
+    )
+
+    const filteredContributions = useMemo(
+        () =>
+            yearNum
+                ? mockProducerContributionStats.filter((d) => d.year === yearNum)
+                : mockProducerContributionStats,
         [yearNum]
     )
 
@@ -291,6 +300,7 @@ export default function AdminStatistikPage() {
                     <TabsTrigger value="pension">{t("admin.stats.pension")}</TabsTrigger>
                     <TabsTrigger value="gender">{t("admin.stats.genderDist")}</TabsTrigger>
                     <TabsTrigger value="weeks">{t("admin.stats.workingWeeks")}</TabsTrigger>
+                    <TabsTrigger value="contributions">{t("admin.stats.producerContributions")}</TabsTrigger>
                     <TabsTrigger value="aiClause">{t("admin.validation.aiClause")}</TabsTrigger>
                 </TabsList>
 
@@ -714,6 +724,149 @@ export default function AdminStatistikPage() {
                                 ))}
                             </TableBody>
                         </Table>
+                    </div>
+                </TabsContent>
+
+                {/* ── Producer Contributions (Helligdagsbetaling & BETA) ─── */}
+                <TabsContent value="contributions" className="mt-4 space-y-4">
+                    {yearNum && (
+                        <Badge variant="outline" className="gap-1">
+                            <CalendarDays className="h-3 w-3" />
+                            Data filtreret for {yearNum}
+                        </Badge>
+                    )}
+
+                    {/* Summary cards */}
+                    <div className="grid gap-4 sm:grid-cols-3">
+                        <Card>
+                            <CardContent className="pt-6 text-center">
+                                <p className="text-2xl font-bold tabular-nums">
+                                    {filteredContributions[filteredContributions.length - 1]?.avgHolidayPayRate || 0}%
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {t("admin.stats.avgHolidayPay")}
+                                </p>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="pt-6 text-center">
+                                <p className="text-2xl font-bold tabular-nums">
+                                    {filteredContributions[filteredContributions.length - 1]?.avgBetaRate || 0}%
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {t("admin.stats.avgBeta")}
+                                </p>
+                            </CardContent>
+                        </Card>
+                        <Card>
+                            <CardContent className="pt-6 text-center">
+                                <p className="text-2xl font-bold tabular-nums">
+                                    {formatKr((filteredContributions[filteredContributions.length - 1]?.totalHolidayPayAmount || 0) + (filteredContributions[filteredContributions.length - 1]?.totalBetaAmount || 0))}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    {t("admin.stats.totalContributions")}
+                                </p>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    <Card>
+                        <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium text-muted-foreground">
+                                {t("admin.stats.contributionsDev")}
+                                {yearNum && (
+                                    <Badge variant="outline" className="ml-2 text-xs font-normal">
+                                        {yearNum} markeret
+                                    </Badge>
+                                )}
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="h-[350px]">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={mockProducerContributionStats}>
+                                        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                                        <XAxis dataKey="year" className="text-xs" />
+                                        <YAxis className="text-xs" tickFormatter={(v) => `${v / 1000000}M`} />
+                                        <Tooltip
+                                            contentStyle={tooltipStyle}
+                                            wrapperStyle={tooltipWrapperStyle}
+                                            formatter={(value, name) => [
+                                                formatKr(value as number),
+                                                name === "totalHolidayPayAmount"
+                                                    ? t("admin.validation.holidayPay")
+                                                    : "BETA",
+                                            ]}
+                                        />
+                                        <Legend
+                                            formatter={(value) =>
+                                                value === "totalHolidayPayAmount"
+                                                    ? t("admin.validation.holidayPay")
+                                                    : "BETA"
+                                            }
+                                        />
+                                        {yearNum && (
+                                            <ReferenceLine
+                                                x={yearNum}
+                                                stroke="hsl(var(--primary))"
+                                                strokeWidth={2}
+                                                strokeDasharray="4 4"
+                                            />
+                                        )}
+                                        <Bar
+                                            dataKey="totalHolidayPayAmount"
+                                            name="totalHolidayPayAmount"
+                                            fill="hsl(30, 80%, 55%)"
+                                            radius={[0, 0, 0, 0]}
+                                        />
+                                        <Bar
+                                            dataKey="totalBetaAmount"
+                                            name="totalBetaAmount"
+                                            fill="hsl(280, 60%, 55%)"
+                                            radius={[4, 4, 0, 0]}
+                                        />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <div className="rounded-lg border">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>År</TableHead>
+                                    <TableHead className="text-right">{t("admin.validation.holidayPay")} (gns. %)</TableHead>
+                                    <TableHead className="text-right">BETA (gns. %)</TableHead>
+                                    <TableHead className="text-right">{t("admin.validation.holidayPay")} (total)</TableHead>
+                                    <TableHead className="text-right">BETA (total)</TableHead>
+                                    <TableHead className="text-right">Kontrakter</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {filteredContributions.map((d) => (
+                                    <TableRow
+                                        key={d.year}
+                                        className={yearNum === d.year ? "bg-primary/5 font-semibold" : ""}
+                                    >
+                                        <TableCell className="font-medium tabular-nums">{d.year}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{d.avgHolidayPayRate}%</TableCell>
+                                        <TableCell className="text-right tabular-nums">{d.avgBetaRate}%</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatKr(d.totalHolidayPayAmount)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{formatKr(d.totalBetaAmount)}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{d.contractCount}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20 p-4">
+                        <p className="text-sm text-amber-800 dark:text-amber-200">
+                            <strong>Bemærk:</strong> Helligdagsbetaling og BETA (barselsfond) er
+                            bidrag som producenter/arbejdsgivere skal indbetale. Disse data
+                            udtrækkes automatisk fra kontrakterne ved validering.
+                        </p>
                     </div>
                 </TabsContent>
 
