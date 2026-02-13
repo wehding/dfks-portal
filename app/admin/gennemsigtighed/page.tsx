@@ -146,24 +146,29 @@ export default function AdminGennemsigtighedPage() {
                                 />
                                 <Tooltip
                                     contentStyle={{
-                                        backgroundColor: "hsl(var(--popover))",
-                                        border: "1px solid hsl(var(--border))",
-                                        borderRadius: "8px",
+                                        backgroundColor: "rgba(255, 255, 255, 0.7)",
+                                        backdropFilter: "blur(12px)",
+                                        WebkitBackdropFilter: "blur(12px)",
+                                        border: "1px solid rgba(255, 255, 255, 0.3)",
+                                        borderRadius: "12px",
                                         fontSize: "13px",
+                                        boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+                                        color: "#1a1a2e",
                                     }}
+                                    wrapperStyle={{ zIndex: 50 }}
                                     formatter={(value) => formatKr(value as number)}
                                 />
                                 <Legend />
                                 <Bar
                                     dataKey="collected"
                                     name={t("admin.transparency.collected")}
-                                    fill="hsl(var(--foreground))"
+                                    fill="hsl(210, 65%, 55%)"
                                     radius={[4, 4, 0, 0]}
                                 />
                                 <Bar
                                     dataKey="distributed"
                                     name={t("admin.transparency.distributed")}
-                                    fill="hsl(var(--muted-foreground))"
+                                    fill="hsl(160, 50%, 50%)"
                                     radius={[4, 4, 0, 0]}
                                 />
                             </BarChart>

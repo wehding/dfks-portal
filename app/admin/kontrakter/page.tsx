@@ -11,6 +11,7 @@ import {
     ChevronDown,
     Filter,
 } from "lucide-react"
+import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
 import { useContracts } from "@/lib/hooks"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -140,8 +141,10 @@ export default function AdminKontrakterPage() {
 
     const handleDelete = () => {
         if (deleteId) {
+            const c = contracts.find(x => x.id === deleteId)
             deleteContract(deleteId)
             setDeleteId(null)
+            if (c) toast.success(`"${c.title}" er slettet`)
         }
     }
 
@@ -171,6 +174,7 @@ export default function AdminKontrakterPage() {
             link.download = `${c.title}.pdf`
             link.click()
         })
+        toast.success(`${filtered.length} kontrakter downloadet`)
     }
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {

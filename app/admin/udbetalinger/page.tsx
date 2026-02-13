@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Plus, Download, Trash2, Settings } from "lucide-react"
+import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
 import { mockPayouts, mockWorks, mockPortalSettings } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -189,7 +190,21 @@ export default function AdminUdbetalingerPage() {
                                             Eksporteret
                                         </Badge>
                                     )}
-                                    <Button variant="outline" size="sm" className="gap-1.5">
+                                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
+                                        const headers = ["Medlem", "Andel %", "Beløb"]
+                                        const rows = payout.distributions.map((d) =>
+                                            [d.userName, d.sharePercent, d.amount].join(";")
+                                        )
+                                        const csv = [headers.join(";"), ...rows].join("\n")
+                                        const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+                                        const url = URL.createObjectURL(blob)
+                                        const a = document.createElement("a")
+                                        a.href = url
+                                        a.download = `udbetaling_${payout.workTitle.replace(/\s+/g, "_")}.csv`
+                                        a.click()
+                                        URL.revokeObjectURL(url)
+                                        toast.success("CSV eksporteret")
+                                    }}>
                                         <Download className="h-3.5 w-3.5" />
                                         {t("admin.payouts.export")}
                                     </Button>

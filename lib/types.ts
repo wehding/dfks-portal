@@ -41,7 +41,11 @@ export interface User {
     id: string
     name: string
     email: string
+    phone?: string
+    cprNumber?: string // masked, e.g. "010185-****"
     role: "member" | "admin"
+    status: "active" | "inactive" | "pending"
+    memberSince: string
     avatarUrl?: string
 }
 
@@ -217,3 +221,56 @@ export interface CreditEntry {
     imdbUrl?: string
     notes?: string
 }
+
+// ── Helligdagsfond (Holiday Fund) ───────────────────────────
+
+export interface HolidayFundEntry {
+    id: string
+    memberId: string
+    memberName: string
+    year: number
+    contributionRate: number // percentage of salary
+    totalContribution: number
+    totalPaid: number
+    balance: number
+    lastPaymentDate?: string
+    status: "active" | "closed" | "pending"
+}
+
+export interface HolidayFundSummary {
+    year: number
+    totalContributions: number
+    totalPaidOut: number
+    balance: number
+    memberCount: number
+}
+
+// ── Barselspulje (Maternity/Parental Leave Fund) ────────────
+
+export type LeaveType = "maternity" | "paternity" | "parental"
+
+export interface MaternityFundEntry {
+    id: string
+    memberId: string
+    memberName: string
+    leaveType: LeaveType
+    startDate: string
+    endDate: string
+    weeksApproved: number
+    weeklyAmount: number
+    totalAmount: number
+    status: "applied" | "approved" | "active" | "completed" | "rejected"
+    childBirthDate: string
+    applicationDate: string
+    notes?: string
+}
+
+export interface MaternityFundSummary {
+    year: number
+    totalApplicants: number
+    totalApproved: number
+    totalPaidOut: number
+    avgWeeks: number
+    byType: { type: LeaveType; count: number; totalAmount: number }[]
+}
+

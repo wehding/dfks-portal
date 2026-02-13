@@ -12,6 +12,7 @@ import {
     CheckCircle2,
     Eye,
 } from "lucide-react"
+import { toast } from "sonner"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { useI18n } from "@/lib/i18n"
 import { useContracts } from "@/lib/hooks"
@@ -79,18 +80,22 @@ export default function AdminValideringPage() {
     const reviewingContract = contracts.find((c) => c.id === reviewingId)
 
     const handleApprove = (id: string) => {
+        const c = contracts.find(x => x.id === id)
         updateContract(id, { status: "approved" })
         setReviewingId(null)
         setLocalPdfUrl(null)
+        if (c) toast.success(`"${c.title}" er godkendt`)
     }
 
     const handleDelete = (id: string) => {
+        const c = contracts.find(x => x.id === id)
         deleteContract(id)
         setDeleteId(null)
         if (reviewingId === id) {
             setReviewingId(null)
             setLocalPdfUrl(null)
         }
+        if (c) toast.success(`"${c.title}" er slettet`)
     }
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {

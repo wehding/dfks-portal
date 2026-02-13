@@ -12,6 +12,9 @@ import {
     LogOut,
     ScrollText,
     Award,
+    CalendarHeart,
+    Baby,
+    Users2,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -75,6 +78,21 @@ export default function AdminLayout({
             label: t("nav.credits"),
             href: "/admin/krediteringer",
             icon: Award,
+        },
+        {
+            label: t("nav.holidayFund"),
+            href: "/admin/helligdagsfond",
+            icon: CalendarHeart,
+        },
+        {
+            label: t("nav.maternityFund"),
+            href: "/admin/barselspulje",
+            icon: Baby,
+        },
+        {
+            label: t("nav.users"),
+            href: "/admin/brugere",
+            icon: Users2,
         },
     ]
 

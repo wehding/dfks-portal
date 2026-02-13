@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload } from "lucide-react"
+import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -9,6 +9,7 @@ import { PdfViewer } from "@/components/pdf-viewer"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Card, CardContent } from "@/components/ui/card"
 import {
     Table,
     TableBody,
@@ -101,6 +102,45 @@ export default function MineVaerkerPage() {
     const { t } = useI18n()
     const [previewPdf, setPreviewPdf] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
+    const [exploitationWork, setExploitationWork] = useState<string | null>(null)
+
+    // Mock exploitation data per work
+    const mockExploitation: Record<string, { platforms: { name: string; views: number; revenue: number }[]; totalRevenue: number; coverage: number }> = {
+        w1: {
+            platforms: [
+                { name: "DR TV", views: 245000, revenue: 48000 },
+                { name: "Netflix DK", views: 128000, revenue: 32000 },
+                { name: "Viaplay", views: 67000, revenue: 18000 },
+            ],
+            totalRevenue: 98000,
+            coverage: 78,
+        },
+        w2: {
+            platforms: [
+                { name: "TV2 Play", views: 312000, revenue: 55000 },
+                { name: "DR TV", views: 189000, revenue: 42000 },
+            ],
+            totalRevenue: 97000,
+            coverage: 65,
+        },
+        w3: {
+            platforms: [
+                { name: "DR TV", views: 156000, revenue: 35000 },
+                { name: "Netflix DK", views: 92000, revenue: 24000 },
+                { name: "Blockbuster", views: 28000, revenue: 8000 },
+            ],
+            totalRevenue: 67000,
+            coverage: 52,
+        },
+    }
+
+    const currentExploitation = exploitationWork ? mockExploitation[exploitationWork] || {
+        platforms: [{ name: "DR TV", views: 45000, revenue: 12000 }],
+        totalRevenue: 12000,
+        coverage: 25,
+    } : null
+
+    const currentWork = exploitationWork ? mockWorks.find(w => w.id === exploitationWork) : null
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -130,6 +170,7 @@ export default function MineVaerkerPage() {
                                 <TableHead>{t("works.rights")}</TableHead>
                                 <TableHead>{t("works.duration")}</TableHead>
                                 <TableHead className="w-[100px]">{t("works.contract")}</TableHead>
+                                <TableHead className="w-[140px]">Udnyttelse</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -189,6 +230,17 @@ export default function MineVaerkerPage() {
                                                 <Download className="h-4 w-4" />
                                             </Button>
                                         </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="gap-1.5 text-xs h-7"
+                                            onClick={() => setExploitationWork(work.id)}
+                                        >
+                                            <BarChart3 className="h-3 w-3" />
+                                            {t("works.seeExploitation")}
+                                        </Button>
                                     </TableCell>
                                 </TableRow>
                             ))}
@@ -320,6 +372,73 @@ export default function MineVaerkerPage() {
                             </div>
                         )
                     })()}
+                </DialogContent>
+            </Dialog>
+
+            {/* Exploitation Dialog */}
+            <Dialog open={!!exploitationWork} onOpenChange={(o) => { if (!o) setExploitationWork(null) }}>
+                <DialogContent className="sm:max-w-[540px]">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <BarChart3 className="h-5 w-5" />
+                            {t("works.seeExploitation")} — {currentWork?.title || ""}
+                        </DialogTitle>
+                    </DialogHeader>
+                    {currentExploitation && (
+                        <div className="space-y-5 py-2">
+                            {/* Summary */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <Card>
+                                    <CardContent className="pt-4 pb-3">
+                                        <p className="text-xs text-muted-foreground">Samlet omsætning</p>
+                                        <p className="text-xl font-bold tabular-nums">
+                                            {currentExploitation.totalRevenue.toLocaleString("da-DK")} kr.
+                                        </p>
+                                    </CardContent>
+                                </Card>
+                                <Card>
+                                    <CardContent className="pt-4 pb-3">
+                                        <p className="text-xs text-muted-foreground">Udnyttelsesdækning</p>
+                                        <p className="text-xl font-bold tabular-nums">
+                                            {currentExploitation.coverage}%
+                                        </p>
+                                        <div className="mt-1.5 h-2 rounded-full bg-muted overflow-hidden">
+                                            <div
+                                                className="h-full rounded-full bg-primary transition-all"
+                                                style={{ width: `${currentExploitation.coverage}%` }}
+                                            />
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            </div>
+
+                            {/* Platform breakdown */}
+                            <div>
+                                <p className="text-sm font-medium mb-3">Platforme</p>
+                                <div className="space-y-3">
+                                    {currentExploitation.platforms.map((p, i) => {
+                                        const maxViews = Math.max(...currentExploitation.platforms.map(x => x.views))
+                                        return (
+                                            <div key={i} className="space-y-1.5">
+                                                <div className="flex justify-between text-sm">
+                                                    <span className="font-medium">{p.name}</span>
+                                                    <span className="text-muted-foreground tabular-nums">
+                                                        {p.views.toLocaleString("da-DK")} visninger · {p.revenue.toLocaleString("da-DK")} kr.
+                                                    </span>
+                                                </div>
+                                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                                    <div
+                                                        className="h-full rounded-full bg-emerald-500 transition-all"
+                                                        style={{ width: `${(p.views / maxViews) * 100}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </DialogContent>
             </Dialog>
         </div>

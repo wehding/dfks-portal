@@ -52,11 +52,14 @@ function formatKr(n: number) {
 }
 
 const tooltipStyle: React.CSSProperties = {
-    backgroundColor: "hsl(var(--popover))",
-    border: "1px solid hsl(var(--border))",
-    borderRadius: "8px",
+    backgroundColor: "rgba(255, 255, 255, 0.7)",
+    backdropFilter: "blur(12px)",
+    WebkitBackdropFilter: "blur(12px)",
+    border: "1px solid rgba(255, 255, 255, 0.3)",
+    borderRadius: "12px",
     fontSize: "13px",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+    color: "#1a1a2e",
 }
 
 const tooltipWrapperStyle: React.CSSProperties = { zIndex: 50 }
