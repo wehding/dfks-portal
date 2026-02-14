@@ -13,6 +13,7 @@ import {
     ScrollText,
     Award,
     Users2,
+    Receipt,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -79,6 +80,11 @@ export default function AdminLayout({
         },
         // Helligdagsfond & Barselspulje removed from admin nav per Martin's request
         // Data is tracked via contract validation fields instead
+        {
+            label: t("nav.producerPayments"),
+            href: "/admin/indbetalinger",
+            icon: Receipt,
+        },
         {
             label: t("nav.users"),
             href: "/admin/brugere",

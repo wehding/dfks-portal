@@ -256,6 +256,32 @@ export interface HolidayFundSummary {
     memberCount: number
 }
 
+// ── Producer Payment Forms (Helligdagsfond & BETA) ──────────
+
+export type FundType = "helligdag" | "beta"
+
+export type PaymentFormStatus = "draft" | "submitted" | "verified" | "paid"
+
+export interface ProducerPaymentForm {
+    id: string
+    fundType: FundType
+    producerName: string
+    filmTitle: string
+    shootingPeriodStart: string
+    shootingPeriodEnd: string
+    accountClosedDate: string
+    ferieberettigetLoen: number
+    calculatedContribution: number // auto: løn × rate (1% or 0.5%)
+    firstPayment: number // senest 6 uger efter optagelse
+    previouslyPaid: number
+    secondPayment: number // slutafregning
+    totalSettlement: number // auto-calculated
+    contactEmail: string
+    status: PaymentFormStatus
+    submittedAt: string
+    year: number
+}
+
 // ── Barselspulje (Maternity/Parental Leave Fund) ────────────
 
 export type LeaveType = "maternity" | "paternity" | "parental"
