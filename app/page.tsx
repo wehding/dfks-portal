@@ -97,6 +97,17 @@ export default function LoginPage() {
           <p className="text-center text-xs text-muted-foreground">
             Brug &quot;admin@&quot; i email for admin-adgang
           </p>
+
+          {/* Producer link */}
+          <div className="border-t pt-6 mt-2">
+            <a
+              href="/indbetalinger"
+              className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              Indbetalingsskema for producenter
+            </a>
+          </div>
         </div>
       </main>
     </div>
