@@ -14,6 +14,7 @@ import {
     Award,
     Users2,
     Receipt,
+    BookOpen,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -52,6 +53,11 @@ export default function AdminLayout({
             label: t("nav.validation"),
             href: "/admin/validering",
             icon: CheckCircle,
+        },
+        {
+            label: t("nav.agreements"),
+            href: "/admin/overenskomster",
+            icon: BookOpen,
         },
         {
             label: t("nav.payouts"),
