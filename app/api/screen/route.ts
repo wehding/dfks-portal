@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
                 "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
+                model: "claude-sonnet-4-20250514",
                 max_tokens: 6000,
                 system,
                 messages: [{ role: "user", content: userMessage }],
@@ -63,7 +63,26 @@ export async function POST(req: NextRequest) {
 
         console.log("[screen] AI raw response (first 500 chars):", text.slice(0, 500))
 
-        return NextResponse.json({ text })
+        // Parse JSON on server side so client receives a clean object
+        const clean = text
+            .replace(/^```json\s*/i, "")
+            .replace(/^```\s*/i, "")
+            .replace(/\s*```$/i, "")
+            .trim()
+
+        let parsed: any
+        try {
+            parsed = JSON.parse(clean)
+        } catch (parseErr) {
+            console.error("[screen] JSON parse error:", parseErr)
+            console.error("[screen] Raw text:", text)
+            return NextResponse.json(
+                { error: "AI returnerede ugyldigt JSON — prøv igen" },
+                { status: 500 }
+            )
+        }
+
+        return NextResponse.json({ result: parsed })
     } catch (err: any) {
         console.error("[screen] Caught error:", err)
         return NextResponse.json(

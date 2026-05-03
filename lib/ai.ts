@@ -258,15 +258,9 @@ export async function screenContract(
 
     const data = await response.json()
     if (data.error) throw new Error(data.error)
-    const raw = data.text ?? ""
-    const clean = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
 
-    let parsed: ScreeningResult
-    try {
-        parsed = JSON.parse(clean)
-    } catch {
-        throw new Error("Kunne ikke parse AI-svar som JSON")
-    }
+    // Server already parsed the JSON — use directly
+    const parsed: ScreeningResult = data.result
 
     // Client-side membership cross-check
     if (_memberList.parsed.length > 0 && parsed.detectedProducer) {
