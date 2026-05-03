@@ -61,6 +61,8 @@ export async function POST(req: NextRequest) {
         const text =
             data.content?.find((b: any) => b.type === "text")?.text ?? ""
 
+        console.log("[screen] AI raw response (first 500 chars):", text.slice(0, 500))
+
         return NextResponse.json({ text })
     } catch (err: any) {
         console.error("[screen] Caught error:", err)

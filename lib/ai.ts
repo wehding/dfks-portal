@@ -259,7 +259,7 @@ export async function screenContract(
     const data = await response.json()
     if (data.error) throw new Error(data.error)
     const raw = data.text ?? ""
-    const clean = raw.replace(/```json|```/g, "").trim()
+    const clean = raw.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim()
 
     let parsed: ScreeningResult
     try {
