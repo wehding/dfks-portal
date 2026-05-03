@@ -83,6 +83,7 @@ export default function AdminValideringPage() {
     const [reviewingId, setReviewingId] = useState<string | null>(null)
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
+    const [localPdfFile, setLocalPdfFile] = useState<File | null>(null)
     const [screeningResult, setScreeningResult] = useState<ScreeningResult | null>(null)
     const [screening, setScreening] = useState(false)
     const [screeningError, setScreeningError] = useState<string | null>(null)
@@ -109,13 +110,14 @@ export default function AdminValideringPage() {
         }
         setReviewingId(null)
         setLocalPdfUrl(null)
+        setLocalPdfFile(null)
         setScreeningResult(null)
         setScreeningError(null)
         if (c) toast.success(`"${c.title}" er godkendt`)
     }
 
     const handleScreenContract = async () => {
-        if (!localPdfUrl) {
+        if (!localPdfFile) {
             toast.error("Upload en PDF for at køre AI-screening")
             return
         }
@@ -123,12 +125,8 @@ export default function AdminValideringPage() {
         setScreeningError(null)
         setScreeningResult(null)
         try {
-            // Fetch the blob URL as a File
-            const resp = await fetch(localPdfUrl)
-            const blob = await resp.blob()
-            const file = new File([blob], "kontrakt.pdf", { type: "application/pdf" })
-            const text = await extractTextFromFile(file)
-            if (!text.trim()) throw new Error("Ingen tekst fundet i PDF — er det en scannet fil?")
+            const text = await extractTextFromFile(localPdfFile)
+            if (!text.trim()) throw new Error("Ingen tekst fundet i PDF — er det en scannet fil uden søgbar tekst?")
             const result = await screenContract(text)
             setScreeningResult(result)
             toast.success("AI-screening fuldført")
@@ -152,7 +150,10 @@ export default function AdminValideringPage() {
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
-        if (file) setLocalPdfUrl(URL.createObjectURL(file))
+        if (file) {
+            setLocalPdfUrl(URL.createObjectURL(file))
+            setLocalPdfFile(file)
+        }
     }
 
     // ── Review View ──────────────────────────────────────────
@@ -166,7 +167,7 @@ export default function AdminValideringPage() {
                         variant="ghost"
                         size="sm"
                         className="gap-1.5"
-                        onClick={() => { setReviewingId(null); setLocalPdfUrl(null); setScreeningResult(null); setScreeningError(null) }}
+                        onClick={() => { setReviewingId(null); setLocalPdfUrl(null); setLocalPdfFile(null); setScreeningResult(null); setScreeningError(null) }}
                     >
                         <ArrowLeft className="h-4 w-4" />
                         {t("admin.validation.backToList")}
@@ -269,8 +270,8 @@ export default function AdminValideringPage() {
                                     variant="outline"
                                     className="h-7 gap-1.5 text-xs"
                                     onClick={handleScreenContract}
-                                    disabled={screening || !localPdfUrl}
-                                    title={!localPdfUrl ? "Upload en PDF for at aktivere AI-screening" : ""}
+                                    disabled={screening || !localPdfFile}
+                                    title={!localPdfFile ? "Upload en PDF for at aktivere AI-screening" : ""}
                                 >
                                     <Sparkles className={`h-3.5 w-3.5 ${screening ? "animate-pulse" : ""}`} />
                                     {screening ? "Screener..." : "AI-screen"}
