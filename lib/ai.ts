@@ -237,32 +237,26 @@ export async function screenContract(
 ): Promise<ScreeningResult> {
     const systemPrompt = buildSystemPrompt()
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    // Call our server-side proxy to avoid CORS restrictions
+    const response = await fetch("/api/screen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 6000,
             system: systemPrompt,
-            messages: [
-                {
-                    role: "user",
-                    content:
-                        "Analyser denne kontrakt og returner JSON:\n\n" +
-                        contractText.slice(0, 40000), // safety cap
-                },
-            ],
+            userMessage:
+                "Analyser denne kontrakt og returner JSON:\n\n" +
+                contractText.slice(0, 40000),
         }),
     })
 
     if (!response.ok) {
-        const err = await response.text()
-        throw new Error(`Claude API fejl ${response.status}: ${err}`)
+        const err = await response.json().catch(() => ({ error: response.statusText }))
+        throw new Error(err.error ?? `Serverfejl ${response.status}`)
     }
 
     const data = await response.json()
-    const raw =
-        data.content?.find((b: any) => b.type === "text")?.text ?? ""
+    if (data.error) throw new Error(data.error)
+    const raw = data.text ?? ""
     const clean = raw.replace(/```json|```/g, "").trim()
 
     let parsed: ScreeningResult
