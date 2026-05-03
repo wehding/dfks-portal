@@ -89,6 +89,11 @@ export default function AdminValideringPage() {
     const [screeningError, setScreeningError] = useState<string | null>(null)
     const [showFlags, setShowFlags] = useState(true)
 
+    // Controlled form state — populated from contract data or AI screening
+    const [formData, setFormData] = useState<Record<string, any>>({})
+    const setField = (key: string, value: any) =>
+        setFormData((prev) => ({ ...prev, [key]: value }))
+
     const unreviewedContracts = contracts.filter(
         (c) => c.status === "pending" || c.status === "review"
     )
@@ -100,10 +105,35 @@ export default function AdminValideringPage() {
     const handleApprove = (id: string) => {
         const c = contracts.find(x => x.id === id)
         // Merge AI-extracted data if available
-        if (screeningResult) {
+        // Build extractedData from controlled form state
+        const hasFormData = Object.keys(formData).length > 0
+        if (hasFormData) {
             updateContract(id, {
                 status: "approved",
-                extractedData: screeningResult.extractedData,
+                extractedData: {
+                    producerName:           formData.producerName || undefined,
+                    salary:                 formData.salary ? Number(formData.salary) : undefined,
+                    salaryUnit:             formData.salaryUnit || "monthly",
+                    startDate:              formData.startDate || undefined,
+                    endDate:                formData.endDate || undefined,
+                    pensionPercent:         formData.pensionPercent ? Number(formData.pensionPercent) : undefined,
+                    pensionSupplement:      formData.pensionSupplement ? Number(formData.pensionSupplement) : undefined,
+                    personalSupplement:     formData.personalSupplement ? Number(formData.personalSupplement) : undefined,
+                    otherSupplements:       formData.otherSupplements || undefined,
+                    workingWeeks:           formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
+                    svod:                   !!formData.svod,
+                    copydan:                !!formData.copydan,
+                    royalty:                !!formData.royalty,
+                    royaltyPercent:         formData.royaltyPercent ? Number(formData.royaltyPercent) : undefined,
+                    aiDataMiningClause:     !!formData.aiDataMiningClause,
+                    distribution:           formData.distribution ? formData.distribution.split(",").map((s: string) => s.trim()).filter(Boolean) : undefined,
+                    collectiveAgreement:    !!formData.collectiveAgreementName,
+                    collectiveAgreementName: formData.collectiveAgreementName || undefined,
+                    gender:                 formData.gender as any || undefined,
+                    holidayPayRate:         formData.holidayPayRate ? Number(formData.holidayPayRate) : undefined,
+                    betaRate:               formData.betaRate ? Number(formData.betaRate) : undefined,
+                    specialNotes:           formData.specialNotes || undefined,
+                },
             })
         } else {
             updateContract(id, { status: "approved" })
@@ -113,6 +143,7 @@ export default function AdminValideringPage() {
         setLocalPdfFile(null)
         setScreeningResult(null)
         setScreeningError(null)
+        setFormData({})
         if (c) toast.success(`"${c.title}" er godkendt`)
     }
 
@@ -129,7 +160,32 @@ export default function AdminValideringPage() {
             if (!text.trim()) throw new Error("Ingen tekst fundet i PDF — er det en scannet fil uden søgbar tekst?")
             const result = await screenContract(text)
             setScreeningResult(result)
-            toast.success("AI-screening fuldført")
+            // Populate form fields with AI-extracted data
+            const ed = result.extractedData
+            setFormData({
+                producerName:        ed.producerName ?? "",
+                salary:              ed.salary ?? "",
+                salaryUnit:          ed.salaryUnit ?? "monthly",
+                startDate:           ed.startDate ?? "",
+                endDate:             ed.endDate ?? "",
+                pensionPercent:      ed.pensionPercent ?? "",
+                pensionSupplement:   ed.pensionSupplement ?? "",
+                personalSupplement:  ed.personalSupplement ?? "",
+                otherSupplements:    ed.otherSupplements ?? "",
+                workingWeeks:        ed.workingWeeks ?? "",
+                svod:                ed.svod ?? false,
+                copydan:             ed.copydan ?? false,
+                royalty:             ed.royalty ?? false,
+                royaltyPercent:      ed.royaltyPercent ?? "",
+                aiDataMiningClause:  ed.aiDataMiningClause ?? false,
+                distribution:        ed.distribution?.join(", ") ?? "",
+                collectiveAgreementName: ed.collectiveAgreementName ?? "",
+                gender:              ed.gender ?? "",
+                holidayPayRate:      ed.holidayPayRate ?? "",
+                betaRate:            ed.betaRate ?? "",
+                specialNotes:        ed.specialNotes ?? "",
+            })
+            toast.success("AI-screening fuldført — felter udfyldt automatisk")
         } catch (e: any) {
             setScreeningError(e.message)
             toast.error(`Screening fejlede: ${e.message}`)
@@ -160,6 +216,9 @@ export default function AdminValideringPage() {
 
     if (reviewingContract) {
         const data = reviewingContract.extractedData
+
+        // Initialise form on first render of this contract
+        // (we use a key trick via reviewingId to reset when switching contracts)
         return (
             <div className="space-y-6">
                 <div className="flex items-center gap-3">
@@ -367,7 +426,8 @@ export default function AdminValideringPage() {
                             <div className="space-y-1.5">
                                 <Label className="text-xs">{t("admin.validation.producer")}</Label>
                                 <Input
-                                    defaultValue={data?.producerName}
+                                    value={String(formData.producerName ?? data?.producerName ?? "")}
+                                    onChange={(e) => setField("producerName", e.target.value)}
                                     placeholder="Producentens navn..."
                                 />
                             </div>
@@ -380,13 +440,15 @@ export default function AdminValideringPage() {
                                     <Label className="text-xs">{t("admin.validation.salary")}</Label>
                                     <Input
                                         type="number"
-                                        defaultValue={data?.salary}
+                                        value={String(formData.salary ?? data?.salary ?? "")}
+                                    onChange={(e) => setField("salary", e.target.value)}
                                         placeholder="0"
                                     />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.salaryUnit")}</Label>
-                                    <Select defaultValue={data?.salaryUnit || "monthly"}>
+                                    <Select value={formData.salaryUnit ?? data?.salaryUnit ?? "monthly"}
+                                        onValueChange={(v) => setField("salaryUnit", v)}>
                                         <SelectTrigger>
                                             <SelectValue />
                                         </SelectTrigger>
@@ -406,11 +468,13 @@ export default function AdminValideringPage() {
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.startDate")}</Label>
-                                    <Input type="date" defaultValue={data?.startDate} />
+                                    <Input type="date" value={String(formData.startDate ?? data?.startDate ?? "")}
+                                    onChange={(e) => setField("startDate", e.target.value)} />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.endDate")}</Label>
-                                    <Input type="date" defaultValue={data?.endDate} />
+                                    <Input type="date" value={String(formData.endDate ?? data?.endDate ?? "")}
+                                    onChange={(e) => setField("endDate", e.target.value)} />
                                 </div>
                             </div>
 
@@ -423,7 +487,8 @@ export default function AdminValideringPage() {
                                     <div className="flex items-center gap-2">
                                         <Input
                                             type="number"
-                                            defaultValue={data?.pensionPercent}
+                                            value={String(formData.pensionPercent ?? data?.pensionPercent ?? "")}
+                                    onChange={(e) => setField("pensionPercent", e.target.value)}
                                             placeholder="0"
                                             step="0.1"
                                         />
@@ -434,7 +499,8 @@ export default function AdminValideringPage() {
                                     <Label className="text-xs">{t("admin.validation.pension")} ({t("common.kr")})</Label>
                                     <Input
                                         type="number"
-                                        defaultValue={data?.pensionSupplement}
+                                        value={String(formData.pensionSupplement ?? data?.pensionSupplement ?? "")}
+                                    onChange={(e) => setField("pensionSupplement", e.target.value)}
                                         placeholder="0"
                                     />
                                 </div>
@@ -444,14 +510,16 @@ export default function AdminValideringPage() {
                                     <Label className="text-xs">{t("admin.validation.personalSupplement")}</Label>
                                     <Input
                                         type="number"
-                                        defaultValue={data?.personalSupplement}
+                                        value={String(formData.personalSupplement ?? data?.personalSupplement ?? "")}
+                                    onChange={(e) => setField("personalSupplement", e.target.value)}
                                         placeholder="0"
                                     />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.other")}</Label>
                                     <Input
-                                        defaultValue={data?.otherSupplements}
+                                        value={String(formData.otherSupplements ?? data?.otherSupplements ?? "")}
+                                    onChange={(e) => setField("otherSupplements", e.target.value)}
                                         placeholder="—"
                                     />
                                 </div>
@@ -464,7 +532,8 @@ export default function AdminValideringPage() {
                                 <Label className="text-xs">{t("admin.validation.workingWeeks")}</Label>
                                 <Input
                                     type="number"
-                                    defaultValue={data?.workingWeeks}
+                                    value={String(formData.workingWeeks ?? data?.workingWeeks ?? "")}
+                                    onChange={(e) => setField("workingWeeks", e.target.value)}
                                     placeholder="0"
                                     className="max-w-[120px]"
                                 />
@@ -481,7 +550,8 @@ export default function AdminValideringPage() {
                                         <div className="flex items-center gap-2">
                                             <Input
                                                 type="number"
-                                                defaultValue={data?.holidayPayRate}
+                                                value={String(formData.holidayPayRate ?? data?.holidayPayRate ?? "")}
+                                    onChange={(e) => setField("holidayPayRate", e.target.value)}
                                                 placeholder="12.5"
                                                 step="0.1"
                                             />
@@ -493,7 +563,8 @@ export default function AdminValideringPage() {
                                         <div className="flex items-center gap-2">
                                             <Input
                                                 type="number"
-                                                defaultValue={data?.betaRate}
+                                                value={String(formData.betaRate ?? data?.betaRate ?? "")}
+                                    onChange={(e) => setField("betaRate", e.target.value)}
                                                 placeholder="0.6"
                                                 step="0.01"
                                             />
@@ -514,22 +585,26 @@ export default function AdminValideringPage() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm">SVOD</span>
-                                        <Switch defaultChecked={data?.svod} />
+                                        <Switch checked={formData.svod ?? data?.svod ?? false}
+                                        onCheckedChange={(v) => setField("svod", v)} />
                                     </div>
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm">Copydan</span>
-                                        <Switch defaultChecked={data?.copydan} />
+                                        <Switch checked={formData.copydan ?? data?.copydan ?? false}
+                                        onCheckedChange={(v) => setField("copydan", v)} />
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <span className="text-sm flex-1">Royalty</span>
                                         <Input
                                             type="number"
-                                            defaultValue={data?.royaltyPercent}
+                                            value={String(formData.royaltyPercent ?? data?.royaltyPercent ?? "")}
+                                    onChange={(e) => setField("royaltyPercent", e.target.value)}
                                             placeholder="%"
                                             className="w-20"
                                             step="0.1"
                                         />
-                                        <Switch defaultChecked={data?.royalty} />
+                                        <Switch checked={formData.royalty ?? data?.royalty ?? false}
+                                        onCheckedChange={(v) => setField("royalty", v)} />
                                     </div>
                                     <Separator className="my-1" />
                                     <div className="flex items-center justify-between">
@@ -539,7 +614,8 @@ export default function AdminValideringPage() {
                                                 {t("admin.validation.aiClauseDesc")}
                                             </p>
                                         </div>
-                                        <Switch defaultChecked={data?.aiDataMiningClause} />
+                                        <Switch checked={formData.aiDataMiningClause ?? data?.aiDataMiningClause ?? false}
+                                        onCheckedChange={(v) => setField("aiDataMiningClause", v)} />
                                     </div>
                                 </div>
                             </div>
@@ -551,18 +627,16 @@ export default function AdminValideringPage() {
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.distribution")}</Label>
                                     <Input
-                                        defaultValue={data?.distribution?.join(", ")}
+                                        value={formData.distribution ?? data?.distribution?.join(", ") ?? ""}
+                                    onChange={(e) => setField("distribution", e.target.value)}
                                         placeholder="Netflix, DR, TV2..."
                                     />
                                 </div>
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.agreement")}</Label>
                                     <Input
-                                        defaultValue={
-                                            data?.collectiveAgreement
-                                                ? data.collectiveAgreementName
-                                                : ""
-                                        }
+                                        value={formData.collectiveAgreementName ?? (data?.collectiveAgreement ? data.collectiveAgreementName : "") ?? ""}
+                                        onChange={(e) => setField("collectiveAgreementName", e.target.value)}
                                         placeholder="—"
                                     />
                                 </div>
@@ -572,7 +646,8 @@ export default function AdminValideringPage() {
                             <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
                                     <Label className="text-xs">{t("admin.validation.gender")}</Label>
-                                    <Select defaultValue={data?.gender}>
+                                    <Select value={formData.gender ?? data?.gender ?? ""}
+                                        onValueChange={(v) => setField("gender", v)}>
                                         <SelectTrigger>
                                             <SelectValue placeholder="—" />
                                         </SelectTrigger>
@@ -588,7 +663,8 @@ export default function AdminValideringPage() {
                             <div className="space-y-1.5">
                                 <Label className="text-xs">{t("admin.validation.specialNotes")}</Label>
                                 <Textarea
-                                    defaultValue={data?.specialNotes}
+                                    value={formData.specialNotes ?? data?.specialNotes ?? ""}
+                                    onChange={(e) => setField("specialNotes", e.target.value)}
                                     placeholder="Fritekst..."
                                     rows={3}
                                 />
