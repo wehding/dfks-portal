@@ -160,11 +160,19 @@ export default function AdminValideringPage() {
             const text = await extractTextFromFile(localPdfFile)
             if (!text.trim()) throw new Error("Ingen tekst fundet i PDF — er det en scannet fil uden søgbar tekst?")
             const result = await screenContract(text)
+            console.log("[validering] screenContract result:", result)
+            console.log("[validering] extractedData:", result?.extractedData)
             setScreeningResult(result)
             // Populate form fields with AI-extracted data
             const ed = result.extractedData
+            if (!ed) {
+                toast.error("AI returnerede ingen data — tjek konsollen")
+                setScreening(false)
+                return
+            }
             setFormData({
                 producerName:        ed.producerName ?? "",
+                productionType:      (ed as any).productionType ?? "",
                 salary:              ed.salary ?? "",
                 salaryUnit:          ed.salaryUnit ?? "monthly",
                 startDate:           ed.startDate ?? "",
