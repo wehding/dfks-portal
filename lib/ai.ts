@@ -161,7 +161,7 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 
   "extractedData": {
     "producerName": "string or null",
-    "productionType": "feature|tvSeries|documentary|docSeries|short|tvEntertainment|reality|other (vælg den mest passende ud fra kontraktens indhold)",
+    "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",
     "salary": null,
     "salaryUnit": "monthly|weekly|daily|total",
     "startDate": "YYYY-MM-DD or null",
@@ -204,7 +204,8 @@ Vigtige regler:
 - Hvis kontrakten henviser til "overenskomsten" uden at specificere, antag at den gældende overenskomst dækker
 - salary skal være et rent tal (ingen valutasymboler)
 - Datoer på formatet YYYY-MM-DD
-- aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold`
+- aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold
+- productionType skal ALTID udfyldes — gæt ud fra kontekst hvis det ikke er eksplicit nævnt. En kontrakt med en stor dansk produktionsselskab og ingen seriestruktur er sandsynligvis feature. Nævnes afsnit/episoder er det tvSeries eller docSeries.`
 
 function buildSystemPrompt(): string {
     let prompt = BASE_SYSTEM
