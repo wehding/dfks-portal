@@ -11,6 +11,11 @@ import {
     Clock,
     CheckCircle2,
     Eye,
+    Sparkles,
+    AlertTriangle,
+    Info,
+    ChevronDown,
+    ChevronUp,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -49,6 +54,14 @@ import {
     TableRow,
 } from "@/components/ui/table"
 import type { Contract } from "@/lib/types"
+import {
+    screenContract,
+    extractTextFromFile,
+    getReferences,
+    getMemberList,
+    type ScreeningResult,
+    type ContractFlag,
+} from "@/lib/ai"
 
 const statusLabels: Record<string, string> = {
     pending: "admin.contracts.pending",
@@ -70,6 +83,10 @@ export default function AdminValideringPage() {
     const [reviewingId, setReviewingId] = useState<string | null>(null)
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
+    const [screeningResult, setScreeningResult] = useState<ScreeningResult | null>(null)
+    const [screening, setScreening] = useState(false)
+    const [screeningError, setScreeningError] = useState<string | null>(null)
+    const [showFlags, setShowFlags] = useState(true)
 
     const unreviewedContracts = contracts.filter(
         (c) => c.status === "pending" || c.status === "review"
@@ -81,10 +98,45 @@ export default function AdminValideringPage() {
 
     const handleApprove = (id: string) => {
         const c = contracts.find(x => x.id === id)
-        updateContract(id, { status: "approved" })
+        // Merge AI-extracted data if available
+        if (screeningResult) {
+            updateContract(id, {
+                status: "approved",
+                extractedData: screeningResult.extractedData,
+            })
+        } else {
+            updateContract(id, { status: "approved" })
+        }
         setReviewingId(null)
         setLocalPdfUrl(null)
+        setScreeningResult(null)
+        setScreeningError(null)
         if (c) toast.success(`"${c.title}" er godkendt`)
+    }
+
+    const handleScreenContract = async () => {
+        if (!localPdfUrl) {
+            toast.error("Upload en PDF for at køre AI-screening")
+            return
+        }
+        setScreening(true)
+        setScreeningError(null)
+        setScreeningResult(null)
+        try {
+            // Fetch the blob URL as a File
+            const resp = await fetch(localPdfUrl)
+            const blob = await resp.blob()
+            const file = new File([blob], "kontrakt.pdf", { type: "application/pdf" })
+            const text = await extractTextFromFile(file)
+            if (!text.trim()) throw new Error("Ingen tekst fundet i PDF — er det en scannet fil?")
+            const result = await screenContract(text)
+            setScreeningResult(result)
+            toast.success("AI-screening fuldført")
+        } catch (e: any) {
+            setScreeningError(e.message)
+            toast.error(`Screening fejlede: ${e.message}`)
+        }
+        setScreening(false)
     }
 
     const handleDelete = (id: string) => {
@@ -114,7 +166,7 @@ export default function AdminValideringPage() {
                         variant="ghost"
                         size="sm"
                         className="gap-1.5"
-                        onClick={() => { setReviewingId(null); setLocalPdfUrl(null) }}
+                        onClick={() => { setReviewingId(null); setLocalPdfUrl(null); setScreeningResult(null); setScreeningError(null) }}
                     >
                         <ArrowLeft className="h-4 w-4" />
                         {t("admin.validation.backToList")}
@@ -181,12 +233,133 @@ export default function AdminValideringPage() {
                             <span className="text-sm font-medium">
                                 {t("admin.validation.extracted")}
                             </span>
-                            <span className="ml-auto">
-                                <Badge variant="secondary" className="font-normal text-xs">
-                                    AI-genereret
-                                </Badge>
-                            </span>
+                            <div className="ml-auto flex items-center gap-2">
+                                {screeningResult && (
+                                    <Badge
+                                        variant={
+                                            screeningResult.overallVerdict === "approved"
+                                                ? "default"
+                                                : screeningResult.overallVerdict === "critical"
+                                                ? "destructive"
+                                                : "secondary"
+                                        }
+                                        className="font-normal text-xs"
+                                    >
+                                        {screeningResult.overallVerdict === "approved"
+                                            ? "✓ Godkendt af AI"
+                                            : screeningResult.overallVerdict === "critical"
+                                            ? "✗ Kritisk"
+                                            : "! Med forbehold"}
+                                    </Badge>
+                                )}
+                                {screeningResult?.profMember !== undefined && (
+                                    <Badge
+                                        variant={screeningResult.profMember ? "default" : "outline"}
+                                        className="font-normal text-xs"
+                                    >
+                                        {screeningResult.profMember === true
+                                            ? "ProF-medlem"
+                                            : screeningResult.profMember === false
+                                            ? "Ikke ProF-medlem"
+                                            : "Medlemsskab ukendt"}
+                                    </Badge>
+                                )}
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 gap-1.5 text-xs"
+                                    onClick={handleScreenContract}
+                                    disabled={screening || !localPdfUrl}
+                                    title={!localPdfUrl ? "Upload en PDF for at aktivere AI-screening" : ""}
+                                >
+                                    <Sparkles className={`h-3.5 w-3.5 ${screening ? "animate-pulse" : ""}`} />
+                                    {screening ? "Screener..." : "AI-screen"}
+                                </Button>
+                            </div>
                         </div>
+
+                        {/* AI Flags panel */}
+                        {screeningError && (
+                            <div className="flex items-start gap-2 mx-4 mt-4 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                                <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                                {screeningError}
+                            </div>
+                        )}
+
+                        {screeningResult && screeningResult.flags.length > 0 && (
+                            <div className="mx-4 mt-4 rounded-lg border">
+                                <button
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium hover:bg-muted/50 transition-colors"
+                                    onClick={() => setShowFlags(!showFlags)}
+                                >
+                                    <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+                                    <span>
+                                        AI-markører ({screeningResult.flags.length})
+                                        {" — "}
+                                        {screeningResult.flags.filter(f => f.severity === "critical").length > 0 && (
+                                            <span className="text-destructive">
+                                                {screeningResult.flags.filter(f => f.severity === "critical").length} kritiske
+                                            </span>
+                                        )}
+                                    </span>
+                                    {showFlags ? (
+                                        <ChevronUp className="ml-auto h-3.5 w-3.5" />
+                                    ) : (
+                                        <ChevronDown className="ml-auto h-3.5 w-3.5" />
+                                    )}
+                                </button>
+                                {showFlags && (
+                                    <div className="divide-y border-t">
+                                        {screeningResult.flags.map((flag: ContractFlag, i: number) => (
+                                            <div key={i} className="px-3 py-2.5 space-y-1">
+                                                <div className="flex items-center gap-2">
+                                                    {flag.severity === "critical" ? (
+                                                        <AlertTriangle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                                                    ) : flag.severity === "warning" ? (
+                                                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                                                    ) : (
+                                                        <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                    )}
+                                                    <span className="text-xs font-medium">{flag.title}</span>
+                                                    <Badge
+                                                        variant={
+                                                            flag.severity === "critical"
+                                                                ? "destructive"
+                                                                : flag.severity === "warning"
+                                                                ? "secondary"
+                                                                : "outline"
+                                                        }
+                                                        className="ml-auto text-[10px] font-normal"
+                                                    >
+                                                        {flag.category}
+                                                    </Badge>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground pl-5">
+                                                    {flag.description}
+                                                </p>
+                                                {flag.quote && (
+                                                    <p className="text-[10px] text-muted-foreground pl-5 italic border-l ml-5 border-muted">
+                                                        "{flag.quote}"
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {screeningResult.recommendations.length > 0 && (
+                                    <div className="border-t px-3 py-2 space-y-1">
+                                        <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                                            Anbefalinger
+                                        </p>
+                                        {screeningResult.recommendations.map((r: string, i: number) => (
+                                            <p key={i} className="text-xs text-muted-foreground">
+                                                → {r}
+                                            </p>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         <div className="space-y-5 p-4">
                             {/* Producer */}
