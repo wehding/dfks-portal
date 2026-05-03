@@ -1,0 +1,286 @@
+/**
+ * lib/ai.ts
+ * Claude-powered contract screening for DFKS Portal.
+ * Called from the admin validation page to auto-populate extractedData.
+ */
+
+import type { ExtractedContractData } from "./types"
+
+// ── Types ────────────────────────────────────────────────────
+
+export type FlagSeverity = "critical" | "warning" | "info"
+
+export interface ContractFlag {
+    category: string
+    severity: FlagSeverity
+    title: string
+    description: string
+    quote?: string
+}
+
+export interface ScreeningResult {
+    extractedData: ExtractedContractData
+    flags: ContractFlag[]
+    recommendations: string[]
+    overallVerdict: "approved" | "review" | "critical"
+    profMember: boolean | null   // null = unknown
+    detectedProducer: string | null
+    contractType: "fiction" | "documentary" | "unknown"
+    parties: string[]
+    period: string
+}
+
+// ── Reference store (module-level singleton) ─────────────────
+// Populated via setReferences() from the overenskomster admin page.
+
+export interface ReferenceDoc {
+    id: string
+    name: string
+    type:
+        | "Fiktion-overenskomst"
+        | "Dokumentar-overenskomst"
+        | "Lønskema (fiktion)"
+        | "Lønskema (dokumentar)"
+        | "Standardkontrakt — fiktion (A-løn)"
+        | "Standardkontrakt — fiktion (leverandør)"
+        | "Standardkontrakt — dokumentar (A-løn)"
+        | "Standardkontrakt — dokumentar (leverandør)"
+        | "Reference"
+    text: string
+    addedAt: string
+}
+
+export interface MemberList {
+    raw: string
+    parsed: string[]
+    updatedAt: string | null
+}
+
+let _references: ReferenceDoc[] = []
+let _memberList: MemberList = { raw: "", parsed: [], updatedAt: null }
+
+export function setReferences(refs: ReferenceDoc[]) {
+    _references = refs
+}
+
+export function setMemberList(list: MemberList) {
+    _memberList = list
+}
+
+export function getReferences(): ReferenceDoc[] {
+    return _references
+}
+
+export function getMemberList(): MemberList {
+    return _memberList
+}
+
+// ── PDF text extraction ──────────────────────────────────────
+
+let _pdfJsLoaded = false
+
+async function loadPdfJs(): Promise<any> {
+    if (typeof window === "undefined") throw new Error("PDF.js requires browser")
+    if (_pdfJsLoaded && (window as any).pdfjsLib) return (window as any).pdfjsLib
+    await new Promise<void>((resolve) => {
+        const s = document.createElement("script")
+        s.src =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
+        s.onload = () => {
+            ;(window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+                "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
+            _pdfJsLoaded = true
+            resolve()
+        }
+        document.head.appendChild(s)
+    })
+    return (window as any).pdfjsLib
+}
+
+export async function extractTextFromFile(file: File): Promise<string> {
+    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        const pdfjsLib = await loadPdfJs()
+        const arrayBuffer = await file.arrayBuffer()
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+        let text = ""
+        for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i)
+            const content = await page.getTextContent()
+            text += content.items.map((item: any) => item.str).join(" ") + "\n"
+        }
+        return text
+    }
+    return new Promise((res, rej) => {
+        const r = new FileReader()
+        r.onload = (e) => res(e.target?.result as string)
+        r.onerror = rej
+        r.readAsText(file, "utf-8")
+    })
+}
+
+// ── Member list helpers ──────────────────────────────────────
+
+function normalize(s: string): string {
+    return s
+        .toLowerCase()
+        .replace(/\b(aps|a\/s|as|film|production|productions|denmark|dk)\b/g, "")
+        .replace(/[^a-zæøå0-9]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+export function checkMembership(
+    producerName: string | null,
+    members: string[]
+): boolean | null {
+    if (!producerName || members.length === 0) return null
+    const pNorm = normalize(producerName)
+    return members.some((m) => {
+        const mNorm = normalize(m)
+        return (
+            pNorm.includes(mNorm) ||
+            mNorm.includes(pNorm) ||
+            (pNorm.length > 4 && mNorm.length > 4 && mNorm.startsWith(pNorm.slice(0, 6)))
+        )
+    })
+}
+
+// ── System prompt ────────────────────────────────────────────
+
+const BASE_SYSTEM = `Du er ekspert i danske filmkontrakter og overenskomster, særligt De4-overenskomsten (fiktion) og FAF-overenskomsten (dokumentar). Du analyserer kontrakter for DFKS — Dansk Filmklipperselskab.
+
+Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON. Brug præcis denne struktur:
+
+{
+  "contractType": "fiction|documentary|unknown",
+  "parties": ["string"],
+  "period": "string",
+  "detectedProducer": "string or null",
+  "profMember": null,
+
+  "extractedData": {
+    "producerName": "string or null",
+    "salary": null,
+    "salaryUnit": "monthly|weekly|daily|total",
+    "startDate": "YYYY-MM-DD or null",
+    "endDate": "YYYY-MM-DD or null",
+    "pensionPercent": null,
+    "pensionSupplement": null,
+    "personalSupplement": null,
+    "otherSupplements": "string or null",
+    "workingWeeks": null,
+    "svod": false,
+    "copydan": false,
+    "royalty": false,
+    "royaltyPercent": null,
+    "aiDataMiningClause": false,
+    "distribution": [],
+    "collectiveAgreement": false,
+    "collectiveAgreementName": null,
+    "gender": null,
+    "holidayPayRate": null,
+    "betaRate": null,
+    "specialNotes": null
+  },
+
+  "flags": [
+    {
+      "category": "Rettighedsbetaling|Ophavret|Løn|Pension|Feriepenge|Kreditering|Opsigelse|AI-klausul|Overenskomst",
+      "severity": "critical|warning|info",
+      "title": "string",
+      "description": "string",
+      "quote": "string (max 160 tegn fra kontrakten, eller null)"
+    }
+  ],
+
+  "recommendations": ["string"],
+  "overallVerdict": "approved|review|critical"
+}
+
+Vigtige regler:
+- Marker KUN som critical/warning hvis kontrakten AFVIGER fra overenskomsten — ikke hvis overenskomsten allerede dækker forholdet
+- Hvis kontrakten henviser til "overenskomsten" uden at specificere, antag at den gældende overenskomst dækker
+- salary skal være et rent tal (ingen valutasymboler)
+- Datoer på formatet YYYY-MM-DD
+- aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold`
+
+function buildSystemPrompt(): string {
+    let prompt = BASE_SYSTEM
+
+    if (_references.length > 0) {
+        prompt +=
+            "\n\n---\nFØLGENDE OVERENSKOMSTER OG REFERENCEDOKUMENTER ER GÆLDENDE BAGGRUNDSVIDEN.\n" +
+            "Skeln mellem fiktion og dokumentar og brug kun relevante dokumenter.\n" +
+            "For lønskemaer: sammenlign honoraret med de gældende satser og flag afvigelser.\n" +
+            "For standardkontrakter: tjek om kontrakten svarer til A-løn- eller leverandørversionen.\n\n" +
+            _references
+                .map((r) => `=== ${r.name} (${r.type}) ===\n${r.text.slice(0, 8000)}`)
+                .join("\n\n")
+    }
+
+    if (_memberList.parsed.length > 0) {
+        prompt +=
+            "\n\n---\nPRODUCENTFORENINGENS (ProF) MEDLEMMER — kun disse er juridisk bundet af overenskomsten:\n" +
+            _memberList.parsed.join("\n") +
+            "\n\nIdentificer producenten i kontrakten. Sæt profMember til true/false/null baseret på listen. " +
+            "Hvis producenten IKKE er på listen: noter det i flags som info, og tilføj '(Producenten er ikke ProF-medlem og er ikke juridisk bundet af overenskomsten)' til relevante critical-flags."
+    }
+
+    return prompt
+}
+
+// ── Main screening function ──────────────────────────────────
+
+export async function screenContract(
+    contractText: string
+): Promise<ScreeningResult> {
+    const systemPrompt = buildSystemPrompt()
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 6000,
+            system: systemPrompt,
+            messages: [
+                {
+                    role: "user",
+                    content:
+                        "Analyser denne kontrakt og returner JSON:\n\n" +
+                        contractText.slice(0, 40000), // safety cap
+                },
+            ],
+        }),
+    })
+
+    if (!response.ok) {
+        const err = await response.text()
+        throw new Error(`Claude API fejl ${response.status}: ${err}`)
+    }
+
+    const data = await response.json()
+    const raw =
+        data.content?.find((b: any) => b.type === "text")?.text ?? ""
+    const clean = raw.replace(/```json|```/g, "").trim()
+
+    let parsed: ScreeningResult
+    try {
+        parsed = JSON.parse(clean)
+    } catch {
+        throw new Error("Kunne ikke parse AI-svar som JSON")
+    }
+
+    // Client-side membership cross-check
+    if (_memberList.parsed.length > 0 && parsed.detectedProducer) {
+        const clientCheck = checkMembership(
+            parsed.detectedProducer,
+            _memberList.parsed
+        )
+        if (parsed.profMember === null) {
+            parsed.profMember = clientCheck
+        }
+    }
+
+    return parsed
+}
