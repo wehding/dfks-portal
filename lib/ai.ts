@@ -77,45 +77,46 @@ export function getMemberList(): MemberList {
 
 // ── PDF text extraction ──────────────────────────────────────
 
-let _pdfJsLoaded = false
-
-async function loadPdfJs(): Promise<any> {
-    if (typeof window === "undefined") throw new Error("PDF.js requires browser")
-    if (_pdfJsLoaded && (window as any).pdfjsLib) return (window as any).pdfjsLib
-    await new Promise<void>((resolve) => {
-        const s = document.createElement("script")
-        s.src =
-            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"
-        s.onload = () => {
-            ;(window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-                "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-            _pdfJsLoaded = true
-            resolve()
-        }
-        document.head.appendChild(s)
-    })
-    return (window as any).pdfjsLib
-}
-
 export async function extractTextFromFile(file: File): Promise<string> {
-    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-        const pdfjsLib = await loadPdfJs()
-        const arrayBuffer = await file.arrayBuffer()
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-        let text = ""
-        for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i)
-            const content = await page.getTextContent()
-            text += content.items.map((item: any) => item.str).join(" ") + "\n"
-        }
-        return text
+    // Plain text files
+    if (!file.name.endsWith(".pdf") && file.type !== "application/pdf") {
+        return new Promise((res, rej) => {
+            const r = new FileReader()
+            r.onload = (e) => res(e.target?.result as string)
+            r.onerror = rej
+            r.readAsText(file, "utf-8")
+        })
     }
-    return new Promise((res, rej) => {
-        const r = new FileReader()
-        r.onload = (e) => res(e.target?.result as string)
-        r.onerror = rej
-        r.readAsText(file, "utf-8")
-    })
+
+    // PDF: use the pdfjs that is already bundled with react-pdf
+    // Polyfill URL.parse which older pdfjs versions expect
+    if (typeof window !== "undefined" && !(URL as any).parse) {
+        ;(URL as any).parse = (val: string, base?: string) => {
+            try { return new URL(val, base) } catch { return null }
+        }
+    }
+
+    const { pdfjs } = await import("react-pdf")
+    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
+
+    const arrayBuffer = await file.arrayBuffer()
+    const loadingTask = pdfjs.getDocument({ data: arrayBuffer })
+    const pdf = await loadingTask.promise
+
+    let text = ""
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
+        const content = await page.getTextContent()
+        text += content.items.map((item: any) => item.str).join(" ") + "\n"
+    }
+
+    if (!text.trim()) {
+        throw new Error(
+            "Ingen søgbar tekst fundet i PDF. Dokumentet er sandsynligvis scannet (billede). Prøv at OCR-behandle det først."
+        )
+    }
+
+    return text
 }
 
 // ── Member list helpers ──────────────────────────────────────
