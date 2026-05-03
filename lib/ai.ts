@@ -161,6 +161,7 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 
   "extractedData": {
     "producerName": "string or null",
+    "productionType": "feature|tvSeries|documentary|docSeries|short|tvEntertainment|reality|other (vælg den mest passende ud fra kontraktens indhold)",
     "salary": null,
     "salaryUnit": "monthly|weekly|daily|total",
     "startDate": "YYYY-MM-DD or null",

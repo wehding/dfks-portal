@@ -67,6 +67,7 @@ export interface Contract {
 }
 
 export interface ExtractedContractData {
+    productionType?: string
     salary?: number
     salaryUnit?: SalaryUnit
     startDate?: string

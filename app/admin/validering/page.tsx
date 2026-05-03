@@ -112,6 +112,7 @@ export default function AdminValideringPage() {
                 status: "approved",
                 extractedData: {
                     producerName:           formData.producerName || undefined,
+                    productionType:         formData.productionType || undefined,
                     salary:                 formData.salary ? Number(formData.salary) : undefined,
                     salaryUnit:             formData.salaryUnit || "monthly",
                     startDate:              formData.startDate || undefined,
@@ -430,6 +431,31 @@ export default function AdminValideringPage() {
                                     onChange={(e) => setField("producerName", e.target.value)}
                                     placeholder="Producentens navn..."
                                 />
+                            </div>
+
+                            <Separator />
+
+                            {/* Production Type */}
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">Type</Label>
+                                <Select
+                                    value={formData.productionType ?? data?.productionType ?? ""}
+                                    onValueChange={(v) => setField("productionType", v)}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Vælg type..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="feature">Spillefilm</SelectItem>
+                                        <SelectItem value="tvSeries">TV-serie</SelectItem>
+                                        <SelectItem value="documentary">Dokumentarfilm</SelectItem>
+                                        <SelectItem value="docSeries">Dokumentarserie</SelectItem>
+                                        <SelectItem value="short">Kortfilm</SelectItem>
+                                        <SelectItem value="tvEntertainment">TV-underholdning</SelectItem>
+                                        <SelectItem value="reality">Reality</SelectItem>
+                                        <SelectItem value="other">Andet</SelectItem>
+                                    </SelectContent>
+                                </Select>
                             </div>
 
                             <Separator />
