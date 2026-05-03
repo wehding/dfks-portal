@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
         }
 
         const apiKey = process.env.ANTHROPIC_API_KEY
+        console.log("[screen] API key present:", !!apiKey)
+        console.log("[screen] system length:", system?.length)
+        console.log("[screen] userMessage length:", userMessage?.length)
         if (!apiKey) {
             return NextResponse.json(
                 { error: "ANTHROPIC_API_KEY er ikke konfigureret på serveren" },
@@ -28,6 +31,7 @@ export async function POST(req: NextRequest) {
             )
         }
 
+        console.log("[screen] Calling Anthropic API...")
         const response = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: {
@@ -36,15 +40,17 @@ export async function POST(req: NextRequest) {
                 "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-                model: "claude-sonnet-4-20250514",
+                model: "claude-haiku-4-5-20251001",
                 max_tokens: 6000,
                 system,
                 messages: [{ role: "user", content: userMessage }],
             }),
         })
 
+        console.log("[screen] Anthropic response status:", response.status)
         if (!response.ok) {
             const err = await response.text()
+            console.error("[screen] Anthropic error:", err)
             return NextResponse.json(
                 { error: `Claude API fejl: ${response.status} — ${err}` },
                 { status: response.status }
@@ -57,6 +63,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ text })
     } catch (err: any) {
+        console.error("[screen] Caught error:", err)
         return NextResponse.json(
             { error: err.message ?? "Ukendt serverfejl" },
             { status: 500 }
