@@ -1,86 +1,209 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
-import {
-    ChevronLeft,
-    ChevronRight,
-    ZoomIn,
-    ZoomOut,
-    Maximize2,
-} from "lucide-react"
+import { useState, useCallback, useEffect, useRef } from "react"
+import { Document, Page, pdfjs } from "react-pdf"
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import "react-pdf/dist/Page/AnnotationLayer.css"
+import "react-pdf/dist/Page/TextLayer.css"
+
+if (typeof window !== "undefined" && !(URL as any).parse) {
+    ;(URL as any).parse = (val: string, base?: string) => {
+        try { return new URL(val, base) } catch { return null }
+    }
+}
+
+pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
 
 interface PdfViewerProps {
     url: string
+    highlights?: string[]
+    activeHighlight?: string | null
 }
 
-export default function PdfViewer({ url }: PdfViewerProps) {
+function norm(s: string): string {
+    return s
+        .toLowerCase()
+        .replace(/\u00a0/g, " ")
+        .replace(/[\u2013\u2014]/g, "-")
+        .replace(/\u2212/g, "-")
+        .replace(/[\u201c\u201d\u2018\u2019]/g, '"')
+        .replace(/\u2009/g, " ")
+        .replace(/\u202f/g, " ")
+        .replace(/,-/g, ",")
+        .replace(/ - /g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+function buildNeedles(quote: string): string[] {
+    const q = norm(quote)
+    const needles: string[] = []
+
+    // Full quote first (most specific)
+    if (q.length >= 5) needles.push(q.slice(0, 60))
+    if (q.length >= 20) needles.push(q.slice(0, 40))
+    if (q.length >= 10) needles.push(q.slice(0, 25))
+
+    // Plain integer → Danish thousands format (14637 → 14.637)
+    if (/^\d{4,}$/.test(q)) {
+        const n = parseInt(q, 10)
+        const formatted = n.toLocaleString("da-DK")
+        // Try underscore-prefixed FIRST (blank fields in PDF: ___1.586,-)
+        // These are more specific and avoid false matches
+        needles.push("___" + formatted)
+        needles.push("__" + formatted)
+        needles.push("_" + formatted)
+        needles.push(formatted + ",-")
+        needles.push(formatted)
+        needles.push(formatted + " dkk")
+    }
+
+    // Decimal number like "9.5" → try "9,5" (Danish decimal comma)
+    if (/^\d+\.\d+$/.test(q)) {
+        const danish = q.replace(".", ",")
+        needles.push(danish)
+        needles.push(danish + " %")
+        needles.push("(" + danish + " %")
+        needles.push(danish + "%")
+    }
+
+    // Number with unit
+    const numWithUnit = q.match(/\d[\d.,\-]*\s*(dkk|kr|%|timer|uger|pct)/)
+    if (numWithUnit && numWithUnit[0].length >= 5) needles.push(numWithUnit[0])
+
+    // Bare numbers as last resort
+    const nums = (q.match(/\d[\d.,]+/g) || [])
+    nums.forEach((n) => { if (n.length >= 4) needles.push(n) })
+
+    // ISO date → Danish date formats
+    const dateMatch = q.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (dateMatch) {
+        const months = ["","januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
+        const day = parseInt(dateMatch[3], 10)
+        const month = parseInt(dateMatch[2], 10)
+        const year = dateMatch[1]
+        needles.push(`${day}. ${months[month]}`)
+        needles.push(`${day}. ${months[month]} ${year}`)
+        needles.push(`${String(day).padStart(2,"0")}.${String(month).padStart(2,"0")}.${year}`)
+        needles.push(`${day}/${month}/${year}`)
+    }
+
+    return [...new Set(needles)].filter((n) => n.length >= 2)
+}
+
+async function findPageForQuote(pdfDoc: any, quote: string, numPages: number): Promise<number> {
+    const needle = norm(quote.slice(0, 40))
+    for (let i = 1; i <= numPages; i++) {
+        try {
+            const page = await pdfDoc.getPage(i)
+            const content = await page.getTextContent()
+            const pageText = norm(content.items.map((item: any) => item.str).join(" "))
+            if (pageText.includes(needle)) return i
+        } catch { /* skip */ }
+    }
+    return 1
+}
+
+// Inject persistent CSS for highlights — React cannot override these
+function ensureHighlightCSS() {
+    const id = "dfks-hl-css"
+    if (document.getElementById(id)) return
+    const style = document.createElement("style")
+    style.id = id
+    style.textContent = `
+        .react-pdf__Page__textContent span[data-hl="true"] {
+            background: rgba(253,224,71,0.55) !important;
+            border-radius: 2px !important;
+        }
+        .react-pdf__Page__textContent span[data-hl="active"] {
+            background: rgba(34,197,94,0.45) !important;
+            border-radius: 2px !important;
+            outline: 2px solid #16a34a !important;
+        }
+    `
+    document.head.appendChild(style)
+}
+
+function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null) {
+    ensureHighlightCSS()
+
+    container.querySelectorAll("span[data-hl]").forEach((el) => {
+        el.removeAttribute("data-hl")
+    })
+
+    const textLayer = container.querySelector(".react-pdf__Page__textContent")
+    if (!textLayer) return
+    const spans = Array.from(textLayer.querySelectorAll("span")) as HTMLElement[]
+    if (!spans.length) return
+
+    let fullText = ""
+    const spanMap: { start: number; end: number; span: HTMLElement }[] = []
+    spans.forEach((span) => {
+        const t = span.textContent ?? ""
+        if (!t) return
+        spanMap.push({ start: fullText.length, end: fullText.length + t.length, span })
+        fullText += t + " "
+    })
+    const normFull = norm(fullText)
+
+    highlights.forEach((quote) => {
+        if (!quote || quote.length < 3) return
+        const isActive = quote === activeHighlight
+        const needles = buildNeedles(quote)
+
+        for (const needle of needles) {
+            const idx = normFull.indexOf(needle)
+            if (idx === -1) continue
+            const matchEnd = idx + needle.length
+            const matched = spanMap.filter(({ start, end }) => start < matchEnd && end > idx)
+            if (!matched.length) continue
+            matched.forEach(({ span }) => {
+                span.setAttribute("data-hl", isActive ? "active" : "true")
+            })
+            if (isActive && matched[0]) {
+                matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
+            }
+            break
+        }
+    })
+}
+
+export default function PdfViewer({ url, highlights = [], activeHighlight = null }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
     const [error, setError] = useState(false)
-    const [ready, setReady] = useState(false)
-    const [Document, setDocument] = useState<any>(null)
-    const [Page, setPage] = useState<any>(null)
+    const [pageRendered, setPageRendered] = useState(false)
+    const [pdfDoc, setPdfDoc] = useState<any>(null)
+    const containerRef = useRef<HTMLDivElement>(null)
 
-    // Dynamically import react-pdf to avoid SSR issues
-    // and patch URL.parse before the library loads
     useEffect(() => {
-        // Polyfill URL.parse for older react-pdf internals
-        if (typeof window !== "undefined" && !URL.parse) {
-            ;(URL as any).parse = (val: string, base?: string) => {
-                try {
-                    return new URL(val, base)
-                } catch {
-                    return null
-                }
-            }
-        }
-
-        import("react-pdf").then(({ Document: Doc, Page: Pg, pdfjs }) => {
-            // Use bundled worker from public folder
-            pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
-            setDocument(() => Doc)
-            setPage(() => Pg)
-            setReady(true)
+        if (!activeHighlight || !pdfDoc || !numPages) return
+        findPageForQuote(pdfDoc, activeHighlight, numPages).then((page) => {
+            if (page !== pageNumber) { setPageRendered(false); setPageNumber(page) }
         })
-    }, [])
+    }, [activeHighlight]) // eslint-disable-line
 
-    const onDocumentLoadSuccess = useCallback(
-        ({ numPages }: { numPages: number }) => {
-            setNumPages(numPages)
-            setPageNumber(1)
-            setError(false)
-        },
-        []
-    )
+    useEffect(() => {
+        if (!containerRef.current || !pageRendered) return
+        const timer = setTimeout(() => {
+            if (containerRef.current) applyHighlights(containerRef.current, highlights, activeHighlight)
+        }, 500)
+        return () => clearTimeout(timer)
+    }, [highlights, activeHighlight, pageNumber, pageRendered])
 
-    const onDocumentLoadError = useCallback((err: any) => {
-        console.error("PDF load error:", err)
-        setError(true)
-    }, [])
-
-    const prevPage = () => setPageNumber((p) => Math.max(1, p - 1))
-    const nextPage = () => setPageNumber((p) => Math.min(numPages, p + 1))
-    const zoomIn = () => setScale((s) => Math.min(2.5, s + 0.2))
-    const zoomOut = () => setScale((s) => Math.max(0.4, s - 0.2))
-    const resetZoom = () => setScale(1.0)
+    const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
+        setNumPages(numPages); setError(false)
+        pdfjs.getDocument(url).promise.then((doc) => setPdfDoc(doc)).catch(() => {})
+    }, [url])
+    const onDocumentLoadError = useCallback(() => setError(true), [])
+    const onPageRenderSuccess = useCallback(() => setPageRendered(true), [])
 
     if (error) {
         return (
-            <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
-                <div>
-                    <p className="font-medium">Kunne ikke indlæse PDF</p>
-                    <p className="mt-1 text-xs opacity-60">{url}</p>
-                </div>
-            </div>
-        )
-    }
-
-    if (!ready || !Document || !Page) {
-        return (
-            <div className="flex flex-1 items-center justify-center py-24">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
+            <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground text-center">
+                <div><p className="font-medium">Kunne ikke indlæse PDF</p><p className="mt-1 text-xs">{url}</p></div>
             </div>
         )
     }
@@ -93,63 +216,31 @@ export default function PdfViewer({ url }: PdfViewerProps) {
 
     return (
         <div className="flex flex-col h-full">
-            {/* Toolbar */}
             <div className="flex items-center gap-1 border-b px-2 py-1.5 shrink-0">
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={prevPage}
-                    disabled={pageNumber <= 1}
-                >
-                    <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-xs tabular-nums text-muted-foreground min-w-[60px] text-center">
-                    {pageNumber} / {numPages || "–"}
-                </span>
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
-                    onClick={nextPage}
-                    disabled={pageNumber >= numPages}
-                >
-                    <ChevronRight className="h-4 w-4" />
-                </Button>
-
+                <Button variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={() => { setPageNumber(p => Math.max(1, p - 1)); setPageRendered(false) }}
+                    disabled={pageNumber <= 1}><ChevronLeft className="h-4 w-4" /></Button>
+                <span className="text-xs tabular-nums text-muted-foreground min-w-[60px] text-center">{pageNumber} / {numPages || "–"}</span>
+                <Button variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={() => { setPageNumber(p => Math.min(numPages, p + 1)); setPageRendered(false) }}
+                    disabled={pageNumber >= numPages}><ChevronRight className="h-4 w-4" /></Button>
                 <div className="mx-1 h-4 w-px bg-border" />
-
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomOut}>
-                    <ZoomOut className="h-3.5 w-3.5" />
-                </Button>
-                <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">
-                    {Math.round(scale * 100)}%
-                </span>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={zoomIn}>
-                    <ZoomIn className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={resetZoom}>
-                    <Maximize2 className="h-3.5 w-3.5" />
-                </Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.max(0.4, s - 0.2))}><ZoomOut className="h-3.5 w-3.5" /></Button>
+                <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.min(2.5, s + 0.2))}><ZoomIn className="h-3.5 w-3.5" /></Button>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(1.0)}><Maximize2 className="h-3.5 w-3.5" /></Button>
+                {highlights.filter(Boolean).length > 0 && (
+                    <span className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
+                        {highlights.filter(Boolean).length} markeringer
+                    </span>
+                )}
             </div>
-
-            {/* PDF render area */}
-            <div className="flex-1 overflow-auto bg-muted/30">
+            <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
                 <div className="flex justify-center p-4">
-                    <Document
-                        file={url}
-                        onLoadSuccess={onDocumentLoadSuccess}
-                        onLoadError={onDocumentLoadError}
-                        loading={Spinner}
-                    >
-                        <Page
-                            pageNumber={pageNumber}
-                            scale={scale}
-                            className="shadow-sm"
-                            loading={Spinner}
-                            renderAnnotationLayer={false}
-                            renderTextLayer={false}
-                        />
+                    <Document file={url} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} loading={Spinner}>
+                        <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
+                            renderTextLayer={true} renderAnnotationLayer={false}
+                            onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
                     </Document>
                 </div>
             </div>

@@ -161,6 +161,15 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 
   "extractedData": {
     "producerName": "string or null",
+    "_sources": {
+      "salary": "EKSAKT tekststreng fra kontrakten der viser honoraret (max 120 tegn) eller null",
+      "pension": "EKSAKT og UNIK tekststreng der kun findes i pensionsafsnittet — brug f.eks. procentsatsen med ord der omgiver den: '9,5 % af grundlønnen' eller 'pensionsbidrag (9,5 %' — vælg den korteste streng der KUN forekommer i pensionsafsnittet og ingen andre steder (max 60 tegn) eller null",
+      "supplements": "EKSAKT tekststreng der indeholder afsnittet om personlige tillæg inkl. selve beløbet — kopiér fra 'personlige tillæg' og frem til beløbet, f.eks. 'personlige tillæg:___1.586' eller 'følgende personlige tillæg:' — max 60 tegn eller null",
+      "dates": "EKSAKT tekststreng der viser periode/datoer eller null",
+      "rights": "EKSAKT tekststreng der viser rettighedsforbehold (SVOD/Copydan/royalty) eller null",
+      "workingHours": "EKSAKT tekststreng der viser arbejdstid eller null",
+      "collectiveAgreement": "EKSAKT tekststreng der nævner overenskomst eller null"
+    },
     "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",
     "salary": null,
     "salaryUnit": "monthly|weekly|daily|total",
@@ -207,7 +216,7 @@ Vigtige regler:
 - aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold
 - productionType skal ALTID udfyldes — gæt ud fra kontekst hvis det ikke er eksplicit nævnt. En kontrakt med en stor dansk produktionsselskab og ingen seriestruktur er sandsynligvis feature. Nævnes afsnit/episoder er det tvSeries eller docSeries.`
 
-function buildSystemPrompt(): string {
+export function buildSystemPrompt(): string {
     let prompt = BASE_SYSTEM
 
     if (_references.length > 0) {

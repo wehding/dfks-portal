@@ -15,6 +15,7 @@ import {
     Users2,
     Receipt,
     BookOpen,
+    Scale,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -58,6 +59,11 @@ export default function AdminLayout({
             label: t("nav.agreements"),
             href: "/admin/overenskomster",
             icon: BookOpen,
+        },
+        {
+            label: t("nav.contractReview"),
+            href: "/admin/kontraktgennemgang",
+            icon: Scale,
         },
         {
             label: t("nav.payouts"),
