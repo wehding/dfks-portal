@@ -162,12 +162,15 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
   "extractedData": {
     "producerName": "string or null",
     "_sources": {
-      "salary": "EKSAKT tekststreng fra kontrakten der viser honoraret (max 120 tegn) eller null",
+      "salary": "EKSAKT tekststreng fra kontrakten der indeholder honoraret — kopiér sætningen der nævner beløbet, f.eks. 'grundløn på __14.637__ DKK pr. uge' eller 'honorar på 45.000 kr. pr. måned' — max 120 tegn eller null",
       "pension": "EKSAKT og UNIK tekststreng der kun findes i pensionsafsnittet — brug f.eks. procentsatsen med ord der omgiver den: '9,5 % af grundlønnen' eller 'pensionsbidrag (9,5 %' — vælg den korteste streng der KUN forekommer i pensionsafsnittet og ingen andre steder (max 60 tegn) eller null",
       "supplements": "EKSAKT tekststreng der indeholder afsnittet om personlige tillæg inkl. selve beløbet — kopiér fra 'personlige tillæg' og frem til beløbet, f.eks. 'personlige tillæg:___1.586' eller 'følgende personlige tillæg:' — max 60 tegn eller null",
-      "dates": "EKSAKT tekststreng der viser periode/datoer eller null",
-      "rights": "EKSAKT tekststreng der viser rettighedsforbehold (SVOD/Copydan/royalty) eller null",
-      "workingHours": "EKSAKT tekststreng der viser arbejdstid eller null",
+      "dates": "EKSAKT tekststreng der viser ansættelsesperioden — kopiér sætningen med start- og slutdato, f.eks. 'fra den 26. august til 24. november 2024' eller 'ansættelsesperioden er 01.01.2024 - 31.03.2024' — max 80 tegn eller null",
+      "rights": "EKSAKT tekststreng der KUN viser selve rettighedsforbeholdene (SVOD/Copydan/royalty) — kopiér kun den del der nævner Copydan, SVOD eller royalty, IKKE den indledende overenskomstreference. F.eks. 'moderniserede Copydan - forbehold og SVOD - aftale' eller 'SVOD-rettigheder og Copydan-vederlag' — max 80 tegn eller null",
+      "copydan": "EKSAKT tekststreng fra kontrakten der specifikt nævner Copydan-vederlag eller Copydan-forbehold — f.eks. 'moderniserede Copydan-forbehold' eller 'Copydan-vederlag er inkluderet' — max 80 tegn eller null",
+      "svod": "EKSAKT tekststreng fra kontrakten der specifikt nævner SVOD-rettigheder — f.eks. 'SVOD-aftale' eller 'streaming on-demand rettigheder' — max 80 tegn eller null",
+      "royalty": "EKSAKT tekststreng fra kontrakten der specifikt nævner royalty eller løbende vederlag — f.eks. 'royalty på 5%' eller 'løbende royaltybetaling' — max 80 tegn eller null",
+      "workingHours": "EKSAKT tekststreng fra kontrakten der viser antal arbejdsuger eller arbejdstimer — kopiér sætningen der nævner uger/timer, f.eks. '11,6 uger' eller 'arbejdstiden er 37 timer ugentligt i 12 uger' eller 'ansættelsen udgør 8 uger' — max 80 tegn eller null",
       "collectiveAgreement": "EKSAKT tekststreng der nævner overenskomst eller null"
     },
     "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",

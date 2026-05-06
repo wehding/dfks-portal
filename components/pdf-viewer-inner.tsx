@@ -31,7 +31,8 @@ function norm(s: string): string {
         .replace(/\u2009/g, " ")
         .replace(/\u202f/g, " ")
         .replace(/,-/g, ",")
-        .replace(/ - /g, "-")
+        // Strip blank-field underscores (PDF forms: __14.637____________)
+        .replace(/_+/g, " ")
         .replace(/\s+/g, " ")
         .trim()
 }
@@ -40,49 +41,61 @@ function buildNeedles(quote: string): string[] {
     const q = norm(quote)
     const needles: string[] = []
 
-    // Full quote first (most specific)
-    if (q.length >= 5) needles.push(q.slice(0, 60))
+    // 1. Full normalised quote in slices (most specific first)
+    if (q.length >= 5)  needles.push(q.slice(0, 60))
     if (q.length >= 20) needles.push(q.slice(0, 40))
     if (q.length >= 10) needles.push(q.slice(0, 25))
 
-    // Plain integer → Danish thousands format (14637 → 14.637)
-    if (/^\d{4,}$/.test(q)) {
-        const n = parseInt(q, 10)
-        const formatted = n.toLocaleString("da-DK")
-        // Try underscore-prefixed FIRST (blank fields in PDF: ___1.586,-)
-        // These are more specific and avoid false matches
-        needles.push("___" + formatted)
-        needles.push("__" + formatted)
-        needles.push("_" + formatted)
-        needles.push(formatted + ",-")
-        needles.push(formatted)
-        needles.push(formatted + " dkk")
+    // 2. For every number in the quote, generate format variants generically
+    const numRe = /(\d[\d.]*)(,(\d+))?/g
+    let m: RegExpExecArray | null
+    while ((m = numRe.exec(q)) !== null) {
+        const intPart = m[1]
+        const decPart = m[3]
+        const fullMatch = m[0]
+        const plainInt = intPart.replace(/\./g, "")
+
+        if (decPart !== undefined) {
+            // Already Danish decimal (comma): "11,6"
+            needles.push(fullMatch)
+            const withUnit = q.slice(m.index, m.index + fullMatch.length + 10).trimEnd()
+            needles.push(withUnit.slice(0, 15))
+            needles.push(intPart + "." + decPart)
+        } else if (intPart.includes(".")) {
+            const dotParts = intPart.split(".")
+            const isDecimal = dotParts[0].length <= 2 && dotParts[dotParts.length - 1].length <= 2
+            if (isDecimal) {
+                // Small number with dot = decimal separator: "11.6" → "11,6"
+                const danish = intPart.replace(".", ",")
+                needles.push(danish)
+                const withUnit = q.slice(m.index, m.index + intPart.length + 10).trimEnd()
+                needles.push(withUnit.replace(".", ",").slice(0, 15))
+            } else {
+                // Dot-thousands: "14.637"
+                needles.push(intPart)
+                needles.push(intPart + ",-")
+                needles.push(plainInt)
+            }
+        } else if (plainInt.length >= 2) {
+            // Plain integer
+            const n = parseInt(plainInt, 10)
+            if (!isNaN(n)) {
+                const daThousands = n.toLocaleString("da-DK")
+                needles.push(daThousands)
+                needles.push(daThousands + ",-")
+                needles.push(plainInt)
+            }
+        }
     }
 
-    // Decimal number like "9.5" → try "9,5" (Danish decimal comma)
-    if (/^\d+\.\d+$/.test(q)) {
-        const danish = q.replace(".", ",")
-        needles.push(danish)
-        needles.push(danish + " %")
-        needles.push("(" + danish + " %")
-        needles.push(danish + "%")
-    }
-
-    // Number with unit
-    const numWithUnit = q.match(/\d[\d.,\-]*\s*(dkk|kr|%|timer|uger|pct)/)
-    if (numWithUnit && numWithUnit[0].length >= 5) needles.push(numWithUnit[0])
-
-    // Bare numbers as last resort
-    const nums = (q.match(/\d[\d.,]+/g) || [])
-    nums.forEach((n) => { if (n.length >= 4) needles.push(n) })
-
-    // ISO date → Danish date formats
+    // 3. ISO date → Danish date formats
     const dateMatch = q.match(/^(\d{4})-(\d{2})-(\d{2})$/)
     if (dateMatch) {
-        const months = ["","januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
-        const day = parseInt(dateMatch[3], 10)
+        const months = ["","januar","februar","marts","april","maj","juni","juli",
+                        "august","september","oktober","november","december"]
+        const day   = parseInt(dateMatch[3], 10)
         const month = parseInt(dateMatch[2], 10)
-        const year = dateMatch[1]
+        const year  = dateMatch[1]
         needles.push(`${day}. ${months[month]}`)
         needles.push(`${day}. ${months[month]} ${year}`)
         needles.push(`${String(day).padStart(2,"0")}.${String(month).padStart(2,"0")}.${year}`)
@@ -93,13 +106,13 @@ function buildNeedles(quote: string): string[] {
 }
 
 async function findPageForQuote(pdfDoc: any, quote: string, numPages: number): Promise<number> {
-    const needle = norm(quote.slice(0, 40))
+    const needles = buildNeedles(quote)
     for (let i = 1; i <= numPages; i++) {
         try {
             const page = await pdfDoc.getPage(i)
             const content = await page.getTextContent()
             const pageText = norm(content.items.map((item: any) => item.str).join(" "))
-            if (pageText.includes(needle)) return i
+            if (needles.some((n) => pageText.includes(n))) return i
         } catch { /* skip */ }
     }
     return 1
@@ -137,19 +150,22 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     const spans = Array.from(textLayer.querySelectorAll("span")) as HTMLElement[]
     if (!spans.length) return
 
-    let fullText = ""
+    let normFull = ""
     const spanMap: { start: number; end: number; span: HTMLElement }[] = []
     spans.forEach((span) => {
         const t = span.textContent ?? ""
         if (!t) return
-        spanMap.push({ start: fullText.length, end: fullText.length + t.length, span })
-        fullText += t + " "
+        const normed = norm(t)
+        if (!normed) return
+        spanMap.push({ start: normFull.length, end: normFull.length + normed.length, span })
+        normFull += normed + " "
     })
-    const normFull = norm(fullText)
+
+    const normActive = activeHighlight ? norm(activeHighlight) : null
 
     highlights.forEach((quote) => {
         if (!quote || quote.length < 3) return
-        const isActive = quote === activeHighlight
+        const isActive = normActive !== null && norm(quote) === normActive
         const needles = buildNeedles(quote)
 
         for (const needle of needles) {
@@ -178,18 +194,42 @@ export default function PdfViewer({ url, highlights = [], activeHighlight = null
     const [pdfDoc, setPdfDoc] = useState<any>(null)
     const containerRef = useRef<HTMLDivElement>(null)
 
+    const activeHighlightRef = useRef(activeHighlight)
+    const highlightsRef = useRef(highlights)
+    activeHighlightRef.current = activeHighlight
+    highlightsRef.current = highlights
+
     useEffect(() => {
         if (!activeHighlight || !pdfDoc || !numPages) return
         findPageForQuote(pdfDoc, activeHighlight, numPages).then((page) => {
-            if (page !== pageNumber) { setPageRendered(false); setPageNumber(page) }
+            if (page !== pageNumber) {
+                setPageRendered(false)
+                setPageNumber(page)
+            } else {
+                // Same page — manually re-trigger highlights
+                if (containerRef.current) {
+                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current)
+                }
+            }
         })
     }, [activeHighlight]) // eslint-disable-line
 
     useEffect(() => {
         if (!containerRef.current || !pageRendered) return
-        const timer = setTimeout(() => {
-            if (containerRef.current) applyHighlights(containerRef.current, highlights, activeHighlight)
-        }, 500)
+        let attempts = 0
+        let timer: ReturnType<typeof setTimeout>
+        const tryApply = () => {
+            if (!containerRef.current) return
+            const textLayer = containerRef.current.querySelector(".react-pdf__Page__textContent")
+            const spans = textLayer?.querySelectorAll("span")
+            if (!spans || spans.length === 0) {
+                // Text layer not ready yet — retry up to 5 times
+                if (attempts++ < 5) timer = setTimeout(tryApply, 300)
+                return
+            }
+            applyHighlights(containerRef.current, highlights, activeHighlight)
+        }
+        timer = setTimeout(tryApply, 400)
         return () => clearTimeout(timer)
     }, [highlights, activeHighlight, pageNumber, pageRendered])
 

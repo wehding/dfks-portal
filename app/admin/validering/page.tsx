@@ -182,6 +182,11 @@ export default function AdminValideringPage() {
     // ── Review view ───────────────────────────────────────────
     if (reviewingContract) {
         const data = reviewingContract.extractedData
+        // Computed highlight strings — must match exactly between highlights[] and SourceBtn onClick
+        const salaryHl = sources.salary ?? (formData.salary ? String(formData.salary) : undefined)
+        const datesHl = sources.dates ?? (formData.startDate ?? undefined) ?? undefined
+        // Only use workingHours if AI returned a source string — formData fallback is too vague to match reliably
+        const weeksHl = sources.workingHours ?? undefined
         return (
             <div className="space-y-6">
                 <div className="flex items-center gap-3">
@@ -207,18 +212,18 @@ export default function AdminValideringPage() {
                         {localPdfUrl ? (
                             <PdfViewer
                                 url={localPdfUrl}
-                                highlights={(() => {
-                                    console.log("[highlights] formData:", {salary: formData.salary, pension: formData.pensionPercent, supplement: formData.personalSupplement, weeks: formData.workingWeeks})
-                                    return [
-                                    formData.salary ? String(formData.salary) : null,
+                                highlights={[
+                                    salaryHl,
                                     sources.pension ?? null,
                                     sources.supplements ?? null,
-                                    formData.startDate ?? null,
-                                    formData.workingWeeks ? String(formData.workingWeeks) + " uger" : null,
-                                    formData.collectiveAgreementName ?? null,
+                                    datesHl,
+                                    weeksHl,
+                                    sources.collectiveAgreement ?? (formData.collectiveAgreementName ?? null),
                                     sources.rights ?? null,
-                                    ].filter(Boolean) as string[]
-                                })()} 
+                                    sources.copydan ?? null,
+                                    sources.svod ?? null,
+                                    sources.royalty ?? null,
+                                ].filter(Boolean) as string[]}
                                 activeHighlight={activeSource}
                             />
                         ) : (
@@ -272,7 +277,7 @@ export default function AdminValideringPage() {
                             </F>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.salary")}<SourceBtn quote={sources.salary ?? undefined} active={activeSource === sources.salary} onClick={() => setActiveSource(sources.salary ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.salary")}<SourceBtn quote={salaryHl} active={activeSource === salaryHl} onClick={() => setActiveSource(salaryHl ?? null)} /></>}>
                                     <Input type="number" value={String(formData.salary ?? data?.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
                                 </F>
                                 <F label={t("admin.validation.salaryUnit")}>
@@ -289,7 +294,7 @@ export default function AdminValideringPage() {
                             </div>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.startDate")}<SourceBtn quote={sources.dates ?? undefined} active={activeSource === sources.dates} onClick={() => setActiveSource(sources.dates ?? null)} /></>}><Input type="date" value={String(formData.startDate ?? data?.startDate ?? "")} onChange={(e) => setField("startDate", e.target.value)} /></F>
+                                <F label={<>{t("admin.validation.startDate")}<SourceBtn quote={datesHl} active={activeSource === datesHl} onClick={() => setActiveSource(datesHl ?? null)} /></>}><Input type="date" value={String(formData.startDate ?? data?.startDate ?? "")} onChange={(e) => setField("startDate", e.target.value)} /></F>
                                 <F label={t("admin.validation.endDate")}><Input type="date" value={String(formData.endDate ?? data?.endDate ?? "")} onChange={(e) => setField("endDate", e.target.value)} /></F>
                             </div>
                             <Separator />
@@ -313,7 +318,7 @@ export default function AdminValideringPage() {
                                 </F>
                             </div>
                             <Separator />
-                            <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={sources.workingHours ?? undefined} active={activeSource === sources.workingHours} onClick={() => setActiveSource(sources.workingHours ?? null)} /></>}>
+                            <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeSource === weeksHl} onClick={() => setActiveSource(weeksHl ?? null)} /></>}>
                                 <Input type="number" value={String(formData.workingWeeks ?? data?.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                             </F>
                             <Separator />
@@ -336,13 +341,25 @@ export default function AdminValideringPage() {
                             </div>
                             <Separator />
                             <div>
-                                <Label className="text-xs mb-3 block">{t("admin.validation.rights")}<SourceBtn quote={sources.rights} active={activeSource === sources.rights} onClick={() => setActiveSource(sources.rights ?? null)} /></Label>
+                                <Label className="text-xs mb-3 block">{t("admin.validation.rights")}</Label>
                                 <div className="space-y-3">
-                                    <RightRow label="SVOD" desc="Streaming on-demand rettighed" checked={formData.svod ?? data?.svod ?? false} onChange={(v) => setField("svod", v)} />
-                                    <RightRow label="Copydan" desc="Copydan-vederlag inkluderet" checked={formData.copydan ?? data?.copydan ?? false} onChange={(v) => setField("copydan", v)} />
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.rights ?? undefined} active={activeSource === (sources.svod ?? sources.rights ?? null)} onClick={() => setActiveSource(sources.svod ?? sources.rights ?? null)} /></span>
+                                            <p className="text-[10px] text-muted-foreground">Streaming on-demand rettighed</p>
+                                        </div>
+                                        <Switch checked={formData.svod ?? data?.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.rights ?? undefined} active={activeSource === (sources.copydan ?? sources.rights ?? null)} onClick={() => setActiveSource(sources.copydan ?? sources.rights ?? null)} /></span>
+                                            <p className="text-[10px] text-muted-foreground">Copydan-vederlag inkluderet</p>
+                                        </div>
+                                        <Switch checked={formData.copydan ?? data?.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
+                                    </div>
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1">
-                                            <span className="text-sm">Royalty</span>
+                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? undefined} active={activeSource === (sources.royalty ?? null)} onClick={() => setActiveSource(sources.royalty ?? null)} /></span>
                                             <p className="text-[10px] text-muted-foreground">Løbende royaltybetaling</p>
                                         </div>
                                         <Input type="number" step="0.1" value={String(formData.royaltyPercent ?? data?.royaltyPercent ?? "")} onChange={(e) => setField("royaltyPercent", e.target.value)} placeholder="%" className="w-20" />
