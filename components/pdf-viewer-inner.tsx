@@ -18,7 +18,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs"
 interface PdfViewerProps {
     url: string
     highlights?: string[]
+    sectionHighlights?: string[]
+    sectionEndMarkers?: string[]
     activeHighlight?: string | null
+    pageNavigationHint?: string
 }
 
 function norm(s: string): string {
@@ -27,10 +30,13 @@ function norm(s: string): string {
         .replace(/\u00a0/g, " ")
         .replace(/[\u2013\u2014]/g, "-")
         .replace(/\u2212/g, "-")
-        .replace(/[\u201c\u201d\u2018\u2019]/g, '"')
+        .replace(/[\u201c\u201d\u2018\u2019\u0027\u2032]/g, "'")
         .replace(/\u2009/g, " ")
         .replace(/\u202f/g, " ")
-        .replace(/,-/g, ",")
+        .replace(/copy\s*-\s*dan/gi, "copydan")
+        // Normalize spaces within numbers: "1 7,6" → "17,6", "27 /10" → "27/10"
+        .replace(/(\d)\s+(\d)/g, "$1$2")
+        .replace(/(\d)\s*\/\s*(\d)/g, "$1/$2")
         // Strip blank-field underscores (PDF forms: __14.637____________)
         .replace(/_+/g, " ")
         .replace(/\s+/g, " ")
@@ -42,9 +48,16 @@ function buildNeedles(quote: string): string[] {
     const needles: string[] = []
 
     // 1. Full normalised quote in slices (most specific first)
-    if (q.length >= 5)  needles.push(q.slice(0, 60))
-    if (q.length >= 20) needles.push(q.slice(0, 40))
-    if (q.length >= 10) needles.push(q.slice(0, 25))
+    // For section highlights (long passages), use longer slices
+    if (q.length >= 100) needles.push(q.slice(0, 120))
+    if (q.length >= 60)  needles.push(q.slice(0, 80))
+    if (q.length >= 4)   needles.push(q.slice(0, 60))
+    if (q.length >= 20)  needles.push(q.slice(0, 40))
+    if (q.length >= 10)  needles.push(q.slice(0, 25))
+    // For short quotes, also try without hyphen (PDF may split compound words)
+    if (q.length < 20) needles.push(q.replace(/-/g, " ").replace(/\s+/g, " ").trim())
+    // Also try without parentheses (PDF may render them differently)
+    if (q.length < 80) needles.push(q.replace(/[()]/g, "").replace(/\s+/g, " ").trim())
 
     // 2. For every number in the quote, generate format variants generically
     const numRe = /(\d[\d.]*)(,(\d+))?/g
@@ -77,13 +90,16 @@ function buildNeedles(quote: string): string[] {
                 needles.push(plainInt)
             }
         } else if (plainInt.length >= 2) {
-            // Plain integer
+            // Plain integer — only use as standalone needle if 4+ digits (avoids false matches on "39", "12" etc.)
             const n = parseInt(plainInt, 10)
             if (!isNaN(n)) {
                 const daThousands = n.toLocaleString("da-DK")
-                needles.push(daThousands)
-                needles.push(daThousands + ",-")
-                needles.push(plainInt)
+                if (plainInt.length >= 4) {
+                    needles.push(daThousands)
+                    needles.push(daThousands + ",-")
+                    needles.push(plainInt)
+                }
+                // Short numbers always need context — rely on the full-quote slices at top
             }
         }
     }
@@ -102,20 +118,47 @@ function buildNeedles(quote: string): string[] {
         needles.push(`${day}/${month}/${year}`)
     }
 
-    return [...new Set(needles)].filter((n) => n.length >= 2)
+    // 4. DD/MM/YYYY dates found anywhere in the string
+    const dmyAll: string[] = []
+    const dmyMatches = q.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g)
+    for (const m of dmyMatches) {
+        const day = m[1].padStart(2, "0")
+        const month = m[2].padStart(2, "0")
+        const year = m[3]
+        dmyAll.push(`${day}/${month}/${year}`)
+        dmyAll.push(`${day}.${month}.${year}`)
+    }
+    // Add context around first date for more specific matching
+    if (dmyAll.length > 0) {
+        const firstDateIdx = q.search(/\d{1,2}\/\d{1,2}\/\d{4}/)
+        if (firstDateIdx > 0) {
+            // Include a few words before the first date
+            needles.push(q.slice(Math.max(0, firstDateIdx - 8), firstDateIdx + 12).trim())
+        }
+        needles.push(dmyAll[0]) // first date as fallback
+    }
+
+    return [...new Set(needles)].filter((n) => n.length >= 3)
 }
 
 async function findPageForQuote(pdfDoc: any, quote: string, numPages: number): Promise<number> {
     const needles = buildNeedles(quote)
+    // For long passages, also try very short distinctive slices
+    const q = norm(quote)
+    if (q.length > 60) {
+        needles.push(q.slice(0, 20))
+        needles.push(q.slice(0, 15))
+    }
+    const uniqueNeedles = [...new Set(needles)].filter(n => n.length >= 3)
     for (let i = 1; i <= numPages; i++) {
         try {
             const page = await pdfDoc.getPage(i)
             const content = await page.getTextContent()
             const pageText = norm(content.items.map((item: any) => item.str).join(" "))
-            if (needles.some((n) => pageText.includes(n))) return i
+            if (uniqueNeedles.some((n) => pageText.includes(n))) return i
         } catch { /* skip */ }
     }
-    return 1
+    return 0
 }
 
 // Inject persistent CSS for highlights — React cannot override these
@@ -126,66 +169,118 @@ function ensureHighlightCSS() {
     style.id = id
     style.textContent = `
         .react-pdf__Page__textContent span[data-hl="true"] {
-            background: rgba(253,224,71,0.55) !important;
-            border-radius: 2px !important;
+            background: rgba(253,224,71,0.45) !important;
         }
         .react-pdf__Page__textContent span[data-hl="active"] {
-            background: rgba(34,197,94,0.45) !important;
-            border-radius: 2px !important;
-            outline: 2px solid #16a34a !important;
+            background: rgba(34,197,94,0.4) !important;
+            box-shadow: 0 0 0 1px rgba(22,163,74,0.5) !important;
         }
     `
     document.head.appendChild(style)
 }
 
-function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null) {
+function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null, sectionHighlights: string[] = [], sectionEndMarkers: string[] = []) {
     ensureHighlightCSS()
 
     container.querySelectorAll("span[data-hl]").forEach((el) => {
         el.removeAttribute("data-hl")
     })
 
-    const textLayer = container.querySelector(".react-pdf__Page__textContent")
+    // Find text layer inside the current page element
+    const pageEl = container.querySelector(".react-pdf__Page")
+    const textLayer = pageEl?.querySelector(".react-pdf__Page__textContent")
     if (!textLayer) return
     const spans = Array.from(textLayer.querySelectorAll("span")) as HTMLElement[]
     if (!spans.length) return
 
     let normFull = ""
     const spanMap: { start: number; end: number; span: HTMLElement }[] = []
-    spans.forEach((span) => {
+    spans.forEach((span, i) => {
         const t = span.textContent ?? ""
         if (!t) return
         const normed = norm(t)
         if (!normed) return
-        spanMap.push({ start: normFull.length, end: normFull.length + normed.length, span })
-        normFull += normed + " "
+        // Don't add leading space if this span continues a number (starts with , or .)
+        const needsSpace = normFull.length > 0 && !normed.startsWith(",") && !normed.startsWith(".")
+        const offset = needsSpace ? 1 : 0
+        spanMap.push({ start: normFull.length + offset, end: normFull.length + offset + normed.length, span })
+        if (needsSpace) normFull += " "
+        normFull += normed
     })
 
-    const normActive = activeHighlight ? norm(activeHighlight) : null
+    // Post-process: fix numbers split across spans e.g. "1 7,6" → "17,6", "2 7" → "27"
+    normFull = normFull.replace(/(\d) (\d)/g, "$1$2")
 
-    highlights.forEach((quote) => {
-        if (!quote || quote.length < 3) return
-        const isActive = normActive !== null && norm(quote) === normActive
+
+    // Active highlight candidates from || separated string
+    const activeCandidates = activeHighlight
+        ? activeHighlight.split("||").map(s => s.trim()).filter(Boolean)
+        : []
+    const resolvedActive = activeCandidates.find(c => {
+        const needles = buildNeedles(c)
+        return needles.some(n => normFull.includes(n))
+    }) ?? activeCandidates[0] ?? null
+    const normActive = resolvedActive ? norm(resolvedActive) : null
+
+    const allHighlights = [...highlights, ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim()))]
+
+    allHighlights.forEach((quote) => {
+        if (!quote || quote.length < 2) return
+        const isSection = sectionHighlights.some(s => s.split("||").map(x => x.trim()).includes(quote))
+        const isActive = normActive !== null && (
+            norm(quote) === normActive ||
+            activeCandidates.some(c => norm(quote) === norm(c))
+        )
         const needles = buildNeedles(quote)
 
         for (const needle of needles) {
             const idx = normFull.indexOf(needle)
             if (idx === -1) continue
-            const matchEnd = idx + needle.length
-            const matched = spanMap.filter(({ start, end }) => start < matchEnd && end > idx)
-            if (!matched.length) continue
-            matched.forEach(({ span }) => {
-                span.setAttribute("data-hl", isActive ? "active" : "true")
-            })
-            if (isActive && matched[0]) {
-                matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
+
+            let matchStart = idx
+            let matchEnd = idx + needle.length
+
+            if (isSection) {
+                // Try the quote directly as needle first, then shorter slices
+                const q = norm(quote)
+                const sectionNeedles = [q, q.slice(0, 30), q.slice(0, 20), q.slice(0, 15), q.slice(0, 10)]
+                let found = false
+                for (const sn of sectionNeedles) {
+                    if (sn.length < 2) continue
+                    const snIdx = normFull.indexOf(sn)
+                    if (snIdx === -1) continue
+                    const snEnd = snIdx + sn.length
+                    const matched = spanMap.filter(({ start, end }) => start < snEnd && end > snIdx)
+                    if (!matched.length) continue
+                    matched.forEach(({ span }) => {
+                        span.setAttribute("data-hl", isActive ? "active" : "true")
+                    })
+                    if (isActive && matched[0]) {
+                        matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
+                    }
+                    found = true
+                    break
+                }
+                if (!found) continue
+            } else {
+                // Only include spans whose start is within the needle range (trim trailing overlap)
+                const matched = spanMap.filter(({ start, end }) => start < matchEnd && end > matchStart && start < matchEnd)
+                // Remove last span if it starts after the needle ends (partial overlap)
+                const trimmed = matched.filter(({ start }) => start < matchEnd)
+                if (!trimmed.length) continue
+                trimmed.forEach(({ span }) => {
+                    span.setAttribute("data-hl", isActive ? "active" : "true")
+                })
+                if (isActive && trimmed[0]) {
+                    trimmed[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
+                }
             }
             break
         }
     })
 }
 
-export default function PdfViewer({ url, highlights = [], activeHighlight = null }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], sectionEndMarkers = [], activeHighlight = null, pageNavigationHint }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
@@ -196,23 +291,43 @@ export default function PdfViewer({ url, highlights = [], activeHighlight = null
 
     const activeHighlightRef = useRef(activeHighlight)
     const highlightsRef = useRef(highlights)
+    const sectionHighlightsRef = useRef(sectionHighlights)
+    const sectionEndMarkersRef = useRef(sectionEndMarkers)
     activeHighlightRef.current = activeHighlight
     highlightsRef.current = highlights
+    sectionHighlightsRef.current = sectionHighlights
+    sectionEndMarkersRef.current = sectionEndMarkers
 
     useEffect(() => {
         if (!activeHighlight || !pdfDoc || !numPages) return
-        findPageForQuote(pdfDoc, activeHighlight, numPages).then((page) => {
-            if (page !== pageNumber) {
+        const navSource = pageNavigationHint ?? activeHighlight
+        const candidates = navSource.split("||").map(s => s.trim()).filter(Boolean)
+        const tryNext = async (idx: number): Promise<number> => {
+            if (idx >= candidates.length) return 0
+            const page = await findPageForQuote(pdfDoc, candidates[idx], numPages)
+            return page > 0 ? page : tryNext(idx + 1)
+        }
+        tryNext(0).then((page) => {
+            const targetPage = page > 0 ? page : 1
+            if (targetPage !== pageNumber) {
                 setPageRendered(false)
-                setPageNumber(page)
+                setPageNumber(targetPage)
             } else {
-                // Same page — manually re-trigger highlights
                 if (containerRef.current) {
-                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current)
+                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current, sectionHighlightsRef.current, sectionEndMarkersRef.current)
                 }
             }
         })
-    }, [activeHighlight]) // eslint-disable-line
+    }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
+
+    const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
+        setNumPages(numPages); setError(false)
+        pdfjs.getDocument(url).promise.then((doc) => setPdfDoc(doc)).catch(() => {})
+    }, [url])
+    const onDocumentLoadError = useCallback(() => setError(true), [])
+    const onPageRenderSuccess = useCallback(() => {
+        setTimeout(() => setPageRendered(true), 150)
+    }, [])
 
     useEffect(() => {
         if (!containerRef.current || !pageRendered) return
@@ -221,24 +336,22 @@ export default function PdfViewer({ url, highlights = [], activeHighlight = null
         const tryApply = () => {
             if (!containerRef.current) return
             const textLayer = containerRef.current.querySelector(".react-pdf__Page__textContent")
-            const spans = textLayer?.querySelectorAll("span")
-            if (!spans || spans.length === 0) {
-                // Text layer not ready yet — retry up to 5 times
-                if (attempts++ < 5) timer = setTimeout(tryApply, 300)
-                return
+            const spans = textLayer ? Array.from(textLayer.querySelectorAll("span")) as HTMLElement[] : []
+            // Build a quick normFull to check if this is the right page
+            let testNorm = ""
+            spans.slice(0, 20).forEach(sp => { testNorm += (sp.textContent ?? "").toLowerCase() + " " })
+            // If any regular highlight is on this page, OR no highlights exist, proceed
+            const hasPageContent = spans.length > 10
+            if (!hasPageContent) {
+                if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            applyHighlights(containerRef.current, highlights, activeHighlight)
+            // Log all page elements
+            const allPages = containerRef.current?.querySelectorAll(".react-pdf__Page")
+            applyHighlights(containerRef.current, highlights, activeHighlight, sectionHighlights, sectionEndMarkers)
         }
-        timer = setTimeout(tryApply, 400)
+        timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, activeHighlight, pageNumber, pageRendered])
-
-    const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
-        setNumPages(numPages); setError(false)
-        pdfjs.getDocument(url).promise.then((doc) => setPdfDoc(doc)).catch(() => {})
-    }, [url])
-    const onDocumentLoadError = useCallback(() => setError(true), [])
-    const onPageRenderSuccess = useCallback(() => setPageRendered(true), [])
+    }, [highlights, sectionHighlights, sectionEndMarkers, activeHighlight, pageNumber, pageRendered])
 
     if (error) {
         return (

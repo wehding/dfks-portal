@@ -78,7 +78,17 @@ export function getMemberList(): MemberList {
 // ── PDF text extraction ──────────────────────────────────────
 
 export async function extractTextFromFile(file: File): Promise<string> {
-    // Plain text files
+    // DOCX
+    if (file.name.endsWith(".docx") || file.name.endsWith(".doc") ||
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        const mammoth = await import("mammoth")
+        const arrayBuffer = await file.arrayBuffer()
+        const result = await mammoth.extractRawText({ arrayBuffer })
+        if (!result.value.trim()) throw new Error("Ingen tekst fundet i Word-dokumentet")
+        return result.value
+    }
+
+    // Plain text
     if (!file.name.endsWith(".pdf") && file.type !== "application/pdf") {
         return new Promise((res, rej) => {
             const r = new FileReader()
@@ -109,6 +119,14 @@ export async function extractTextFromFile(file: File): Promise<string> {
         const content = await page.getTextContent()
         text += content.items.map((item: any) => item.str).join(" ") + "\n"
     }
+
+    // Normalize PDF text artifacts: remove spaces within numbers/dates
+    // e.g. "1 7,6" → "17,6", "27 /10/2025" → "27/10/2025"
+    text = text
+        .replace(/(\d) (\d)/g, "$1$2")
+        .replace(/(\d) \/ (\d)/g, "$1/$2")
+        .replace(/(\d)\/ (\d)/g, "$1/$2")
+        .replace(/(\d) \/(\d)/g, "$1/$2")
 
     if (!text.trim()) {
         throw new Error(
@@ -146,7 +164,32 @@ export function checkMembership(
     })
 }
 
-// ── System prompt ────────────────────────────────────────────
+// ── Personal data masking ────────────────────────────────────
+// Masks sensitive personal data before sending to AI API.
+// The original text is kept locally for display and highlighting.
+
+export function maskPersonalData(text: string): string {
+    return text
+        // CPR-nummer: 6 cifre, bindestreg, 4 cifre (ddmmyy-xxxx)
+        .replace(/\b\d{6}[-–]\d{4}\b/g, "[CPR-NUMMER]")
+        // Bankkontonummer: reg.nr + kontonr (4 cifre + 6-10 cifre)
+        .replace(/\b\d{4}[\s-]\d{6,10}\b/g, "[KONTONUMMER]")
+        // IBAN
+        .replace(/\b[A-Z]{2}\d{2}[\s]?(?:\d{4}[\s]?){3,6}\d{1,4}\b/g, "[IBAN]")
+        // Telefonnumre: danske formater (+45 xx xx xx xx, xx xx xx xx, 8 cifre i træk)
+        .replace(/(?:\+45[\s-]?)?\b(?:\d{2}[\s-]){3}\d{2}\b/g, "[TELEFON]")
+        .replace(/\b\d{8}\b(?!\s*(?:kr|dkk|,-|%|uger|timer|moms))/gi, "[TELEFON]")
+        // Email-adresser
+        .replace(/\b[A-ZÆØÅa-zæøå0-9._%+\-]+@[A-ZÆØÅa-zæøå0-9.\-]+\.[A-Za-z]{2,}\b/g, "[EMAIL]")
+        // Adresser: gadenavn + husnummer (simpelt mønster)
+        .replace(/\b[A-ZÆØÅ][a-zæøå]+(?:vej|gade|alle|allé|stræde|plads|vænge|torv|have|park|skov|mark)\s+\d+[A-Za-z]?(?:,?\s*\d{1,2}\.?\s*(?:th|tv|mf|sal)?)?\b/gi, "[ADRESSE]")
+        // Postnummer + by (4 cifre efterfulgt af bynavn)
+        .replace(/\b\d{4}\s+[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b/g, "[POSTNR-BY]")
+        // CVR-nummer: 8 cifre (kun hvis ledsaget af "cvr" i nærheden)
+        .replace(/\b(?:cvr\.?(?:[-–\s]?nr\.?)?\s*:?\s*)\d{8}\b/gi, "CVR: [CVR-NUMMER]")
+}
+
+
 
 const BASE_SYSTEM = `Du er ekspert i danske filmkontrakter og overenskomster, særligt De4-overenskomsten (fiktion) og FAF-overenskomsten (dokumentar). Du analyserer kontrakter for DFKS — Dansk Filmklipperselskab.
 
@@ -166,12 +209,11 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
       "pension": "EKSAKT og UNIK tekststreng der kun findes i pensionsafsnittet — brug f.eks. procentsatsen med ord der omgiver den: '9,5 % af grundlønnen' eller 'pensionsbidrag (9,5 %' — vælg den korteste streng der KUN forekommer i pensionsafsnittet og ingen andre steder (max 60 tegn) eller null",
       "supplements": "EKSAKT tekststreng der indeholder afsnittet om personlige tillæg inkl. selve beløbet — kopiér fra 'personlige tillæg' og frem til beløbet, f.eks. 'personlige tillæg:___1.586' eller 'følgende personlige tillæg:' — max 60 tegn eller null",
       "dates": "EKSAKT tekststreng der viser ansættelsesperioden — kopiér sætningen med start- og slutdato, f.eks. 'fra den 26. august til 24. november 2024' eller 'ansættelsesperioden er 01.01.2024 - 31.03.2024' — max 80 tegn eller null",
-      "rights": "EKSAKT tekststreng der KUN viser selve rettighedsforbeholdene (SVOD/Copydan/royalty) — kopiér kun den del der nævner Copydan, SVOD eller royalty, IKKE den indledende overenskomstreference. F.eks. 'moderniserede Copydan - forbehold og SVOD - aftale' eller 'SVOD-rettigheder og Copydan-vederlag' — max 80 tegn eller null",
-      "copydan": "EKSAKT tekststreng fra kontrakten der specifikt nævner Copydan-vederlag eller Copydan-forbehold — f.eks. 'moderniserede Copydan-forbehold' eller 'Copydan-vederlag er inkluderet' — max 80 tegn eller null",
-      "svod": "EKSAKT tekststreng fra kontrakten der specifikt nævner SVOD-rettigheder — f.eks. 'SVOD-aftale' eller 'streaming on-demand rettigheder' — max 80 tegn eller null",
-      "royalty": "EKSAKT tekststreng fra kontrakten der specifikt nævner royalty eller løbende vederlag — f.eks. 'royalty på 5%' eller 'løbende royaltybetaling' — max 80 tegn eller null",
-      "workingHours": "EKSAKT tekststreng fra kontrakten der viser antal arbejdsuger eller arbejdstimer — kopiér sætningen der nævner uger/timer, f.eks. '11,6 uger' eller 'arbejdstiden er 37 timer ugentligt i 12 uger' eller 'ansættelsen udgør 8 uger' — max 80 tegn eller null",
-      "collectiveAgreement": "EKSAKT tekststreng der nævner overenskomst eller null"
+      "workingWeeks": "EKSAKT og KORT tekststreng der viser det SAMLEDE antal uger — KUN selve ugetallet med umiddelbar kontekst, f.eks. 'engageret i 9 uger', '17,6 weeks', 'i alt 11,6 uger' — STOP før datoer og andre oplysninger. Max 30 tegn. Null hvis intet samlet ugetal findes.",
+      "collectiveAgreement": "EKSAKT tekststreng der nævner overenskomst — kopiér den FULDE sætning inkl. eventuelle Copydan-forbehold og SVOD-aftale hvis de er nævnt i samme sætning, f.eks. 'I øvrigt henvises til gældende Fiktionsoverenskomst mellem De4 og Producentforeningen af 7.februar 2022 med det moderniserede Copydan-forbehold og SVOD-aftale' — max 200 tegn eller null",
+      "copydan": "Kopiér den KOMPLETTE tekstpassage der omhandler Copydan-forbehold — START altid fra afsnittets allerførste ord eller overskrift (f.eks. 'Third party (Copy-dan) reservation' eller 'Copydan-forbehold'). Kopier hele afsnittet inkl. overskrift. Max 400 tegn. Null hvis Copydan ikke nævnes.",
+      "svod": "Kopiér den KOMPLETTE tekstpassage der omhandler SVOD/streaming eller Create Denmark — START altid fra afsnittets allerførste ord. Inkluder hele afsnittet. Max 400 tegn. Null hvis ikke nævnes.",
+      "royalty": "Kopiér den KOMPLETTE tekstpassage der omhandler et specifikt royalty-forbehold med en konkret aftale om royaltybetaling — KUN hvis der er et dedikeret royalty-afsnit adskilt fra SVOD/streaming. Royalties der blot nævnes i SVOD-afsnittet tæller IKKE. Max 400 tegn. Null hvis ikke relevant."
     },
     "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",
     "salary": null,
@@ -183,14 +225,16 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
     "personalSupplement": null,
     "otherSupplements": "string or null",
     "workingWeeks": null,
-    "svod": false,
-    "copydan": false,
-    "royalty": false,
+    "svod": "true hvis SVOD/streaming-rettigheder er i behold. VIGTIGT: Når Create Denmark er nævnt som den organisation der forhandler rettigheder eller administrerer rettighedsbetaling på vegne af rettighedshaverne, er det et SVOD-forbehold — sæt svod til true. Create Denmark er netop det organ der forhandler SVOD-rettigheder i Danmark. Sæt også true hvis SVOD er eksplicit nævnt, eller hvis overenskomsten er inkorporeret og dækker streaming-rettigheder.",
+    "copydan": "true hvis Copydan-vederlag eller Copydan-forbehold er i behold — enten eksplicit nævnt eller inkorporeret via overenskomst.",
+    "royalty": "true hvis der er et royalty-forbehold i kontrakten, ELLER hvis produktionstype er feature (spillefilm) og distribution inkluderer biograf/theatrical — overenskomsten giver royalty-ret ved biografdistribution. false for tv-serier, streaming-only og dokumentar uden biografdistribution. Det er forbeholdet der markeres, ikke om betaling er garanteret.",
     "royaltyPercent": null,
     "aiDataMiningClause": false,
     "distribution": [],
-    "collectiveAgreement": false,
+    "collectiveAgreement": "true KUN hvis kontrakten er indgået direkte under overenskomsten som en A-lønskontrakt. Sæt false hvis det er en leverandørkontrakt (CVR-nummer, moms, selvstændig) — selv hvis overenskomstens vilkår er inkorporeret ved reference. Inkorporering ved reference er IKKE det samme som at kontrakten er en overenskomstkontrakt.",
     "collectiveAgreementName": null,
+    "isFreelanceContract": "true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, selvstændig erhvervsdrivende) — false hvis det er en lønmodtagerkontrakt",
+    "collectiveAgreementByReference": "true hvis overenskomstens vilkår er inkorporeret ved reference selv om kontrakten ikke er en overenskomstkontrakt — f.eks. 'the terms set forth therein shall supplement' — ellers false",
     "gender": null,
     "holidayPayRate": null,
     "betaRate": null,
@@ -214,6 +258,9 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 Vigtige regler:
 - Marker KUN som critical/warning hvis kontrakten AFVIGER fra overenskomsten — ikke hvis overenskomsten allerede dækker forholdet
 - Hvis kontrakten henviser til "overenskomsten" uden at specificere, antag at den gældende overenskomst dækker
+- VIGTIGT — Inkorporering ved reference: Hvis en kontrakt (også leverandørkontrakter og engelsksprogede kontrakter) eksplicit inkorporerer overenskomsten ved reference — selv med formuleringer som "does not apply directly, but the terms shall supplement" eller "selv om overenskomsten ikke gælder direkte, finder dens vilkår anvendelse som supplement" — så behandles overenskomstens rettigheder som gældende. Det betyder at svod, copydan og øvrige overenskomstrettigheder sættes til true, og collectiveAgreement sættes til true. Sæt et info-flag der forklarer at overenskomsten er inkorporeret ved reference. VIGTIGT: En leverandørkontrakt med CVR-nummer er stadig en leverandørkontrakt selv om overenskomstens vilkår finder anvendelse som supplement — sæt i så fald specialNotes til at angive at det er en leverandørkontrakt hvor overenskomstens vilkår er inkorporeret ved reference. Forveksl ikke "overenskomstens vilkår gælder som supplement" med "kontrakten er en overenskomstkontrakt".
+- VIGTIGT — Alt-inklusivt honorar: Hvis kontrakten angiver at honoraret inkluderer pension, feriepenge eller sociale omkostninger ("the fee includes any and all social costs", "honoraret er inklusiv pension og feriepenge" eller lignende), skal dette flages som warning — ikke critical. Rettighedsmæssigt er kontrakten stadig OK hvis overenskomsten er inkorporeret. Men det skal bemærkes at producenten ikke indbetaler pension og feriepenge separat oveni honoraret, hvilket afviger fra overenskomstens normale struktur. Angiv i flaget at klipperen selv skal håndtere pension og feriepenge af honoraret, og at den effektive løn dermed er lavere end honoraret umiddelbart antyder. Sæt pensionPercent og holidayPayRate til null da de er inkluderet i honoraret. Denne situation alene bør ikke føre til overallVerdict = critical.
+- Privatkopiering og Copydan: Hvis kontrakten eksplicit nævner at medarbejderen/klipperen bevarer retten til vederlag for privatkopiering (f.eks. "retains the right to compensation for private copying", "bevarer ret til privatkopiering", reference til ophavsretslovens §39-46a eller tilsvarende) — noter dette i specialNotes og sæt copydan til true. Det er en lovhjemlet ret der bekræfter at Copydan-vederlag er i behold, og det bør fremhæves som en positiv bemærkning til klipperen.
 - salary skal være et rent tal (ingen valutasymboler)
 - Datoer på formatet YYYY-MM-DD
 - aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold
@@ -225,7 +272,12 @@ export function buildSystemPrompt(): string {
     if (_references.length > 0) {
         prompt +=
             "\n\n---\nFØLGENDE OVERENSKOMSTER OG REFERENCEDOKUMENTER ER GÆLDENDE BAGGRUNDSVIDEN.\n" +
-            "Skeln mellem fiktion og dokumentar og brug kun relevante dokumenter.\n" +
+            "Skeln mellem fiktion og dokumentar og brug kun relevante dokumenter.\n\n" +
+            "NÅR EN KONTRAKT HENVISER TIL OVERENSKOMSTEN — enten direkte eller ved inkorporering ved reference — skal du aktivt gennemgå den relevante overenskomst herunder og tjekke:\n" +
+            "1. Hvilke rettigheder er dækket af overenskomsten? (SVOD, Copydan, royalty, pension, feriepenge, kreditering osv.)\n" +
+            "2. Er disse rettigheder eksplicit nævnt eller udeladt i selve kontrakten?\n" +
+            "3. Afviger kontraktens vilkår fra overenskomstens på nogen punkt — løn, pension, rettigheder, opsigelse?\n" +
+            "Flag kun afvigelser, ikke forhold der allerede er dækket af overenskomsten.\n\n" +
             "For lønskemaer: sammenlign honoraret med de gældende satser og flag afvigelser.\n" +
             "For standardkontrakter: tjek om kontrakten svarer til A-løn- eller leverandørversionen.\n\n" +
             _references

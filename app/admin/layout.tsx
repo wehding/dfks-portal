@@ -7,6 +7,7 @@ import {
     FileText,
     CheckCircle,
     Wallet,
+    Play,
     BarChart3,
     Database,
     LogOut,
@@ -69,6 +70,11 @@ export default function AdminLayout({
             label: t("nav.payouts"),
             href: "/admin/udbetalinger",
             icon: Wallet,
+        },
+        {
+            label: "Streaming",
+            href: "/admin/streaming",
+            icon: Play,
         },
         {
             label: t("nav.statistics"),

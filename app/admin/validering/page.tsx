@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useMemo, useEffect } from "react"
 import {
     Check, X, FileText, Upload, ArrowLeft,
     Trash2, Clock, CheckCircle2, Eye, Sparkles,
@@ -31,7 +31,22 @@ const statusLabels: Record<string, string> = {
     approved: "admin.contracts.approved", rejected: "admin.contracts.rejected",
 }
 
-// ── Source link button ────────────────────────────────────────
+// ── Personal data masking ─────────────────────────────────────
+
+function maskPersonalData(text: string): string {
+    return text
+        .replace(/\b\d{6}[-–]\d{4}\b/g, "[CPR-NUMMER]")
+        .replace(/\b\d{4}[\s-]\d{6,10}\b/g, "[KONTONUMMER]")
+        .replace(/\b[A-Z]{2}\d{2}[\s]?(?:\d{4}[\s]?){3,6}\d{1,4}\b/g, "[IBAN]")
+        .replace(/(?:\+45[\s-]?)?\b(?:\d{2}[\s-]){3}\d{2}\b/g, "[TELEFON]")
+        .replace(/\b\d{8}\b(?!\s*(?:kr|dkk|,-|%|uger|timer|moms))/gi, "[TELEFON]")
+        .replace(/\b[A-ZÆØÅa-zæøå0-9._%+\-]+@[A-ZÆØÅa-zæøå0-9.\-]+\.[A-Za-z]{2,}\b/g, "[EMAIL]")
+        .replace(/\b[A-ZÆØÅ][a-zæøå]+(?:vej|gade|alle|allé|stræde|plads|vænge|torv|have|park|skov|mark)\s+\d+[A-Za-z]?(?:,?\s*\d{1,2}\.?\s*(?:th|tv|mf|sal)?)?\b/gi, "[ADRESSE]")
+        .replace(/\b\d{4}\s+[A-ZÆØÅ][a-zæøå]+(?:\s+[A-ZÆØÅ][a-zæøå]+)?\b/g, "[POSTNR-BY]")
+        .replace(/\b(?:cvr\.?(?:[-–\s]?nr\.?)?\s*:?\s*)\d{8}\b/gi, "CVR: [CVR-NUMMER]")
+}
+
+
 
 function SourceBtn({ quote, active, onClick }: { quote?: string; active: boolean; onClick: () => void }) {
     if (!quote) return null
@@ -58,11 +73,15 @@ export default function AdminValideringPage() {
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
     const [localPdfFile, setLocalPdfFile] = useState<File | null>(null)
     const [screening, setScreening] = useState(false)
+    const [textLoading, setTextLoading] = useState(false)
     const [formData, setFormData] = useState<Record<string, any>>({})
     const [contractText, setContractText] = useState("")
     const [sources, setSources] = useState<Record<string, string>>({})
     const [activeSource, setActiveSource] = useState<string | null>(null)
-    const setField = (key: string, value: any) => setFormData((prev) => ({ ...prev, [key]: value }))
+    const [showMaskingConfirm, setShowMaskingConfirm] = useState(false)
+    const [maskingPreview, setMaskingPreview] = useState<{count: number, types: string[]}>({ count: 0, types: [] })
+    const [maskedText, setMaskedText] = useState("")
+    const [showMaskedEditor, setShowMaskedEditor] = useState(false)
 
     const unreviewedContracts = contracts.filter((c) => c.status === "pending" || c.status === "review")
     const reviewedContracts = contracts.filter((c) => c.status === "approved" || c.status === "rejected")
@@ -71,6 +90,7 @@ export default function AdminValideringPage() {
     const leaveReview = () => {
         setReviewingId(null); setLocalPdfUrl(null); setLocalPdfFile(null)
         setFormData({}); setContractText(""); setSources({}); setActiveSource(null)
+        setTextLoading(false); setMaskedText(""); setScreening(false)
     }
 
     const handleApprove = (id: string) => {
@@ -97,8 +117,10 @@ export default function AdminValideringPage() {
                     royaltyPercent: formData.royaltyPercent ? Number(formData.royaltyPercent) : undefined,
                     aiDataMiningClause: !!formData.aiDataMiningClause,
                     distribution: formData.distribution ? formData.distribution.split(",").map((s: string) => s.trim()).filter(Boolean) : undefined,
-                    collectiveAgreement: !!formData.collectiveAgreementName,
+                    collectiveAgreement: !!formData.collectiveAgreement,
                     collectiveAgreementName: formData.collectiveAgreementName || undefined,
+                    collectiveAgreementByReference: !!formData.collectiveAgreementByReference,
+                    isFreelanceContract: !!formData.isFreelanceContract,
                     gender: formData.gender as any || undefined,
                     holidayPayRate: formData.holidayPayRate ? Number(formData.holidayPayRate) : undefined,
                     betaRate: formData.betaRate ? Number(formData.betaRate) : undefined,
@@ -119,20 +141,52 @@ export default function AdminValideringPage() {
         if (c) toast.error(`"${c.title}" er afvist`)
     }
 
+    const handleExtractClick = async () => {
+        if (!localPdfFile) { toast.error("Upload kontrakten for at køre AI-udtræk"); return }
+        setTextLoading(true)
+        try {
+            const { extractTextFromFile } = await import("@/lib/ai")
+            const raw = contractText || await extractTextFromFile(localPdfFile)
+            const masked = maskPersonalData(raw)
+            const types: string[] = []
+            if (masked.includes("[CPR-NUMMER]")) types.push("CPR-numre")
+            if (masked.includes("[KONTONUMMER]") || masked.includes("[IBAN]")) types.push("kontonumre")
+            if (masked.includes("[TELEFON]")) types.push("telefonnumre")
+            if (masked.includes("[EMAIL]")) types.push("email-adresser")
+            if (masked.includes("[ADRESSE]")) types.push("adresser")
+            if (masked.includes("[POSTNR-BY]")) types.push("postnumre")
+            if (masked.includes("[CVR-NUMMER]")) types.push("CVR-numre")
+            const count = (masked.match(/\[(?:CPR-NUMMER|KONTONUMMER|IBAN|TELEFON|EMAIL|ADRESSE|POSTNR-BY|CVR-NUMMER)\]/g) || []).length
+            setMaskingPreview({ count, types })
+            setMaskedText(masked)
+            setShowMaskingConfirm(true)
+        } catch (e: any) {
+            toast.error(`Kunne ikke forberede udtræk: ${e.message}`)
+        } finally {
+            setTextLoading(false)
+        }
+    }
+
     const handleExtract = async () => {
         if (!localPdfFile) { toast.error("Upload kontrakten for at køre AI-udtræk"); return }
         setScreening(true)
         try {
-            // Extract text client-side then send to screen API as JSON
             const { extractTextFromFile, buildSystemPrompt } = await import("@/lib/ai")
-            const text = await extractTextFromFile(localPdfFile)
-            if (!text.trim()) throw new Error("Ingen tekst fundet i filen")
+            let textToSend = maskedText
+            let originalText = contractText
+            if (!textToSend) {
+                const raw = await extractTextFromFile(localPdfFile)
+                if (!raw.trim()) throw new Error("Ingen tekst fundet i filen")
+                originalText = raw
+                textToSend = maskPersonalData(raw)
+            }
+            if (!textToSend.trim()) throw new Error("Ingen tekst fundet i filen")
             const resp = await fetch("/api/screen", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     system: buildSystemPrompt(),
-                    userMessage: "Analyser denne kontrakt og returner JSON:\n\n" + text.slice(0, 40000),
+                    userMessage: "Analyser denne kontrakt og returner JSON:\n\n" + textToSend.slice(0, 40000),
                 }),
             })
             if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error ?? `Fejl ${resp.status}`) }
@@ -140,13 +194,30 @@ export default function AdminValideringPage() {
             if (data.error) throw new Error(data.error)
             const ed = data.result?.extractedData
             if (!ed) throw new Error("AI returnerede ingen data")
-            // Store contract text for highlighting (reuse extracted text from above)
             try {
-                setContractText(text)
+                setContractText(originalText)
             } catch { /* highlighting won't work but that's ok */ }
             if (ed._sources) {
-                setSources(ed._sources)
-                console.log("[validering] sources:", ed._sources)
+                // Clip heading-type sources at camelCase boundary (mammoth joins heading+body without separator)
+                const clipHeading = (s: string | null | undefined): string | null => {
+                    if (!s) return null
+                    // Find first lowercase→uppercase transition = where heading ends and body begins
+                    for (let i = 1; i < s.length; i++) {
+                        if (/[a-zæøå]/.test(s[i - 1]) && /[A-ZÆØÅ]/.test(s[i])) {
+                            return s.slice(0, i).trim()
+                        }
+                        if (s[i] === "\n" || s[i] === "\r") return s.slice(0, i).trim()
+                    }
+                    return s
+                }
+                const clipped = {
+                    ...ed._sources,
+                    copydan: clipHeading(ed._sources.copydan),
+                    svod: clipHeading(ed._sources.svod),
+                    royalty: clipHeading(ed._sources.royalty),
+                }
+                setSources(clipped)
+                console.log("[validering] sources:", clipped)
             }
 
             setFormData({
@@ -161,6 +232,8 @@ export default function AdminValideringPage() {
                 distribution: ed.distribution?.join(", ") ?? "", collectiveAgreementName: ed.collectiveAgreementName ?? "",
                 gender: ed.gender ?? "", holidayPayRate: ed.holidayPayRate ?? "",
                 betaRate: ed.betaRate ?? "", specialNotes: ed.specialNotes ?? "",
+                isFreelanceContract: ed.isFreelanceContract ?? false,
+                collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
             })
             toast.success("Felter udfyldt — kontrollér og godkend")
         } catch (e: any) { toast.error(`Udtræk fejlede: ${e.message}`) }
@@ -174,9 +247,23 @@ export default function AdminValideringPage() {
         if (c) toast.success(`"${c.title}" er slettet`)
     }
 
-    const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
-        if (file) { setLocalPdfUrl(URL.createObjectURL(file)); setLocalPdfFile(file) }
+        if (!file) return
+        setLocalPdfUrl(URL.createObjectURL(file))
+        setLocalPdfFile(file)
+        if (!file.name.endsWith(".pdf") && file.type !== "application/pdf") {
+            setTextLoading(true)
+            try {
+                const { extractTextFromFile } = await import("@/lib/ai")
+                const text = await extractTextFromFile(file)
+                setContractText(text)
+            } catch (err) {
+                console.error("Tekstudtræk fejlede:", err)
+            } finally {
+                setTextLoading(false)
+            }
+        }
     }
 
     // ── Review view ───────────────────────────────────────────
@@ -185,9 +272,38 @@ export default function AdminValideringPage() {
         // Computed highlight strings — must match exactly between highlights[] and SourceBtn onClick
         const salaryHl = sources.salary ?? (formData.salary ? String(formData.salary) : undefined)
         const datesHl = sources.dates ?? (formData.startDate ?? undefined) ?? undefined
-        // Only use workingHours if AI returned a source string — formData fallback is too vague to match reliably
-        const weeksHl = sources.workingHours ?? undefined
+        const weeksHl = sources.workingWeeks ?? undefined
+
+        // Rights source lookup — maps unique identifiers to actual text strings for highlighting
+        // If specific source is very short (< 20 chars), it's likely a keyword extract that won't
+        const svodSrc = sources.svod ?? null
+        const copydanSrc = sources.copydan ?? null
+        const royaltySrc = sources.royalty ?? null
+
+        // Use AI sources to find the right page, but short keywords for actual highlighting
+        const ca = sources.collectiveAgreement ?? null
+        const rightsPageSource: Record<string, string | null> = {
+            __svod__:    svodSrc ?? "Create Denmark||SVOD||streaming",
+            __copydan__: copydanSrc ?? "Copydan",
+            __royalty__: royaltySrc ?? "royalt",
+            __collectiveAgreement__: ca,
+        }
+        const rightsHighlightSource: Record<string, string> = {
+            __svod__:    "Section 55||§ 55||§55||Create Denmark",
+            __copydan__: "§§||Article 13||§§ 13",
+            __royalty__: royaltySrc ? royaltySrc.toLowerCase().slice(0, 30) : "",
+            __collectiveAgreement__: ca ? ca.toLowerCase().slice(0, 40) : "STANDARDKONTRAKT||Standardkontrakt||overenskomst",
+        }
+        // Resolve: page navigation uses AI source, highlighting uses short keyword
+        const resolvedActiveHighlight = activeSource
+            ? (rightsHighlightSource[activeSource] ?? rightsPageSource[activeSource] ?? activeSource)
+            : null
+        // For page finding, use the full AI source via || fallback
+        const resolvedPageSource = activeSource
+            ? (rightsPageSource[activeSource] ?? activeSource)
+            : null
         return (
+            <>
             <div className="space-y-6">
                 <div className="flex items-center gap-3">
                     <Button variant="ghost" size="sm" className="gap-1.5" onClick={leaveReview}>
@@ -210,6 +326,18 @@ export default function AdminValideringPage() {
                             </label>
                         </div>
                         {localPdfUrl ? (
+                            localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
+                                <TextViewer text={contractText} loading={textLoading}
+                                    highlights={[
+                                        salaryHl,
+                                        sources.pension ?? null,
+                                        sources.supplements ?? null,
+                                        datesHl,
+                                        weeksHl,
+                                    ].filter(Boolean) as string[]}
+                                    sectionHighlights={["Section 55", "§ 55", "§55", "Create Denmark", "§§", "Article 13", "§§ 13", ca ? ca.toLowerCase().slice(0, 40) : null, royaltySrc ? royaltySrc.toLowerCase().slice(0, 30) : null].filter((v): v is string => Boolean(v))}
+                                    activeHighlight={resolvedActiveHighlight} />
+                            ) : (
                             <PdfViewer
                                 url={localPdfUrl}
                                 highlights={[
@@ -218,14 +346,12 @@ export default function AdminValideringPage() {
                                     sources.supplements ?? null,
                                     datesHl,
                                     weeksHl,
-                                    sources.collectiveAgreement ?? (formData.collectiveAgreementName ?? null),
-                                    sources.rights ?? null,
-                                    sources.copydan ?? null,
-                                    sources.svod ?? null,
-                                    sources.royalty ?? null,
                                 ].filter(Boolean) as string[]}
-                                activeHighlight={activeSource}
+                                sectionHighlights={["Section 55", "§ 55", "§55", "Create Denmark", "§§", "Article 13", "§§ 13", ca ? ca.toLowerCase().slice(0, 40) : null, royaltySrc ? royaltySrc.toLowerCase().slice(0, 30) : null].filter(Boolean) as string[]}
+                                activeHighlight={resolvedActiveHighlight}
+                                pageNavigationHint={resolvedPageSource ?? undefined}
                             />
+                            )
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">
                                 <div className="text-center space-y-2">
@@ -247,10 +373,10 @@ export default function AdminValideringPage() {
                                     </span>
                                 )}
                                 <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
-                                    onClick={handleExtract} disabled={screening || !localPdfFile}
+                                    onClick={handleExtractClick} disabled={screening || textLoading || !localPdfFile}
                                     title={!localPdfFile ? "Upload kontrakten for at aktivere AI-udtræk" : ""}>
-                                    <Sparkles className={`h-3.5 w-3.5 ${screening ? "animate-pulse" : ""}`} />
-                                    {screening ? "Udtrækker..." : "AI-udtræk"}
+                                    <Sparkles className={`h-3.5 w-3.5 ${(screening || textLoading) ? "animate-pulse" : ""}`} />
+                                    {screening ? "Udtrækker..." : textLoading ? "Forbereder..." : "AI-udtræk"}
                                 </Button>
                             </div>
                         </div>
@@ -345,21 +471,21 @@ export default function AdminValideringPage() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.rights ?? undefined} active={activeSource === (sources.svod ?? sources.rights ?? null)} onClick={() => setActiveSource(sources.svod ?? sources.rights ?? null)} /></span>
+                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__svod__"} onClick={() => setActiveSource("__svod__")} /></span>
                                             <p className="text-[10px] text-muted-foreground">Streaming on-demand rettighed</p>
                                         </div>
                                         <Switch checked={formData.svod ?? data?.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                     </div>
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.rights ?? undefined} active={activeSource === (sources.copydan ?? sources.rights ?? null)} onClick={() => setActiveSource(sources.copydan ?? sources.rights ?? null)} /></span>
+                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__copydan__"} onClick={() => setActiveSource("__copydan__")} /></span>
                                             <p className="text-[10px] text-muted-foreground">Copydan-vederlag inkluderet</p>
                                         </div>
                                         <Switch checked={formData.copydan ?? data?.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1">
-                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? undefined} active={activeSource === (sources.royalty ?? null)} onClick={() => setActiveSource(sources.royalty ?? null)} /></span>
+                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__royalty__"} onClick={() => setActiveSource("__royalty__")} /></span>
                                             <p className="text-[10px] text-muted-foreground">Løbende royaltybetaling</p>
                                         </div>
                                         <Input type="number" step="0.1" value={String(formData.royaltyPercent ?? data?.royaltyPercent ?? "")} onChange={(e) => setField("royaltyPercent", e.target.value)} placeholder="%" className="w-20" />
@@ -374,8 +500,29 @@ export default function AdminValideringPage() {
                                 <F label={t("admin.validation.distribution")}>
                                     <Input value={formData.distribution ?? data?.distribution?.join(", ") ?? ""} onChange={(e) => setField("distribution", e.target.value)} placeholder="Netflix, DR, TV2..." />
                                 </F>
-                                <F label={<>{t("admin.validation.agreement")}<SourceBtn quote={sources.collectiveAgreement ?? undefined} active={activeSource === sources.collectiveAgreement} onClick={() => setActiveSource(sources.collectiveAgreement ?? null)} /></>}>
-                                    <Input value={formData.collectiveAgreementName ?? (data?.collectiveAgreement ? data.collectiveAgreementName : "") ?? ""} onChange={(e) => setField("collectiveAgreementName", e.target.value)} placeholder="—" />
+                                <F label={<>{t("admin.validation.agreement")}<SourceBtn quote={sources.collectiveAgreement ?? undefined} active={activeSource === "__collectiveAgreement__"} onClick={() => setActiveSource("__collectiveAgreement__")} /></>}>
+                                    <Select
+                                        value={
+                                            (formData.collectiveAgreementByReference ?? data?.collectiveAgreementByReference)
+                                                ? "reference"
+                                                : (formData.collectiveAgreement ?? data?.collectiveAgreement)
+                                                    ? "yes"
+                                                    : "no"
+                                        }
+                                        onValueChange={(v) => {
+                                            setField("collectiveAgreement", v === "yes" || v === "reference")
+                                            setField("collectiveAgreementByReference", v === "reference")
+                                            setField("isFreelanceContract", v === "reference")
+                                        }}
+                                    >
+                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="no">Ingen overenskomst</SelectItem>
+                                            <SelectItem value="yes">Overenskomstkontrakt</SelectItem>
+                                            <SelectItem value="reference">Leverandørkontrakt — ved reference</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    <Input className="mt-1.5" value={formData.collectiveAgreementName ?? (data?.collectiveAgreement ? data.collectiveAgreementName : "") ?? ""} onChange={(e) => setField("collectiveAgreementName", e.target.value)} placeholder="Overenskomstens navn..." />
                                 </F>
                             </div>
                             <div className="grid gap-3 sm:grid-cols-2">
@@ -406,6 +553,62 @@ export default function AdminValideringPage() {
                     </div>
                 </div>
             </div>
+            <Dialog open={showMaskingConfirm} onOpenChange={() => setShowMaskingConfirm(false)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Persondata maskeres inden AI-udtræk</DialogTitle>
+                        <DialogDescription>
+                            Følgende personoplysninger erstattes med placeholders inden kontrakten sendes til AI:
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-2">
+                        {maskingPreview.count > 0 ? (
+                            <>
+                                <p className="text-sm">
+                                    Der er fundet <span className="font-medium">{maskingPreview.count} forekomster</span> af følsomme data som maskeres:
+                                </p>
+                                <ul className="text-sm space-y-1 pl-4">
+                                    {maskingPreview.types.map(t => (
+                                        <li key={t} className="flex items-center gap-2">
+                                            <span className="h-1.5 w-1.5 rounded-full bg-yellow-500 shrink-0" />
+                                            {t}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </>
+                        ) : (
+                            <p className="text-sm text-muted-foreground">Ingen personoplysninger fundet med automatisk detektion.</p>
+                        )}
+                        <p className="text-xs text-muted-foreground border-t pt-3">
+                            Automatisk maskering er ikke 100% pålidelig. Brug "Rediger maskeret tekst" for at tjekke og tilføje yderligere maskeringer inden afsendelse.
+                        </p>
+                    </div>
+                    <DialogFooter className="flex-col sm:flex-row gap-2">
+                        <Button variant="outline" onClick={() => { setShowMaskingConfirm(false); setShowMaskedEditor(true) }}>
+                            Rediger maskeret tekst
+                        </Button>
+                        <Button onClick={() => { setShowMaskingConfirm(false); handleExtract() }}>
+                            Fortsæt med AI-udtræk
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            <Dialog open={showMaskedEditor} onOpenChange={() => setShowMaskedEditor(false)}>
+                <DialogContent className="max-w-3xl h-[80vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle>Rediger maskeret tekst</DialogTitle>
+                        <DialogDescription>
+                            Dette er teksten der sendes til AI. Erstat eventuelt resterende følsomme oplysninger manuelt med f.eks. [NAVN] eller [ADRESSE].
+                        </DialogDescription>
+                    </DialogHeader>
+                    <Textarea className="flex-1 font-mono text-xs resize-none" value={maskedText} onChange={(e) => setMaskedText(e.target.value)} />
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowMaskedEditor(false)}>Annuller</Button>
+                        <Button onClick={() => { setShowMaskedEditor(false); handleExtract() }}>Send til AI-udtræk</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            </>
         )
     }
 
@@ -546,4 +749,200 @@ function ContractTable({ contracts, onReview, onDelete, t, showStatus = false }:
             </Table>
         </div>
     )
+}
+
+// ── Text viewer for non-PDF files ─────────────────────────────
+
+function normChar(s: string): string {
+    return s
+        .toLowerCase()
+        .replace(/[\u00a0\u2009\u202f]/g, " ")
+        .replace(/[\u2013\u2014\u2212]/g, "-")
+        .replace(/[\u201c\u201d\u2018\u2019\u0027\u2032]/g, "'")
+        .replace(/_/g, " ")
+}
+
+// Pre-normalize full strings before char mapping
+function preNorm(s: string): string {
+    return s.replace(/copy\s*-\s*dan/gi, "copydan")
+}
+
+// Build a char-level map: normPos → origPos, so we can search in norm-space
+// but cut from original text
+function buildCharMap(text: string): { normText: string; normToOrig: number[] } {
+    const preProcessed = preNorm(text)
+    let normText = ""
+    const normToOrig: number[] = []
+    let i = 0
+    while (i < preProcessed.length) {
+        const ch = normChar(preProcessed[i])
+        for (let j = 0; j < ch.length; j++) {
+            normToOrig.push(i)
+            normText += ch[j]
+        }
+        i++
+    }
+    // Collapse multiple spaces in norm-space while tracking orig positions
+    let collapsed = ""
+    const collapsedToOrig: number[] = []
+    let prevSpace = false
+    for (let k = 0; k < normText.length; k++) {
+        if (normText[k] === " ") {
+            if (!prevSpace) { collapsed += " "; collapsedToOrig.push(normToOrig[k]) }
+            prevSpace = true
+        } else {
+            collapsed += normText[k]
+            collapsedToOrig.push(normToOrig[k])
+            prevSpace = false
+        }
+    }
+    return { normText: collapsed.trim(), normToOrig: collapsedToOrig }
+}
+
+function TextViewer({ text, loading = false, highlights, sectionHighlights = [], sectionEndMarkers = [], activeHighlight }: {
+    text: string
+    loading?: boolean
+    highlights: string[]
+    sectionHighlights?: string[]
+    sectionEndMarkers?: string[]
+    activeHighlight: string | null
+}) {
+    const containerRef = useRef<HTMLDivElement>(null)
+
+    const html = useMemo(() => {
+        if (!text) return ""
+
+        const { normText, normToOrig } = buildCharMap(text)
+
+        type Range = { origStart: number; origEnd: number; active: boolean }
+        const ranges: Range[] = []
+
+        const normQ = (s: string) => buildCharMap(s).normText
+        const allHighlights = [...highlights, ...sectionHighlights]
+
+        allHighlights.forEach((quote) => {
+            if (!quote || quote.length < 3) return
+            const isActive = activeHighlight !== null && normQ(quote) === normQ(activeHighlight)
+            const isSection = sectionHighlights.includes(quote)
+            const q = normQ(quote)
+            const candidates = [q.slice(0, 60), q.slice(0, 40), q.slice(0, 25)].filter(c => c.length >= 4)
+
+            for (const needle of candidates) {
+                const idx = normText.indexOf(needle)
+                if (idx === -1) continue
+                const origStart = normToOrig[idx]
+
+                let sectionStart = origStart
+                let origEnd = (normToOrig[idx + needle.length - 1] ?? normToOrig[normToOrig.length - 1]) + 1
+
+                if (isSection) {
+                    // Walk back up to 500 chars to find section start = double line break before match
+                    const lookback = 500
+                    const textBefore = text.slice(Math.max(0, origStart - lookback), origStart)
+                    const doubleBreakMatch = textBefore.match(/\n\n[^\n].*$/)
+                    if (doubleBreakMatch) {
+                        sectionStart = origStart - (textBefore.length - textBefore.lastIndexOf(doubleBreakMatch[0])) + 2
+                    }
+                    // Find end using sectionEndMarkers first, then double line break
+                    const boundaries = sectionEndMarkers.length > 0 ? sectionEndMarkers : []
+                    let endFromMarker = text.length
+                    for (const marker of boundaries) {
+                        if (!marker) continue
+                        const mq = normQ(marker)
+                        const mIdx = normText.indexOf(mq.slice(0, 40), normText.indexOf(normQ(quote).slice(0, 20)) + 10)
+                        if (mIdx !== -1) {
+                            const mOrig = normToOrig[mIdx]
+                            if (mOrig < endFromMarker) endFromMarker = mOrig
+                        }
+                    }
+                    const nextDoubleBreak = text.indexOf("\n\n", sectionStart + 1)
+                    origEnd = Math.min(
+                        endFromMarker,
+                        nextDoubleBreak !== -1 ? nextDoubleBreak : text.length
+                    )
+                }
+
+                ranges.push({ origStart: sectionStart, origEnd, active: isActive })
+                break
+            }
+        })
+
+        if (!ranges.length) return escapeHtml(text)
+
+        ranges.sort((a, b) => a.origStart - b.origStart)
+
+        // If there's an active range, render it separately — don't let inactive ranges suppress it
+        const activeRange = ranges.find(r => r.active)
+        const inactiveRanges = ranges.filter(r => !r.active)
+
+        // Build final list: inactive ranges first (skip overlaps), then overlay active on top
+        const finalRanges: typeof ranges = []
+        let cursor = 0
+        for (const r of inactiveRanges) {
+            if (r.origStart >= cursor) {
+                finalRanges.push(r)
+                cursor = r.origEnd
+            }
+        }
+        if (activeRange) {
+            // Insert active range, potentially replacing/overriding inactive at same position
+            const filtered = finalRanges.filter(r => r.origEnd <= activeRange.origStart || r.origStart >= activeRange.origEnd)
+            filtered.push(activeRange)
+            filtered.sort((a, b) => a.origStart - b.origStart)
+            finalRanges.length = 0
+            finalRanges.push(...filtered)
+        }
+
+        let result = ""
+        cursor = 0
+        for (const { origStart, origEnd, active } of finalRanges) {
+            result += escapeHtml(text.slice(cursor, origStart))
+            const cls = active
+                ? "bg-green-200 dark:bg-green-800 outline outline-2 outline-green-500 rounded"
+                : "bg-yellow-200 dark:bg-yellow-800 rounded"
+            result += `<mark class="${cls}" data-hl="${active ? "active" : "true"}">${escapeHtml(text.slice(origStart, origEnd))}</mark>`
+            cursor = origEnd
+        }
+        result += escapeHtml(text.slice(cursor))
+        return result
+    }, [text, highlights, activeHighlight])
+
+    // Scroll active highlight into view
+    useEffect(() => {
+        if (!containerRef.current || !activeHighlight) return
+        const el = containerRef.current.querySelector("mark[data-hl='active']")
+        el?.scrollIntoView({ behavior: "smooth", block: "center" })
+    }, [activeHighlight, html])
+
+    if (loading) {
+        return (
+            <div className="flex flex-1 h-full items-center justify-center">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-foreground border-t-transparent" />
+            </div>
+        )
+    }
+
+    if (!text) {
+        return (
+            <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">
+                <div className="text-center space-y-2">
+                    <FileText className="mx-auto h-8 w-8 opacity-30" />
+                    <p>Indlæser dokument...</p>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div ref={containerRef} className="flex-1 overflow-auto p-6 text-sm leading-relaxed whitespace-pre-wrap font-mono bg-background h-full"
+            dangerouslySetInnerHTML={{ __html: html }} />
+    )
+}
+
+function escapeHtml(s: string): string {
+    return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
 }

@@ -222,7 +222,13 @@ function MasterDataTable({
 
 export default function AdminStamdataPage() {
     const { t } = useI18n()
-    const [adminFeePercent, setAdminFeePercent] = useState(5)
+    const [adminFeePercent, setAdminFeePercent] = useState(() => {
+        if (typeof window !== "undefined") {
+            const stored = localStorage.getItem("streaming_admin_fee")
+            return stored ? Number(stored) : 15
+        }
+        return 15
+    })
 
     return (
         <div className="space-y-6">
@@ -256,9 +262,10 @@ export default function AdminStamdataPage() {
                     <div className="max-w-md space-y-6">
                         <div className="rounded-lg border p-6 space-y-4">
                             <div>
-                                <h3 className="text-sm font-medium">Administrationsbidrag</h3>
+                                <h3 className="text-sm font-medium">Administrationsbidrag — Streaming</h3>
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                    Procentsatsen for administrationsbidrag der bruges ved udbetalingsberegning
+                                    Aktuel procentsats der bruges ved registrering af nye streaming-udbetalinger.
+                                    Gælder kun fremadrettet — eksisterende udbetalinger bevarer deres sats.
                                 </p>
                             </div>
                             <div className="flex items-center gap-3">
@@ -273,7 +280,30 @@ export default function AdminStamdataPage() {
                                 />
                                 <span className="text-sm text-muted-foreground font-medium">%</span>
                             </div>
-                            <Button size="sm">{t("common.save")}</Button>
+
+                            {/* Historik */}
+                            <div className="space-y-1.5">
+                                <p className="text-xs font-medium text-muted-foreground">Historik</p>
+                                <div className="rounded-md border divide-y text-xs">
+                                    {[
+                                        { percent: 15, from: "2024-01-01", by: "Admin" },
+                                        { percent: 10, from: "2022-01-01", by: "Admin" },
+                                    ].map((h, i) => (
+                                        <div key={i} className="flex items-center justify-between px-3 py-2">
+                                            <span className="font-medium">{h.percent}%</span>
+                                            <span className="text-muted-foreground">fra {h.from}</span>
+                                            <span className="text-muted-foreground">{h.by}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <Button size="sm" onClick={() => {
+                                // TODO: gem i database + tilføj til historik
+                                localStorage.setItem("streaming_admin_fee", String(adminFeePercent))
+                            }}>
+                                {t("common.save")}
+                            </Button>
                         </div>
                     </div>
                 </TabsContent>

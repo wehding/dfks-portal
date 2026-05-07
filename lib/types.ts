@@ -86,6 +86,8 @@ export interface ExtractedContractData {
     distribution?: string[]
     collectiveAgreement: boolean
     collectiveAgreementName?: string
+    collectiveAgreementByReference?: boolean  // overenskomst inkorporeret ved reference i leverandørkontrakt
+    isFreelanceContract?: boolean             // leverandørkontrakt med CVR
     gender?: Gender
     holidayPayRate?: number // Helligdagsbetaling percentage
     betaRate?: number // BETA (barselsfonden) percentage
