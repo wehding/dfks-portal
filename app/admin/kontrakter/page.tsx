@@ -389,7 +389,7 @@ export default function AdminKontrakterPage() {
                     setLocalPdfUrl(null)
                 }}
             >
-                <DialogContent className="max-w-5xl h-[85vh] flex flex-col">
+                <DialogContent className="max-w-7xl h-[90vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             {viewContract?.title}
@@ -405,11 +405,14 @@ export default function AdminKontrakterPage() {
                         <DialogDescription>
                             {viewContract?.userName} • {t(`cat.${viewContract?.category}` as any)} •{" "}
                             {viewContract?.premiereDate}
+                            {viewContract?.creditedRoles?.length > 0 && (
+                                <> • <span className="font-medium text-foreground">{viewContract.creditedRoles.join(", ")}</span></>
+                            )}
                         </DialogDescription>
                     </DialogHeader>
 
                     {viewContract && (
-                        <div className="flex-1 grid gap-4 overflow-hidden lg:grid-cols-2">
+                        <div className="flex-1 grid gap-4 overflow-hidden lg:grid-cols-[3fr_2fr]">
                             {/* PDF */}
                             <div className="rounded-lg border overflow-hidden flex flex-col">
                                 {localPdfUrl ? (
@@ -438,6 +441,39 @@ export default function AdminKontrakterPage() {
                             {/* Details */}
                             <div className="rounded-lg border overflow-auto">
                                 <div className="p-4 space-y-4 text-sm">
+                                    {/* Portal-submitted data */}
+                                    {(viewContract.creditedRoles.length > 0 || viewContract.episodes) && (
+                                        <>
+                                            <div className="rounded-md bg-muted/40 border px-3 py-2.5 space-y-1.5">
+                                                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Indsendt af klipper</p>
+                                                {viewContract.creditedRoles.length > 0 && (
+                                                    <div className="flex gap-2">
+                                                        <span className="text-muted-foreground shrink-0">{t("upload.creditedRole")}:</span>
+                                                        <span>{viewContract.creditedRoles.join(", ")}</span>
+                                                    </div>
+                                                )}
+                                                {viewContract.episodes && viewContract.episodes.length > 0 && (
+                                                    <div className="flex gap-2">
+                                                        <span className="text-muted-foreground shrink-0">Afsnit:</span>
+                                                        <span className="tabular-nums">{viewContract.episodes.map(e => `#${e.number}`).join(", ")}</span>
+                                                    </div>
+                                                )}
+                                                {viewContract.duration > 0 && !viewContract.episodes?.length && (
+                                                    <div className="flex gap-2">
+                                                        <span className="text-muted-foreground shrink-0">Varighed:</span>
+                                                        <span className="tabular-nums">{viewContract.duration} min</span>
+                                                    </div>
+                                                )}
+                                                {viewContract.premiereDate && (
+                                                    <div className="flex gap-2">
+                                                        <span className="text-muted-foreground shrink-0">Premiere:</span>
+                                                        <span>{viewContract.premiereDate}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <Separator />
+                                        </>
+                                    )}
                                     {viewContract.extractedData ? (
                                         <>
                                             <div className="grid grid-cols-2 gap-3">
