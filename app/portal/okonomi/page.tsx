@@ -5,6 +5,7 @@ import { CheckCircle2, Clock, Lock, AlertCircle, ChevronDown, ChevronUp, FileUp,
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { UploadContractDialog } from "@/components/streaming/upload-contract-dialog"
 import type { DistributionKeyStatus, PayoutStatus, ProductionType } from "@/lib/streaming-types"
 
 // ── Mock data — klipper: Anna Heide ──────────────────────────
@@ -212,6 +213,7 @@ function DistributionKeyCard({ production, onAccept }: {
 export default function PortalOkonomiPage() {
     const [expanded, setExpanded] = useState<string | null>("008")
     const [accepted, setAccepted] = useState<Set<string>>(new Set())
+    const [uploadFor, setUploadFor] = useState<MyProduction | null>(null)
 
     const totalPaid = myProductions.reduce((s, p) =>
         s + p.payouts.filter(pay => pay.status === "paid").reduce((a, pay) => a + pay.myAmount, 0), 0)
@@ -311,7 +313,7 @@ export default function PortalOkonomiPage() {
                                                         Din kontrakt for denne produktion er ikke registreret i arkivet. Upload den som dokumentation for dine bevarede rettigheder.
                                                     </p>
                                                 </div>
-                                                <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300">
+                                                <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300" onClick={() => setUploadFor(production)}>
                                                     <FileUp className="h-3.5 w-3.5 mr-1.5" />
                                                     Upload kontrakt
                                                 </Button>
@@ -359,5 +361,13 @@ export default function PortalOkonomiPage() {
                 })}
             </div>
         </div>
+
+        <UploadContractDialog
+            open={!!uploadFor}
+            onClose={() => setUploadFor(null)}
+            productionTitle={uploadFor?.title ?? ""}
+            productionId={uploadFor?.id ?? ""}
+            onUploaded={() => setUploadFor(null)}
+        />
     )
 }
