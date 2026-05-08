@@ -291,6 +291,8 @@ const translations = {
         // Admin - Producer Payments (Indbetalinger)
         "nav.producerPayments": "Indbetalinger",
         "nav.agreements": "Overenskomster",
+        "nav.contractReview": "Kontraktgennemgang",
+        "nav.streaming": "Streaming",
         "admin.payments.title": "Producentindbetalinger",
         "admin.payments.subtitle": "Digital indberetning af Helligdagsfond og BETA-bidrag",
         "admin.payments.newPayment": "Ny indbetaling",
@@ -635,6 +637,8 @@ const translations = {
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
         "nav.agreements": "Agreements",
+        "nav.contractReview": "Contract Review",
+        "nav.streaming": "Streaming",
         "admin.payments.title": "Producer Payments",
         "admin.payments.subtitle": "Digital submission of Holiday Fund and BETA contributions",
         "admin.payments.newPayment": "New payment",

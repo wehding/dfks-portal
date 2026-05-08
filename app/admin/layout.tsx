@@ -72,7 +72,7 @@ export default function AdminLayout({
             icon: Wallet,
         },
         {
-            label: "Streaming",
+            label: t("nav.streaming"),
             href: "/admin/streaming",
             icon: Play,
         },
