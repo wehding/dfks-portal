@@ -92,5 +92,14 @@ export function useMasterData(type: "roles" | "categories" | "platforms") {
         )
     }, [])
 
-    return { items, addItem, deleteItem, toggleActive, renameItem }
+    const reorderItems = useCallback((fromIndex: number, toIndex: number) => {
+        setItems((prev) => {
+            const next = [...prev]
+            const [moved] = next.splice(fromIndex, 1)
+            next.splice(toIndex, 0, moved)
+            return next
+        })
+    }, [])
+
+    return { items, addItem, deleteItem, toggleActive, renameItem, reorderItems }
 }

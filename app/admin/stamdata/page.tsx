@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Pencil, Trash2, Check, X } from "lucide-react"
+import { useState, useRef } from "react"
+import { Plus, Pencil, Trash2, Check, X, GripVertical } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { useMasterData } from "@/lib/hooks"
 import { PageHeader } from "@/components/page-header"
@@ -30,18 +30,22 @@ import {
 function MasterDataTable({
     type,
     addLabel,
+    reorderable = false,
 }: {
     type: "roles" | "categories" | "platforms"
     addLabel: string
+    reorderable?: boolean
 }) {
     const { t } = useI18n()
-    const { items, addItem, deleteItem, toggleActive, renameItem } = useMasterData(type)
+    const { items, addItem, deleteItem, toggleActive, renameItem, reorderItems } = useMasterData(type)
 
     const [addDialogOpen, setAddDialogOpen] = useState(false)
     const [newName, setNewName] = useState("")
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editingName, setEditingName] = useState("")
     const [deleteId, setDeleteId] = useState<string | null>(null)
+    const dragIndex = useRef<number | null>(null)
+    const dragOverIndex = useRef<number | null>(null)
 
     const handleAdd = () => {
         if (newName.trim()) {
@@ -100,8 +104,26 @@ function MasterDataTable({
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {items.map((item) => (
-                            <TableRow key={item.id}>
+                        {items.map((item, index) => (
+                            <TableRow
+                                key={item.id}
+                                draggable={reorderable}
+                                onDragStart={() => { dragIndex.current = index }}
+                                onDragOver={(e) => { e.preventDefault(); dragOverIndex.current = index }}
+                                onDrop={() => {
+                                    if (dragIndex.current !== null && dragOverIndex.current !== null && dragIndex.current !== dragOverIndex.current) {
+                                        reorderItems(dragIndex.current, dragOverIndex.current)
+                                    }
+                                    dragIndex.current = null
+                                    dragOverIndex.current = null
+                                }}
+                                className={reorderable ? "cursor-default" : ""}
+                            >
+                                {reorderable && (
+                                    <TableCell className="w-8 pr-0">
+                                        <GripVertical className="h-4 w-4 text-muted-foreground/40 cursor-grab" />
+                                    </TableCell>
+                                )}
                                 <TableCell>
                                     {editingId === item.id ? (
                                         <div className="flex items-center gap-2">
@@ -262,7 +284,7 @@ export default function AdminStamdataPage() {
                 </TabsContent>
 
                 <TabsContent value="platforms" className="mt-4">
-                    <MasterDataTable type="platforms" addLabel="Tilføj platform" />
+                    <MasterDataTable type="platforms" addLabel="Tilføj platform" reorderable />
                 </TabsContent>
 
                 <TabsContent value="settings" className="mt-4">
