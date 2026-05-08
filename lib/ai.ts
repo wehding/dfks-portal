@@ -296,6 +296,56 @@ export function buildSystemPrompt(): string {
     return prompt
 }
 
+// ── Portal contract screening ────────────────────────────────
+// Lighter prompt for the klipper portal: extracts only the fields
+// needed to pre-fill the upload form (title, category, role, etc.)
+
+const PORTAL_SYSTEM = `Du er assistent der hjælper klippere med at udfylde en uploadformular baseret på deres kontrakt.
+
+Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
+
+{
+  "title": "produktionens titel (string eller null)",
+  "category": "feature|short|tvSeries|documentary|docSeries|tvEntertainment|reality|sport eller null",
+  "creditedRole": "klipperens titel/rolle i produktionen på dansk (fx 'Klipper', 'Editor', 'Supervising Editor', 'Montør') eller null",
+  "duration": "samlet varighed i hele minutter som tal — 0 for serier eller hvis ukendt",
+  "premiereDate": "YYYY-MM-DD eller null",
+  "episodes": [{"number": 1, "title": "Afsnit 1", "duration": 45}]
+}
+
+Regler:
+- category baseres på produktionstype: spillefilm/feature film → feature, tv-serie/dramaserie → tvSeries, dokumentarfilm → documentary, dokumentarserie → docSeries, kortfilm → short, tv-show/underholdning → tvEntertainment, reality → reality, sport → sport
+- episodes skal KUN udfyldes hvis det er en serie (tvSeries eller docSeries) og kontrakten nævner specifikke afsnit med titler og/eller varighed. Ellers returner tom liste []
+- duration for serier sættes til summen af episodes hvis de er kendte, ellers 0
+- Returner null for felter du ikke kan finde i kontrakten`
+
+export interface PortalScreeningResult {
+    title: string | null
+    category: string | null
+    creditedRole: string | null
+    duration: number
+    premiereDate: string | null
+    episodes: { number: number; title: string; duration: number }[]
+}
+
+export async function screenPortalContract(contractText: string): Promise<PortalScreeningResult> {
+    const resp = await fetch("/api/screen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            system: PORTAL_SYSTEM,
+            userMessage: "Analyser denne kontrakt og returner JSON til formularen:\n\n" + contractText.slice(0, 30000),
+        }),
+    })
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}))
+        throw new Error(err.error ?? `Fejl ${resp.status}`)
+    }
+    const data = await resp.json()
+    if (data.error) throw new Error(data.error)
+    return data.result as PortalScreeningResult
+}
+
 // ── Main screening function ──────────────────────────────────
 
 export async function screenContract(

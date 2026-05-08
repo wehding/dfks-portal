@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useMemo, useCallback, useEffect } from "react"
 import {
     Upload,
     Plus,
@@ -11,10 +11,13 @@ import {
     Clock,
     FileText,
     ChevronDown,
+    Sparkles,
+    Loader2,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockRoles, mockRegisteredWorks } from "@/lib/mock-data"
 import { useContracts } from "@/lib/hooks"
+import type { PortalScreeningResult } from "@/lib/ai"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -89,6 +92,8 @@ export default function MineKontrakterPage() {
     const [premiereDate, setPremiereDate] = useState("")
     const [episodes, setEpisodes] = useState<Episode[]>([])
     const [isDragging, setIsDragging] = useState(false)
+    const [screening, setScreening] = useState(false)
+    const [aiFields, setAiFields] = useState<Set<string>>(new Set())
 
     // Contract detail preview
     const [previewContractId, setPreviewContractId] = useState<string | null>(null)
@@ -145,6 +150,45 @@ export default function MineKontrakterPage() {
         )
 
     const activeRoles = mockRoles.filter((r) => r.active)
+
+    // Auto-screen contract when file is selected
+    useEffect(() => {
+        if (!file) return
+        let cancelled = false
+        setScreening(true)
+        setAiFields(new Set())
+        ;(async () => {
+            try {
+                const { extractTextFromFile, screenPortalContract } = await import("@/lib/ai")
+                const text = await extractTextFromFile(file)
+                if (cancelled) return
+                const result: PortalScreeningResult = await screenPortalContract(text)
+                if (cancelled) return
+                const filled = new Set<string>()
+                if (result.title) { setTitle(result.title); filled.add("title") }
+                if (result.category && ["feature","short","tvSeries","documentary","docSeries","tvEntertainment","reality","sport"].includes(result.category)) {
+                    setCategory(result.category as Category); filled.add("category")
+                }
+                if (result.creditedRole) { setCreditedRole(result.creditedRole); filled.add("creditedRole") }
+                if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate") }
+                if (result.episodes && result.episodes.length > 0) {
+                    setEpisodes(result.episodes.map((e, i) => ({ number: i + 1, title: e.title ?? "", duration: e.duration ?? 0 })))
+                    filled.add("episodes")
+                } else if (result.duration && result.duration > 0) {
+                    setDuration(String(result.duration)); filled.add("duration")
+                }
+                setAiFields(filled)
+                if (filled.size > 0) {
+                    toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`)
+                }
+            } catch (e: any) {
+                if (!cancelled) toast.error(`Screening fejlede: ${e.message}`)
+            } finally {
+                if (!cancelled) setScreening(false)
+            }
+        })()
+        return () => { cancelled = true }
+    }, [file])
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -288,17 +332,31 @@ export default function MineKontrakterPage() {
                             {/* File info */}
                             {file && (
                                 <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
-                                    <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
-                                    <span className="text-sm truncate flex-1">{file.name}</span>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="gap-1.5"
-                                        onClick={() => setShowPdfPreview(true)}
-                                    >
-                                        <Eye className="h-3.5 w-3.5" />
-                                        {t("common.preview")}
-                                    </Button>
+                                    {screening ? (
+                                        <Loader2 className="h-4 w-4 text-purple-500 shrink-0 animate-spin" />
+                                    ) : (
+                                        <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <span className="text-sm truncate block">{file.name}</span>
+                                        {screening && (
+                                            <span className="text-xs text-purple-600 dark:text-purple-400 flex items-center gap-1 mt-0.5">
+                                                <Sparkles className="h-3 w-3" />
+                                                Screener kontrakt...
+                                            </span>
+                                        )}
+                                    </div>
+                                    {!screening && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="gap-1.5"
+                                            onClick={() => setShowPdfPreview(true)}
+                                        >
+                                            <Eye className="h-3.5 w-3.5" />
+                                            {t("common.preview")}
+                                        </Button>
+                                    )}
                                 </div>
                             )}
 
@@ -306,7 +364,10 @@ export default function MineKontrakterPage() {
                             <div className="space-y-4">
                                 {/* Title + Work Matching */}
                                 <div className="space-y-1.5">
-                                    <Label className="text-xs">{t("upload.title_field")}</Label>
+                                    <Label className="text-xs flex items-center gap-1">
+                                        {t("upload.title_field")}
+                                        {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                    </Label>
                                     <Input
                                         value={title}
                                         onChange={(e) => {
@@ -314,6 +375,7 @@ export default function MineKontrakterPage() {
                                             setMatchedWork(null)
                                         }}
                                         placeholder="Fx: Drømmen om Danmark"
+                                        disabled={screening}
                                     />
                                     {titleMatches.length > 0 && !matchedWork && (
                                         <div className="rounded-md border bg-muted/50 p-3 space-y-2">
@@ -379,9 +441,13 @@ export default function MineKontrakterPage() {
                                 {/* Category + Role */}
                                 <div className="grid gap-4 sm:grid-cols-2">
                                     <div className="space-y-1.5">
-                                        <Label className="text-xs">{t("upload.category")}</Label>
+                                        <Label className="text-xs flex items-center gap-1">
+                                            {t("upload.category")}
+                                            {aiFields.has("category") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                        </Label>
                                         <Select
                                             value={category}
+                                            disabled={screening}
                                             onValueChange={(v) => {
                                                 setCategory(v as Category)
                                                 if (!seriesCategories.includes(v as Category))
@@ -404,8 +470,11 @@ export default function MineKontrakterPage() {
                                         </Select>
                                     </div>
                                     <div className="space-y-1.5">
-                                        <Label className="text-xs">{t("upload.creditedRole")}</Label>
-                                        <Select value={creditedRole} onValueChange={setCreditedRole}>
+                                        <Label className="text-xs flex items-center gap-1">
+                                            {t("upload.creditedRole")}
+                                            {aiFields.has("creditedRole") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                        </Label>
+                                        <Select value={creditedRole} onValueChange={setCreditedRole} disabled={screening}>
                                             <SelectTrigger>
                                                 <SelectValue placeholder="—" />
                                             </SelectTrigger>
@@ -424,7 +493,10 @@ export default function MineKontrakterPage() {
                                 {isSeries ? (
                                     <div className="space-y-3">
                                         <div className="flex items-center justify-between">
-                                            <Label className="text-xs">{t("upload.episodes")}</Label>
+                                            <Label className="text-xs flex items-center gap-1">
+                                                {t("upload.episodes")}
+                                                {aiFields.has("episodes") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                            </Label>
                                             <Button
                                                 variant="outline"
                                                 size="sm"
@@ -494,7 +566,10 @@ export default function MineKontrakterPage() {
                                 ) : (
                                     <div className="grid gap-4 sm:grid-cols-2">
                                         <div className="space-y-1.5">
-                                            <Label className="text-xs">{t("upload.duration")}</Label>
+                                            <Label className="text-xs flex items-center gap-1">
+                                                {t("upload.duration")}
+                                                {aiFields.has("duration") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                            </Label>
                                             <div className="relative">
                                                 <Input
                                                     type="number"
@@ -502,6 +577,7 @@ export default function MineKontrakterPage() {
                                                     onChange={(e) => setDuration(e.target.value)}
                                                     placeholder="0"
                                                     className="pr-10"
+                                                    disabled={screening}
                                                 />
                                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                                                     {t("common.minutes")}
@@ -509,13 +585,15 @@ export default function MineKontrakterPage() {
                                             </div>
                                         </div>
                                         <div className="space-y-1.5">
-                                            <Label className="text-xs">
+                                            <Label className="text-xs flex items-center gap-1">
                                                 {t("upload.premiereDate")}
+                                                {aiFields.has("premiereDate") && <Sparkles className="h-3 w-3 text-purple-500" />}
                                             </Label>
                                             <Input
                                                 type="date"
                                                 value={premiereDate}
                                                 onChange={(e) => setPremiereDate(e.target.value)}
+                                                disabled={screening}
                                             />
                                         </div>
                                     </div>
@@ -523,11 +601,15 @@ export default function MineKontrakterPage() {
 
                                 {isSeries && (
                                     <div className="space-y-1.5">
-                                        <Label className="text-xs">{t("upload.premiereDate")}</Label>
+                                        <Label className="text-xs flex items-center gap-1">
+                                            {t("upload.premiereDate")}
+                                            {aiFields.has("premiereDate") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                        </Label>
                                         <Input
                                             type="date"
                                             value={premiereDate}
                                             onChange={(e) => setPremiereDate(e.target.value)}
+                                            disabled={screening}
                                         />
                                     </div>
                                 )}
@@ -536,7 +618,7 @@ export default function MineKontrakterPage() {
 
                                 <Button
                                     className="w-full"
-                                    disabled={!file || !title}
+                                    disabled={!file || !title || screening}
                                     onClick={() => {
                                         if (!file || !title) return
                                         const today = new Date()
@@ -568,6 +650,7 @@ export default function MineKontrakterPage() {
                                         setDuration("")
                                         setPremiereDate("")
                                         setEpisodes([])
+                                        setAiFields(new Set())
                                         setShowUpload(false)
                                     }}
                                 >
