@@ -699,7 +699,7 @@ function EmptyState({ icon, title, desc }: { icon: React.ReactNode; title: strin
 
 function ContractTable({ contracts, onReview, onDelete, t, showStatus = false }: {
     contracts: Contract[]; onReview: (id: string) => void; onDelete: (id: string) => void
-    t: (key: string) => string; showStatus?: boolean
+    t: ReturnType<typeof useI18n>["t"]; showStatus?: boolean
 }) {
     return (
         <div className="rounded-lg border">
