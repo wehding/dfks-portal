@@ -29,7 +29,7 @@ interface MyDistributionKey {
 interface MyPayout {
     id: string
     payoutYear: number
-    type: "irf" | "succesbetaling"
+    type: "irf" | "succesbetaling" | "royalties" | "copydan"
     myAmount: number
     status: PayoutStatus
     paidAt?: string
@@ -343,7 +343,7 @@ export default function PortalOkonomiPage() {
                                                 <div key={payout.id} className="flex items-center gap-3 px-4 py-3">
                                                     <div className="flex-1">
                                                         <p className="text-sm">
-                                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Succesbetaling"}
+                                                            {payout.payoutYear} — {{ irf: "IRF", succesbetaling: "Succesbetaling", royalties: "Royalties", copydan: "Copydan" }[payout.type]}
                                                         </p>
                                                         {payout.paidAt && (
                                                             <p className="text-xs text-muted-foreground">Udbetalt {payout.paidAt}</p>

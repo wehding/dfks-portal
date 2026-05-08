@@ -143,8 +143,9 @@ export interface StreamingPayout {
     productionId: string
     distributionKeyId: string       // Den fordelingsnøgle der bruges
     payoutYear: number
-    type: "irf" | "succesbetaling"      // IRF = første udbetaling, Succesbetaling = løbende
-    grossAmount: number             // Modtaget fra Create Denmark inkl. adm.
+    type: "irf" | "succesbetaling" | "royalties" | "copydan"
+    payer?: string                  // Udfyldes ved royalties (producentnavn)
+    grossAmount: number             // Modtaget beløb inkl. adm.
     adminFeePercent: number         // Fra produktionens adminFeePercent
     adminFeeAmount: number          // Beregnet: grossAmount × adminFeePercent / (100 + adminFeePercent)
     netAmount: number               // Til fordeling: grossAmount - adminFeeAmount
@@ -215,18 +216,21 @@ export interface StreamingNotification {
 }
 
 /**
- * Global indstilling for administrationsprocent på streaming-udbetalinger.
+ * Global indstilling for administrationsprocenter på udbetalinger.
  * Gælder fremadrettet — ældre udbetalinger beholder deres egen sats.
  */
+export interface StreamingAdminFees {
+    linked: boolean                 // true = alle typer bruger samme sats
+    irf: number
+    succesbetaling: number
+    royalties: number
+    copydan: number
+}
+
 export interface StreamingSettings {
-    currentAdminFeePercent: number  // Aktuel sats — bruges ved registrering af nye udbetalinger
+    adminFees: StreamingAdminFees
     updatedAt: string
     updatedBy: string
-    history: {
-        percent: number
-        effectiveFrom: string       // Dato for ikrafttræden
-        setBy: string
-    }[]
 }
 
 /**

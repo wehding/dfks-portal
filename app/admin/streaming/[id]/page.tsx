@@ -50,7 +50,7 @@ interface MockDistributionKey {
 interface MockPayout {
     id: string
     payoutYear: number
-    type: "irf" | "succesbetaling"
+    type: "irf" | "succesbetaling" | "royalties" | "copydan"
     grossAmount: number
     adminFeePercent: number
     adminFeeAmount: number
@@ -666,7 +666,7 @@ export default function StreamingDetailPage() {
                                 >
                                     <div className="flex-1">
                                         <p className="text-sm font-medium">
-                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Succesbetaling"}
+                                            {payout.payoutYear} — {{ irf: "IRF", succesbetaling: "Succesbetaling", royalties: "Royalties", copydan: "Copydan" }[payout.type]}
                                         </p>
                                         <p className="text-xs text-muted-foreground mt-0.5">
                                             Modtaget {payout.receivedAt}
