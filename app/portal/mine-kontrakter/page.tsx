@@ -554,7 +554,7 @@ export default function MineKontrakterPage() {
                                             {episodes.map((ep, idx) => (
                                                 <div
                                                     key={idx}
-                                                    className="grid grid-cols-[52px_1fr_80px_32px] gap-2 items-center"
+                                                    className="grid grid-cols-[52px_80px_32px] gap-2 items-center"
                                                 >
                                                     <div className="relative">
                                                         <Input
@@ -568,14 +568,6 @@ export default function MineKontrakterPage() {
                                                         />
                                                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">#</span>
                                                     </div>
-                                                    <Input
-                                                        placeholder={t("upload.episodeTitle")}
-                                                        value={ep.title}
-                                                        onChange={(e) =>
-                                                            updateEpisode(idx, { title: e.target.value })
-                                                        }
-                                                        className="h-8 text-sm"
-                                                    />
                                                     <div className="relative">
                                                         <Input
                                                             type="number"
