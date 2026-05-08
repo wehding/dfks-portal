@@ -43,6 +43,7 @@ export interface StreamingProduction {
     licenseStartYear: number
     adminFeePercent: number         // Administrationsprocent for denne produktion
     platform?: string               // Platform/distributør (f.eks. "Netflix", "DR")
+    season?: number                 // Sæsonnummer (valgfrit — kun relevant for serier)
     notes?: string
     createdAt: string
     updatedAt: string

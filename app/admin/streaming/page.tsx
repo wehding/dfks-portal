@@ -287,6 +287,7 @@ export default function StreamingPage() {
                             <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                                 <TypeIcon type={p.type} />
                                 {typeLabel(p.type)}
+                                {p.season && <><span className="text-muted-foreground/40">·</span>Sæson {p.season}</>}
                                 <span className="text-muted-foreground/40">·</span>
                                 {p.premiereYear}
                                 <span className="text-muted-foreground/40">·</span>

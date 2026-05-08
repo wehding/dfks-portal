@@ -481,6 +481,7 @@ export default function StreamingDetailPage() {
                         <span>·</span>
                         {production.type.startsWith("film") ? <Film className="h-3.5 w-3.5" /> : <Tv className="h-3.5 w-3.5" />}
                         <span>{typeLabel(production.type)}</span>
+                        {production.season && <><span>·</span><span>Sæson {production.season}</span></>}
                         <span>·</span>
                         <span>{production.premiereYear}</span>
                     </div>

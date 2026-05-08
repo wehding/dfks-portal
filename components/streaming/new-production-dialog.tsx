@@ -48,7 +48,10 @@ export function NewProductionDialog({
     const [licenseStartYear, setLicenseStartYear] = useState(String(currentYear))
     const [licenseDurationYears, setLicenseDurationYears] = useState("")
     const [platform, setPlatform] = useState("")
+    const [season, setSeason] = useState("")
     const [notes, setNotes] = useState("")
+
+    const isSeries = type.toLowerCase().includes("serie")
 
     const isValid = title.trim().length > 0 && productionNumber.trim().length > 0
 
@@ -68,6 +71,7 @@ export function NewProductionDialog({
             licenseDurationYears: parseInt(licenseDurationYears) || 50,
             licenseStartYear: parseInt(licenseStartYear),
             platform: platform || undefined,
+            season: season ? parseInt(season) : undefined,
             notes: notes.trim() || undefined,
         })
         reset()
@@ -82,6 +86,7 @@ export function NewProductionDialog({
         setLicenseStartYear(String(currentYear))
         setLicenseDurationYears("")
         setPlatform("")
+        setSeason("")
         setNotes("")
     }
 
@@ -150,6 +155,22 @@ export function NewProductionDialog({
                             </SelectContent>
                         </Select>
                     </div>
+
+                    {/* Sæson — kun for serier */}
+                    {isSeries && (
+                        <div className="space-y-1.5">
+                            <Label htmlFor="season">Sæson <span className="text-muted-foreground font-normal">(valgfri)</span></Label>
+                            <Input
+                                id="season"
+                                type="number"
+                                min="1"
+                                placeholder="Fx 1"
+                                value={season}
+                                onChange={e => setSeason(e.target.value)}
+                                className="w-24"
+                            />
+                        </div>
+                    )}
 
                     {/* Premiere år */}
                     <div className="grid grid-cols-2 gap-3">
