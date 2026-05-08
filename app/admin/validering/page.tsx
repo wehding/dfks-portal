@@ -247,6 +247,8 @@ export default function AdminValideringPage() {
         if (c) toast.success(`"${c.title}" er slettet`)
     }
 
+    const setField = (key: string, value: unknown) => setFormData(prev => ({ ...prev, [key]: value }))
+
     const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
