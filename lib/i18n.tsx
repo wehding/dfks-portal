@@ -767,7 +767,7 @@ const translations = {
     },
 } as const
 
-type TranslationKey = keyof typeof translations.da
+export type TranslationKey = keyof typeof translations.da
 
 interface I18nContextType {
     locale: Locale

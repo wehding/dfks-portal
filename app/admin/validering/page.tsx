@@ -7,7 +7,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { PdfViewer } from "@/components/pdf-viewer"
-import { useI18n } from "@/lib/i18n"
+import { useI18n, type TranslationKey } from "@/lib/i18n"
 import { useContracts } from "@/lib/hooks"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -26,7 +26,7 @@ import type { Contract } from "@/lib/types"
 const statusVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
     pending: "outline", review: "secondary", approved: "default", rejected: "destructive",
 }
-const statusLabels: Record<string, string> = {
+const statusLabels: Record<string, TranslationKey> = {
     pending: "admin.contracts.pending", review: "admin.contracts.review",
     approved: "admin.contracts.approved", rejected: "admin.contracts.rejected",
 }
