@@ -341,7 +341,8 @@ export default function MineKontrakterPage() {
                                 <p>
                                     Når du uploader en kontrakt, vil den blive scannet automatisk af AI for at udfylde formularen.{" "}
                                     <strong>Personfølsomme oplysninger</strong> som CPR-nummer, telefonnummer, e-mail og kontonummer{" "}
-                                    fjernes inden teksten sendes til AI-tjenesten.
+                                    fjernes inden teksten sendes til AI-tjenesten.{" "}
+                                    AI-tjenesten bruger ikke dine data til træning.
                                 </p>
                             </div>
 
