@@ -70,7 +70,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "001": {
         id: "001", productionNumber: "001", title: "Kærlighed for voksne",
         type: "film_original", premiereYear: 2022,
-        licenseDurationYears: 50, licenseStartYear: 2022,
+        licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 15,
         createdAt: "2022-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Lars Wissing", birthDate: "280282", contractUrl: "https://drive.google.com/file/d/1vhHHGS-B8oxVZA8zcecTuo8i_-Rw3-Ug/view" },
@@ -94,7 +94,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "002": {
         id: "002", productionNumber: "002", title: "Nisser",
         type: "tv_series_original", premiereYear: 2022,
-        licenseDurationYears: 50, licenseStartYear: 2022,
+        licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2023-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Michael Bauer", birthDate: "240183", episodes: "1, 4" },
@@ -124,7 +124,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "003": {
         id: "003", productionNumber: "003", title: "Toscana",
         type: "film_licensed", premiereYear: 2022,
-        licenseDurationYears: 10, licenseStartYear: 2022,
+        licenseDurationYears: 10, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Anders Hoffmann", birthDate: "060772" },
@@ -152,7 +152,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "004": {
         id: "004", productionNumber: "004", title: "Kastanjemanden",
         type: "tv_series_original", premiereYear: 2022,
-        licenseDurationYears: 50, licenseStartYear: 2022,
+        licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2023-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Cathrine Ambus", birthDate: "281271", episodes: "3, 6" },
@@ -181,7 +181,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "005": {
         id: "005", productionNumber: "005", title: "Skruk Sæson 1",
         type: "tv_series_original", premiereYear: 2022,
-        licenseDurationYears: 50, licenseStartYear: 2022,
+        licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2022-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Jonas Kirkegaard", episodes: "1, 2" },
@@ -194,7 +194,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "006": {
         id: "006", productionNumber: "006", title: "Ehrengard",
         type: "tv_series_original", premiereYear: 2023,
-        licenseDurationYears: 50, licenseStartYear: 2023,
+        licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 10,
         createdAt: "2023-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Janus Billeskov Jansen", birthDate: "251151" },
@@ -220,7 +220,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "007": {
         id: "007", productionNumber: "007", title: "A Beautiful Life",
         type: "tv_series_original", premiereYear: 2023,
-        licenseDurationYears: 50, licenseStartYear: 2023,
+        licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 15,
         createdAt: "2023-01-01", updatedAt: "2025-01-01", createdBy: "admin",
         editors: [{ id: "e1", name: "Anders Hofman", birthDate: "060772" }],
         distributionKey: {
@@ -238,7 +238,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "008": {
         id: "008", productionNumber: "008", title: "Sygeplejersken",
         type: "tv_series_original", premiereYear: 2023,
-        licenseDurationYears: 50, licenseStartYear: 2023,
+        licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 15,
         createdAt: "2023-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Elin Pröjts", episodes: "1, 3" },
@@ -269,7 +269,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "009": {
         id: "009", productionNumber: "009", title: "Skruk Sæson 2",
         type: "tv_series_original", premiereYear: 2024,
-        licenseDurationYears: 50, licenseStartYear: 2024,
+        licenseDurationYears: 50, licenseStartYear: 2024, adminFeePercent: 10,
         createdAt: "2024-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Lars Terkelsen", episodes: "" },
@@ -293,7 +293,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "010": {
         id: "010", productionNumber: "010", title: "Bytte Bytte Baby 2",
         type: "film_original", premiereYear: 2024,
-        licenseDurationYears: 50, licenseStartYear: 2024,
+        licenseDurationYears: 50, licenseStartYear: 2024, adminFeePercent: 10,
         createdAt: "2024-01-01", updatedAt: "2025-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Benjamin Binderup" },
@@ -315,7 +315,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "011": {
         id: "011", productionNumber: "011", title: "Sult",
         type: "film_original", premiereYear: 2025,
-        licenseDurationYears: 50, licenseStartYear: 2025,
+        licenseDurationYears: 50, licenseStartYear: 2025, adminFeePercent: 15,
         createdAt: "2025-01-01", updatedAt: "2025-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Peter Winther" },
@@ -341,7 +341,7 @@ const mockData: Record<string, MockProductionDetail> = {
     "012": {
         id: "012", productionNumber: "012", title: "Reservatet",
         type: "tv_series_original", premiereYear: 2025,
-        licenseDurationYears: 50, licenseStartYear: 2025,
+        licenseDurationYears: 50, licenseStartYear: 2025, adminFeePercent: 15,
         createdAt: "2025-01-01", updatedAt: "2025-01-01", createdBy: "admin",
         editors: [
             { id: "e1", name: "Anja Farsig", episodes: "1, 2" },
