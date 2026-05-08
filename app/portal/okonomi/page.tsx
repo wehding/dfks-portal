@@ -313,12 +313,12 @@ export default function PortalOkonomiPage() {
                                                 <div>
                                                     <p className="text-sm font-medium text-red-700 dark:text-red-300">Kontrakt mangler</p>
                                                     <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">
-                                                        Din kontrakt for dette værk er ikke registreret i arkivet. Upload den som dokumentation for dine bevarede rettigheder.
+                                                        Din kontrakt for dette værk er ikke registreret i arkivet. Send den til DFKS som dokumentation for dine bevarede rettigheder.
                                                     </p>
                                                 </div>
                                                 <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300" onClick={() => setUploadFor(production)}>
                                                     <FileUp className="h-3.5 w-3.5 mr-1.5" />
-                                                    Upload kontrakt
+                                                    Send kontrakt
                                                 </Button>
                                             </div>
                                         </div>

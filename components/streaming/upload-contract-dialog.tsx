@@ -59,7 +59,7 @@ export function UploadContractDialog({
         // TODO: upload til storage / database
         await new Promise((r) => setTimeout(r, 800)) // simulér upload
         onUploaded(productionId, file)
-        toast.success("Kontrakt uploadet — afventer godkendelse")
+        toast.success("Kontrakt sendt — afventer godkendelse")
         setFile(null)
         setUploading(false)
         onClose()
@@ -75,7 +75,7 @@ export function UploadContractDialog({
         <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Upload kontrakt</DialogTitle>
+                    <DialogTitle>Send kontrakt</DialogTitle>
                 </DialogHeader>
 
                 <div className="space-y-4">
@@ -142,11 +142,11 @@ export function UploadContractDialog({
                     </Button>
                     <Button onClick={handleSubmit} disabled={!file || uploading}>
                         {uploading ? (
-                            <>Uploader...</>
+                            <>Sender...</>
                         ) : (
                             <>
                                 <Upload className="h-3.5 w-3.5 mr-1.5" />
-                                Upload kontrakt
+                                Send kontrakt
                             </>
                         )}
                     </Button>
