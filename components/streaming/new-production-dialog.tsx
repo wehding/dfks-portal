@@ -22,6 +22,7 @@ interface NewProductionDialogProps {
         licenseDurationYears: number
         licenseStartYear: number
         platform?: string
+        season?: number
         notes?: string
     }) => void
 }
