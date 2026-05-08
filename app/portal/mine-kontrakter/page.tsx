@@ -14,7 +14,6 @@ import {
     Sparkles,
     Loader2,
     X,
-    ShieldCheck,
 } from "lucide-react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
@@ -332,17 +331,6 @@ export default function MineKontrakterPage() {
                                 </label>
                                 <p className="mt-2 text-xs text-muted-foreground">
                                     {t("upload.maxSize")}
-                                </p>
-                            </div>
-
-                            {/* AI screening notice */}
-                            <div className="flex gap-2.5 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30 px-3.5 py-3 text-xs text-blue-800 dark:text-blue-300">
-                                <ShieldCheck className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                                <p>
-                                    Når du uploader din kontrakt herover, læser denne side automatisk kontrakten med AI for at udfylde felterne nedenfor.{" "}
-                                    <strong>Personfølsomme oplysninger</strong> som CPR-nummer, telefonnummer, e-mail og kontonummer{" "}
-                                    fjernes fra kontraktteksten, inden den sendes til AI-tjenesten.{" "}
-                                    AI-tjenesten bruger ikke dine data til træning.
                                 </p>
                             </div>
 

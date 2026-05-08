@@ -3,7 +3,7 @@
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { Film, FileText, Wallet, LogOut } from "lucide-react"
+import { Film, FileText, Wallet, LogOut, ShieldCheck } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
@@ -87,6 +87,15 @@ export default function PortalLayout({
                 </SidebarContent>
 
                 <SidebarFooter>
+                    <div className="mx-2 mb-2 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/40 px-3 py-2.5 space-y-1">
+                        <div className="flex items-center gap-1.5 text-[11px] font-medium text-blue-700 dark:text-blue-400">
+                            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                            AI-assisteret system
+                        </div>
+                        <p className="text-[10px] text-blue-600 dark:text-blue-400 leading-relaxed">
+                            DFKS bruger AI til at screene kontrakter og behandle rettighedsbetalinger. Personfølsomme data anonymiseres inden behandling, og AI-tjenesten træner ikke på dine data.
+                        </p>
+                    </div>
                     <SidebarMenu>
                         <SidebarMenuItem>
                             <SidebarMenuButton asChild>
