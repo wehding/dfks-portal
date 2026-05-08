@@ -92,6 +92,7 @@ export default function MineKontrakterPage() {
     const [duration, setDuration] = useState("")
     const [premiereDate, setPremiereDate] = useState("")
     const [episodes, setEpisodes] = useState<Episode[]>([])
+    const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "" }])
     const [isDragging, setIsDragging] = useState(false)
     const [screening, setScreening] = useState(false)
     const [aiFields, setAiFields] = useState<Set<string>>(new Set())
@@ -453,8 +454,10 @@ export default function MineKontrakterPage() {
                                             disabled={screening}
                                             onValueChange={(v) => {
                                                 setCategory(v as Category)
-                                                if (!seriesCategories.includes(v as Category))
+                                                if (!seriesCategories.includes(v as Category)) {
                                                     setEpisodes([])
+                                                    setEpisodeCredits([{ number: 1, role: "" }])
+                                                }
                                             }}
                                         >
                                             <SelectTrigger>
@@ -472,23 +475,108 @@ export default function MineKontrakterPage() {
                                             </SelectContent>
                                         </Select>
                                     </div>
-                                    <div className="space-y-1.5">
-                                        <Label className="text-xs flex items-center gap-1">
-                                            {t("upload.creditedRole")}
-                                            {aiFields.has("creditedRole") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                                        </Label>
+                                    {/* Credited roles — only for non-series */}
+                                    {!isSeries && (
+                                        <div className="space-y-1.5">
+                                            <Label className="text-xs flex items-center gap-1">
+                                                {t("upload.creditedRole")}
+                                                {aiFields.has("creditedRole") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                                            </Label>
+                                            <div className="space-y-2">
+                                                {creditedRoles.map((role, idx) => (
+                                                    <div key={idx} className="flex gap-2">
+                                                        <Select
+                                                            value={role}
+                                                            disabled={screening}
+                                                            onValueChange={(v) =>
+                                                                setCreditedRoles(prev => prev.map((r, i) => i === idx ? v : r))
+                                                            }
+                                                        >
+                                                            <SelectTrigger className="flex-1">
+                                                                <SelectValue placeholder="—" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {activeRoles.map((r) => (
+                                                                    <SelectItem key={r.id} value={r.name}>
+                                                                        {r.name}
+                                                                    </SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                        {creditedRoles.length > 1 && (
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-9 w-9 shrink-0 text-muted-foreground"
+                                                                onClick={() =>
+                                                                    setCreditedRoles(prev => prev.filter((_, i) => i !== idx))
+                                                                }
+                                                            >
+                                                                <X className="h-3.5 w-3.5" />
+                                                            </Button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 gap-1 text-xs text-muted-foreground px-0 hover:bg-transparent hover:text-foreground"
+                                                    disabled={screening}
+                                                    onClick={() => setCreditedRoles(prev => [...prev, ""])}
+                                                >
+                                                    <Plus className="h-3 w-3" />
+                                                    Tilføj kreditering
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Episode credits (series) or duration (non-series) */}
+                                {isSeries ? (
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-xs">Afsnit &amp; kreditering</Label>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 gap-1 text-xs"
+                                                onClick={() => setEpisodeCredits(prev => [...prev, { number: (prev[prev.length - 1]?.number ?? 0) + 1, role: prev[prev.length - 1]?.role ?? "" }])}
+                                            >
+                                                <Plus className="h-3 w-3" />
+                                                Tilføj afsnit
+                                            </Button>
+                                        </div>
+                                        {episodeCredits.length === 0 && (
+                                            <p className="text-xs text-muted-foreground py-4 text-center border rounded-md border-dashed">
+                                                Tilføj de afsnit du har kreditering på
+                                            </p>
+                                        )}
                                         <div className="space-y-2">
-                                            {creditedRoles.map((role, idx) => (
-                                                <div key={idx} className="flex gap-2">
+                                            {episodeCredits.map((ec, idx) => (
+                                                <div key={idx} className="grid grid-cols-[52px_1fr_32px] gap-2 items-center">
+                                                    <div className="relative">
+                                                        <Input
+                                                            type="number"
+                                                            value={ec.number}
+                                                            onChange={(e) =>
+                                                                setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x))
+                                                            }
+                                                            className="h-8 text-sm pl-4 pr-1 tabular-nums"
+                                                            min={1}
+                                                        />
+                                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">#</span>
+                                                    </div>
                                                     <Select
-                                                        value={role}
-                                                        disabled={screening}
+                                                        value={ec.role}
                                                         onValueChange={(v) =>
-                                                            setCreditedRoles(prev => prev.map((r, i) => i === idx ? v : r))
+                                                            setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, role: v } : x))
                                                         }
                                                     >
-                                                        <SelectTrigger className="flex-1">
-                                                            <SelectValue placeholder="—" />
+                                                        <SelectTrigger className="h-8 text-sm">
+                                                            <SelectValue placeholder="Kreditering..." />
                                                         </SelectTrigger>
                                                         <SelectContent>
                                                             {activeRoles.map((r) => (
@@ -498,110 +586,18 @@ export default function MineKontrakterPage() {
                                                             ))}
                                                         </SelectContent>
                                                     </Select>
-                                                    {creditedRoles.length > 1 && (
-                                                        <Button
-                                                            type="button"
-                                                            variant="ghost"
-                                                            size="icon"
-                                                            className="h-9 w-9 shrink-0 text-muted-foreground"
-                                                            onClick={() =>
-                                                                setCreditedRoles(prev => prev.filter((_, i) => i !== idx))
-                                                            }
-                                                        >
-                                                            <X className="h-3.5 w-3.5" />
-                                                        </Button>
-                                                    )}
-                                                </div>
-                                            ))}
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-7 gap-1 text-xs text-muted-foreground px-0 hover:bg-transparent hover:text-foreground"
-                                                disabled={screening}
-                                                onClick={() => setCreditedRoles(prev => [...prev, ""])}
-                                            >
-                                                <Plus className="h-3 w-3" />
-                                                Tilføj kreditering
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Duration or Episodes */}
-                                {isSeries ? (
-                                    <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
-                                            <Label className="text-xs flex items-center gap-1">
-                                                {t("upload.episodes")}
-                                                {aiFields.has("episodes") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                                            </Label>
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 gap-1 text-xs"
-                                                onClick={addEpisode}
-                                            >
-                                                <Plus className="h-3 w-3" />
-                                                {t("upload.addEpisode")}
-                                            </Button>
-                                        </div>
-                                        {episodes.length === 0 && (
-                                            <p className="text-xs text-muted-foreground py-4 text-center border rounded-md border-dashed">
-                                                Tilføj afsnit med titel og varighed
-                                            </p>
-                                        )}
-                                        <div className="space-y-2">
-                                            {episodes.map((ep, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className="grid grid-cols-[52px_80px_32px] gap-2 items-center"
-                                                >
-                                                    <div className="relative">
-                                                        <Input
-                                                            type="number"
-                                                            value={ep.number}
-                                                            onChange={(e) =>
-                                                                updateEpisode(idx, { number: parseInt(e.target.value) || 1 })
-                                                            }
-                                                            className="h-8 text-sm pl-4 pr-1 tabular-nums"
-                                                            min={1}
-                                                        />
-                                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">#</span>
-                                                    </div>
-                                                    <div className="relative">
-                                                        <Input
-                                                            type="number"
-                                                            placeholder="min"
-                                                            value={ep.duration || ""}
-                                                            onChange={(e) =>
-                                                                updateEpisode(idx, {
-                                                                    duration: parseInt(e.target.value) || 0,
-                                                                })
-                                                            }
-                                                            className="h-8 text-sm pr-8"
-                                                        />
-                                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                                                            min
-                                                        </span>
-                                                    </div>
                                                     <Button
                                                         variant="ghost"
                                                         size="icon"
-                                                        className="h-8 w-8"
-                                                        onClick={() => removeEpisode(idx)}
+                                                        className="h-8 w-8 text-muted-foreground"
+                                                        onClick={() => setEpisodeCredits(prev => prev.filter((_, i) => i !== idx))}
+                                                        disabled={episodeCredits.length === 1}
                                                     >
                                                         <Trash2 className="h-3 w-3" />
                                                     </Button>
                                                 </div>
                                             ))}
                                         </div>
-                                        {episodes.length > 0 && (
-                                            <div className="text-xs text-muted-foreground">
-                                                Total: {episodes.reduce((s, e) => s + e.duration, 0)}{" "}
-                                                {t("common.minutes")}
-                                            </div>
-                                        )}
                                     </div>
                                 ) : (
                                     <div className="grid gap-4 sm:grid-cols-2">
@@ -658,22 +654,25 @@ export default function MineKontrakterPage() {
 
                                 <Button
                                     className="w-full"
-                                    disabled={!file || !title || screening || creditedRoles.every(r => !r)}
+                                    disabled={!file || !title || screening || (isSeries ? episodeCredits.every(e => !e.role) : creditedRoles.every(r => !r))}
                                     onClick={() => {
                                         if (!file || !title) return
                                         const today = new Date()
                                         const dateStr = today.toISOString().slice(0, 10)
+                                        const filledEpisodeCredits = episodeCredits.filter(e => e.role)
                                         addContract({
                                             id: `portal_${Date.now()}`,
                                             userId: "u1",
                                             userName: "Anna Heide",
                                             title: title.trim(),
                                             category: (category || "feature") as any,
-                                            creditedRoles: creditedRoles.filter(Boolean).length > 0 ? creditedRoles.filter(Boolean) : ["Klipper"],
-                                            duration: isSeries
-                                                ? episodes.reduce((s, e) => s + e.duration, 0)
-                                                : Number(duration) || 0,
-                                            episodes: isSeries ? episodes : undefined,
+                                            creditedRoles: isSeries
+                                                ? [...new Set(filledEpisodeCredits.map(e => e.role))]
+                                                : creditedRoles.filter(Boolean).length > 0 ? creditedRoles.filter(Boolean) : ["Klipper"],
+                                            duration: Number(duration) || 0,
+                                            episodes: isSeries
+                                                ? filledEpisodeCredits.map(e => ({ number: e.number, title: "", duration: 0 }))
+                                                : undefined,
                                             premiereDate: premiereDate || dateStr,
                                             premiereYear: premiereDate
                                                 ? new Date(premiereDate).getFullYear()
@@ -690,6 +689,7 @@ export default function MineKontrakterPage() {
                                         setDuration("")
                                         setPremiereDate("")
                                         setEpisodes([])
+                                        setEpisodeCredits([{ number: 1, role: "" }])
                                         setAiFields(new Set())
                                         setShowUpload(false)
                                     }}
