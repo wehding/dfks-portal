@@ -14,7 +14,6 @@ import { Separator } from "@/components/ui/separator"
 import { RegisterPayoutDialog } from "@/components/streaming/register-payout-dialog"
 import { AddEditorDialog } from "@/components/streaming/add-editor-dialog"
 import { CreateDistributionKeyDialog } from "@/components/streaming/create-distribution-key-dialog"
-import { AddExploitationDialog } from "@/components/streaming/add-exploitation-dialog"
 import type {
     StreamingProduction, ProductionType, DistributionKeyStatus,
     DistributionShare, PayoutStatus, ExploitationType,
@@ -481,8 +480,7 @@ export default function StreamingDetailPage() {
     const [expandedPayout, setExpandedPayout] = useState<string | null>(null)
     const [copiedId, setCopiedId] = useState<string | null>(null)
     const [showRegister, setShowRegister] = useState(false)
-    const [activeExploitationId, setActiveExploitationId] = useState<string | null>(null)
-    const [showAddExploitation, setShowAddExploitation] = useState(false)
+    const [activeExploitationId, setActiveExploitationId] = useState<string | undefined>(undefined)
     const [showAddEditor, setShowAddEditor] = useState(false)
     const [showCreateKey, setShowCreateKey] = useState(false)
 
@@ -514,7 +512,9 @@ export default function StreamingDetailPage() {
     const acceptedCount = production.distributionKey?.shares.filter(s => s.acceptedAt).length ?? 0
     const totalShares = production.distributionKey?.shares.length ?? 0
 
-    const activeExploitation = production.exploitations.find(e => e.id === activeExploitationId) ?? null
+    const exploitationOptions = production.exploitations.map(e => ({
+        id: e.id, platform: e.platform, type: e.type, payer: e.payer,
+    }))
 
     function copyPayoutText(exploitation: MockExploitation, payout: MockPayout) {
         const text = generatePayoutText(production, exploitation, payout)
@@ -703,9 +703,9 @@ export default function StreamingDetailPage() {
             <div className="rounded-lg border">
                 <div className="flex items-center justify-between px-4 py-3 border-b">
                     <h2 className="font-medium">Udbetalinger</h2>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAddExploitation(true)}>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setActiveExploitationId(undefined); setShowRegister(true) }}>
                         <Plus className="h-3.5 w-3.5" />
-                        Tilføj udnyttelse
+                        Registrér betaling
                     </Button>
                 </div>
 
@@ -729,11 +729,8 @@ export default function StreamingDetailPage() {
                                         )}
                                     </div>
                                     <Button
-                                        variant="ghost" size="sm" className="gap-1.5"
-                                        onClick={() => {
-                                            setActiveExploitationId(exploitation.id)
-                                            setShowRegister(true)
-                                        }}
+                                        variant="ghost" size="sm" className="gap-1.5 text-muted-foreground"
+                                        onClick={() => { setActiveExploitationId(exploitation.id); setShowRegister(true) }}
                                     >
                                         <Plus className="h-3.5 w-3.5" />
                                         Registrér betaling
@@ -825,28 +822,16 @@ export default function StreamingDetailPage() {
             </div>
 
             {/* Dialogs */}
-            {activeExploitation && (
-                <RegisterPayoutDialog
-                    open={showRegister}
-                    onClose={() => { setShowRegister(false); setActiveExploitationId(null) }}
-                    productionTitle={production.title}
-                    exploitationPlatform={activeExploitation.platform}
-                    exploitationType={activeExploitation.type}
-                    onRegister={(payout) => {
-                        console.log("Registreret:", payout)
-                        setShowRegister(false)
-                        setActiveExploitationId(null)
-                    }}
-                />
-            )}
-
-            <AddExploitationDialog
-                open={showAddExploitation}
-                onClose={() => setShowAddExploitation(false)}
+            <RegisterPayoutDialog
+                open={showRegister}
+                onClose={() => { setShowRegister(false); setActiveExploitationId(undefined) }}
                 productionTitle={production.title}
-                onAdd={(exploitation) => {
-                    console.log("Udnyttelse tilføjet:", exploitation)
-                    setShowAddExploitation(false)
+                existingExploitations={exploitationOptions}
+                preselectedExploitationId={activeExploitationId}
+                onRegister={(data) => {
+                    console.log("Registreret:", data)
+                    setShowRegister(false)
+                    setActiveExploitationId(undefined)
                 }}
             />
 
