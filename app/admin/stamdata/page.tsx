@@ -31,7 +31,7 @@ function MasterDataTable({
     type,
     addLabel,
 }: {
-    type: "roles" | "categories"
+    type: "roles" | "categories" | "platforms"
     addLabel: string
 }) {
     const { t } = useI18n()
@@ -245,6 +245,9 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="categories">
                         {t("admin.masterData.categories")}
                     </TabsTrigger>
+                    <TabsTrigger value="platforms">
+                        Platforme
+                    </TabsTrigger>
                     <TabsTrigger value="settings">
                         Indstillinger
                     </TabsTrigger>
@@ -256,6 +259,10 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="categories" className="mt-4">
                     <MasterDataTable type="categories" addLabel={t("admin.masterData.addCategory")} />
+                </TabsContent>
+
+                <TabsContent value="platforms" className="mt-4">
+                    <MasterDataTable type="platforms" addLabel="Tilføj platform" />
                 </TabsContent>
 
                 <TabsContent value="settings" className="mt-4">

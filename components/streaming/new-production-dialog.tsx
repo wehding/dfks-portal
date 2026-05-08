@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useMasterData } from "@/lib/hooks"
 import type { ProductionType, LicenseDuration } from "@/lib/streaming-types"
 
 // ── Types ─────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ interface NewProductionDialogProps {
         premiereYear: number
         licenseDurationYears: LicenseDuration
         licenseStartYear: number
+        platform?: string
         notes?: string
     }) => void
 }
@@ -44,12 +46,14 @@ const years = Array.from({ length: 6 }, (_, i) => currentYear - 2 + i)
 export function NewProductionDialog({
     open, onClose, nextProductionNumber, onCreate
 }: NewProductionDialogProps) {
+    const { items: platforms } = useMasterData("platforms")
     const [productionNumber, setProductionNumber] = useState(nextProductionNumber)
     const [title, setTitle] = useState("")
     const [type, setType] = useState<ProductionType>("film_original")
     const [premiereYear, setPremiereYear] = useState(String(currentYear))
     const [licenseStartYear, setLicenseStartYear] = useState(String(currentYear))
     const [licenseDurationYears, setLicenseDurationYears] = useState<LicenseDuration>(50)
+    const [platform, setPlatform] = useState("")
     const [notes, setNotes] = useState("")
 
     const selectedType = productionTypes.find(t => t.value === type)
@@ -70,6 +74,7 @@ export function NewProductionDialog({
             premiereYear: parseInt(premiereYear),
             licenseDurationYears,
             licenseStartYear: parseInt(licenseStartYear),
+            platform: platform || undefined,
             notes: notes.trim() || undefined,
         })
         reset()
@@ -83,6 +88,7 @@ export function NewProductionDialog({
         setPremiereYear(String(currentYear))
         setLicenseStartYear(String(currentYear))
         setLicenseDurationYears(50)
+        setPlatform("")
         setNotes("")
     }
 
@@ -132,6 +138,21 @@ export function NewProductionDialog({
                             <SelectContent>
                                 {productionTypes.map(t => (
                                     <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+
+                    {/* Platform */}
+                    <div className="space-y-1.5">
+                        <Label>Platform</Label>
+                        <Select value={platform} onValueChange={setPlatform}>
+                            <SelectTrigger>
+                                <SelectValue placeholder="Vælg platform..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {platforms.filter(p => p.active).map(p => (
+                                    <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>

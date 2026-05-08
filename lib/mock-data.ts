@@ -557,6 +557,17 @@ export const mockCategories: MasterDataItem[] = [
     { id: "cat8", name: "Sport", active: true },
 ]
 
+export const mockPlatforms: MasterDataItem[] = [
+    { id: "pl1", name: "Danmarks Radio", active: true },
+    { id: "pl2", name: "TV2", active: true },
+    { id: "pl3", name: "Viaplay", active: true },
+    { id: "pl4", name: "Netflix", active: true },
+    { id: "pl5", name: "HBO", active: true },
+    { id: "pl6", name: "Amazon Prime", active: true },
+    { id: "pl7", name: "TV2 Øst", active: true },
+    { id: "pl8", name: "TV2 Syd", active: true },
+]
+
 // ── Statistics ──────────────────────────────────────────────
 
 export const mockSalaryData: SalaryDataPoint[] = [
