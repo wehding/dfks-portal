@@ -389,7 +389,7 @@ export default function AdminKontrakterPage() {
                     setLocalPdfUrl(null)
                 }}
             >
-                <DialogContent className="max-w-7xl h-[90vh] flex flex-col">
+                <DialogContent className="sm:max-w-7xl w-[92vw] h-[90vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             {viewContract?.title}
