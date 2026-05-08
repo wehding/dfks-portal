@@ -216,9 +216,11 @@ export default function StreamingPage() {
     const [search, setSearch] = useState("")
     const [showNew, setShowNew] = useState(false)
 
+    const q = search.toLowerCase()
     const filtered = mockProductions.filter(p =>
-        p.title.toLowerCase().includes(search.toLowerCase()) ||
-        p.productionNumber.includes(search)
+        p.title.toLowerCase().includes(q) ||
+        p.productionNumber.includes(q) ||
+        p.editors.some(e => e.name.toLowerCase().includes(q))
     )
 
     const totalReceived = mockProductions.reduce((s, p) => s + p.totalReceived, 0)
@@ -262,7 +264,7 @@ export default function StreamingPage() {
 
             {/* Search */}
             <Input
-                placeholder="Søg på titel eller nummer..."
+                placeholder="Søg på titel, nummer eller klipper..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="max-w-sm"
