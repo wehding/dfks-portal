@@ -143,11 +143,7 @@ export default function MineKontrakterPage() {
         )
 
     const removeEpisode = (idx: number) =>
-        setEpisodes((prev) =>
-            prev
-                .filter((_, i) => i !== idx)
-                .map((ep, i) => ({ ...ep, number: i + 1 }))
-        )
+        setEpisodes((prev) => prev.filter((_, i) => i !== idx))
 
     const activeRoles = mockRoles.filter((r) => r.active)
 
@@ -558,11 +554,20 @@ export default function MineKontrakterPage() {
                                             {episodes.map((ep, idx) => (
                                                 <div
                                                     key={idx}
-                                                    className="grid grid-cols-[40px_1fr_80px_32px] gap-2 items-center"
+                                                    className="grid grid-cols-[52px_1fr_80px_32px] gap-2 items-center"
                                                 >
-                                                    <span className="text-xs text-muted-foreground text-center tabular-nums">
-                                                        #{ep.number}
-                                                    </span>
+                                                    <div className="relative">
+                                                        <Input
+                                                            type="number"
+                                                            value={ep.number}
+                                                            onChange={(e) =>
+                                                                updateEpisode(idx, { number: parseInt(e.target.value) || 1 })
+                                                            }
+                                                            className="h-8 text-sm pl-4 pr-1 tabular-nums"
+                                                            min={1}
+                                                        />
+                                                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">#</span>
+                                                    </div>
                                                     <Input
                                                         placeholder={t("upload.episodeTitle")}
                                                         value={ep.title}
