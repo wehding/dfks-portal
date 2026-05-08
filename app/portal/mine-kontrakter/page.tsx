@@ -87,7 +87,7 @@ export default function MineKontrakterPage() {
     const [showPdfPreview, setShowPdfPreview] = useState(false)
     const [title, setTitle] = useState("")
     const [category, setCategory] = useState<Category | "">("")
-    const [creditedRole, setCreditedRole] = useState("")
+    const [creditedRoles, setCreditedRoles] = useState<string[]>([""])
     const [duration, setDuration] = useState("")
     const [premiereDate, setPremiereDate] = useState("")
     const [episodes, setEpisodes] = useState<Episode[]>([])
@@ -169,7 +169,7 @@ export default function MineKontrakterPage() {
                 if (result.category && ["feature","short","tvSeries","documentary","docSeries","tvEntertainment","reality","sport"].includes(result.category)) {
                     setCategory(result.category as Category); filled.add("category")
                 }
-                if (result.creditedRole) { setCreditedRole(result.creditedRole); filled.add("creditedRole") }
+                if (result.creditedRole) { setCreditedRoles([result.creditedRole]); filled.add("creditedRole") }
                 if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate") }
                 if (result.episodes && result.episodes.length > 0) {
                     setEpisodes(result.episodes.map((e, i) => ({ number: i + 1, title: e.title ?? "", duration: e.duration ?? 0 })))
@@ -245,7 +245,7 @@ export default function MineKontrakterPage() {
                                             {t(`cat.${c.category}` as any)}
                                         </TableCell>
                                         <TableCell className="text-muted-foreground">
-                                            {c.creditedRole}
+                                            {c.creditedRoles.join(", ")}
                                         </TableCell>
                                         <TableCell className="text-muted-foreground tabular-nums">
                                             {c.uploadedAt}
@@ -474,18 +474,54 @@ export default function MineKontrakterPage() {
                                             {t("upload.creditedRole")}
                                             {aiFields.has("creditedRole") && <Sparkles className="h-3 w-3 text-purple-500" />}
                                         </Label>
-                                        <Select value={creditedRole} onValueChange={setCreditedRole} disabled={screening}>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="—" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                {activeRoles.map((r) => (
-                                                    <SelectItem key={r.id} value={r.name}>
-                                                        {r.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                        <div className="space-y-2">
+                                            {creditedRoles.map((role, idx) => (
+                                                <div key={idx} className="flex gap-2">
+                                                    <Select
+                                                        value={role}
+                                                        disabled={screening}
+                                                        onValueChange={(v) =>
+                                                            setCreditedRoles(prev => prev.map((r, i) => i === idx ? v : r))
+                                                        }
+                                                    >
+                                                        <SelectTrigger className="flex-1">
+                                                            <SelectValue placeholder="—" />
+                                                        </SelectTrigger>
+                                                        <SelectContent>
+                                                            {activeRoles.map((r) => (
+                                                                <SelectItem key={r.id} value={r.name}>
+                                                                    {r.name}
+                                                                </SelectItem>
+                                                            ))}
+                                                        </SelectContent>
+                                                    </Select>
+                                                    {creditedRoles.length > 1 && (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="h-9 w-9 shrink-0 text-muted-foreground"
+                                                            onClick={() =>
+                                                                setCreditedRoles(prev => prev.filter((_, i) => i !== idx))
+                                                            }
+                                                        >
+                                                            <X className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 gap-1 text-xs text-muted-foreground px-0 hover:bg-transparent hover:text-foreground"
+                                                disabled={screening}
+                                                onClick={() => setCreditedRoles(prev => [...prev, ""])}
+                                            >
+                                                <Plus className="h-3 w-3" />
+                                                Tilføj kreditering
+                                            </Button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -618,7 +654,7 @@ export default function MineKontrakterPage() {
 
                                 <Button
                                     className="w-full"
-                                    disabled={!file || !title || screening}
+                                    disabled={!file || !title || screening || creditedRoles.every(r => !r)}
                                     onClick={() => {
                                         if (!file || !title) return
                                         const today = new Date()
@@ -629,7 +665,7 @@ export default function MineKontrakterPage() {
                                             userName: "Anna Heide",
                                             title: title.trim(),
                                             category: (category || "feature") as any,
-                                            creditedRole: creditedRole || "Klipper",
+                                            creditedRoles: creditedRoles.filter(Boolean).length > 0 ? creditedRoles.filter(Boolean) : ["Klipper"],
                                             duration: isSeries
                                                 ? episodes.reduce((s, e) => s + e.duration, 0)
                                                 : Number(duration) || 0,
@@ -646,7 +682,7 @@ export default function MineKontrakterPage() {
                                         setPdfUrl(null)
                                         setTitle("")
                                         setCategory("")
-                                        setCreditedRole("")
+                                        setCreditedRoles([""])
                                         setDuration("")
                                         setPremiereDate("")
                                         setEpisodes([])

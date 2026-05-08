@@ -55,7 +55,7 @@ export interface Contract {
     userName?: string
     title: string
     category: Category
-    creditedRole: string
+    creditedRoles: string[]
     duration: number // minutes (total or per episode)
     episodes?: Episode[]
     premiereDate: string
@@ -97,7 +97,7 @@ export interface ExtractedContractData {
 export interface Work {
     id: string
     title: string
-    creditedRole: string
+    creditedRoles: string[]
     sharedCredit: boolean
     sharedWith?: string[] // names of other credited users
     duration: number
@@ -228,7 +228,7 @@ export interface CreditEntry {
     workTitle: string
     category: Category
     premiereYear: number
-    creditedRole: string
+    creditedRoles: string[]
     memberName: string
     memberId: string
     producerName: string

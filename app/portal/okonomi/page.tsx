@@ -379,7 +379,7 @@ export default function PortalOkonomiPage() {
                         userName: "Anna Heide",
                         title: uploadFor.title,
                         category: "feature",
-                        creditedRole: "Klipper",
+                        creditedRoles: ["Klipper"],
                         duration: 0,
                         premiereDate: today,
                         premiereYear: new Date().getFullYear(),

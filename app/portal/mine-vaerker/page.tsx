@@ -184,7 +184,7 @@ export default function MineVaerkerPage() {
                                             </span>
                                         </div>
                                     </TableCell>
-                                    <TableCell>{work.creditedRole}</TableCell>
+                                    <TableCell>{work.creditedRoles.join(", ")}</TableCell>
                                     <TableCell>
                                         {work.sharedCredit ? (
                                             <Tooltip>

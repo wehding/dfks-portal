@@ -237,7 +237,7 @@ export default function AdminKrediteringerPage() {
                                         {credit.premiereYear}
                                     </TableCell>
                                     <TableCell>{credit.memberName}</TableCell>
-                                    <TableCell>{credit.creditedRole}</TableCell>
+                                    <TableCell>{credit.creditedRoles.join(", ")}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">
                                         {credit.producerName}
                                     </TableCell>
