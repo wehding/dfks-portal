@@ -143,7 +143,7 @@ export interface StreamingPayout {
     productionId: string
     distributionKeyId: string       // Den fordelingsnøgle der bruges
     payoutYear: number
-    type: "irf" | "completers"      // IRF = initial, Completers = løbende
+    type: "irf" | "succesbetaling"      // IRF = første udbetaling, Succesbetaling = løbende
     grossAmount: number             // Modtaget fra Create Denmark inkl. adm.
     adminFeePercent: number         // Fra produktionens adminFeePercent
     adminFeeAmount: number          // Beregnet: grossAmount × adminFeePercent / (100 + adminFeePercent)
@@ -257,7 +257,7 @@ export interface EditorPayoutSummary {
     sharePercent?: number           // Aktuel andel i låst nøgle
     payouts: {
         year: number
-        type: "irf" | "completers"
+        type: "irf" | "succesbetaling"
         amount: number
         status: PayoutStatus
         paidAt?: string

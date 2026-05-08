@@ -17,7 +17,7 @@ interface RegisterPayoutDialogProps {
     productionTitle: string
     onRegister: (payout: {
         payoutYear: number
-        type: "irf" | "completers"
+        type: "irf" | "succesbetaling"
         grossAmount: number
         adminFeePercent: number
         receivedAt: string
@@ -52,7 +52,7 @@ export function RegisterPayoutDialog({
         ? Number(localStorage.getItem("streaming_admin_fee") ?? "15")
         : 15
     const [payoutYear, setPayoutYear] = useState(String(currentYear - 1))
-    const [type, setType] = useState<"irf" | "completers">("completers")
+    const [type, setType] = useState<"irf" | "succesbetaling">("succesbetaling")
     const [grossInput, setGrossInput] = useState("")
     const [receivedAt, setReceivedAt] = useState(
         new Date().toISOString().split("T")[0]
@@ -108,13 +108,13 @@ export function RegisterPayoutDialog({
                         </div>
                         <div className="space-y-1.5">
                             <Label>Type</Label>
-                            <Select value={type} onValueChange={v => setType(v as "irf" | "completers")}>
+                            <Select value={type} onValueChange={v => setType(v as "irf" | "succesbetaling")}>
                                 <SelectTrigger>
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="irf">IRF (første udbetaling)</SelectItem>
-                                    <SelectItem value="completers">Completers (løbende)</SelectItem>
+                                    <SelectItem value="succesbetaling">Succesbetaling (løbende)</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>

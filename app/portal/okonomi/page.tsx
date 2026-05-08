@@ -29,7 +29,7 @@ interface MyDistributionKey {
 interface MyPayout {
     id: string
     payoutYear: number
-    type: "irf" | "completers"
+    type: "irf" | "succesbetaling"
     myAmount: number
     status: PayoutStatus
     paidAt?: string
@@ -69,8 +69,8 @@ const myProductions: MyProduction[] = [
             ],
         },
         payouts: [
-            { id: "p1", payoutYear: 2023, type: "completers", myAmount: 5201.38, status: "paid", paidAt: "2024-03-01" },
-            { id: "p2", payoutYear: 2024, type: "completers", myAmount: 8886.92, status: "pending" },
+            { id: "p1", payoutYear: 2023, type: "succesbetaling", myAmount: 5201.38, status: "paid", paidAt: "2024-03-01" },
+            { id: "p2", payoutYear: 2024, type: "succesbetaling", myAmount: 8886.92, status: "pending" },
         ],
         totalReceived: 5201.38,
     },
@@ -343,7 +343,7 @@ export default function PortalOkonomiPage() {
                                                 <div key={payout.id} className="flex items-center gap-3 px-4 py-3">
                                                     <div className="flex-1">
                                                         <p className="text-sm">
-                                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Completers"}
+                                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Succesbetaling"}
                                                         </p>
                                                         {payout.paidAt && (
                                                             <p className="text-xs text-muted-foreground">Udbetalt {payout.paidAt}</p>

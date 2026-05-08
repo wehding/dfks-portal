@@ -50,7 +50,7 @@ interface MockDistributionKey {
 interface MockPayout {
     id: string
     payoutYear: number
-    type: "irf" | "completers"
+    type: "irf" | "succesbetaling"
     grossAmount: number
     adminFeePercent: number
     adminFeeAmount: number
@@ -87,8 +87,8 @@ const mockData: Record<string, MockProductionDetail> = {
         },
         payouts: [
             { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 33438.59, adminFeePercent: 15, adminFeeAmount: 3343.86, netAmount: 30094.73, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 30094.73 }] },
-            { id: "p2", payoutYear: 2023, type: "completers", grossAmount: 11154.37, adminFeePercent: 15, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 10038.93 }] },
-            { id: "p3", payoutYear: 2024, type: "completers", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "exported", receivedAt: "2025-01-20", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 9479.39 }] },
+            { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 15, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 10038.93 }] },
+            { id: "p3", payoutYear: 2024, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "exported", receivedAt: "2025-01-20", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 9479.39 }] },
         ],
     },
     "002": {
@@ -146,7 +146,7 @@ const mockData: Record<string, MockProductionDetail> = {
         },
         payouts: [
             { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 22292.39, adminFeePercent: 10, adminFeeAmount: 2229.24, netAmount: 20063.15, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 12037.89 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 8025.26 }] },
-            { id: "p2", payoutYear: 2023, type: "completers", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 6023.36 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 4015.57 }] },
+            { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 6023.36 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 4015.57 }] },
         ],
     },
     "004": {
@@ -214,7 +214,7 @@ const mockData: Record<string, MockProductionDetail> = {
         },
         payouts: [
             { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 36815.61, adminFeePercent: 10, adminFeeAmount: 3681.56, netAmount: 33134.05, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 19880.43 }, { name: "Biel Andrés", sharePercent: 40, amount: 13253.62 }] },
-            { id: "p2", payoutYear: 2024, type: "completers", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 6023.36 }, { name: "Biel Andrés", sharePercent: 40, amount: 4015.57 }] },
+            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 6023.36 }, { name: "Biel Andrés", sharePercent: 40, amount: 4015.57 }] },
         ],
     },
     "007": {
@@ -231,8 +231,8 @@ const mockData: Record<string, MockProductionDetail> = {
         },
         payouts: [
             { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 22799.51, adminFeePercent: 15, adminFeeAmount: 2279.95, netAmount: 20519.56, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20519.56 }] },
-            { id: "p2", payoutYear: 2024, type: "completers", grossAmount: 22308.73, adminFeePercent: 15, adminFeeAmount: 2230.87, netAmount: 20077.86, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20077.86 }] },
-            { id: "p3", payoutYear: 2025, type: "completers", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "pending", receivedAt: "2025-03-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 9479.39 }] },
+            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 22308.73, adminFeePercent: 15, adminFeeAmount: 2230.87, netAmount: 20077.86, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20077.86 }] },
+            { id: "p3", payoutYear: 2025, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "pending", receivedAt: "2025-03-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 9479.39 }] },
         ],
     },
     "008": {
@@ -262,8 +262,8 @@ const mockData: Record<string, MockProductionDetail> = {
             ],
         },
         payouts: [
-            { id: "p1", payoutYear: 2023, type: "completers", grossAmount: 15411.50, adminFeePercent: 15, adminFeeAmount: 1541.15, netAmount: 13870.35, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 3467.59 }, { name: "Anna Heide", sharePercent: 37.5, amount: 5201.38 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 3467.59 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 1733.79 }] },
-            { id: "p2", payoutYear: 2024, type: "completers", grossAmount: 27880.54, adminFeePercent: 15, adminFeeAmount: 4182.08, netAmount: 23698.46, status: "pending", receivedAt: "2025-02-10", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 5924.61 }, { name: "Anna Heide", sharePercent: 37.5, amount: 8886.92 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 5924.61 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 2962.31 }] },
+            { id: "p1", payoutYear: 2023, type: "succesbetaling", grossAmount: 15411.50, adminFeePercent: 15, adminFeeAmount: 1541.15, netAmount: 13870.35, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 3467.59 }, { name: "Anna Heide", sharePercent: 37.5, amount: 5201.38 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 3467.59 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 1733.79 }] },
+            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 27880.54, adminFeePercent: 15, adminFeeAmount: 4182.08, netAmount: 23698.46, status: "pending", receivedAt: "2025-02-10", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 5924.61 }, { name: "Anna Heide", sharePercent: 37.5, amount: 8886.92 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 5924.61 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 2962.31 }] },
         ],
     },
     "009": {
@@ -666,7 +666,7 @@ export default function StreamingDetailPage() {
                                 >
                                     <div className="flex-1">
                                         <p className="text-sm font-medium">
-                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Completers"}
+                                            {payout.payoutYear} — {payout.type === "irf" ? "IRF" : "Succesbetaling"}
                                         </p>
                                         <p className="text-xs text-muted-foreground mt-0.5">
                                             Modtaget {payout.receivedAt}
