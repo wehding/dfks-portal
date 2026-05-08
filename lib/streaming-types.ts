@@ -232,6 +232,7 @@ export interface StreamingSettings {
  * Beregnet view — ikke gemt i DB.
  */
 // ── Oversigt / Dashboard ─────────────────────────────────────
+export interface ProductionOverview {
     production: StreamingProduction
     editors: ProductionEditor[]
     activeDistributionKey?: DistributionKey
