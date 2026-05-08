@@ -280,7 +280,7 @@ export default function AdminStamdataPage() {
                 </TabsContent>
 
                 <TabsContent value="categories" className="mt-4">
-                    <MasterDataTable type="categories" addLabel={t("admin.masterData.addCategory")} />
+                    <MasterDataTable type="categories" addLabel={t("admin.masterData.addCategory")} reorderable />
                 </TabsContent>
 
                 <TabsContent value="platforms" className="mt-4">
