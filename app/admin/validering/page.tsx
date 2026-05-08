@@ -385,24 +385,33 @@ export default function AdminValideringPage() {
 
                         <div className="space-y-5 p-4">
                             {/* Portal-submitted data (read-only) */}
-                            {(reviewingContract.creditedRoles.length > 0 || reviewingContract.episodes) && (
+                            {(reviewingContract.creditedRoles.length > 0 || reviewingContract.episodeCredits || reviewingContract.episodes) && (
                                 <>
                                     <div className="rounded-md bg-muted/40 border px-3 py-2.5 space-y-2">
                                         <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Indsendt af klipper</p>
                                         <div className="space-y-1 text-sm">
-                                            <div className="flex gap-2">
-                                                <span className="text-muted-foreground shrink-0">{t("upload.creditedRole")}:</span>
-                                                <span>{reviewingContract.creditedRoles.join(", ") || "—"}</span>
-                                            </div>
-                                            {reviewingContract.episodes && reviewingContract.episodes.length > 0 && (
+                                            {reviewingContract.episodeCredits && reviewingContract.episodeCredits.length > 0 ? (
+                                                <div className="space-y-0.5">
+                                                    <span className="text-muted-foreground text-xs">Kreditering pr. afsnit:</span>
+                                                    {Object.entries(
+                                                        reviewingContract.episodeCredits.reduce<Record<string, number[]>>((acc, ec) => {
+                                                            acc[ec.role] = [...(acc[ec.role] ?? []), ec.number]
+                                                            return acc
+                                                        }, {})
+                                                    ).map(([role, nums]) => (
+                                                        <div key={role} className="flex gap-2 pl-2">
+                                                            <span className="text-muted-foreground shrink-0">{role}:</span>
+                                                            <span className="tabular-nums">{nums.sort((a,b)=>a-b).map(n => `#${n}`).join(", ")}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
                                                 <div className="flex gap-2">
-                                                    <span className="text-muted-foreground shrink-0">Afsnit:</span>
-                                                    <span className="tabular-nums">
-                                                        {reviewingContract.episodes.map(e => `#${e.number}`).join(", ")}
-                                                    </span>
+                                                    <span className="text-muted-foreground shrink-0">{t("upload.creditedRole")}:</span>
+                                                    <span>{reviewingContract.creditedRoles.join(", ") || "—"}</span>
                                                 </div>
                                             )}
-                                            {reviewingContract.duration > 0 && !reviewingContract.episodes?.length && (
+                                            {reviewingContract.duration > 0 && !reviewingContract.episodeCredits?.length && (
                                                 <div className="flex gap-2">
                                                     <span className="text-muted-foreground shrink-0">Varighed:</span>
                                                     <span className="tabular-nums">{reviewingContract.duration} min</span>

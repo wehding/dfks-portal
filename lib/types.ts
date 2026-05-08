@@ -49,6 +49,11 @@ export interface User {
     avatarUrl?: string
 }
 
+export interface EpisodeCredit {
+    number: number
+    role: string
+}
+
 export interface Contract {
     id: string
     userId: string
@@ -58,6 +63,7 @@ export interface Contract {
     creditedRoles: string[]
     duration: number // minutes (total or per episode)
     episodes?: Episode[]
+    episodeCredits?: EpisodeCredit[] // per-episode role assignment (for series)
     premiereDate: string
     premiereYear: number
     fileUrl: string

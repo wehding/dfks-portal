@@ -442,23 +442,32 @@ export default function AdminKontrakterPage() {
                             <div className="rounded-lg border overflow-auto">
                                 <div className="p-4 space-y-4 text-sm">
                                     {/* Portal-submitted data */}
-                                    {(viewContract.creditedRoles.length > 0 || viewContract.episodes) && (
+                                    {(viewContract.creditedRoles.length > 0 || viewContract.episodeCredits || viewContract.episodes) && (
                                         <>
                                             <div className="rounded-md bg-muted/40 border px-3 py-2.5 space-y-1.5">
                                                 <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Indsendt af klipper</p>
-                                                {viewContract.creditedRoles.length > 0 && (
+                                                {viewContract.episodeCredits && viewContract.episodeCredits.length > 0 ? (
+                                                    <div className="space-y-0.5">
+                                                        <span className="text-muted-foreground text-xs">Kreditering pr. afsnit:</span>
+                                                        {Object.entries(
+                                                            viewContract.episodeCredits.reduce<Record<string, number[]>>((acc, ec) => {
+                                                                acc[ec.role] = [...(acc[ec.role] ?? []), ec.number]
+                                                                return acc
+                                                            }, {})
+                                                        ).map(([role, nums]) => (
+                                                            <div key={role} className="flex gap-2 pl-2">
+                                                                <span className="text-muted-foreground shrink-0">{role}:</span>
+                                                                <span className="tabular-nums">{nums.sort((a,b)=>a-b).map(n => `#${n}`).join(", ")}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : viewContract.creditedRoles.length > 0 && (
                                                     <div className="flex gap-2">
                                                         <span className="text-muted-foreground shrink-0">{t("upload.creditedRole")}:</span>
                                                         <span>{viewContract.creditedRoles.join(", ")}</span>
                                                     </div>
                                                 )}
-                                                {viewContract.episodes && viewContract.episodes.length > 0 && (
-                                                    <div className="flex gap-2">
-                                                        <span className="text-muted-foreground shrink-0">Afsnit:</span>
-                                                        <span className="tabular-nums">{viewContract.episodes.map(e => `#${e.number}`).join(", ")}</span>
-                                                    </div>
-                                                )}
-                                                {viewContract.duration > 0 && !viewContract.episodes?.length && (
+                                                {viewContract.duration > 0 && !viewContract.episodeCredits?.length && (
                                                     <div className="flex gap-2">
                                                         <span className="text-muted-foreground shrink-0">Varighed:</span>
                                                         <span className="tabular-nums">{viewContract.duration} min</span>
