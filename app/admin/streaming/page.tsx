@@ -232,7 +232,7 @@ export default function StreamingPage() {
             {/* Header */}
             <div className="flex items-start justify-between">
                 <div>
-                    <h1 className="text-2xl font-semibold tracking-tight">Værker</h1>
+                    <h1 className="text-2xl font-semibold tracking-tight">Rettighedsbetaling</h1>
                     <p className="mt-1 text-sm text-muted-foreground">
                         Rettighedsudbetalinger via Create Denmark
                     </p>

@@ -17,6 +17,7 @@ import {
     Receipt,
     BookOpen,
     Scale,
+    Library,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -70,6 +71,11 @@ export default function AdminLayout({
             label: t("nav.payouts"),
             href: "/admin/udbetalinger",
             icon: Wallet,
+        },
+        {
+            label: t("nav.works"),
+            href: "/admin/vaerker",
+            icon: Library,
         },
         {
             label: t("nav.streaming"),
