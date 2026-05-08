@@ -709,6 +709,7 @@ function ContractTable({ contracts, onReview, onDelete, t, showStatus = false }:
                         <TableHead>{t("upload.title")}</TableHead>
                         <TableHead>{t("upload.member")}</TableHead>
                         <TableHead className="hidden sm:table-cell">{t("upload.category")}</TableHead>
+                        <TableHead className="hidden md:table-cell">{t("upload.creditedRole")}</TableHead>
                         <TableHead className="hidden md:table-cell">{t("admin.contracts.uploaded")}</TableHead>
                         {showStatus && <TableHead>{t("common.status")}</TableHead>}
                         <TableHead className="w-[100px]" />
@@ -725,6 +726,7 @@ function ContractTable({ contracts, onReview, onDelete, t, showStatus = false }:
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">{c.userName ?? "—"}</TableCell>
                             <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{c.category ?? "—"}</TableCell>
+                            <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{c.creditedRoles.join(", ")}</TableCell>
                             <TableCell className="hidden md:table-cell text-sm text-muted-foreground tabular-nums">
                                 {new Date(c.uploadedAt).toLocaleDateString("da-DK")}
                             </TableCell>

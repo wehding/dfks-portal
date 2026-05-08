@@ -256,6 +256,7 @@ export default function AdminKontrakterPage() {
                                 </button>
                             </TableHead>
                             <TableHead>{t("admin.contracts.member")}</TableHead>
+                            <TableHead>{t("upload.creditedRole")}</TableHead>
                             <TableHead>
                                 <button
                                     className="flex items-center text-xs font-medium"
@@ -305,6 +306,9 @@ export default function AdminKontrakterPage() {
                                     <TableCell className="font-medium">{c.title}</TableCell>
                                     <TableCell className="text-muted-foreground">
                                         {c.userName}
+                                    </TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {c.creditedRoles.join(", ")}
                                     </TableCell>
                                     <TableCell>
                                         <span className="text-sm">
