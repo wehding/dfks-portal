@@ -15,6 +15,7 @@ import {
     Loader2,
     X,
 } from "lucide-react"
+import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
 import { mockRoles, mockRegisteredWorks } from "@/lib/mock-data"
 import { useContracts } from "@/lib/hooks"
