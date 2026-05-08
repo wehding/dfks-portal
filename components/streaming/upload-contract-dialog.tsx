@@ -76,7 +76,7 @@ export function UploadContractDialog({
                 <div className="space-y-4">
                     {/* Produktion */}
                     <div className="rounded-md border bg-muted/40 px-4 py-3">
-                        <p className="text-xs text-muted-foreground">Produktion</p>
+                        <p className="text-xs text-muted-foreground">Værk</p>
                         <p className="mt-0.5 text-sm font-medium">{productionTitle}</p>
                     </div>
 

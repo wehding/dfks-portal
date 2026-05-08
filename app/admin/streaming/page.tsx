@@ -237,14 +237,14 @@ export default function StreamingPage() {
                 </div>
                 <Button onClick={() => setShowNew(true)}>
                     <Plus className="h-4 w-4" />
-                    Ny produktion
+                    Nyt værk
                 </Button>
             </div>
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Produktioner</p>
+                    <p className="text-sm text-muted-foreground">Værker</p>
                     <p className="mt-1 text-2xl font-semibold">{mockProductions.length}</p>
                 </div>
                 <div className="rounded-lg border bg-card p-4">
@@ -262,7 +262,7 @@ export default function StreamingPage() {
 
             {/* Search */}
             <Input
-                placeholder="Søg på titel eller produktionsnummer..."
+                placeholder="Søg på titel eller nummer..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 className="max-w-sm"
@@ -332,7 +332,7 @@ export default function StreamingPage() {
 
                 {filtered.length === 0 && (
                     <div className="py-12 text-center text-sm text-muted-foreground">
-                        Ingen produktioner matcher din søgning
+                        Ingen værker matcher din søgning
                     </div>
                 )}
             </div>

@@ -97,7 +97,7 @@ export function NewProductionDialog({
         <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Ny produktion</DialogTitle>
+                    <DialogTitle>Nyt værk</DialogTitle>
                 </DialogHeader>
 
                 <div className="space-y-4 py-2">
@@ -119,7 +119,7 @@ export function NewProductionDialog({
                             </Label>
                             <Input
                                 id="title"
-                                placeholder="Produktionens titel"
+                                placeholder="Titlen"
                                 value={title}
                                 onChange={e => setTitle(e.target.value)}
                                 autoFocus
@@ -235,7 +235,7 @@ export function NewProductionDialog({
                 <DialogFooter>
                     <Button variant="outline" onClick={handleClose}>Annuller</Button>
                     <Button onClick={handleSubmit} disabled={!isValid}>
-                        Opret produktion
+                        Opret værk
                     </Button>
                 </DialogFooter>
             </DialogContent>

@@ -496,7 +496,7 @@ export default function StreamingDetailPage() {
                     </Link>
                 </Button>
                 <div className="py-12 text-center text-sm text-muted-foreground">
-                    Produktion ikke fundet
+                    Værk ikke fundet
                 </div>
             </div>
         )

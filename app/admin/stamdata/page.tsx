@@ -328,7 +328,7 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="roles">{t("admin.masterData.roles")}</TabsTrigger>
                     <TabsTrigger value="categories">{t("admin.masterData.categories")}</TabsTrigger>
                     <TabsTrigger value="platforms">Platforme</TabsTrigger>
-                    <TabsTrigger value="productionTypes">Produktionstyper</TabsTrigger>
+                    <TabsTrigger value="productionTypes">Værkstyper</TabsTrigger>
                     <TabsTrigger value="licensePeriods">Licensperioder</TabsTrigger>
                     <TabsTrigger value="settings">Indstillinger</TabsTrigger>
                 </TabsList>
@@ -348,7 +348,7 @@ export default function AdminStamdataPage() {
                 <TabsContent value="productionTypes" className="mt-4">
                     <MasterDataTable
                         type="productionTypes"
-                        addLabel="Tilføj produktionstype"
+                        addLabel="Tilføj værkstype"
                         reorderable
                         metaLabel="Standard licens"
                         metaPlaceholder="Fx 50"

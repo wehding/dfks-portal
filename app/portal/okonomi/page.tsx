@@ -250,7 +250,7 @@ export default function PortalOkonomiPage() {
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Kræver handling</p>
                     <p className={`mt-1 text-xl font-semibold ${needsAction > 0 ? "text-amber-600" : ""}`}>
-                        {needsAction > 0 ? `${needsAction} produktion${needsAction > 1 ? "er" : ""}` : "—"}
+                        {needsAction > 0 ? `${needsAction} ${needsAction > 1 ? "værker" : "værk"}` : "—"}
                     </p>
                 </div>
             </div>
@@ -311,7 +311,7 @@ export default function PortalOkonomiPage() {
                                                 <div>
                                                     <p className="text-sm font-medium text-red-700 dark:text-red-300">Kontrakt mangler</p>
                                                     <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">
-                                                        Din kontrakt for denne produktion er ikke registreret i arkivet. Upload den som dokumentation for dine bevarede rettigheder.
+                                                        Din kontrakt for dette værk er ikke registreret i arkivet. Upload den som dokumentation for dine bevarede rettigheder.
                                                     </p>
                                                 </div>
                                                 <Button size="sm" variant="outline" className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300" onClick={() => setUploadFor(production)}>

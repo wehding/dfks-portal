@@ -101,7 +101,7 @@ export function CreateDistributionKeyDialog({
                     {editors.length === 0 ? (
                         <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
                             <AlertCircle className="h-4 w-4 shrink-0" />
-                            Tilføj klippere til produktionen før du opretter en fordelingsnøgle
+                            Tilføj klippere til værket før du opretter en fordelingsnøgle
                         </div>
                     ) : (
                         <>
