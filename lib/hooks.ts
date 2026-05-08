@@ -14,6 +14,8 @@ import {
     mockRoles as initialRoles,
     mockCategories as initialCategories,
     mockPlatforms as initialPlatforms,
+    mockProductionTypes as initialProductionTypes,
+    mockLicensePeriods as initialLicensePeriods,
 } from "./mock-data"
 
 // ── Contracts ───────────────────────────────────────────────
@@ -57,8 +59,13 @@ export function useWorks(initialData?: Work[]) {
 
 // ── Master Data ─────────────────────────────────────────────
 
-export function useMasterData(type: "roles" | "categories" | "platforms") {
-    const initial = type === "roles" ? initialRoles : type === "platforms" ? initialPlatforms : initialCategories
+export function useMasterData(type: "roles" | "categories" | "platforms" | "productionTypes" | "licensePeriods") {
+    const initial =
+        type === "roles" ? initialRoles :
+        type === "platforms" ? initialPlatforms :
+        type === "productionTypes" ? initialProductionTypes :
+        type === "licensePeriods" ? initialLicensePeriods :
+        initialCategories
     const [items, setItems] = useState<MasterDataItem[]>(initial)
 
     const addItem = useCallback((name: string) => {

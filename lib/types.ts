@@ -151,6 +151,7 @@ export interface MasterDataItem {
     id: string
     name: string
     active: boolean
+    meta?: string   // Valgfrit ekstra felt, fx standard licensperiode for produktionstyper
 }
 
 // ── Settings ────────────────────────────────────────────────

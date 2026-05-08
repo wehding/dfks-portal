@@ -31,16 +31,21 @@ function MasterDataTable({
     type,
     addLabel,
     reorderable = false,
+    metaLabel,
+    metaPlaceholder,
 }: {
-    type: "roles" | "categories" | "platforms"
+    type: "roles" | "categories" | "platforms" | "productionTypes" | "licensePeriods"
     addLabel: string
     reorderable?: boolean
+    metaLabel?: string
+    metaPlaceholder?: string
 }) {
     const { t } = useI18n()
     const { items, addItem, deleteItem, toggleActive, renameItem, reorderItems } = useMasterData(type)
 
     const [addDialogOpen, setAddDialogOpen] = useState(false)
     const [newName, setNewName] = useState("")
+    const [newMeta, setNewMeta] = useState("")
     const [editingId, setEditingId] = useState<string | null>(null)
     const [editingName, setEditingName] = useState("")
     const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -49,8 +54,10 @@ function MasterDataTable({
 
     const handleAdd = () => {
         if (newName.trim()) {
-            addItem(newName.trim())
+            const item = { id: `${type}_${Date.now()}`, name: newName.trim(), active: true, meta: newMeta.trim() || undefined }
+            addItem(item.name)
             setNewName("")
+            setNewMeta("")
             setAddDialogOpen(false)
         }
     }
@@ -98,7 +105,9 @@ function MasterDataTable({
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            {reorderable && <TableHead className="w-8" />}
                             <TableHead>{t("admin.masterData.name")}</TableHead>
+                            {metaLabel && <TableHead className="w-[140px]">{metaLabel}</TableHead>}
                             <TableHead className="w-[80px]">{t("admin.masterData.active")}</TableHead>
                             <TableHead className="w-[100px]" />
                         </TableRow>
@@ -160,6 +169,11 @@ function MasterDataTable({
                                         </span>
                                     )}
                                 </TableCell>
+                                {metaLabel && (
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {item.meta ? `${item.meta} år` : "—"}
+                                    </TableCell>
+                                )}
                                 <TableCell>
                                     <Switch
                                         checked={item.active}
@@ -199,15 +213,27 @@ function MasterDataTable({
                     <DialogHeader>
                         <DialogTitle>{addLabel}</DialogTitle>
                     </DialogHeader>
-                    <div className="space-y-1.5">
-                        <Label className="text-xs">{t("admin.masterData.name")}</Label>
-                        <Input
-                            value={newName}
-                            onChange={(e) => setNewName(e.target.value)}
-                            placeholder="Navn..."
-                            autoFocus
-                            onKeyDown={(e) => e.key === "Enter" && handleAdd()}
-                        />
+                    <div className="space-y-3">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">{t("admin.masterData.name")}</Label>
+                            <Input
+                                value={newName}
+                                onChange={(e) => setNewName(e.target.value)}
+                                placeholder="Navn..."
+                                autoFocus
+                                onKeyDown={(e) => e.key === "Enter" && handleAdd()}
+                            />
+                        </div>
+                        {metaLabel && (
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">{metaLabel}</Label>
+                                <Input
+                                    value={newMeta}
+                                    onChange={(e) => setNewMeta(e.target.value)}
+                                    placeholder={metaPlaceholder ?? ""}
+                                />
+                            </div>
+                        )}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
@@ -261,18 +287,12 @@ export default function AdminStamdataPage() {
 
             <Tabs defaultValue="roles">
                 <TabsList>
-                    <TabsTrigger value="roles">
-                        {t("admin.masterData.roles")}
-                    </TabsTrigger>
-                    <TabsTrigger value="categories">
-                        {t("admin.masterData.categories")}
-                    </TabsTrigger>
-                    <TabsTrigger value="platforms">
-                        Platforme
-                    </TabsTrigger>
-                    <TabsTrigger value="settings">
-                        Indstillinger
-                    </TabsTrigger>
+                    <TabsTrigger value="roles">{t("admin.masterData.roles")}</TabsTrigger>
+                    <TabsTrigger value="categories">{t("admin.masterData.categories")}</TabsTrigger>
+                    <TabsTrigger value="platforms">Platforme</TabsTrigger>
+                    <TabsTrigger value="productionTypes">Produktionstyper</TabsTrigger>
+                    <TabsTrigger value="licensePeriods">Licensperioder</TabsTrigger>
+                    <TabsTrigger value="settings">Indstillinger</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -285,6 +305,24 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="platforms" className="mt-4">
                     <MasterDataTable type="platforms" addLabel="Tilføj platform" reorderable />
+                </TabsContent>
+
+                <TabsContent value="productionTypes" className="mt-4">
+                    <MasterDataTable
+                        type="productionTypes"
+                        addLabel="Tilføj produktionstype"
+                        reorderable
+                        metaLabel="Standard licens"
+                        metaPlaceholder="Fx 50"
+                    />
+                </TabsContent>
+
+                <TabsContent value="licensePeriods" className="mt-4">
+                    <MasterDataTable
+                        type="licensePeriods"
+                        addLabel="Tilføj licensperiode"
+                        reorderable
+                    />
                 </TabsContent>
 
                 <TabsContent value="settings" className="mt-4">

@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useMasterData } from "@/lib/hooks"
-import type { ProductionType, LicenseDuration } from "@/lib/streaming-types"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -18,25 +17,14 @@ interface NewProductionDialogProps {
     onCreate: (production: {
         productionNumber: string
         title: string
-        type: ProductionType
+        type: string
         premiereYear: number
-        licenseDurationYears: LicenseDuration
+        licenseDurationYears: number
         licenseStartYear: number
         platform?: string
         notes?: string
     }) => void
 }
-
-// ── Helpers ──────────────────────────────────────────────────
-
-const productionTypes: { value: ProductionType; label: string; defaultLicense: LicenseDuration }[] = [
-    { value: "film_original",        label: "Film — Original",           defaultLicense: 50 },
-    { value: "film_licensed",        label: "Film — Licenseret",         defaultLicense: 10 },
-    { value: "tv_series_original",   label: "TV Serie — Original",       defaultLicense: 50 },
-    { value: "tv_series_licensed",   label: "TV Serie — Licenseret",     defaultLicense: 10 },
-    { value: "short_original",       label: "Kortfilm — Original",       defaultLicense: 50 },
-    { value: "documentary_original", label: "Dokumentar — Original",     defaultLicense: 50 },
-]
 
 const currentYear = new Date().getFullYear()
 const years = Array.from({ length: 6 }, (_, i) => currentYear - 2 + i)
@@ -47,22 +35,27 @@ export function NewProductionDialog({
     open, onClose, nextProductionNumber, onCreate
 }: NewProductionDialogProps) {
     const { items: platforms } = useMasterData("platforms")
+    const { items: productionTypes } = useMasterData("productionTypes")
+    const { items: licensePeriods } = useMasterData("licensePeriods")
+
+    const activeTypes = productionTypes.filter(t => t.active)
+    const activePeriods = licensePeriods.filter(p => p.active)
+
     const [productionNumber, setProductionNumber] = useState(nextProductionNumber)
     const [title, setTitle] = useState("")
-    const [type, setType] = useState<ProductionType>("film_original")
+    const [type, setType] = useState("")
     const [premiereYear, setPremiereYear] = useState(String(currentYear))
     const [licenseStartYear, setLicenseStartYear] = useState(String(currentYear))
-    const [licenseDurationYears, setLicenseDurationYears] = useState<LicenseDuration>(50)
+    const [licenseDurationYears, setLicenseDurationYears] = useState("")
     const [platform, setPlatform] = useState("")
     const [notes, setNotes] = useState("")
 
-    const selectedType = productionTypes.find(t => t.value === type)
     const isValid = title.trim().length > 0 && productionNumber.trim().length > 0
 
-    function handleTypeChange(val: ProductionType) {
+    function handleTypeChange(val: string) {
         setType(val)
-        const t = productionTypes.find(pt => pt.value === val)
-        if (t) setLicenseDurationYears(t.defaultLicense)
+        const selected = productionTypes.find(pt => pt.name === val)
+        if (selected?.meta) setLicenseDurationYears(selected.meta)
     }
 
     function handleSubmit() {
@@ -72,7 +65,7 @@ export function NewProductionDialog({
             title: title.trim(),
             type,
             premiereYear: parseInt(premiereYear),
-            licenseDurationYears,
+            licenseDurationYears: parseInt(licenseDurationYears) || 50,
             licenseStartYear: parseInt(licenseStartYear),
             platform: platform || undefined,
             notes: notes.trim() || undefined,
@@ -84,10 +77,10 @@ export function NewProductionDialog({
     function reset() {
         setProductionNumber(nextProductionNumber)
         setTitle("")
-        setType("film_original")
+        setType("")
         setPremiereYear(String(currentYear))
         setLicenseStartYear(String(currentYear))
-        setLicenseDurationYears(50)
+        setLicenseDurationYears("")
         setPlatform("")
         setNotes("")
     }
@@ -131,13 +124,13 @@ export function NewProductionDialog({
                     {/* Type */}
                     <div className="space-y-1.5">
                         <Label>Type</Label>
-                        <Select value={type} onValueChange={v => handleTypeChange(v as ProductionType)}>
+                        <Select value={type} onValueChange={handleTypeChange}>
                             <SelectTrigger>
-                                <SelectValue />
+                                <SelectValue placeholder="Vælg type..." />
                             </SelectTrigger>
                             <SelectContent>
-                                {productionTypes.map(t => (
-                                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                                {activeTypes.map(t => (
+                                    <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
@@ -191,23 +184,16 @@ export function NewProductionDialog({
                     {/* Licensperiode */}
                     <div className="space-y-1.5">
                         <Label>Licensperiode</Label>
-                        <Select
-                            value={String(licenseDurationYears)}
-                            onValueChange={v => setLicenseDurationYears(Number(v) as LicenseDuration)}
-                        >
+                        <Select value={licenseDurationYears} onValueChange={setLicenseDurationYears}>
                             <SelectTrigger>
-                                <SelectValue />
+                                <SelectValue placeholder="Vælg periode..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="10">10 år (licenseret)</SelectItem>
-                                <SelectItem value="50">50 år (original)</SelectItem>
+                                {activePeriods.map(p => (
+                                    <SelectItem key={p.id} value={p.name}>{p.name} år</SelectItem>
+                                ))}
                             </SelectContent>
                         </Select>
-                        {selectedType && (
-                            <p className="text-xs text-muted-foreground">
-                                Standard for {selectedType.label.split("—")[0].trim()} er {selectedType.defaultLicense} år
-                            </p>
-                        )}
                     </div>
 
                     {/* Note */}

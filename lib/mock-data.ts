@@ -557,6 +557,20 @@ export const mockCategories: MasterDataItem[] = [
     { id: "cat8", name: "Sport", active: true },
 ]
 
+export const mockProductionTypes: MasterDataItem[] = [
+    { id: "pt1", name: "Film — Original",        active: true,  meta: "50" },
+    { id: "pt2", name: "Film — Licenseret",      active: true,  meta: "10" },
+    { id: "pt3", name: "TV Serie — Original",    active: true,  meta: "50" },
+    { id: "pt4", name: "TV Serie — Licenseret",  active: true,  meta: "10" },
+    { id: "pt5", name: "Kortfilm — Original",    active: true,  meta: "50" },
+    { id: "pt6", name: "Dokumentar — Original",  active: true,  meta: "50" },
+]
+
+export const mockLicensePeriods: MasterDataItem[] = [
+    { id: "lp1", name: "10", active: true },
+    { id: "lp2", name: "50", active: true },
+]
+
 export const mockPlatforms: MasterDataItem[] = [
     { id: "pl1", name: "Danmarks Radio", active: true },
     { id: "pl2", name: "TV2", active: true },
