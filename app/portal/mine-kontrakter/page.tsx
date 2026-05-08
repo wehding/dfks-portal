@@ -13,6 +13,7 @@ import {
     ChevronDown,
     Sparkles,
     Loader2,
+    X,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockRoles, mockRegisteredWorks } from "@/lib/mock-data"
