@@ -6,7 +6,7 @@ import { useParams } from "next/navigation"
 import {
     ArrowLeft, Plus, Lock, CheckCircle2, Clock, AlertCircle,
     ExternalLink, ChevronDown, ChevronUp, Download, Users, Pencil,
-    Film, Tv, Copy
+    Film, Tv, Copy,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -14,12 +14,13 @@ import { Separator } from "@/components/ui/separator"
 import { RegisterPayoutDialog } from "@/components/streaming/register-payout-dialog"
 import { AddEditorDialog } from "@/components/streaming/add-editor-dialog"
 import { CreateDistributionKeyDialog } from "@/components/streaming/create-distribution-key-dialog"
+import { AddExploitationDialog } from "@/components/streaming/add-exploitation-dialog"
 import type {
     StreamingProduction, ProductionType, DistributionKeyStatus,
-    DistributionShare, StreamingPayout, PayoutStatus
+    DistributionShare, PayoutStatus, ExploitationType,
 } from "@/lib/streaming-types"
 
-// ── Mock data ────────────────────────────────────────────────
+// ── Mock interfaces ───────────────────────────────────────────
 
 interface MockEditor {
     id: string
@@ -38,19 +39,13 @@ interface MockDistributionKey {
     lockedAt?: string
     documentUrl?: string
     shares: (DistributionShare & { name: string })[]
-    events: {
-        id: string
-        type: string
-        actorName: string
-        createdAt: string
-        comment?: string
-    }[]
+    events: { id: string; type: string; actorName: string; createdAt: string; comment?: string }[]
 }
 
 interface MockPayout {
     id: string
     payoutYear: number
-    type: "irf" | "succesbetaling" | "royalties" | "copydan"
+    type: "irf" | "succesbetaling" | "betaling"
     grossAmount: number
     adminFeePercent: number
     adminFeeAmount: number
@@ -60,11 +55,21 @@ interface MockPayout {
     distributions: { name: string; sharePercent: number; amount: number }[]
 }
 
+interface MockExploitation {
+    id: string
+    platform: string
+    type: ExploitationType
+    payer?: string
+    payouts: MockPayout[]
+}
+
 interface MockProductionDetail extends StreamingProduction {
     editors: MockEditor[]
     distributionKey?: MockDistributionKey
-    payouts: MockPayout[]
+    exploitations: MockExploitation[]
 }
+
+// ── Mock data ─────────────────────────────────────────────────
 
 const mockData: Record<string, MockProductionDetail> = {
     "001": {
@@ -85,10 +90,21 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev3", type: "locked", actorName: "Admin", createdAt: "2022-03-20" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 33438.59, adminFeePercent: 15, adminFeeAmount: 3343.86, netAmount: 30094.73, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 30094.73 }] },
-            { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 15, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 10038.93 }] },
-            { id: "p3", payoutYear: 2024, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "exported", receivedAt: "2025-01-20", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 9479.39 }] },
+        exploitations: [
+            {
+                id: "ex1", platform: "Netflix", type: "streaming",
+                payouts: [
+                    { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 33438.59, adminFeePercent: 15, adminFeeAmount: 3343.86, netAmount: 30094.73, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 30094.73 }] },
+                    { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 15, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 10038.93 }] },
+                    { id: "p3", payoutYear: 2024, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "exported", receivedAt: "2025-01-20", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 9479.39 }] },
+                ],
+            },
+            {
+                id: "ex2", platform: "Copydan", type: "copydan",
+                payouts: [
+                    { id: "p4", payoutYear: 2023, type: "betaling", grossAmount: 3200.00, adminFeePercent: 8, adminFeeAmount: 243.70, netAmount: 2956.30, status: "paid", receivedAt: "2024-03-15", distributions: [{ name: "Lars Wissing", sharePercent: 100, amount: 2956.30 }] },
+                ],
+            },
         ],
     },
     "002": {
@@ -117,9 +133,12 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev5", type: "locked", actorName: "Admin", createdAt: "2022-04-05" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 27864.74, adminFeePercent: 10, adminFeeAmount: 2786.47, netAmount: 25078.27, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Michael Bauer", sharePercent: 33.33, amount: 8359.42 }, { name: "Ida Bregninge", sharePercent: 33.33, amount: 8359.42 }, { name: "Dan Loghin", sharePercent: 33.34, amount: 8359.43 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 27864.74, adminFeePercent: 10, adminFeeAmount: 2786.47, netAmount: 25078.27, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Michael Bauer", sharePercent: 33.33, amount: 8359.42 }, { name: "Ida Bregninge", sharePercent: 33.33, amount: 8359.42 }, { name: "Dan Loghin", sharePercent: 33.34, amount: 8359.43 }] },
+            ],
+        }],
     },
     "003": {
         id: "003", productionNumber: "003", title: "Toscana",
@@ -144,10 +163,13 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev4", type: "locked", actorName: "Admin", createdAt: "2022-05-05" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 22292.39, adminFeePercent: 10, adminFeeAmount: 2229.24, netAmount: 20063.15, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 12037.89 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 8025.26 }] },
-            { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 6023.36 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 4015.57 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 22292.39, adminFeePercent: 10, adminFeeAmount: 2229.24, netAmount: 20063.15, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 12037.89 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 8025.26 }] },
+                { id: "p2", payoutYear: 2023, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Anders Hoffmann", sharePercent: 60, amount: 6023.36 }, { name: "Niels Ostenfeld", sharePercent: 40, amount: 4015.57 }] },
+            ],
+        }],
     },
     "004": {
         id: "004", productionNumber: "004", title: "Kastanjemanden",
@@ -174,9 +196,12 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev2", type: "locked", actorName: "Admin", createdAt: "2022-06-10" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 55730.97, adminFeePercent: 10, adminFeeAmount: 5573.10, netAmount: 50157.87, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Cathrine Ambus", sharePercent: 33.33, amount: 16719.29 }, { name: "Anja Farsig", sharePercent: 33.33, amount: 16719.29 }, { name: "Martin Schade", sharePercent: 25.01, amount: 12539.47 }, { name: "Lars Therkelsen", sharePercent: 8.33, amount: 4179.82 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2022, type: "irf", grossAmount: 55730.97, adminFeePercent: 10, adminFeeAmount: 5573.10, netAmount: 50157.87, status: "paid", receivedAt: "2023-01-10", distributions: [{ name: "Cathrine Ambus", sharePercent: 33.33, amount: 16719.29 }, { name: "Anja Farsig", sharePercent: 33.33, amount: 16719.29 }, { name: "Martin Schade", sharePercent: 25.01, amount: 12539.47 }, { name: "Lars Therkelsen", sharePercent: 8.33, amount: 4179.82 }] },
+            ],
+        }],
     },
     "005": {
         id: "005", productionNumber: "005", title: "Skruk Sæson 1",
@@ -189,7 +214,7 @@ const mockData: Record<string, MockProductionDetail> = {
             { id: "e3", name: "Marcus Brandt", episodes: "5, 6" },
         ],
         distributionKey: undefined,
-        payouts: [],
+        exploitations: [],
     },
     "006": {
         id: "006", productionNumber: "006", title: "Ehrengard",
@@ -212,10 +237,13 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev2", type: "locked", actorName: "Admin", createdAt: "2023-02-10" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 36815.61, adminFeePercent: 10, adminFeeAmount: 3681.56, netAmount: 33134.05, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 19880.43 }, { name: "Biel Andrés", sharePercent: 40, amount: 13253.62 }] },
-            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 6023.36 }, { name: "Biel Andrés", sharePercent: 40, amount: 4015.57 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 36815.61, adminFeePercent: 10, adminFeeAmount: 3681.56, netAmount: 33134.05, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 19880.43 }, { name: "Biel Andrés", sharePercent: 40, amount: 13253.62 }] },
+                { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 11154.37, adminFeePercent: 10, adminFeeAmount: 1115.44, netAmount: 10038.93, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Janus Billeskov Jansen", sharePercent: 60, amount: 6023.36 }, { name: "Biel Andrés", sharePercent: 40, amount: 4015.57 }] },
+            ],
+        }],
     },
     "007": {
         id: "007", productionNumber: "007", title: "A Beautiful Life",
@@ -229,11 +257,14 @@ const mockData: Record<string, MockProductionDetail> = {
             shares: [{ id: "s1", distributionKeyId: "dk7", editorId: "e1", name: "Anders Hofman", sharePercent: 100, acceptedAt: "2023-03-05", acceptedByUserId: "u1" }],
             events: [{ id: "ev1", type: "locked", actorName: "Admin", createdAt: "2023-03-05" }],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 22799.51, adminFeePercent: 15, adminFeeAmount: 2279.95, netAmount: 20519.56, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20519.56 }] },
-            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 22308.73, adminFeePercent: 15, adminFeeAmount: 2230.87, netAmount: 20077.86, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20077.86 }] },
-            { id: "p3", payoutYear: 2025, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "pending", receivedAt: "2025-03-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 9479.39 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2023, type: "irf", grossAmount: 22799.51, adminFeePercent: 15, adminFeeAmount: 2279.95, netAmount: 20519.56, status: "paid", receivedAt: "2024-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20519.56 }] },
+                { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 22308.73, adminFeePercent: 15, adminFeeAmount: 2230.87, netAmount: 20077.86, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 20077.86 }] },
+                { id: "p3", payoutYear: 2025, type: "succesbetaling", grossAmount: 11152.22, adminFeePercent: 15, adminFeeAmount: 1672.83, netAmount: 9479.39, status: "pending", receivedAt: "2025-03-10", distributions: [{ name: "Anders Hofman", sharePercent: 100, amount: 9479.39 }] },
+            ],
+        }],
     },
     "008": {
         id: "008", productionNumber: "008", title: "Sygeplejersken",
@@ -247,13 +278,13 @@ const mockData: Record<string, MockProductionDetail> = {
             { id: "e4", name: "Tómas Gislason", episodes: "8" },
         ],
         distributionKey: {
-            id: "dk2", status: "proposed",
+            id: "dk8", status: "proposed",
             proposedBy: "Anna Heide", proposedAt: "2025-03-10",
             shares: [
-                { id: "s1", distributionKeyId: "dk2", editorId: "e1", name: "Elin Pröjts", sharePercent: 25, acceptedAt: "2025-03-11", acceptedByUserId: "u1" },
-                { id: "s2", distributionKeyId: "dk2", editorId: "e2", name: "Anna Heide", sharePercent: 37.5, acceptedAt: "2025-03-10", acceptedByUserId: "u2" },
-                { id: "s3", distributionKeyId: "dk2", editorId: "e3", name: "Benjamin Binderup", sharePercent: 25 },
-                { id: "s4", distributionKeyId: "dk2", editorId: "e4", name: "Tómas Gislason", sharePercent: 12.5 },
+                { id: "s1", distributionKeyId: "dk8", editorId: "e1", name: "Elin Pröjts", sharePercent: 25, acceptedAt: "2025-03-11", acceptedByUserId: "u1" },
+                { id: "s2", distributionKeyId: "dk8", editorId: "e2", name: "Anna Heide", sharePercent: 37.5, acceptedAt: "2025-03-10", acceptedByUserId: "u2" },
+                { id: "s3", distributionKeyId: "dk8", editorId: "e3", name: "Benjamin Binderup", sharePercent: 25 },
+                { id: "s4", distributionKeyId: "dk8", editorId: "e4", name: "Tómas Gislason", sharePercent: 12.5 },
             ],
             events: [
                 { id: "ev1", type: "proposed", actorName: "Anna Heide", createdAt: "2025-03-10", comment: "Fordelingsnøgle foreslået baseret på episodeantal" },
@@ -261,10 +292,13 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev3", type: "accepted", actorName: "Anna Heide", createdAt: "2025-03-10" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2023, type: "succesbetaling", grossAmount: 15411.50, adminFeePercent: 15, adminFeeAmount: 1541.15, netAmount: 13870.35, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 3467.59 }, { name: "Anna Heide", sharePercent: 37.5, amount: 5201.38 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 3467.59 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 1733.79 }] },
-            { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 27880.54, adminFeePercent: 15, adminFeeAmount: 4182.08, netAmount: 23698.46, status: "pending", receivedAt: "2025-02-10", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 5924.61 }, { name: "Anna Heide", sharePercent: 37.5, amount: 8886.92 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 5924.61 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 2962.31 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "DR", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2023, type: "succesbetaling", grossAmount: 15411.50, adminFeePercent: 15, adminFeeAmount: 1541.15, netAmount: 13870.35, status: "paid", receivedAt: "2024-02-05", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 3467.59 }, { name: "Anna Heide", sharePercent: 37.5, amount: 5201.38 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 3467.59 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 1733.79 }] },
+                { id: "p2", payoutYear: 2024, type: "succesbetaling", grossAmount: 27880.54, adminFeePercent: 15, adminFeeAmount: 4182.08, netAmount: 23698.46, status: "pending", receivedAt: "2025-02-10", distributions: [{ name: "Elin Pröjts", sharePercent: 25, amount: 5924.61 }, { name: "Anna Heide", sharePercent: 37.5, amount: 8886.92 }, { name: "Benjamin Binderup", sharePercent: 25, amount: 5924.61 }, { name: "Tómas Gislason", sharePercent: 12.5, amount: 2962.31 }] },
+            ],
+        }],
     },
     "009": {
         id: "009", productionNumber: "009", title: "Skruk Sæson 2",
@@ -286,9 +320,12 @@ const mockData: Record<string, MockProductionDetail> = {
             ],
             events: [{ id: "ev1", type: "locked", actorName: "Admin", createdAt: "2024-02-10" }],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2024, type: "irf", grossAmount: 28807.67, adminFeePercent: 10, adminFeeAmount: 2880.77, netAmount: 25926.90, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Lars Terkelsen", sharePercent: 22.23, amount: 5764.41 }, { name: "Jakob Juul Toldam", sharePercent: 33.34, amount: 8642.30 }, { name: "Kasper Schultz Simonsen", sharePercent: 44.43, amount: 11520.19 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "DR", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2024, type: "irf", grossAmount: 28807.67, adminFeePercent: 10, adminFeeAmount: 2880.77, netAmount: 25926.90, status: "paid", receivedAt: "2025-01-10", distributions: [{ name: "Lars Terkelsen", sharePercent: 22.23, amount: 5764.41 }, { name: "Jakob Juul Toldam", sharePercent: 33.34, amount: 8642.30 }, { name: "Kasper Schultz Simonsen", sharePercent: 44.43, amount: 11520.19 }] },
+            ],
+        }],
     },
     "010": {
         id: "010", productionNumber: "010", title: "Bytte Bytte Baby 2",
@@ -308,9 +345,12 @@ const mockData: Record<string, MockProductionDetail> = {
             ],
             events: [{ id: "ev1", type: "locked", actorName: "Admin", createdAt: "2024-03-05" }],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2024, type: "irf", grossAmount: 18000, adminFeePercent: 10, adminFeeAmount: 1800, netAmount: 16200, status: "paid", receivedAt: "2025-03-10", distributions: [{ name: "Benjamin Binderup", sharePercent: 50, amount: 8100 }, { name: "Carsten Søsted", sharePercent: 50, amount: 8100 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2024, type: "irf", grossAmount: 18000, adminFeePercent: 10, adminFeeAmount: 1800, netAmount: 16200, status: "paid", receivedAt: "2025-03-10", distributions: [{ name: "Benjamin Binderup", sharePercent: 50, amount: 8100 }, { name: "Carsten Søsted", sharePercent: 50, amount: 8100 }] },
+            ],
+        }],
     },
     "011": {
         id: "011", productionNumber: "011", title: "Sult",
@@ -334,9 +374,12 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev3", type: "accepted", actorName: "Peter Winther", createdAt: "2025-02-05" },
             ],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2025, type: "irf", grossAmount: 28946.25, adminFeePercent: 15, adminFeeAmount: 4341.94, netAmount: 24604.31, status: "pending", receivedAt: "2025-04-10", distributions: [{ name: "Peter Winther", sharePercent: 50, amount: 12302.16 }, { name: "Viola Frederikke Lindkvist Hjorth", sharePercent: 50, amount: 12302.16 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "Netflix", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2025, type: "irf", grossAmount: 28946.25, adminFeePercent: 15, adminFeeAmount: 4341.94, netAmount: 24604.31, status: "pending", receivedAt: "2025-04-10", distributions: [{ name: "Peter Winther", sharePercent: 50, amount: 12302.16 }, { name: "Viola Frederikke Lindkvist Hjorth", sharePercent: 50, amount: 12302.16 }] },
+            ],
+        }],
     },
     "012": {
         id: "012", productionNumber: "012", title: "Reservatet",
@@ -358,9 +401,12 @@ const mockData: Record<string, MockProductionDetail> = {
             ],
             events: [{ id: "ev1", type: "locked", actorName: "Admin", createdAt: "2025-03-10" }],
         },
-        payouts: [
-            { id: "p1", payoutYear: 2025, type: "irf", grossAmount: 70541.15, adminFeePercent: 15, adminFeeAmount: 10581.17, netAmount: 59959.98, status: "paid", receivedAt: "2025-04-01", distributions: [{ name: "Anja Farsig", sharePercent: 22, amount: 13191.20 }, { name: "Kasper Leick", sharePercent: 39, amount: 23384.39 }, { name: "Frederik Strunk", sharePercent: 39, amount: 23384.39 }] },
-        ],
+        exploitations: [{
+            id: "ex1", platform: "DR", type: "streaming",
+            payouts: [
+                { id: "p1", payoutYear: 2025, type: "irf", grossAmount: 70541.15, adminFeePercent: 15, adminFeeAmount: 10581.17, netAmount: 59959.98, status: "paid", receivedAt: "2025-04-01", distributions: [{ name: "Anja Farsig", sharePercent: 22, amount: 13191.20 }, { name: "Kasper Leick", sharePercent: 39, amount: 23384.39 }, { name: "Frederik Strunk", sharePercent: 39, amount: 23384.39 }] },
+            ],
+        }],
     },
 }
 
@@ -383,6 +429,19 @@ function typeLabel(type: ProductionType): string {
     return map[type] ?? type
 }
 
+const EXPLOITATION_TYPE_LABELS: Record<ExploitationType, string> = {
+    streaming:  "Streaming",
+    broadcast:  "Broadcast",
+    royalties:  "Royalties",
+    copydan:    "Copydan",
+}
+
+const PAYOUT_TYPE_LABELS: Record<"irf" | "succesbetaling" | "betaling", string> = {
+    irf:           "IRF",
+    succesbetaling: "Succesbetaling",
+    betaling:      "Betaling",
+}
+
 function KeyStatusBadge({ status }: { status?: DistributionKeyStatus }) {
     if (!status || status === "draft") return <Badge variant="outline" className="gap-1 text-muted-foreground"><AlertCircle className="h-3 w-3" />Ingen nøgle</Badge>
     if (status === "proposed") return <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950"><Clock className="h-3 w-3" />Afventer accept</Badge>
@@ -399,17 +458,17 @@ function PayoutStatusBadge({ status }: { status: PayoutStatus }) {
     return null
 }
 
-function generatePayoutText(production: MockProductionDetail, payout: MockPayout): string {
+function generatePayoutText(production: MockProductionDetail, exploitation: MockExploitation, payout: MockPayout): string {
+    const typeStr = PAYOUT_TYPE_LABELS[payout.type]
     const lines = [
-        `SVOD-vederlag — ${production.title} (${payout.payoutYear})`,
-        `Modtaget fra Create Denmark: ${fmt2(payout.grossAmount)}`,
+        `${typeStr} — ${production.title} (${payout.payoutYear})`,
+        `Platform: ${exploitation.platform}`,
+        `Modtaget: ${fmt2(payout.grossAmount)}`,
         `Administrationsgebyr (${payout.adminFeePercent}%): ${fmt2(payout.adminFeeAmount)}`,
         `Til fordeling: ${fmt2(payout.netAmount)}`,
         ``,
         `Fordeling:`,
-        ...payout.distributions.map(d =>
-            `  ${d.name} — ${d.sharePercent}% — ${fmt2(d.amount)}`
-        ),
+        ...payout.distributions.map(d => `  ${d.name} — ${d.sharePercent}% — ${fmt2(d.amount)}`),
     ]
     return lines.join("\n")
 }
@@ -422,10 +481,11 @@ export default function StreamingDetailPage() {
     const [expandedPayout, setExpandedPayout] = useState<string | null>(null)
     const [copiedId, setCopiedId] = useState<string | null>(null)
     const [showRegister, setShowRegister] = useState(false)
+    const [activeExploitationId, setActiveExploitationId] = useState<string | null>(null)
+    const [showAddExploitation, setShowAddExploitation] = useState(false)
     const [showAddEditor, setShowAddEditor] = useState(false)
     const [showCreateKey, setShowCreateKey] = useState(false)
 
-    // Fallback til "001" hvis mock ikke har id'et — viser "ikke fundet" hvis id er "ny" eller ukendt
     const production = mockData[id]
 
     if (!production) {
@@ -444,18 +504,20 @@ export default function StreamingDetailPage() {
         )
     }
 
-    const totalReceived = production.payouts.reduce((s, p) => s + p.grossAmount, 0)
-    const totalNet = production.payouts.reduce((s, p) => s + p.netAmount, 0)
-    const totalAdmin = production.payouts.reduce((s, p) => s + p.adminFeeAmount, 0)
-
-    const pendingPayouts = production.payouts.filter(p => p.status === "pending" || p.status === "distributing")
+    const allPayouts = production.exploitations.flatMap(e => e.payouts)
+    const totalReceived = allPayouts.reduce((s, p) => s + p.grossAmount, 0)
+    const totalNet = allPayouts.reduce((s, p) => s + p.netAmount, 0)
+    const totalAdmin = allPayouts.reduce((s, p) => s + p.adminFeeAmount, 0)
+    const pendingPayouts = allPayouts.filter(p => p.status === "pending" || p.status === "distributing")
     const canExport = production.distributionKey?.status === "locked" && pendingPayouts.length > 0
 
     const acceptedCount = production.distributionKey?.shares.filter(s => s.acceptedAt).length ?? 0
     const totalShares = production.distributionKey?.shares.length ?? 0
 
-    function copyPayoutText(payout: MockPayout) {
-        const text = generatePayoutText(production, payout)
+    const activeExploitation = production.exploitations.find(e => e.id === activeExploitationId) ?? null
+
+    function copyPayoutText(exploitation: MockExploitation, payout: MockPayout) {
+        const text = generatePayoutText(production, exploitation, payout)
         navigator.clipboard.writeText(text)
         setCopiedId(payout.id)
         setTimeout(() => setCopiedId(null), 2000)
@@ -490,8 +552,6 @@ export default function StreamingDetailPage() {
                         <span>Licens: {production.licenseDurationYears} år fra {production.licenseStartYear}</span>
                         <span>·</span>
                         <span className={licenseYearsRemaining < 5 ? "text-amber-600" : ""}>{licenseYearsRemaining} år tilbage</span>
-                        <span>·</span>
-                        <span>Adm. {production.adminFeePercent}%</span>
                     </div>
                 </div>
                 <Button variant="outline" size="sm" className="gap-1.5">
@@ -503,7 +563,7 @@ export default function StreamingDetailPage() {
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg border bg-card p-4">
-                    <p className="text-sm text-muted-foreground">Modtaget fra Create Denmark</p>
+                    <p className="text-sm text-muted-foreground">Modtaget i alt</p>
                     <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived)}</p>
                 </div>
                 <div className="rounded-lg border bg-card p-4">
@@ -579,7 +639,6 @@ export default function StreamingDetailPage() {
 
                 {production.distributionKey ? (
                     <div>
-                        {/* Shares */}
                         <div className="divide-y">
                             {production.distributionKey.shares.map(share => (
                                 <div key={share.id} className="flex items-center gap-4 px-4 py-3">
@@ -606,14 +665,12 @@ export default function StreamingDetailPage() {
                             ))}
                         </div>
 
-                        {/* Accept progress */}
                         {production.distributionKey.status !== "locked" && (
                             <div className="px-4 py-3 border-t bg-muted/30 text-sm text-muted-foreground">
                                 {acceptedCount} af {totalShares} klippere har accepteret
                             </div>
                         )}
 
-                        {/* Audit trail */}
                         {production.distributionKey.events.length > 0 && (
                             <div className="px-4 py-3 border-t">
                                 <p className="text-xs font-medium text-muted-foreground mb-2">Historik</p>
@@ -642,93 +699,123 @@ export default function StreamingDetailPage() {
                 )}
             </div>
 
-            {/* Udbetalinger */}
+            {/* Udbetalinger — grupperet per udnyttelse */}
             <div className="rounded-lg border">
                 <div className="flex items-center justify-between px-4 py-3 border-b">
                     <h2 className="font-medium">Udbetalinger</h2>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowRegister(true)}>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowAddExploitation(true)}>
                         <Plus className="h-3.5 w-3.5" />
-                        Registrér beløb
+                        Tilføj udnyttelse
                     </Button>
                 </div>
 
-                {production.payouts.length === 0 ? (
+                {production.exploitations.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        Ingen udbetalinger registreret endnu
+                        Ingen udnyttelser registreret endnu
                     </div>
                 ) : (
                     <div className="divide-y">
-                        {production.payouts.map(payout => (
-                            <div key={payout.id}>
-                                <button
-                                    className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
-                                    onClick={() => setExpandedPayout(expandedPayout === payout.id ? null : payout.id)}
-                                >
-                                    <div className="flex-1">
-                                        <p className="text-sm font-medium">
-                                            {payout.payoutYear} — {{ irf: "IRF", succesbetaling: "Succesbetaling", royalties: "Royalties", copydan: "Copydan" }[payout.type]}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                            Modtaget {payout.receivedAt}
-                                        </p>
+                        {production.exploitations.map(exploitation => (
+                            <div key={exploitation.id} className="p-4 space-y-3">
+                                {/* Exploitation header */}
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-medium text-sm">{exploitation.platform}</span>
+                                        <Badge variant="outline" className="text-xs">
+                                            {EXPLOITATION_TYPE_LABELS[exploitation.type]}
+                                        </Badge>
+                                        {exploitation.payer && (
+                                            <span className="text-xs text-muted-foreground">via {exploitation.payer}</span>
+                                        )}
                                     </div>
-                                    <div className="text-right">
-                                        <p className="text-sm font-medium tabular-nums">{fmt2(payout.grossAmount)}</p>
-                                        <p className="text-xs text-muted-foreground">fra Create Denmark</p>
-                                    </div>
-                                    <PayoutStatusBadge status={payout.status} />
-                                    {expandedPayout === payout.id
-                                        ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
-                                        : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                                    }
-                                </button>
+                                    <Button
+                                        variant="ghost" size="sm" className="gap-1.5"
+                                        onClick={() => {
+                                            setActiveExploitationId(exploitation.id)
+                                            setShowRegister(true)
+                                        }}
+                                    >
+                                        <Plus className="h-3.5 w-3.5" />
+                                        Registrér betaling
+                                    </Button>
+                                </div>
 
-                                {expandedPayout === payout.id && (
-                                    <div className="px-4 pb-4 pt-1 border-t bg-muted/20 space-y-3">
-                                        {/* Beregning */}
-                                        <div className="rounded-md border bg-card p-3 text-sm space-y-1.5">
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">Modtaget fra Create Denmark</span>
-                                                <span className="tabular-nums font-medium">{fmt2(payout.grossAmount)}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-muted-foreground">Adm. gebyr ({payout.adminFeePercent}%)</span>
-                                                <span className="tabular-nums text-muted-foreground">− {fmt2(payout.adminFeeAmount)}</span>
-                                            </div>
-                                            <Separator />
-                                            <div className="flex justify-between font-medium">
-                                                <span>Til fordeling</span>
-                                                <span className="tabular-nums">{fmt2(payout.netAmount)}</span>
-                                            </div>
-                                        </div>
+                                {/* Payouts */}
+                                {exploitation.payouts.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground pl-1">Ingen betalinger registreret endnu</p>
+                                ) : (
+                                    <div className="rounded-md border divide-y">
+                                        {exploitation.payouts.map(payout => (
+                                            <div key={payout.id}>
+                                                <button
+                                                    className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                                    onClick={() => setExpandedPayout(expandedPayout === payout.id ? null : payout.id)}
+                                                >
+                                                    <div className="flex-1">
+                                                        <p className="text-sm font-medium">
+                                                            {payout.payoutYear} — {PAYOUT_TYPE_LABELS[payout.type]}
+                                                        </p>
+                                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                                            Modtaget {payout.receivedAt}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-sm font-medium tabular-nums">{fmt2(payout.grossAmount)}</p>
+                                                    </div>
+                                                    <PayoutStatusBadge status={payout.status} />
+                                                    {expandedPayout === payout.id
+                                                        ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                        : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                    }
+                                                </button>
 
-                                        {/* Fordeling */}
-                                        <div className="rounded-md border bg-card divide-y text-sm">
-                                            {payout.distributions.map((d, i) => (
-                                                <div key={i} className="flex items-center gap-3 px-3 py-2">
-                                                    <span className="flex-1">{d.name}</span>
-                                                    <span className="text-muted-foreground tabular-nums w-10 text-right">{d.sharePercent}%</span>
-                                                    <span className="tabular-nums font-medium w-24 text-right">{fmt2(d.amount)}</span>
-                                                </div>
-                                            ))}
-                                        </div>
+                                                {expandedPayout === payout.id && (
+                                                    <div className="px-4 pb-4 pt-1 border-t bg-muted/20 space-y-3">
+                                                        <div className="rounded-md border bg-card p-3 text-sm space-y-1.5">
+                                                            <div className="flex justify-between">
+                                                                <span className="text-muted-foreground">Modtaget</span>
+                                                                <span className="tabular-nums font-medium">{fmt2(payout.grossAmount)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between">
+                                                                <span className="text-muted-foreground">Adm. gebyr ({payout.adminFeePercent}%)</span>
+                                                                <span className="tabular-nums text-muted-foreground">− {fmt2(payout.adminFeeAmount)}</span>
+                                                            </div>
+                                                            <Separator />
+                                                            <div className="flex justify-between font-medium">
+                                                                <span>Til fordeling</span>
+                                                                <span className="tabular-nums">{fmt2(payout.netAmount)}</span>
+                                                            </div>
+                                                        </div>
 
-                                        {/* Eksport */}
-                                        <div className="flex gap-2">
-                                            <Button
-                                                variant="outline" size="sm" className="gap-1.5"
-                                                onClick={() => copyPayoutText(payout)}
-                                            >
-                                                <Copy className="h-3.5 w-3.5" />
-                                                {copiedId === payout.id ? "Kopieret!" : "Kopiér til lønsystem"}
-                                            </Button>
-                                            {payout.status === "pending" && production.distributionKey?.status === "locked" && (
-                                                <Button size="sm" className="gap-1.5">
-                                                    <Download className="h-3.5 w-3.5" />
-                                                    Markér som eksporteret
-                                                </Button>
-                                            )}
-                                        </div>
+                                                        <div className="rounded-md border bg-card divide-y text-sm">
+                                                            {payout.distributions.map((d, i) => (
+                                                                <div key={i} className="flex items-center gap-3 px-3 py-2">
+                                                                    <span className="flex-1">{d.name}</span>
+                                                                    <span className="text-muted-foreground tabular-nums w-10 text-right">{d.sharePercent}%</span>
+                                                                    <span className="tabular-nums font-medium w-24 text-right">{fmt2(d.amount)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+
+                                                        <div className="flex gap-2">
+                                                            <Button
+                                                                variant="outline" size="sm" className="gap-1.5"
+                                                                onClick={() => copyPayoutText(exploitation, payout)}
+                                                            >
+                                                                <Copy className="h-3.5 w-3.5" />
+                                                                {copiedId === payout.id ? "Kopieret!" : "Kopiér til lønsystem"}
+                                                            </Button>
+                                                            {payout.status === "pending" && production.distributionKey?.status === "locked" && (
+                                                                <Button size="sm" className="gap-1.5">
+                                                                    <Download className="h-3.5 w-3.5" />
+                                                                    Markér som eksporteret
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
@@ -737,13 +824,29 @@ export default function StreamingDetailPage() {
                 )}
             </div>
 
-            <RegisterPayoutDialog
-                open={showRegister}
-                onClose={() => setShowRegister(false)}
+            {/* Dialogs */}
+            {activeExploitation && (
+                <RegisterPayoutDialog
+                    open={showRegister}
+                    onClose={() => { setShowRegister(false); setActiveExploitationId(null) }}
+                    productionTitle={production.title}
+                    exploitationPlatform={activeExploitation.platform}
+                    exploitationType={activeExploitation.type}
+                    onRegister={(payout) => {
+                        console.log("Registreret:", payout)
+                        setShowRegister(false)
+                        setActiveExploitationId(null)
+                    }}
+                />
+            )}
+
+            <AddExploitationDialog
+                open={showAddExploitation}
+                onClose={() => setShowAddExploitation(false)}
                 productionTitle={production.title}
-                onRegister={(payout) => {
-                    console.log("Registreret:", payout)
-                    setShowRegister(false)
+                onAdd={(exploitation) => {
+                    console.log("Udnyttelse tilføjet:", exploitation)
+                    setShowAddExploitation(false)
                 }}
             />
 

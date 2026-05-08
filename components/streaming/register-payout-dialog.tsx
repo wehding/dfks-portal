@@ -8,19 +8,21 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { AlertCircle } from "lucide-react"
+import type { ExploitationType } from "@/lib/streaming-types"
 
 // ── Types ─────────────────────────────────────────────────────
 
-type PayoutType = "irf" | "succesbetaling" | "royalties" | "copydan"
+type PayoutType = "irf" | "succesbetaling" | "betaling"
 
 interface RegisterPayoutDialogProps {
     open: boolean
     onClose: () => void
     productionTitle: string
+    exploitationPlatform: string
+    exploitationType: ExploitationType
     onRegister: (payout: {
         payoutYear: number
         type: PayoutType
-        payer?: string
         grossAmount: number
         adminFeePercent: number
         receivedAt: string
@@ -28,19 +30,22 @@ interface RegisterPayoutDialogProps {
     }) => void
 }
 
-const PAYOUT_LABELS: Record<PayoutType, string> = {
-    irf:           "IRF (første udbetaling)",
-    succesbetaling: "Succesbetaling (løbende)",
-    royalties:     "Royalties",
-    copydan:       "Copydan",
+// ── Helpers ──────────────────────────────────────────────────
+
+function fmt2(n: number) {
+    return new Intl.NumberFormat("da-DK", {
+        style: "currency", currency: "DKK",
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).format(n)
 }
 
-const PAYOUT_SOURCES: Record<PayoutType, string> = {
-    irf:           "Create Denmark",
-    succesbetaling: "Create Denmark",
-    royalties:     "Producent",
-    copydan:       "Copydan",
+function parseAmount(s: string): number {
+    const cleaned = s.replace(/\./g, "").replace(",", ".")
+    return parseFloat(cleaned) || 0
 }
+
+const currentYear = new Date().getFullYear()
+const years = Array.from({ length: 10 }, (_, i) => currentYear - i)
 
 function loadAdminFees() {
     if (typeof window === "undefined") return { irf: 15, succesbetaling: 15, royalties: 10, copydan: 8 }
@@ -56,61 +61,37 @@ function loadAdminFees() {
     } catch { return { irf: 15, succesbetaling: 15, royalties: 10, copydan: 8 } }
 }
 
-// ── Helpers ──────────────────────────────────────────────────
-
-function fmt2(n: number) {
-    return new Intl.NumberFormat("da-DK", {
-        style: "currency", currency: "DKK",
-        minimumFractionDigits: 2, maximumFractionDigits: 2
-    }).format(n)
-}
-
-function parseAmount(s: string): number {
-    // Accepter både "33.438,59" (da-DK) og "33438.59" (en-US)
-    const cleaned = s.replace(/\./g, "").replace(",", ".")
-    return parseFloat(cleaned) || 0
-}
-
-const currentYear = new Date().getFullYear()
-const years = Array.from({ length: 10 }, (_, i) => currentYear - i)
+const isStreamingLike = (t: ExploitationType) => t === "streaming" || t === "broadcast"
 
 // ── Component ────────────────────────────────────────────────
 
 export function RegisterPayoutDialog({
-    open, onClose, productionTitle, onRegister
+    open, onClose, productionTitle, exploitationPlatform, exploitationType, onRegister,
 }: RegisterPayoutDialogProps) {
     const [payoutYear, setPayoutYear] = useState(String(currentYear - 1))
-    const [type, setType] = useState<PayoutType>("succesbetaling")
-    const [payer, setPayer] = useState("")
+    const [type, setType] = useState<PayoutType>(isStreamingLike(exploitationType) ? "irf" : "betaling")
     const [grossInput, setGrossInput] = useState("")
-    const [receivedAt, setReceivedAt] = useState(
-        new Date().toISOString().split("T")[0]
-    )
+    const [receivedAt, setReceivedAt] = useState(new Date().toISOString().split("T")[0])
     const [notes, setNotes] = useState("")
 
     const adminFees = loadAdminFees()
-    const adminFeePercent = adminFees[type]
+    const adminFeePercent =
+        exploitationType === "royalties" ? adminFees.royalties
+        : exploitationType === "copydan"  ? adminFees.copydan
+        : type === "irf"                  ? adminFees.irf
+        :                                   adminFees.succesbetaling
+
     const grossAmount = parseAmount(grossInput)
     const adminFeeAmount = grossAmount > 0
         ? grossAmount * adminFeePercent / (100 + adminFeePercent)
         : 0
     const netAmount = grossAmount - adminFeeAmount
-
-    const isValid = grossAmount > 0 && payoutYear && receivedAt
+    const isValid = grossAmount > 0 && !!payoutYear && !!receivedAt
 
     function handleSubmit() {
         if (!isValid) return
-        onRegister({
-            payoutYear: parseInt(payoutYear),
-            type,
-            payer: type === "royalties" ? payer || undefined : undefined,
-            grossAmount,
-            adminFeePercent,
-            receivedAt,
-            notes: notes || undefined,
-        })
+        onRegister({ payoutYear: parseInt(payoutYear), type, grossAmount, adminFeePercent, receivedAt, notes: notes || undefined })
         setGrossInput("")
-        setPayer("")
         setNotes("")
         onClose()
     }
@@ -120,18 +101,18 @@ export function RegisterPayoutDialog({
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
                     <DialogTitle>Registrér betaling</DialogTitle>
-                    <p className="text-sm text-muted-foreground">{productionTitle}</p>
+                    <p className="text-sm text-muted-foreground">
+                        {productionTitle} · {exploitationPlatform}
+                    </p>
                 </DialogHeader>
 
                 <div className="space-y-4 py-2">
-                    {/* År + type */}
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* År + type (kun streaming/broadcast) */}
+                    <div className={`grid gap-3 ${isStreamingLike(exploitationType) ? "grid-cols-2" : ""}`}>
                         <div className="space-y-1.5">
                             <Label>Udbetalingsår</Label>
                             <Select value={payoutYear} onValueChange={setPayoutYear}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     {years.map(y => (
                                         <SelectItem key={y} value={String(y)}>{y}</SelectItem>
@@ -139,47 +120,27 @@ export function RegisterPayoutDialog({
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="space-y-1.5">
-                            <Label>Type</Label>
-                            <Select value={type} onValueChange={v => setType(v as PayoutType)}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {(Object.entries(PAYOUT_LABELS) as [PayoutType, string][]).map(([val, label]) => (
-                                        <SelectItem key={val} value={val}>{label}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        {isStreamingLike(exploitationType) && (
+                            <div className="space-y-1.5">
+                                <Label>Type</Label>
+                                <Select value={type} onValueChange={v => setType(v as PayoutType)}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="irf">IRF (første udbetaling)</SelectItem>
+                                        <SelectItem value="succesbetaling">Succesbetaling (løbende)</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        )}
                     </div>
 
-                    {/* Kilde */}
                     <p className="text-xs text-muted-foreground -mt-2">
-                        Kilde: <span className="font-medium">{PAYOUT_SOURCES[type]}</span>
-                        {" — "}adm. bidrag: <span className="font-medium">{adminFeePercent}%</span>
+                        Adm. bidrag: <span className="font-medium">{adminFeePercent}%</span>
                     </p>
-
-                    {/* Producentnavn — kun ved royalties */}
-                    {type === "royalties" && (
-                        <div className="space-y-1.5">
-                            <Label htmlFor="payer">
-                                Producent <span className="text-muted-foreground font-normal">(valgfri)</span>
-                            </Label>
-                            <Input
-                                id="payer"
-                                placeholder="Producentens navn"
-                                value={payer}
-                                onChange={e => setPayer(e.target.value)}
-                            />
-                        </div>
-                    )}
 
                     {/* Beløb */}
                     <div className="space-y-1.5">
-                        <Label htmlFor="gross">
-                            Modtaget beløb (inkl. adm.)
-                        </Label>
+                        <Label htmlFor="gross">Modtaget beløb (inkl. adm.)</Label>
                         <div className="relative">
                             <Input
                                 id="gross"
@@ -201,7 +162,7 @@ export function RegisterPayoutDialog({
                     {grossAmount > 0 && (
                         <div className="rounded-md border bg-muted/30 p-3 space-y-1.5 text-sm">
                             <div className="flex justify-between">
-                                <span className="text-muted-foreground">Modtaget fra Create Denmark</span>
+                                <span className="text-muted-foreground">Modtaget</span>
                                 <span className="tabular-nums font-medium">{fmt2(grossAmount)}</span>
                             </div>
                             <div className="flex justify-between">
@@ -216,7 +177,7 @@ export function RegisterPayoutDialog({
                         </div>
                     )}
 
-                    {/* Modtaget dato */}
+                    {/* Dato */}
                     <div className="space-y-1.5">
                         <Label htmlFor="receivedAt">Modtaget dato</Label>
                         <Input
@@ -227,20 +188,19 @@ export function RegisterPayoutDialog({
                         />
                     </div>
 
-                    {/* Noter */}
+                    {/* Note */}
                     <div className="space-y-1.5">
                         <Label htmlFor="notes">
                             Note <span className="text-muted-foreground font-normal">(valgfri)</span>
                         </Label>
                         <Input
                             id="notes"
-                            placeholder="F.eks. reference til Create Denmark afregning"
+                            placeholder="F.eks. reference til afregning"
                             value={notes}
                             onChange={e => setNotes(e.target.value)}
                         />
                     </div>
 
-                    {/* Advarsel hvis ingen låst nøgle */}
                     <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 p-3 text-sm text-amber-700 dark:text-amber-300">
                         <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                         <p>
@@ -252,9 +212,7 @@ export function RegisterPayoutDialog({
 
                 <DialogFooter>
                     <Button variant="outline" onClick={onClose}>Annuller</Button>
-                    <Button onClick={handleSubmit} disabled={!isValid}>
-                        Registrér
-                    </Button>
+                    <Button onClick={handleSubmit} disabled={!isValid}>Registrér</Button>
                 </DialogFooter>
             </DialogContent>
         </Dialog>

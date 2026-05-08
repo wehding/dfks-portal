@@ -172,6 +172,44 @@ export interface PayoutEditorDistribution {
     payoutText?: string             // Genereret tekst til lønsystem
 }
 
+// ── Udnyttelse ────────────────────────────────────────────────
+
+export type ExploitationType = "streaming" | "broadcast" | "royalties" | "copydan"
+
+/**
+ * En konkret udnyttelse af et værk — én aftale med én platform/kilde.
+ * Et værk kan have flere udnyttelser (Netflix, DR, Copydan osv.)
+ */
+export interface Exploitation {
+    id: string
+    productionId: string
+    platform: string            // "Netflix", "DR", "Copydan" etc.
+    type: ExploitationType
+    payer?: string              // Udfyldes ved royalties (producentnavn)
+    notes?: string
+    createdAt: string
+}
+
+/**
+ * En betaling under en specifik udnyttelse.
+ */
+export interface ExploitationPayout {
+    id: string
+    exploitationId: string
+    payoutYear: number
+    type: "irf" | "succesbetaling" | "betaling"
+    grossAmount: number
+    adminFeePercent: number
+    adminFeeAmount: number
+    netAmount: number
+    status: PayoutStatus
+    receivedAt: string
+    exportedAt?: string
+    paidAt?: string
+    notes?: string
+    distributions: PayoutEditorDistribution[]
+}
+
 // ── Eksport ───────────────────────────────────────────────────
 
 /**
