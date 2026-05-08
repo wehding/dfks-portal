@@ -228,6 +228,7 @@ export default function PortalOkonomiPage() {
     }
 
     return (
+        <>
         <div className="space-y-6 max-w-2xl">
             <div>
                 <h1 className="text-2xl font-semibold tracking-tight">Økonomi</h1>
@@ -369,5 +370,6 @@ export default function PortalOkonomiPage() {
             productionId={uploadFor?.id ?? ""}
             onUploaded={() => setUploadFor(null)}
         />
+        </>
     )
 }
