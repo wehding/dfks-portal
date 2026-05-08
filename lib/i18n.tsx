@@ -55,6 +55,7 @@ const translations = {
         "upload.newWork": "Nyt værk",
         "upload.existingWork": "Eksisterende værk",
         "upload.disambiguate": "Flere værker med denne titel — vælg det rigtige:",
+        "upload.member": "Medlem",
 
         // Categories
         "cat.feature": "Spillefilm",
@@ -382,6 +383,7 @@ const translations = {
         "common.minutes": "min",
         "common.hours": "timer",
         "common.preview": "Forhåndsvis",
+        "common.status": "Status",
     },
     en: {
         // Navigation
@@ -433,6 +435,7 @@ const translations = {
         "upload.newWork": "New work",
         "upload.existingWork": "Existing work",
         "upload.disambiguate": "Multiple works with this title — select the correct one:",
+        "upload.member": "Member",
 
         // Categories
         "cat.feature": "Feature Film",
@@ -651,6 +654,7 @@ const translations = {
         "common.minutes": "min",
         "common.hours": "hours",
         "common.preview": "Preview",
+        "common.status": "Status",
 
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
