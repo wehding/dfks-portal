@@ -318,7 +318,7 @@ Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
 }
 
 Regler:
-- creditedRole: returner ALTID præcis ét af de listede rollnavne — kopiér stavningen nøjagtigt. Vigtigt: "Editor", "Film Editor", "Supervising Editor", "Monteur", "Montage", "Montør", "Cutter", "Picture Editor" er alle synonymer for "Klipper" — vælg altid "Klipper" for disse funktioner uanset om kontrakten er på dansk, engelsk eller fransk
+- creditedRole: returner ALTID præcis ét af de listede rollnavne — kopiér stavningen nøjagtigt. Vigtigt: "Editor", "Film Editor", "Supervising Editor", "Monteur", "Montage", "Cutter", "Picture Editor" er alle synonymer for "Klipper" — vælg altid "Klipper" for disse funktioner uanset om kontrakten er på dansk, engelsk eller fransk
 - category baseres på produktionstype: spillefilm/feature film → feature, tv-serie/dramaserie → tvSeries, dokumentarfilm → documentary, dokumentarserie → docSeries, kortfilm → short, tv-show/underholdning → tvEntertainment, reality → reality, sport → sport
 - episodes skal KUN udfyldes hvis det er en serie (tvSeries eller docSeries) og kontrakten nævner specifikke afsnit med titler og/eller varighed. Ellers returner tom liste []
 - duration for serier sættes til summen af episodes hvis de er kendte, ellers 0
