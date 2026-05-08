@@ -276,7 +276,7 @@ export default function AdminStamdataPage() {
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
-                    <MasterDataTable type="roles" addLabel={t("admin.masterData.addRole")} />
+                    <MasterDataTable type="roles" addLabel={t("admin.masterData.addRole")} reorderable />
                 </TabsContent>
 
                 <TabsContent value="categories" className="mt-4">
