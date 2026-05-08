@@ -245,6 +245,15 @@ const translations = {
         // Admin - Validation extras
         "admin.validation.aiClause": "AI/Data mining forbehold",
         "admin.validation.aiClauseDesc": "Klausul om AI/data mining rettigheder",
+        "admin.validation.document": "Dokument",
+        "admin.validation.uploadLocal": "Upload lokal fil",
+        "admin.validation.uploadPrompt": "Upload en kontrakt for at se den her",
+        "admin.validation.reject": "Afvis",
+        "admin.validation.pending": "Afventer gennemgang",
+        "admin.validation.allReviewed": "Alle kontrakter er gennemgået",
+        "admin.validation.allReviewedDesc": "Der er ingen nye kontrakter til gennemgang",
+        "admin.validation.deleteTitle": "Slet kontrakt",
+        "admin.validation.deleteDesc": "Er du sikker på at du vil slette denne kontrakt? Dette kan ikke fortrydes.",
 
         // Admin - Holiday Fund
         "admin.holidayFund.title": "Helligdagsfond",
@@ -614,6 +623,15 @@ const translations = {
         // Admin - Validation extras
         "admin.validation.aiClause": "AI/Data mining clause",
         "admin.validation.aiClauseDesc": "Clause on AI/data mining rights",
+        "admin.validation.document": "Document",
+        "admin.validation.uploadLocal": "Upload local file",
+        "admin.validation.uploadPrompt": "Upload a contract to view it here",
+        "admin.validation.reject": "Reject",
+        "admin.validation.pending": "Awaiting review",
+        "admin.validation.allReviewed": "All contracts reviewed",
+        "admin.validation.allReviewedDesc": "There are no new contracts for review",
+        "admin.validation.deleteTitle": "Delete contract",
+        "admin.validation.deleteDesc": "Are you sure you want to delete this contract? This cannot be undone.",
 
         // Common
         "common.search": "Search...",
