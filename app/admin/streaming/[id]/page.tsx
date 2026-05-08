@@ -18,6 +18,7 @@ import type {
     StreamingProduction, ProductionType, DistributionKeyStatus,
     DistributionShare, PayoutStatus, ExploitationType,
 } from "@/lib/streaming-types"
+import { mockContracts } from "@/lib/mock-data"
 
 // ── Mock interfaces ───────────────────────────────────────────
 
@@ -26,7 +27,7 @@ interface MockEditor {
     name: string
     birthDate?: string
     episodes?: string
-    contractUrl?: string
+    contractId?: string
     userId?: string
 }
 
@@ -77,7 +78,7 @@ const mockData: Record<string, MockProductionDetail> = {
         licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 15,
         createdAt: "2022-01-01", updatedAt: "2024-01-01", createdBy: "admin",
         editors: [
-            { id: "e1", name: "Lars Wissing", birthDate: "280282", contractUrl: "https://drive.google.com/file/d/1vhHHGS-B8oxVZA8zcecTuo8i_-Rw3-Ug/view" },
+            { id: "e1", name: "Lars Wissing", birthDate: "280282", contractId: "c2" },
         ],
         distributionKey: {
             id: "dk1", status: "locked",
@@ -599,13 +600,28 @@ export default function StreamingDetailPage() {
                                     {editor.episodes && <span>Episoder: {editor.episodes}</span>}
                                 </p>
                             </div>
-                            {editor.contractUrl && (
-                                <a href={editor.contractUrl} target="_blank" rel="noreferrer"
-                                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                                    <ExternalLink className="h-3 w-3" />
-                                    Kontrakt
-                                </a>
-                            )}
+                            {editor.contractId && (() => {
+                                const contract = mockContracts.find(c => c.id === editor.contractId)
+                                const d = contract?.extractedData
+                                const rights = d ? [
+                                    d.svod && "SVOD",
+                                    d.copydan && "Copydan",
+                                    d.royalty && `Royalty ${d.royaltyPercent || 0}%`,
+                                    d.aiDataMiningClause && "AI-forbehold",
+                                ].filter(Boolean) as string[] : []
+                                return (
+                                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                                        {rights.map(r => (
+                                            <Badge key={r} variant="secondary" className="text-[10px] font-normal h-4 px-1.5">{r}</Badge>
+                                        ))}
+                                        <Link href={`/admin/kontrakter?open=${editor.contractId}`}
+                                            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                                            <ExternalLink className="h-3 w-3" />
+                                            Kontrakt
+                                        </Link>
+                                    </div>
+                                )
+                            })()}
                         </div>
                     ))}
                     {production.editors.length === 0 && (

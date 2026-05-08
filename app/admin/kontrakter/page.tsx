@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import {
     Search,
     Trash2,
@@ -82,10 +83,20 @@ function formatRights(c: Contract) {
 export default function AdminKontrakterPage() {
     const { t } = useI18n()
     const { contracts, deleteContract } = useContracts()
+    const searchParams = useSearchParams()
     const [search, setSearch] = useState("")
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [viewContract, setViewContract] = useState<Contract | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
+
+    // Auto-open contract from ?open= URL param
+    useEffect(() => {
+        const openId = searchParams.get("open")
+        if (openId && contracts.length > 0) {
+            const c = contracts.find(x => x.id === openId)
+            if (c) setViewContract(c)
+        }
+    }, [searchParams, contracts])
 
     // Filters
     const [filterYear, setFilterYear] = useState<string>("all")
