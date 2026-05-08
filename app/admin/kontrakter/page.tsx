@@ -406,7 +406,7 @@ export default function AdminKontrakterPage() {
                             {viewContract?.userName} • {t(`cat.${viewContract?.category}` as any)} •{" "}
                             {viewContract?.premiereDate}
                             {(viewContract?.creditedRoles?.length ?? 0) > 0 && (
-                                <> • <span className="font-medium text-foreground">{viewContract.creditedRoles.join(", ")}</span></>
+                                <> • <span className="font-medium text-foreground">{viewContract?.creditedRoles.join(", ")}</span></>
                             )}
                         </DialogDescription>
                     </DialogHeader>
