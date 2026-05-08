@@ -6,6 +6,35 @@
 
 import type { ExtractedContractData } from "./types"
 
+// ── Anonymisation ─────────────────────────────────────────────
+// Removes personally identifiable data before sending to AI API.
+// Salary amounts, dates and production metadata are preserved
+// as these are needed for extraction.
+
+export function anonymizeContractText(text: string): string {
+    return text
+        // CPR: DDMMYY-XXXX or DDMMYYXXXX
+        .replace(/\b\d{6}[-–]\d{4}\b/g, "[CPR]")
+        .replace(/\b\d{10}\b(?!\s*(?:kr|%|\.))/g, "[CPR]")
+        // IBAN
+        .replace(/\bDK\d{2}[\s]*\d{4}[\s]*\d{10}\b/gi, "[IBAN]")
+        // Danish bank: reg.nr (4 digits) + account (6–10 digits)
+        .replace(/\b\d{4}[\s–-]\d{6,10}\b/g, "[KONTONR]")
+        // Email
+        .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[EMAIL]")
+        // Phone: +45 XX XX XX XX or 8-digit groups
+        .replace(/(\+45[\s-]?)?\b\d{2}[\s-]\d{2}[\s-]\d{2}[\s-]\d{2}\b/g, "[TELEFON]")
+        // Standalone 8-digit numbers that aren't amounts (no kr/% after)
+        .replace(/\b(\d{8})\b(?!\s*(?:kr|%))/g, (_, n) => {
+            // Keep if it looks like a year-adjacent number or a production number
+            if (/19\d{2}|20\d{2}/.test(n)) return n
+            return "[NUMMER]"
+        })
+        // Names after common Danish contract patterns
+        .replace(/(Undertegnede|Ansatte|Klipper(?:en)?|Freelancer|mellem)\s+([A-ZÆØÅ][a-zæøå]+(?: [A-ZÆØÅ][a-zæøå]+)+)/g,
+            (_, prefix) => `${prefix} [NAVN]`)
+}
+
 // ── Types ────────────────────────────────────────────────────
 
 export type FlagSeverity = "critical" | "warning" | "info"
@@ -335,12 +364,13 @@ export interface PortalScreeningResult {
 }
 
 export async function screenPortalContract(contractText: string, availableRoles: string[] = []): Promise<PortalScreeningResult> {
+    const safeText = anonymizeContractText(contractText)
     const resp = await fetch("/api/screen", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             system: buildPortalSystem(availableRoles),
-            userMessage: "Analyser denne kontrakt og returner JSON til formularen:\n\n" + contractText.slice(0, 30000),
+            userMessage: "Analyser denne kontrakt og returner JSON til formularen:\n\n" + safeText.slice(0, 30000),
         }),
     })
     if (!resp.ok) {
@@ -358,6 +388,7 @@ export async function screenContract(
     contractText: string
 ): Promise<ScreeningResult> {
     const systemPrompt = buildSystemPrompt()
+    const safeText = anonymizeContractText(contractText)
 
     // Call our server-side proxy to avoid CORS restrictions
     const response = await fetch("/api/screen", {
@@ -367,7 +398,7 @@ export async function screenContract(
             system: systemPrompt,
             userMessage:
                 "Analyser denne kontrakt og returner JSON:\n\n" +
-                contractText.slice(0, 40000),
+                safeText.slice(0, 40000),
         }),
     })
 
