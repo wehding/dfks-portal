@@ -35,10 +35,10 @@ const translations = {
 
         // Upload
         "upload.title": "Upload Kontrakt",
-        "upload.dragDrop": "Træk og slip din PDF her",
+        "upload.dragDrop": "Træk og slip din fil her",
         "upload.or": "eller",
         "upload.browse": "Vælg fil",
-        "upload.maxSize": "Maks 25MB • Kun PDF",
+        "upload.maxSize": "Maks 25MB • PDF eller Word",
         "upload.category": "Kategori",
         "upload.creditedRole": "Krediteret funktion",
         "upload.duration": "Varighed",
@@ -415,10 +415,10 @@ const translations = {
 
         // Upload
         "upload.title": "Upload Contract",
-        "upload.dragDrop": "Drag and drop your PDF here",
+        "upload.dragDrop": "Drag and drop your file here",
         "upload.or": "or",
         "upload.browse": "Browse files",
-        "upload.maxSize": "Max 25MB • PDF only",
+        "upload.maxSize": "Max 25MB • PDF or Word",
         "upload.category": "Category",
         "upload.creditedRole": "Credited role",
         "upload.duration": "Duration",

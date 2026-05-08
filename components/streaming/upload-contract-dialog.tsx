@@ -32,8 +32,13 @@ export function UploadContractDialog({
     const [uploading, setUploading] = useState(false)
 
     const handleFile = useCallback((f: File) => {
-        if (f.type !== "application/pdf") {
-            toast.error("Kun PDF-filer er tilladt")
+        const allowed = [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ]
+        if (!allowed.includes(f.type)) {
+            toast.error("Kun PDF- og Word-filer er tilladt")
             return
         }
         setFile(f)
@@ -93,20 +98,20 @@ export function UploadContractDialog({
                             onDrop={handleDrop}
                         >
                             <Upload className="mx-auto h-8 w-8 text-muted-foreground/40" />
-                            <p className="mt-3 text-sm">Træk og slip din PDF her</p>
+                            <p className="mt-3 text-sm">Træk og slip din fil her</p>
                             <p className="mt-1 text-xs text-muted-foreground">eller</p>
                             <label className="mt-3 inline-block cursor-pointer">
                                 <input
                                     type="file"
-                                    accept=".pdf"
+                                    accept=".pdf,.doc,.docx"
                                     className="hidden"
                                     onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
                                 />
                                 <span className="rounded-md border px-4 py-2 text-sm hover:bg-muted transition-colors">
-                                    Vælg PDF
+                                    Vælg fil
                                 </span>
                             </label>
-                            <p className="mt-2 text-xs text-muted-foreground">Maks 25MB · Kun PDF</p>
+                            <p className="mt-2 text-xs text-muted-foreground">Maks 25MB · PDF eller Word</p>
                         </div>
                     ) : (
                         <div className="flex items-center gap-3 rounded-lg border px-4 py-3">

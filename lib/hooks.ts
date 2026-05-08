@@ -6,10 +6,9 @@
  * The component API stays the same.
  */
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import type { Contract, MasterDataItem, Work } from "./types"
 import {
-    mockContracts as initialContracts,
     mockWorks as initialWorks,
     mockRoles as initialRoles,
     mockCategories as initialCategories,
@@ -17,29 +16,28 @@ import {
     mockProductionTypes as initialProductionTypes,
     mockLicensePeriods as initialLicensePeriods,
 } from "./mock-data"
+import { contractStore } from "./contract-store"
 
 // ── Contracts ───────────────────────────────────────────────
 
-export function useContracts(initialData?: Contract[]) {
-    const [contracts, setContracts] = useState<Contract[]>(
-        initialData ?? initialContracts
-    )
+export function useContracts() {
+    const [contracts, setContracts] = useState<Contract[]>(contractStore.getAll)
+
+    useEffect(() => contractStore.subscribe(() => setContracts(contractStore.getAll())), [])
 
     const deleteContract = useCallback((id: string) => {
         // TODO: await supabase.from('contracts').delete().eq('id', id)
-        setContracts((prev) => prev.filter((c) => c.id !== id))
+        contractStore.remove(id)
     }, [])
 
     const updateContract = useCallback((id: string, updates: Partial<Contract>) => {
         // TODO: await supabase.from('contracts').update(updates).eq('id', id)
-        setContracts((prev) =>
-            prev.map((c) => (c.id === id ? { ...c, ...updates } : c))
-        )
+        contractStore.update(id, updates)
     }, [])
 
     const addContract = useCallback((contract: Contract) => {
         // TODO: await supabase.from('contracts').insert(contract)
-        setContracts((prev) => [contract, ...prev])
+        contractStore.add(contract)
     }, [])
 
     return { contracts, deleteContract, updateContract, addContract }

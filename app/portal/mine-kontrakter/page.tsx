@@ -13,7 +13,8 @@ import {
     ChevronDown,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
-import { mockRoles, mockRegisteredWorks, mockContracts } from "@/lib/mock-data"
+import { mockRoles, mockRegisteredWorks } from "@/lib/mock-data"
+import { useContracts } from "@/lib/hooks"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -71,9 +72,10 @@ const statusLabels: Record<string, string> = {
 
 export default function MineKontrakterPage() {
     const { t } = useI18n()
+    const { contracts, addContract } = useContracts()
 
     // Member's contracts (filtered by userId in real app)
-    const myContracts = mockContracts.filter((c) => c.userId === "u1")
+    const myContracts = contracts.filter((c) => c.userId === "u1")
 
     // Upload section state
     const [showUpload, setShowUpload] = useState(false)
@@ -104,9 +106,14 @@ export default function MineKontrakterPage() {
     }, [title])
 
     const handleFile = useCallback((f: File) => {
-        if (f.type === "application/pdf") {
+        const allowed = [
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ]
+        if (allowed.includes(f.type)) {
             setFile(f)
-            setPdfUrl(URL.createObjectURL(f))
+            if (f.type === "application/pdf") setPdfUrl(URL.createObjectURL(f))
         }
     }, [])
 
@@ -263,7 +270,7 @@ export default function MineKontrakterPage() {
                                 <label className="mt-3 inline-block cursor-pointer">
                                     <input
                                         type="file"
-                                        accept=".pdf"
+                                        accept=".pdf,.doc,.docx"
                                         className="hidden"
                                         onChange={(e) =>
                                             e.target.files?.[0] && handleFile(e.target.files[0])
@@ -527,7 +534,43 @@ export default function MineKontrakterPage() {
 
                                 <Separator />
 
-                                <Button className="w-full" disabled={!file || !title}>
+                                <Button
+                                    className="w-full"
+                                    disabled={!file || !title}
+                                    onClick={() => {
+                                        if (!file || !title) return
+                                        const today = new Date()
+                                        const dateStr = today.toISOString().slice(0, 10)
+                                        addContract({
+                                            id: `portal_${Date.now()}`,
+                                            userId: "u1",
+                                            userName: "Anna Heide",
+                                            title: title.trim(),
+                                            category: (category || "feature") as any,
+                                            creditedRole: creditedRole || "Klipper",
+                                            duration: isSeries
+                                                ? episodes.reduce((s, e) => s + e.duration, 0)
+                                                : Number(duration) || 0,
+                                            episodes: isSeries ? episodes : undefined,
+                                            premiereDate: premiereDate || dateStr,
+                                            premiereYear: premiereDate
+                                                ? new Date(premiereDate).getFullYear()
+                                                : today.getFullYear(),
+                                            fileUrl: "",
+                                            status: "pending",
+                                            uploadedAt: dateStr,
+                                        })
+                                        setFile(null)
+                                        setPdfUrl(null)
+                                        setTitle("")
+                                        setCategory("")
+                                        setCreditedRole("")
+                                        setDuration("")
+                                        setPremiereDate("")
+                                        setEpisodes([])
+                                        setShowUpload(false)
+                                    }}
+                                >
                                     <Upload className="mr-2 h-4 w-4" />
                                     {t("upload.submit")}
                                 </Button>

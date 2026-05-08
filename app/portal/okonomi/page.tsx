@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { UploadContractDialog } from "@/components/streaming/upload-contract-dialog"
+import { useContracts } from "@/lib/hooks"
 import type { DistributionKeyStatus, PayoutStatus, ProductionType } from "@/lib/streaming-types"
 
 // ── Mock data — klipper: Anna Heide ──────────────────────────
@@ -211,6 +212,7 @@ function DistributionKeyCard({ production, onAccept }: {
 // ── Page ─────────────────────────────────────────────────────
 
 export default function PortalOkonomiPage() {
+    const { addContract } = useContracts()
     const [expanded, setExpanded] = useState<string | null>("008")
     const [accepted, setAccepted] = useState<Set<string>>(new Set())
     const [uploadFor, setUploadFor] = useState<MyProduction | null>(null)
@@ -368,7 +370,26 @@ export default function PortalOkonomiPage() {
             onClose={() => setUploadFor(null)}
             productionTitle={uploadFor?.title ?? ""}
             productionId={uploadFor?.id ?? ""}
-            onUploaded={() => setUploadFor(null)}
+            onUploaded={(_, file) => {
+                if (uploadFor) {
+                    const today = new Date().toISOString().slice(0, 10)
+                    addContract({
+                        id: `portal_${Date.now()}`,
+                        userId: "u1",
+                        userName: "Anna Heide",
+                        title: uploadFor.title,
+                        category: "feature",
+                        creditedRole: "Klipper",
+                        duration: 0,
+                        premiereDate: today,
+                        premiereYear: new Date().getFullYear(),
+                        fileUrl: "",
+                        status: "pending",
+                        uploadedAt: today,
+                    })
+                }
+                setUploadFor(null)
+            }}
         />
         </>
     )
