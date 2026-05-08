@@ -157,19 +157,25 @@ export default function MineKontrakterPage() {
         let cancelled = false
         setScreening(true)
         setAiFields(new Set())
+        const roleNames = activeRoles.map(r => r.name)
         ;(async () => {
             try {
                 const { extractTextFromFile, screenPortalContract } = await import("@/lib/ai")
                 const text = await extractTextFromFile(file)
                 if (cancelled) return
-                const result: PortalScreeningResult = await screenPortalContract(text)
+                const result: PortalScreeningResult = await screenPortalContract(text, roleNames)
                 if (cancelled) return
                 const filled = new Set<string>()
                 if (result.title) { setTitle(result.title); filled.add("title") }
                 if (result.category && ["feature","short","tvSeries","documentary","docSeries","tvEntertainment","reality","sport"].includes(result.category)) {
                     setCategory(result.category as Category); filled.add("category")
                 }
-                if (result.creditedRole) { setCreditedRoles([result.creditedRole]); filled.add("creditedRole") }
+                if (result.creditedRole) {
+                    // Find exact match first, then case-insensitive fallback
+                    const exact = roleNames.find(r => r === result.creditedRole)
+                    const ci = exact ?? roleNames.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase())
+                    if (ci) { setCreditedRoles([ci]); filled.add("creditedRole") }
+                }
                 if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate") }
                 if (result.episodes && result.episodes.length > 0) {
                     setEpisodes(result.episodes.map((e, i) => ({ number: i + 1, title: e.title ?? "", duration: e.duration ?? 0 })))
@@ -188,7 +194,7 @@ export default function MineKontrakterPage() {
             }
         })()
         return () => { cancelled = true }
-    }, [file])
+    }, [file]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
