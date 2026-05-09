@@ -251,7 +251,7 @@ export default function MineVaerkerPage() {
 
             {/* Contract Preview Dialog */}
             <Dialog open={!!previewPdf} onOpenChange={() => { setPreviewPdf(null); setLocalPdfUrl(null) }}>
-                <DialogContent className="max-w-5xl h-[85vh] flex flex-col">
+                <DialogContent className="h-[90vh] flex flex-col" style={{ maxWidth: "92vw", width: "92vw" }}>
                     <DialogHeader>
                         <DialogTitle>{t("common.preview")}</DialogTitle>
                     </DialogHeader>
