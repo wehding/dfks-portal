@@ -737,7 +737,7 @@ export default function MineKontrakterPage() {
                     setLocalPdfUrl(null)
                 }}
             >
-                <DialogContent className="sm:max-w-7xl w-[92vw] h-[90vh] flex flex-col">
+                <DialogContent className="h-[90vh] flex flex-col" style={{ maxWidth: "92vw", width: "92vw" }}>
                     <DialogHeader>
                         <DialogTitle>
                             {previewContract?.title}
