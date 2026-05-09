@@ -737,7 +737,7 @@ export default function MineKontrakterPage() {
                     setLocalPdfUrl(null)
                 }}
             >
-                <DialogContent className="max-w-5xl h-[85vh] flex flex-col">
+                <DialogContent className="sm:max-w-7xl w-[92vw] h-[90vh] flex flex-col">
                     <DialogHeader>
                         <DialogTitle>
                             {previewContract?.title}
@@ -757,7 +757,7 @@ export default function MineKontrakterPage() {
 
                         return (
                             <div
-                                className={`flex-1 grid gap-4 overflow-hidden ${isApproved && data ? "lg:grid-cols-2" : ""
+                                className={`flex-1 grid gap-4 overflow-hidden ${isApproved && data ? "lg:grid-cols-[3fr_2fr]" : ""
                                     }`}
                             >
                                 {/* PDF */}
