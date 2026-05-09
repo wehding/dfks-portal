@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import {
     Search,
@@ -80,7 +80,7 @@ function formatRights(c: Contract) {
     return parts.length > 0 ? parts.join(", ") : "—"
 }
 
-export default function AdminKontrakterPage() {
+function AdminKontrakterContent() {
     const { t } = useI18n()
     const { contracts, deleteContract } = useContracts()
     const searchParams = useSearchParams()
@@ -638,5 +638,13 @@ export default function AdminKontrakterPage() {
                 </DialogContent>
             </Dialog>
         </div>
+    )
+}
+
+export default function AdminKontrakterPage() {
+    return (
+        <Suspense>
+            <AdminKontrakterContent />
+        </Suspense>
     )
 }
