@@ -3,7 +3,7 @@
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { Film, FileText, Wallet, LogOut, ShieldCheck } from "lucide-react"
+import { Film, FileText, Wallet, LogOut, ShieldCheck, UserCircle } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
@@ -46,6 +46,11 @@ export default function PortalLayout({
             label: t("nav.economy"),
             href: "/portal/okonomi",
             icon: Wallet,
+        },
+        {
+            label: "Min profil",
+            href: "/portal/min-profil",
+            icon: UserCircle,
         },
     ]
 
