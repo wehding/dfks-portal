@@ -99,7 +99,7 @@ export default function MinProfilPage() {
             <section className="rounded-lg border border-amber-200 dark:border-amber-900">
                 <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-200 dark:border-amber-900">
                     <Heart className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                    <h2 className="font-medium">Kontaktperson ved dødsfald</h2>
+                    <h2 className="font-medium">Kontakt i forbindelse med arv</h2>
                 </div>
                 <div className="p-5 space-y-4">
                     <div className="flex gap-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-3.5 py-3 text-xs text-amber-800 dark:text-amber-300">
