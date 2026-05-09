@@ -45,11 +45,6 @@ export interface NextOfKin {
     notes?: string
 }
 
-export interface BankAccount {
-    registrationNumber: string
-    accountNumber: string
-}
-
 export interface UserAddress {
     street: string
     postalCode: string
@@ -63,7 +58,6 @@ export interface User {
     phone?: string
     cprNumber?: string // masked, e.g. "010185-****"
     address?: UserAddress
-    bankAccount?: BankAccount
     nextOfKin?: NextOfKin
     role: "member" | "admin"
     status: "active" | "inactive" | "pending"

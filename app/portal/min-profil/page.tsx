@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Lock, Heart, CreditCard, User, Save, Info } from "lucide-react"
+import { Lock, Heart, User, Save, Info } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { mockUsers } from "@/lib/mock-data"
-import type { NextOfKin, BankAccount, UserAddress } from "@/lib/types"
+import type { NextOfKin, UserAddress } from "@/lib/types"
 
 // Simulér indlogget bruger
 const currentUser = mockUsers[0]
@@ -22,11 +22,6 @@ export default function MinProfilPage() {
     const [phone, setPhone] = useState(currentUser.phone ?? "")
     const [address, setAddress] = useState<UserAddress>(
         currentUser.address ?? { street: "", postalCode: "", city: "" }
-    )
-
-    // Bankoplysninger
-    const [bank, setBank] = useState<BankAccount>(
-        currentUser.bankAccount ?? { registrationNumber: "", accountNumber: "" }
     )
 
     // Arvekontakt
@@ -99,38 +94,6 @@ export default function MinProfilPage() {
                 </div>
             </section>
 
-            {/* Bankoplysninger */}
-            <section className="rounded-lg border">
-                <div className="flex items-center gap-2 px-5 py-4 border-b">
-                    <CreditCard className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="font-medium">Bankoplysninger</h2>
-                </div>
-                <div className="p-5 space-y-4">
-                    <p className="text-sm text-muted-foreground">
-                        Bruges til udbetaling af rettighedsvederlag fra DFKS.
-                    </p>
-                    <div className="grid gap-4 sm:grid-cols-3">
-                        <div className="space-y-1.5">
-                            <Label>Reg.nr.</Label>
-                            <Input
-                                value={bank.registrationNumber}
-                                onChange={e => setBank(b => ({ ...b, registrationNumber: e.target.value }))}
-                                placeholder="0000"
-                                maxLength={4}
-                            />
-                        </div>
-                        <div className="sm:col-span-2 space-y-1.5">
-                            <Label>Kontonummer</Label>
-                            <Input
-                                value={bank.accountNumber}
-                                onChange={e => setBank(b => ({ ...b, accountNumber: e.target.value }))}
-                                placeholder="00000000"
-                                maxLength={10}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </section>
 
             {/* Arvekontakt */}
             <section className="rounded-lg border border-amber-200 dark:border-amber-900">
