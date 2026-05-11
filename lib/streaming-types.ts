@@ -284,6 +284,7 @@ export type VaerkType =
     | "dokumentarserie"
     | "dokuDrama"
     | "kort_dokumentar"
+    | "ikke_relevant"       // Ikke relevant for DFKS
 
 export type SortStatus = "pending" | "approved" | "rejected" | "flagged"
 

@@ -161,7 +161,7 @@ function matchesRule(title: string, channel: string | undefined, rule: FilterRul
 
 // ── Import dialog ─────────────────────────────────────────────
 
-type ImportStep = "setup" | "parsing" | "preview" | "filtering" | "confirm"
+type ImportStep = "setup" | "parsing" | "preview" | "confirm"
 
 interface ParsedRow {
     rawTitle: string
@@ -194,8 +194,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
     const [headers, setHeaders] = useState<string[]>([])
     const [allRows, setAllRows] = useState<ParsedRow[]>([])
     const [previewRows, setPreviewRows] = useState<Record<string, string>[]>([])
-    const [filterResult, setFilterResult] = useState<FilterResult | null>(null)
-    const [filteredRows, setFilteredRows] = useState<ParsedRow[]>([])
+    const [filterPreview, setFilterPreview] = useState<FilterResult | null>(null)
     const [parseError, setParseError] = useState<string | null>(null)
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -266,6 +265,26 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                 return obj
             })
             setPreviewRows(prev)
+
+            // Beregn filter-preview (kun informativt — intet fjernes ved import)
+            const rules = loadFilterRules().filter(r => r.active)
+            const ruleCounts = new Map<string, number>(rules.map(r => [r.id, 0]))
+            let removedCount = 0
+            for (const row of parsed) {
+                for (const rule of rules) {
+                    if (matchesRule(row.rawTitle, row.channel, rule)) {
+                        ruleCounts.set(rule.id, (ruleCounts.get(rule.id) ?? 0) + 1)
+                        removedCount++
+                        break
+                    }
+                }
+            }
+            setFilterPreview({
+                totalRows: parsed.length,
+                removed: removedCount,
+                remaining: parsed.length - removedCount,
+                byRule: rules.map(r => ({ ruleName: r.name, count: ruleCounts.get(r.id) ?? 0 })).filter(r => r.count > 0),
+            })
             setStep("preview")
         } catch (err) {
             setParseError(err instanceof Error ? err.message : "Ukendt fejl ved parsing")
@@ -273,37 +292,9 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         }
     }
 
-    const handleRunFilter = () => {
-        const rules = loadFilterRules().filter(r => r.active)
-        const ruleCounts = new Map<string, number>(rules.map(r => [r.id, 0]))
-
-        const kept: ParsedRow[] = []
-        for (const row of allRows) {
-            let removed = false
-            for (const rule of rules) {
-                if (matchesRule(row.rawTitle, row.channel, rule)) {
-                    ruleCounts.set(rule.id, (ruleCounts.get(rule.id) ?? 0) + 1)
-                    removed = true
-                    break
-                }
-            }
-            if (!removed) kept.push(row)
-        }
-
-        const removedRows = allRows.length - kept.length
-        setFilteredRows(kept)
-        setFilterResult({
-            totalRows: allRows.length,
-            removed: removedRows,
-            byRule: rules.map(r => ({ ruleName: r.name, count: ruleCounts.get(r.id) ?? 0 })).filter(r => r.count > 0),
-            remaining: kept.length,
-        })
-        setStep("filtering")
-    }
-
     const handleConfirm = () => {
         const batchId = `batch_${Date.now()}`
-        const toStore = filteredRows.slice(0, MAX_STORE_ROWS).map((r, i): AftalelicensVaerk => ({
+        const toStore = allRows.slice(0, MAX_STORE_ROWS).map((r, i): AftalelicensVaerk => ({
             id: `${batchId}_${i}`,
             batchId,
             rawTitle: r.rawTitle,
@@ -325,8 +316,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             return
         }
 
-        if (filteredRows.length > MAX_STORE_ROWS) {
-            toast.warning(`Kun de første ${MAX_STORE_ROWS.toLocaleString("da-DK")} rækker er gemt (filen har ${filteredRows.length.toLocaleString("da-DK")} rækker)`)
+        if (allRows.length > MAX_STORE_ROWS) {
+            toast.warning(`Kun de første ${MAX_STORE_ROWS.toLocaleString("da-DK")} rækker er gemt (filen har ${allRows.length.toLocaleString("da-DK")} rækker)`)
         }
 
         const batch: AftalelicensBatch = {
@@ -335,8 +326,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             year: Number(year),
             uploadedAt: new Date().toISOString(),
             uploadedBy: "Admin",
-            totalRows: filterResult?.totalRows ?? allRows.length,
-            filteredRows: Math.min(filteredRows.length, MAX_STORE_ROWS),
+            totalRows: allRows.length,
+            filteredRows: Math.min(allRows.length, MAX_STORE_ROWS),
             status: "imported",
             notes: file?.name || undefined,
         }
@@ -355,8 +346,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         setHeaders([])
         setAllRows([])
         setPreviewRows([])
-        setFilterResult(null)
-        setFilteredRows([])
+        setFilterPreview(null)
         setParseError(null)
     }
 
@@ -496,60 +486,40 @@ function ImportDialog({ open, onOpenChange, onImport }: {
                             <p className="text-sm text-destructive">Ingen titelkolonne fundet — tjek at filen har en kolonne med &quot;titel&quot; eller &quot;program&quot;</p>
                         )}
 
+                        {filterPreview && filterPreview.removed > 0 && (
+                            <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1.5">
+                                <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                                    Filterregler vil auto-afvise ca. {filterPreview.removed.toLocaleString("da-DK")} rækker i sorteringen
+                                </p>
+                                <p className="text-xs text-amber-700 dark:text-amber-400">
+                                    Alle {filterPreview.totalRows.toLocaleString("da-DK")} rækker importeres — afviste kan altid gendannes ved at slå en regel fra.
+                                </p>
+                                {filterPreview.byRule.length > 0 && (
+                                    <div className="space-y-0.5 pt-1">
+                                        {filterPreview.byRule.map(r => (
+                                            <div key={r.ruleName} className="flex items-center justify-between text-xs text-amber-700 dark:text-amber-400">
+                                                <span>{r.ruleName}</span>
+                                                <span className="font-mono">{r.count.toLocaleString("da-DK")}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {allRows.length > MAX_STORE_ROWS && (
+                            <div className="flex items-start gap-2 rounded bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                                <span>
+                                    {allRows.length.toLocaleString("da-DK")} rækker er for mange til at gemme lokalt — kun de første {MAX_STORE_ROWS.toLocaleString("da-DK")} gemmes.
+                                </span>
+                            </div>
+                        )}
+
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setStep("setup")}>Tilbage</Button>
-                            <Button onClick={handleRunFilter} disabled={colMap.titleCol === null}>
-                                Kør filtrering
-                                <ChevronRight className="ml-1 h-4 w-4" />
-                            </Button>
-                        </DialogFooter>
-                    </div>
-                )}
-
-                {step === "filtering" && filterResult && (
-                    <div className="space-y-4">
-                        <div className="rounded-lg border p-4 space-y-3">
-                            <p className="text-sm font-medium">Filtreringsresultat</p>
-                            <div className="grid grid-cols-3 gap-4 text-center">
-                                <div className="rounded-lg bg-muted/50 p-3">
-                                    <p className="text-2xl font-semibold">{filterResult.totalRows.toLocaleString("da-DK")}</p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">Rækker i alt</p>
-                                </div>
-                                <div className="rounded-lg bg-destructive/10 p-3">
-                                    <p className="text-2xl font-semibold text-destructive">{filterResult.removed.toLocaleString("da-DK")}</p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">Fjernet af regler</p>
-                                </div>
-                                <div className="rounded-lg bg-green-50 dark:bg-green-950/30 p-3">
-                                    <p className="text-2xl font-semibold text-green-700 dark:text-green-400">
-                                        {Math.min(filterResult.remaining, MAX_STORE_ROWS).toLocaleString("da-DK")}
-                                    </p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">Til sortering</p>
-                                </div>
-                            </div>
-                            {filterResult.byRule.length > 0 && (
-                                <div className="space-y-1">
-                                    <p className="text-xs font-medium text-muted-foreground">Per regel:</p>
-                                    {filterResult.byRule.map(r => (
-                                        <div key={r.ruleName} className="flex items-center justify-between text-xs">
-                                            <span className="text-muted-foreground">{r.ruleName}</span>
-                                            <span className="font-mono">{r.count.toLocaleString("da-DK")} rækker</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                            {filterResult.remaining > MAX_STORE_ROWS && (
-                                <div className="flex items-start gap-2 rounded bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                                    <span>
-                                        {filterResult.remaining.toLocaleString("da-DK")} rækker er for mange til at gemme lokalt — kun de første {MAX_STORE_ROWS.toLocaleString("da-DK")} gemmes.
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                        <DialogFooter>
-                            <Button variant="outline" onClick={() => setStep("preview")}>Tilbage</Button>
-                            <Button onClick={handleConfirm}>
-                                Bekræft import
+                            <Button onClick={handleConfirm} disabled={colMap.titleCol === null}>
+                                Importer {allRows.length.toLocaleString("da-DK")} rækker
                             </Button>
                         </DialogFooter>
                     </div>

@@ -72,6 +72,7 @@ const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     dokumentarserie: "Dokumentarserie",
     dokuDrama:       "DokuDrama",
     kort_dokumentar: "Kort dokumentar",
+    ikke_relevant:   "Ikke relevant",
 }
 
 const KILDE_LABELS: Record<string, string> = {
@@ -84,12 +85,15 @@ function genMockVaerker(): AftalelicensVaerk[] {
     // Legitime filmværker — skal sorteres
     const filmTitles = [
         { raw: "Nordlys", type: "dokumentarfilm" as VaerkType, channel: "DR K", duration: 88, isGenudsendelse: false },
+        { raw: "Drømmen om Danmark", type: "spillefilm" as VaerkType, channel: "DR1", duration: 118, isGenudsendelse: false },
         { raw: "Borgen", type: "tv_serie_lang" as VaerkType, channel: "DR1", duration: 55, isGenudsendelse: false, season: 3, episode: 7, productionYear: 2013 },
         { raw: "Kærlighed for voksne", type: "spillefilm" as VaerkType, channel: "DR2", duration: 88, isGenudsendelse: false },
         { raw: "Sommerdansen", type: "dokumentarfilm" as VaerkType, channel: "DR K", duration: 52, isGenudsendelse: false },
         { raw: "Bryggeren", type: "dokuDrama" as VaerkType, channel: "TV2", duration: 44, isGenudsendelse: true },
         { raw: "Ronja Røverdatter", type: "spillefilm" as VaerkType, channel: "DR1", duration: 106, isGenudsendelse: false },
-        { raw: "Mørke sider", type: "dokumentarserie" as VaerkType, channel: "DR2", duration: 48, isGenudsendelse: false },
+        { raw: "Mørke sider S1E1", type: "dokumentarserie" as VaerkType, channel: "DR2", duration: 48, isGenudsendelse: false },
+        { raw: "Mørke sider S1E2", type: "dokumentarserie" as VaerkType, channel: "DR2", duration: 48, isGenudsendelse: false },
+        { raw: "Mørke sider S1E3", type: "dokumentarserie" as VaerkType, channel: "DR2", duration: 48, isGenudsendelse: false },
         { raw: "Skovgården", type: "tv_serie_kort" as VaerkType, channel: "TV2", duration: 28, isGenudsendelse: true },
         { raw: "Frihavn", type: "tv_serie_lang" as VaerkType, channel: "DR1", duration: 58, isGenudsendelse: false },
         { raw: "Havets stemme", type: "kortfilm" as VaerkType, channel: "DR K", duration: 18, isGenudsendelse: false },
@@ -145,6 +149,8 @@ function genMockVaerker(): AftalelicensVaerk[] {
         isGenudsendelse: t.isGenudsendelse,
         vaerkType: t.type,
         sortStatus: (i < 6 ? "approved" : i === 6 ? "rejected" : i === 7 ? "flagged" : "pending") as SortStatus,
+        // "Drømmen om Danmark" (index 1) simulerer et DB-match
+        sortedBy: (i === 1 ? "db" : undefined),
         notes: i === 7 ? "Usikker på værktype" : undefined,
         season: (t as { season?: number }).season,
         episode: (t as { episode?: number }).episode,
@@ -567,6 +573,42 @@ function SortTable({ vaerker, onUpdate }: {
     const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null)
     const [aiSuggestions, setAiSuggestions] = useState<Map<string, { status: string; type?: string; reason: string }>>(new Map())
     const aiAbortRef = useRef<AbortController | null>(null)
+    const [bulkPopup, setBulkPopup] = useState<{ x: number; y: number; label: string; onConfirm: () => void } | null>(null)
+    const lastClickPos = useRef({ x: 0, y: 0 })
+
+    useEffect(() => {
+        const handler = (e: MouseEvent) => {
+            lastClickPos.current = { x: e.clientX, y: e.clientY }
+        }
+        window.addEventListener("mousedown", handler)
+        return () => window.removeEventListener("mousedown", handler)
+    }, [])
+
+    // Åbn bulk-popup ved musen, men hold den inden for skærmen
+    const openBulkPopup = (label: string, onConfirm: () => void) => {
+        const POPUP_W = 252   // min-w-[220px] + border + padding
+        const POPUP_H = 90    // ca. højde
+        const rawX = lastClickPos.current.x + 12
+        const rawY = lastClickPos.current.y - 10
+        setBulkPopup({
+            x: Math.min(rawX, window.innerWidth - POPUP_W),
+            y: Math.min(Math.max(rawY, 8), window.innerHeight - POPUP_H),
+            label,
+            onConfirm,
+        })
+    }
+
+    // Luk bulk-popup ved klik udenfor
+    useEffect(() => {
+        if (!bulkPopup) return
+        const handler = (e: MouseEvent) => {
+            const target = e.target as Element
+            if (!target.closest("[data-bulk-popup]")) setBulkPopup(null)
+        }
+        // Lyt i næste tick så popup ikke lukker med det samme
+        const t = setTimeout(() => window.addEventListener("mousedown", handler), 0)
+        return () => { clearTimeout(t); window.removeEventListener("mousedown", handler) }
+    }, [bulkPopup])
 
     const BATCH_SIZE = 50
 
@@ -744,6 +786,44 @@ function SortTable({ vaerker, onUpdate }: {
         onUpdate(id, { sortStatus: status, sortedAt: new Date().toISOString(), sortedBy: "admin" })
     }
 
+    // Fjern kun afsnit/sæson-markører — behold årstal som del af matchet
+    const stripEpisodeId = (title: string) =>
+        title
+            .replace(/\s*[Ss]\d+\s*[Ee]\d+/g, "")   // S1E1 / S01E01
+            .replace(/\s*[Ss]æson\s*\d+/gi, "")      // Sæson 3
+            .replace(/\s*[Aa]fsnit\s*\d+/gi, "")     // Afsnit 7
+            .replace(/\s*[-–]\s*\d+\s*$/g, "")       // - 4 til sidst
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase()
+
+    const rejectWithMatches = (id: string) => {
+        const vaerk = vaerker.find(v => v.id === id)
+        if (!vaerk) return
+
+        // Afvis den valgte titel
+        setStatus(id, "rejected")
+
+        // Find andre titler med samme serienavn + årstal (ekskl. allerede afviste)
+        const baseTitle = stripEpisodeId(vaerk.rawTitle)
+        const siblings = vaerker.filter(v => {
+            if (v.id === id || v.sortStatus === "rejected") return false
+            if (stripEpisodeId(v.rawTitle) !== baseTitle) return false
+            // Hvis årstal er tilgængeligt på begge, kræv at de matcher
+            if (vaerk.productionYear && v.productionYear && vaerk.productionYear !== v.productionYear) return false
+            return true
+        })
+
+        if (siblings.length === 0) return
+
+        const yearSuffix = vaerk.productionYear ? ` (${vaerk.productionYear})` : ""
+        openBulkPopup(`Afvis alle ${siblings.length + 1} med samme serienavn${yearSuffix}?`, () => {
+            const now = new Date().toISOString()
+            siblings.forEach(s => onUpdate(s.id, { sortStatus: "rejected", sortedAt: now, sortedBy: "admin" }))
+            setBulkPopup(null)
+        })
+    }
+
     const pending = vaerker.filter(v => v.sortStatus === "pending").length
     const total = vaerker.length
     const progress = total > 0 ? Math.round(((total - pending) / total) * 100) : 100
@@ -904,7 +984,23 @@ function SortTable({ vaerker, onUpdate }: {
                                 <TableCell>
                                     <Select
                                         value={v.vaerkType ?? ""}
-                                        onValueChange={val => onUpdate(v.id, { vaerkType: val as VaerkType })}
+                                        onValueChange={val => {
+                                            const type = val as VaerkType
+                                            onUpdate(v.id, { vaerkType: type })
+
+                                            // Tilbyd bulk-ændring for samme serie
+                                            const baseTitle = stripEpisodeId(v.rawTitle)
+                                            const siblings = vaerker.filter(s =>
+                                                s.id !== v.id &&
+                                                stripEpisodeId(s.rawTitle) === baseTitle &&
+                                                !(v.productionYear && s.productionYear && v.productionYear !== s.productionYear)
+                                            )
+                                            if (siblings.length === 0) return
+                                            openBulkPopup(`Sæt alle ${siblings.length + 1} til "${VAERK_TYPE_LABELS[type]}"?`, () => {
+                                                siblings.forEach(s => onUpdate(s.id, { vaerkType: type }))
+                                                setBulkPopup(null)
+                                            })
+                                        }}
                                     >
                                         <SelectTrigger className="h-8 text-xs">
                                             <SelectValue placeholder="Vælg type" />
@@ -949,6 +1045,14 @@ function SortTable({ vaerker, onUpdate }: {
                                 <TableCell>
                                     <div className="flex items-center gap-1.5">
                                         <SortStatusBadge status={v.sortStatus} />
+                                        {v.sortStatus === "approved" && v.sortedBy === "db" && (
+                                            <span
+                                                title="Automatisk godkendt — fundet i værksdatabasen"
+                                                className="inline-flex items-center rounded px-1 py-0 text-[9px] font-medium tracking-wide bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400 cursor-help border border-green-200 dark:border-green-800"
+                                            >
+                                                db
+                                            </span>
+                                        )}
                                         {v.sortStatus === "rejected" && (() => {
                                             let label = ""
                                             let title = ""
@@ -991,7 +1095,7 @@ function SortTable({ vaerker, onUpdate }: {
                                             variant="ghost"
                                             size="icon"
                                             className="h-7 w-7 text-destructive hover:text-destructive"
-                                            onClick={() => setStatus(v.id, "rejected")}
+                                            onClick={() => rejectWithMatches(v.id)}
                                             title="Afvis"
                                         >
                                             <X className="h-3.5 w-3.5" />
@@ -1045,6 +1149,25 @@ function SortTable({ vaerker, onUpdate }: {
                             disabled={(page + 1) * PAGE_SIZE >= filtered.length}
                         >
                             Næste
+                        </Button>
+                    </div>
+                </div>
+            )}
+
+            {/* Bulk-popup — vises ved musen */}
+            {bulkPopup && (
+                <div
+                    data-bulk-popup
+                    className="fixed z-50 bg-popover border border-border rounded-lg shadow-lg p-3 flex flex-col gap-2 min-w-[220px]"
+                    style={{ left: bulkPopup.x, top: bulkPopup.y }}
+                >
+                    <p className="text-sm font-medium leading-snug">{bulkPopup.label}</p>
+                    <div className="flex gap-2 justify-end">
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setBulkPopup(null)}>
+                            Nej
+                        </Button>
+                        <Button size="sm" className="h-7 text-xs" onClick={bulkPopup.onConfirm}>
+                            Ja, sæt alle
                         </Button>
                     </div>
                 </div>
@@ -2096,6 +2219,7 @@ const DEFAULT_VAEGTE: Record<VaerkType, number> = {
     dokumentarserie: 100,
     dokuDrama:       200,
     kort_dokumentar: 100,
+    ikke_relevant:   0,
 }
 
 const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
