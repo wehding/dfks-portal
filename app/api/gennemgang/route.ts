@@ -11,6 +11,8 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
+import { callAi } from "@/lib/ai-client"
+import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 
 // ── Sensitive data masking ───────────────────────────────────
 // Masks CPR numbers, bank account numbers and private addresses
@@ -187,19 +189,13 @@ VIGTIGT for JSON-output: Returner KUN JSON — ingen tekst hverken før eller ef
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData()
-        const file = formData.get("file") as File | null
+        const file       = formData.get("file")     as File | null
         const memberName = formData.get("memberName") as string | null
+        const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
+        const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
         if (!file) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
-        }
-
-        const apiKey = process.env.ANTHROPIC_API_KEY
-        if (!apiKey) {
-            return NextResponse.json(
-                { error: "ANTHROPIC_API_KEY er ikke konfigureret" },
-                { status: 500 }
-            )
         }
 
         const buffer = Buffer.from(await file.arrayBuffer())
@@ -257,33 +253,39 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // Call Claude
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 16000,
-                system: SYSTEM_PROMPT,
-                messages: [{ role: "user", content: messageContent }],
-            }),
-        })
-
-        if (!response.ok) {
-            const err = await response.text()
-            console.error("[gennemgang] Claude error:", err)
+        // PDF-filer med document-blokke understøttes kun af Anthropic
+        let raw: string
+        if (filename.endsWith(".pdf") && provider !== "anthropic") {
             return NextResponse.json(
-                { error: `Claude API fejl ${response.status}` },
-                { status: response.status }
+                { error: "PDF-analyse kræver Anthropic som AI-udbyder. Skift i Stamdata → Indstillinger, eller upload som DOCX/TXT." },
+                { status: 400 }
             )
         }
 
-        const data = await response.json()
-        const raw = data.content?.find((b: any) => b.type === "text")?.text ?? ""
+        if (provider === "anthropic") {
+            // Anthropic: brug document-blokke (understøtter PDF nativt)
+            const apiKey = process.env.ANTHROPIC_API_KEY
+            if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY er ikke konfigureret" }, { status: 500 })
+            const ALLOWED = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"]
+            const safeModel = ALLOWED.includes(model) ? model : AI_CONFIG_DEFAULTS.kontrakt.model
+            const response = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+                body: JSON.stringify({ model: safeModel, max_tokens: 16000, system: SYSTEM_PROMPT, messages: [{ role: "user", content: messageContent }] }),
+            })
+            if (!response.ok) {
+                const err = await response.text()
+                console.error("[gennemgang] Anthropic error:", err)
+                return NextResponse.json({ error: `Claude API fejl ${response.status}` }, { status: response.status })
+            }
+            const data = await response.json()
+            raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? ""
+        } else {
+            // OpenAI / Google: brug text-indhold (kun DOCX/TXT)
+            const textBlock = messageContent.find((b: { type: string; text?: string }) => b.type === "text")
+            const userMessage = textBlock?.text ?? ""
+            raw = await callAi({ provider, model, system: SYSTEM_PROMPT, userMessage, maxTokens: 16000 })
+        }
         // Strip markdown code fences robustly
         const clean = raw
             .replace(/^\s*```(?:json)?\s*/i, "")

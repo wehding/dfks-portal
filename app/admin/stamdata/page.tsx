@@ -1,8 +1,9 @@
 "use client"
 
-import { useState, useRef, useCallback, useEffect } from "react"
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Filter, Save } from "lucide-react"
+import { useState, useRef, useEffect } from "react"
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Filter, Save, Loader2 } from "lucide-react"
 import type { FilterRule, VaerkType, VaerkVaegt, AftalelicensVaegtExtra } from "@/lib/streaming-types"
+import { AI_PROVIDERS, AI_CONFIG_DEFAULTS, loadAiConfig, saveAiConfig, getProviderDef, type AiUseCase, type AiConfig, type AiProvider } from "@/lib/ai-providers"
 import { useI18n } from "@/lib/i18n"
 import { useMasterData } from "@/lib/hooks"
 import { PageHeader } from "@/components/page-header"
@@ -538,9 +539,34 @@ function loadVaegtExtra(): AftalelicensVaegtExtra {
     } catch { return DEFAULT_VAEGT_EXTRA }
 }
 
+function loadHensaettelserPct(): number {
+    if (typeof window === "undefined") return 10
+    try {
+        const v = localStorage.getItem("dfks_hensaettelser_pct")
+        return v !== null ? Number(v) : 10
+    } catch { return 10 }
+}
+
+function loadSocialPct(): number {
+    if (typeof window === "undefined") return 0
+    try {
+        const v = localStorage.getItem("dfks_sociale_pct")
+        return v !== null ? Number(v) : 0
+    } catch { return 0 }
+}
+
 function VaegteTab() {
     const [vaegte, setVaegte] = useState<VaerkVaegt[]>(loadVaegte)
     const [extra, setExtra] = useState<AftalelicensVaegtExtra>(loadVaegtExtra)
+    const [fees, setFees] = useState<AdminFees>(loadFees)
+    const [hensaettelserPct, setHensaettelserPct] = useState(10)
+    const [socialPct, setSocialPct] = useState(0)
+
+    // Hydrate from localStorage (avoids SSR mismatch)
+    useEffect(() => {
+        setHensaettelserPct(loadHensaettelserPct())
+        setSocialPct(loadSocialPct())
+    }, [])
 
     const setWeight = (type: VaerkType, value: number) => {
         setVaegte(prev => prev.map(v => v.type === type ? { ...v, weight: value } : v))
@@ -550,10 +576,27 @@ function VaegteTab() {
         setExtra(prev => ({ ...prev, [key]: value }))
     }
 
+    const setFee = (key: keyof Omit<AdminFees, "linked">, value: number) => {
+        setFees(prev => prev.linked
+            ? { ...prev, irf: value, succesbetaling: value, royalties: value, copydan: value }
+            : { ...prev, [key]: value }
+        )
+    }
+
+    const toggleLinked = () => {
+        setFees(prev => prev.linked
+            ? { ...prev, linked: false }
+            : { ...prev, linked: true, succesbetaling: prev.irf, royalties: prev.irf, copydan: prev.irf }
+        )
+    }
+
     const handleSave = () => {
         localStorage.setItem("dfks_vaerkvaegte", JSON.stringify(vaegte))
         localStorage.setItem("dfks_vaegt_extra", JSON.stringify(extra))
-        toast.success("Vægte gemt")
+        localStorage.setItem("streaming_admin_fees", JSON.stringify(fees))
+        localStorage.setItem("dfks_hensaettelser_pct", String(hensaettelserPct))
+        localStorage.setItem("dfks_sociale_pct", String(socialPct))
+        toast.success("Vægte og hensættelser gemt")
     }
 
     return (
@@ -779,34 +822,299 @@ function VaegteTab() {
                 </div>
             </div>
 
+            {/* Administrationsbidrag */}
+            <div className="rounded-lg border">
+                <div className="px-4 py-3 border-b">
+                    <h3 className="text-sm font-medium">Administrationsbidrag</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Procentsatser der bruges ved registrering af nye udbetalinger.
+                        Gælder kun fremadrettet — eksisterende udbetalinger bevarer deres sats.
+                    </p>
+                </div>
+                <div className="px-4 py-4 space-y-4">
+                    <button
+                        type="button"
+                        onClick={toggleLinked}
+                        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                        {fees.linked
+                            ? <Link2 className="h-3.5 w-3.5 text-primary" />
+                            : <Unlink2 className="h-3.5 w-3.5" />
+                        }
+                        {fees.linked ? "Samme sats for alle typer — klik for at adskille" : "Individuelle satser — klik for at låse sammen"}
+                    </button>
+                    <div className="space-y-3">
+                        {fees.linked ? (
+                            <div className="flex items-center gap-3">
+                                <Label className="w-32 text-sm shrink-0">Alle typer</Label>
+                                <Input
+                                    type="number"
+                                    value={fees.irf}
+                                    onChange={e => setFee("irf", Number(e.target.value))}
+                                    className="w-20"
+                                    step="0.5"
+                                    min="0"
+                                    max="100"
+                                />
+                                <span className="text-sm text-muted-foreground">%</span>
+                            </div>
+                        ) : (
+                            FEE_LABELS.map(({ key, label }) => (
+                                <div key={key} className="flex items-center gap-3">
+                                    <Label className="w-32 text-sm shrink-0">{label}</Label>
+                                    <Input
+                                        type="number"
+                                        value={fees[key]}
+                                        onChange={e => setFee(key, Number(e.target.value))}
+                                        className="w-20"
+                                        step="0.5"
+                                        min="0"
+                                        max="100"
+                                    />
+                                    <span className="text-sm text-muted-foreground">%</span>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Hensættelser og sociale formål */}
+            <div className="rounded-lg border">
+                <div className="px-4 py-3 border-b">
+                    <h3 className="text-sm font-medium">Hensættelser og sociale formål</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                        Standardprocenter der bruges i beregningsmodulet. Begge trækkes fra beløbet efter administrationsbidrag.
+                    </p>
+                </div>
+                <div className="px-4 py-4 space-y-3">
+                    <div className="flex items-center gap-3">
+                        <Label className="w-36 text-sm shrink-0">Hensættelser</Label>
+                        <Input
+                            type="number"
+                            value={hensaettelserPct}
+                            onChange={e => setHensaettelserPct(Number(e.target.value))}
+                            className="w-20"
+                            step="0.5"
+                            min="0"
+                            max="100"
+                        />
+                        <span className="text-sm text-muted-foreground">%</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Label className="w-36 text-sm shrink-0">Til sociale formål</Label>
+                        <Input
+                            type="number"
+                            value={socialPct}
+                            onChange={e => setSocialPct(Number(e.target.value))}
+                            className="w-20"
+                            step="0.5"
+                            min="0"
+                            max="100"
+                        />
+                        <span className="text-sm text-muted-foreground">%</span>
+                    </div>
+                </div>
+            </div>
+
             <Button onClick={handleSave} className="gap-2">
                 <Save className="h-4 w-4" />
-                Gem vægte
+                Gem vægte og hensættelser
             </Button>
+        </div>
+    )
+}
+
+// ── AI-udbyder indstillinger ──────────────────────────────────
+
+// Eksporteres ikke længere — bruges kun internt nu
+export type AiModelId = string
+export const DEFAULT_AI_MODEL: AiModelId = "claude-sonnet-4-6"
+
+function AiProviderPicker({ useCase, title, description }: { useCase: AiUseCase; title: string; description: string }) {
+    const [config, setConfig] = useState<AiConfig>(AI_CONFIG_DEFAULTS[useCase])
+
+    useEffect(() => {
+        setConfig(loadAiConfig(useCase))
+    }, [useCase])
+
+    const handleProviderChange = (provider: AiProvider) => {
+        const firstModel = getProviderDef(provider).models[0].id
+        const newConfig = { provider, model: firstModel }
+        setConfig(newConfig)
+        saveAiConfig(useCase, newConfig)
+        toast.success("AI-udbyder gemt")
+    }
+
+    const handleModelChange = (model: string) => {
+        const newConfig = { ...config, model }
+        setConfig(newConfig)
+        saveAiConfig(useCase, newConfig)
+        toast.success("AI-model gemt")
+    }
+
+    const currentProvider = getProviderDef(config.provider)
+
+    return (
+        <div className="rounded-lg border p-5 space-y-4">
+            <div>
+                <h3 className="text-sm font-medium">{title}</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Udbyder</Label>
+                    <Select value={config.provider} onValueChange={v => handleProviderChange(v as AiProvider)}>
+                        <SelectTrigger className="h-8 text-xs">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {AI_PROVIDERS.map(p => (
+                                <SelectItem key={p.id} value={p.id} className="text-xs">{p.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+                <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Model</Label>
+                    <Select value={config.model} onValueChange={handleModelChange}>
+                        <SelectTrigger className="h-8 text-xs">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {currentProvider.models.map(m => (
+                                <SelectItem key={m.id} value={m.id} className="text-xs">{m.label}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+                {currentProvider.models.find(m => m.id === config.model)?.description}
+            </p>
+        </div>
+    )
+}
+
+type KeyStatus = { configured: boolean; source: "env" | "stored" | "missing"; masked?: string }
+type AllKeyStatus = Record<"anthropic" | "openai" | "google", KeyStatus>
+
+const PROVIDER_LABELS: Record<string, string> = {
+    anthropic: "Anthropic (Claude)",
+    openai:    "OpenAI (GPT)",
+    google:    "Google (Gemini)",
+}
+
+function AiKeySettings() {
+    const [status, setStatus] = useState<AllKeyStatus | null>(null)
+    const [editing, setEditing] = useState<Record<string, string>>({})
+    const [saving, setSaving] = useState(false)
+
+    useEffect(() => {
+        fetch("/api/admin/ai-keys")
+            .then(r => r.json())
+            .then(setStatus)
+            .catch(() => null)
+    }, [])
+
+    const handleSave = async () => {
+        setSaving(true)
+        try {
+            await fetch("/api/admin/ai-keys", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(editing),
+            })
+            // Genindlæs status
+            const updated = await fetch("/api/admin/ai-keys").then(r => r.json())
+            setStatus(updated)
+            setEditing({})
+            toast.success("API-nøgler gemt")
+        } catch {
+            toast.error("Kunne ikke gemme nøgler")
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    return (
+        <div className="rounded-lg border p-5 space-y-4">
+            <div>
+                <h3 className="text-sm font-medium">API-nøgler</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                    Nøgler sat via miljøvariabler (.env) har altid prioritet og kan ikke overskrives herfra.
+                    Nøgler gemt her gemmes i <code className="text-[10px] bg-muted px-1 rounded">config/ai-keys.json</code> på serveren.
+                </p>
+            </div>
+            <div className="space-y-3">
+                {(["anthropic", "openai", "google"] as const).map(provider => {
+                    const s = status?.[provider]
+                    return (
+                        <div key={provider} className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs">{PROVIDER_LABELS[provider]}</Label>
+                                {s && (
+                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                                        s.source === "env"     ? "bg-blue-50 text-blue-700"    :
+                                        s.source === "stored"  ? "bg-green-50 text-green-700"  :
+                                        "bg-muted text-muted-foreground"
+                                    }`}>
+                                        {s.source === "env" ? "Fra .env" : s.source === "stored" ? "Gemt" : "Ikke sat"}
+                                    </span>
+                                )}
+                            </div>
+                            {s?.source === "env" ? (
+                                <div className="h-8 flex items-center rounded-md border bg-muted/50 px-3 text-xs font-mono text-muted-foreground cursor-not-allowed">
+                                    {s.masked}
+                                </div>
+                            ) : (
+                                <Input
+                                    type="password"
+                                    className="h-8 text-xs font-mono"
+                                    placeholder={s?.masked ? `Nuværende: ${s.masked}` : "Indsæt API-nøgle…"}
+                                    value={editing[provider] ?? ""}
+                                    onChange={e => setEditing(prev => ({ ...prev, [provider]: e.target.value }))}
+                                    autoComplete="off"
+                                />
+                            )}
+                        </div>
+                    )
+                })}
+            </div>
+            {Object.keys(editing).some(k => editing[k]) && (
+                <Button size="sm" onClick={handleSave} disabled={saving} className="w-full">
+                    {saving ? <><Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> Gemmer…</> : <><Save className="h-3 w-3 mr-1.5" /> Gem nøgler</>}
+                </Button>
+            )}
+        </div>
+    )
+}
+
+function AiModelSettings() {
+    return (
+        <div className="space-y-4">
+            <AiKeySettings />
+            <AiProviderPicker
+                useCase="soeg"
+                title="AI-søgning (sorteringsmodul)"
+                description="Bruges ved flag-dialog til at vurdere enkelttitler. Præcision er vigtig."
+            />
+            <AiProviderPicker
+                useCase="grovsorter"
+                title="Grovsortering (batch)"
+                description="Bruges til at klassificere hundredvis af titler ad gangen. Hastighed og pris er vigtig."
+            />
+            <AiProviderPicker
+                useCase="kontrakt"
+                title="Kontraktanalyse & validering"
+                description="Bruges til gennemgang og screening af kontrakter. Præcision er vigtig. Bemærk: PDF-filer kræver Anthropic."
+            />
         </div>
     )
 }
 
 export default function AdminStamdataPage() {
     const { t } = useI18n()
-    const [fees, setFees] = useState<AdminFees>(loadFees)
-
-    const setFee = useCallback((key: keyof Omit<AdminFees, "linked">, value: number) => {
-        setFees(prev => prev.linked
-            ? { ...prev, irf: value, succesbetaling: value, royalties: value, copydan: value }
-            : { ...prev, [key]: value }
-        )
-    }, [])
-
-    const toggleLinked = useCallback(() => {
-        setFees(prev => {
-            if (!prev.linked) {
-                // Låse: sæt alle til IRF-satsen
-                return { ...prev, linked: true, succesbetaling: prev.irf, royalties: prev.irf, copydan: prev.irf }
-            }
-            return { ...prev, linked: false }
-        })
-    }, [])
 
     return (
         <div className="space-y-6">
@@ -822,9 +1130,9 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="platforms">Platforme</TabsTrigger>
                     <TabsTrigger value="productionTypes">Værkstyper</TabsTrigger>
                     <TabsTrigger value="licensePeriods">Licensperioder</TabsTrigger>
-                    <TabsTrigger value="settings">Indstillinger</TabsTrigger>
+                    <TabsTrigger value="settings">AI indstillinger</TabsTrigger>
                     <TabsTrigger value="filtreringsregler">Filtreringsregler</TabsTrigger>
-                    <TabsTrigger value="vaegt">Vægte</TabsTrigger>
+                    <TabsTrigger value="vaegt">Vægte og hensættelser</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -859,69 +1167,7 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="settings" className="mt-4">
                     <div className="max-w-md space-y-6">
-                        <div className="rounded-lg border p-6 space-y-5">
-                            <div>
-                                <h3 className="text-sm font-medium">Administrationsbidrag</h3>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                    Procentsatser der bruges ved registrering af nye udbetalinger.
-                                    Gælder kun fremadrettet — eksisterende udbetalinger bevarer deres sats.
-                                </p>
-                            </div>
-
-                            {/* Linked toggle */}
-                            <button
-                                type="button"
-                                onClick={toggleLinked}
-                                className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                            >
-                                {fees.linked
-                                    ? <Link2 className="h-3.5 w-3.5 text-primary" />
-                                    : <Unlink2 className="h-3.5 w-3.5" />
-                                }
-                                {fees.linked ? "Samme sats for alle typer — klik for at adskille" : "Individuelle satser — klik for at låse sammen"}
-                            </button>
-
-                            {/* Fee inputs */}
-                            <div className="space-y-3">
-                                {fees.linked ? (
-                                    <div className="flex items-center gap-3">
-                                        <Label className="w-32 text-sm shrink-0">Alle typer</Label>
-                                        <Input
-                                            type="number"
-                                            value={fees.irf}
-                                            onChange={e => setFee("irf", Number(e.target.value))}
-                                            className="w-20"
-                                            step="0.5"
-                                            min="0"
-                                            max="100"
-                                        />
-                                        <span className="text-sm text-muted-foreground">%</span>
-                                    </div>
-                                ) : (
-                                    FEE_LABELS.map(({ key, label }) => (
-                                        <div key={key} className="flex items-center gap-3">
-                                            <Label className="w-32 text-sm shrink-0">{label}</Label>
-                                            <Input
-                                                type="number"
-                                                value={fees[key]}
-                                                onChange={e => setFee(key, Number(e.target.value))}
-                                                className="w-20"
-                                                step="0.5"
-                                                min="0"
-                                                max="100"
-                                            />
-                                            <span className="text-sm text-muted-foreground">%</span>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-
-                            <Button size="sm" onClick={() => {
-                                localStorage.setItem("streaming_admin_fees", JSON.stringify(fees))
-                            }}>
-                                {t("common.save")}
-                            </Button>
-                        </div>
+                        <AiModelSettings />
                     </div>
                 </TabsContent>
 

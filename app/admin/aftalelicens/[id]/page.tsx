@@ -7,8 +7,10 @@ import {
     ArrowLeft, Check, X, Flag, Search, ChevronDown, Download,
     Users, Calculator, Lock, Loader2, ExternalLink, Info, Save,
     ChevronsUpDown, ChevronUp, FileText, Clock, AlertTriangle,
-    Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban,
+    Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff,
 } from "lucide-react"
+import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
+import { loadAiConfig } from "@/lib/ai-providers"
 import { PageHeader } from "@/components/page-header"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
@@ -564,11 +566,32 @@ function SortTable({ vaerker, onUpdate }: {
     const PAGE_SIZE = 200
     const [page, setPage] = useState(0)
     const [filter, setFilter] = useState<"all" | SortStatus>("all")
+    const [hideRejected, setHideRejected] = useState(false)
     const [search, setSearch] = useState("")
+    const [dupFilter, setDupFilter] = useState("")
     const [sortCol, setSortCol] = useState<SortCol>("date")
     const [sortDir, setSortDir] = useState<SortDir>("asc")
     const [dfiLoading, setDfiLoading] = useState<string | null>(null)
-    const [noteEdit, setNoteEdit] = useState<{ id: string; value: string } | null>(null)
+    const [noteEdit, setNoteEdit] = useState<{
+        id: string
+        value: string
+        rawTitle: string
+        channel?: string
+        productionYear?: number
+        broadcastDate?: string
+        duration?: number
+    } | null>(null)
+    const [aiSearch, setAiSearch] = useState<{
+        loading: boolean
+        result: {
+            hvadErDette: string
+            relevant: "ja" | "nej" | "usikker"
+            vaerkType: string | null
+            begrundelse: string
+            confidence: "høj" | "mellem" | "lav"
+        } | null
+        error: string | null
+    }>({ loading: false, result: null, error: null })
     const [aiRunning, setAiRunning] = useState(false)
     const [aiProgress, setAiProgress] = useState<{ done: number; total: number } | null>(null)
     const [aiSuggestions, setAiSuggestions] = useState<Map<string, { status: string; type?: string; reason: string }>>(new Map())
@@ -689,6 +712,8 @@ function SortTable({ vaerker, onUpdate }: {
                             duration: v.duration,
                             vaerkType: v.vaerkType ?? null,
                         })),
+                        examples: getTrainingExamples(20),
+                        ...loadAiConfig("grovsorter"),
                     }),
                 })
                 const data = await res.json()
@@ -746,12 +771,36 @@ function SortTable({ vaerker, onUpdate }: {
         else { setSortCol(col); setSortDir("asc") }
     }
 
+    // Fjern kun afsnit/sæson-markører — behold årstal som del af matchet
+    const stripEpisodeId = (title: string) =>
+        title
+            .replace(/\s*[Ss]\d+\s*[Ee]\d+/g, "")   // S1E1 / S01E01
+            .replace(/\s*[Ss]æson\s*\d+/gi, "")      // Sæson 3
+            .replace(/\s*[Aa]fsnit\s*\d+/gi, "")     // Afsnit 7
+            .replace(/\s*[-–]\s*\d+\s*$/g, "")       // - 4 til sidst
+            .replace(/\s+/g, " ")
+            .trim()
+            .toLowerCase()
+
     const STATUS_ORDER: Record<SortStatus, number> = { pending: 0, flagged: 1, approved: 2, rejected: 3 }
 
     const filtered = useMemo(() => {
         setPage(0)
         let list = vaerker
         if (filter !== "all") list = list.filter(v => v.sortStatus === filter)
+        if (hideRejected && filter === "all") list = list.filter(v => v.sortStatus !== "rejected")
+
+        // Dublet-filter: tæl forekomster inden for status-filtreret liste
+        const minDup = dupFilter !== "" ? Number(dupFilter) : null
+        if (minDup !== null && minDup >= 1) {
+            const counts = new Map<string, number>()
+            for (const v of list) {
+                const base = stripEpisodeId(v.rawTitle)
+                counts.set(base, (counts.get(base) ?? 0) + 1)
+            }
+            list = list.filter(v => (counts.get(stripEpisodeId(v.rawTitle)) ?? 1) >= minDup)
+        }
+
         if (search) list = list.filter(v => v.rawTitle.toLowerCase().includes(search.toLowerCase()))
 
         list = [...list].sort((a, b) => {
@@ -767,7 +816,7 @@ function SortTable({ vaerker, onUpdate }: {
             return sortDir === "asc" ? cmp : -cmp
         })
         return list
-    }, [vaerker, filter, search, sortCol, sortDir])
+    }, [vaerker, filter, hideRejected, search, dupFilter, sortCol, sortDir])
 
     const handleDfi = async (vaerk: AftalelicensVaerk) => {
         setDfiLoading(vaerk.id)
@@ -783,19 +832,61 @@ function SortTable({ vaerker, onUpdate }: {
     }
 
     const setStatus = (id: string, status: SortStatus) => {
-        onUpdate(id, { sortStatus: status, sortedAt: new Date().toISOString(), sortedBy: "admin" })
+        onUpdate(id, {
+            sortStatus: status,
+            sortedAt: new Date().toISOString(),
+            sortedBy: "admin",
+            ...(status === "rejected" ? { vaerkType: "ikke_relevant" as VaerkType } : {}),
+        })
     }
 
-    // Fjern kun afsnit/sæson-markører — behold årstal som del af matchet
-    const stripEpisodeId = (title: string) =>
-        title
-            .replace(/\s*[Ss]\d+\s*[Ee]\d+/g, "")   // S1E1 / S01E01
-            .replace(/\s*[Ss]æson\s*\d+/gi, "")      // Sæson 3
-            .replace(/\s*[Aa]fsnit\s*\d+/gi, "")     // Afsnit 7
-            .replace(/\s*[-–]\s*\d+\s*$/g, "")       // - 4 til sidst
-            .replace(/\s+/g, " ")
-            .trim()
-            .toLowerCase()
+    const flagWithMatches = (id: string, note: string) => {
+        const vaerk = vaerker.find(v => v.id === id)
+        if (!vaerk) return
+
+        const now = new Date().toISOString()
+        onUpdate(id, { sortStatus: "flagged", notes: note, sortedAt: now, sortedBy: "admin" })
+
+        const baseTitle = stripEpisodeId(vaerk.rawTitle)
+        const siblings = vaerker.filter(v => {
+            if (v.id === id || v.sortStatus === "flagged") return false
+            if (stripEpisodeId(v.rawTitle) !== baseTitle) return false
+            if (vaerk.productionYear && v.productionYear && vaerk.productionYear !== v.productionYear) return false
+            return true
+        })
+
+        if (siblings.length === 0) return
+
+        const yearSuffix = vaerk.productionYear ? ` (${vaerk.productionYear})` : ""
+        openBulkPopup(`Flag alle ${siblings.length + 1} med samme serienavn${yearSuffix}?`, () => {
+            siblings.forEach(s => onUpdate(s.id, { sortStatus: "flagged", notes: note, sortedAt: now, sortedBy: "admin" }))
+            setBulkPopup(null)
+        })
+    }
+
+    const approveWithMatches = (id: string, vaerkType?: VaerkType) => {
+        const vaerk = vaerker.find(v => v.id === id)
+        if (!vaerk) return
+
+        const now = new Date().toISOString()
+        onUpdate(id, { sortStatus: "approved", vaerkType: vaerkType ?? vaerk.vaerkType, sortedAt: now, sortedBy: "admin" })
+
+        const baseTitle = stripEpisodeId(vaerk.rawTitle)
+        const siblings = vaerker.filter(v => {
+            if (v.id === id || v.sortStatus === "approved") return false
+            if (stripEpisodeId(v.rawTitle) !== baseTitle) return false
+            if (vaerk.productionYear && v.productionYear && vaerk.productionYear !== v.productionYear) return false
+            return true
+        })
+
+        if (siblings.length === 0) return
+
+        const yearSuffix = vaerk.productionYear ? ` (${vaerk.productionYear})` : ""
+        openBulkPopup(`Godkend alle ${siblings.length + 1} med samme serienavn${yearSuffix}?`, () => {
+            siblings.forEach(s => onUpdate(s.id, { sortStatus: "approved", vaerkType: vaerkType ?? s.vaerkType, sortedAt: now, sortedBy: "admin" }))
+            setBulkPopup(null)
+        })
+    }
 
     const rejectWithMatches = (id: string) => {
         const vaerk = vaerker.find(v => v.id === id)
@@ -819,7 +910,7 @@ function SortTable({ vaerker, onUpdate }: {
         const yearSuffix = vaerk.productionYear ? ` (${vaerk.productionYear})` : ""
         openBulkPopup(`Afvis alle ${siblings.length + 1} med samme serienavn${yearSuffix}?`, () => {
             const now = new Date().toISOString()
-            siblings.forEach(s => onUpdate(s.id, { sortStatus: "rejected", sortedAt: now, sortedBy: "admin" }))
+            siblings.forEach(s => onUpdate(s.id, { sortStatus: "rejected", vaerkType: "ikke_relevant" as VaerkType, sortedAt: now, sortedBy: "admin" }))
             setBulkPopup(null)
         })
     }
@@ -902,6 +993,38 @@ function SortTable({ vaerker, onUpdate }: {
                         </span>
                     </Button>
                 ))}
+                {/* Skjul afviste */}
+                <Button
+                    variant={hideRejected ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setHideRejected(h => !h)}
+                    className="text-xs gap-1.5"
+                >
+                    {hideRejected ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {hideRejected ? "Afviste skjult" : "Skjul afviste"}
+                </Button>
+
+                {/* Dublet-filter */}
+                <div className="flex items-center gap-1.5 border rounded-md px-2 h-9 bg-background">
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">Dubletter ≥</span>
+                    <Input
+                        type="number"
+                        value={dupFilter}
+                        onChange={e => setDupFilter(e.target.value)}
+                        placeholder="—"
+                        className="h-6 w-14 border-0 p-0 text-xs text-center focus-visible:ring-0 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+                        min="1"
+                    />
+                    {dupFilter !== "" && (
+                        <button
+                            type="button"
+                            onClick={() => setDupFilter("")}
+                            className="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                        >
+                            <X className="h-3 w-3" />
+                        </button>
+                    )}
+                </div>
                 <Button
                     variant="outline"
                     size="sm"
@@ -1086,7 +1209,7 @@ function SortTable({ vaerker, onUpdate }: {
                                             variant="ghost"
                                             size="icon"
                                             className="h-7 w-7 text-green-600 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-950/30"
-                                            onClick={() => setStatus(v.id, "approved")}
+                                            onClick={() => approveWithMatches(v.id)}
                                             title="Godkend"
                                         >
                                             <Check className="h-3.5 w-3.5" />
@@ -1104,7 +1227,18 @@ function SortTable({ vaerker, onUpdate }: {
                                             variant="ghost"
                                             size="icon"
                                             className="h-7 w-7 text-amber-600 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30"
-                                            onClick={() => setNoteEdit({ id: v.id, value: v.notes ?? "" })}
+                                            onClick={() => {
+                                                setNoteEdit({
+                                                    id: v.id,
+                                                    value: v.notes ?? "",
+                                                    rawTitle: v.rawTitle,
+                                                    channel: v.channel,
+                                                    productionYear: v.productionYear,
+                                                    broadcastDate: v.broadcastDate,
+                                                    duration: v.duration,
+                                                })
+                                                setAiSearch({ loading: false, result: null, error: null })
+                                            }}
                                             title="Flag"
                                         >
                                             <Flag className="h-3.5 w-3.5" />
@@ -1175,23 +1309,152 @@ function SortTable({ vaerker, onUpdate }: {
 
             {/* Note/flag dialog */}
             <Dialog open={!!noteEdit} onOpenChange={() => setNoteEdit(null)}>
-                <DialogContent>
+                <DialogContent className="max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Flag værk</DialogTitle>
-                        <DialogDescription>Tilføj en note om hvorfor dette værk er flagget.</DialogDescription>
+                        <DialogDescription className="truncate">{noteEdit?.rawTitle}</DialogDescription>
                     </DialogHeader>
-                    <Input
-                        value={noteEdit?.value ?? ""}
-                        onChange={e => setNoteEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
-                        placeholder="Note..."
-                        autoFocus
-                    />
+
+                    {/* AI-søgning */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-muted-foreground">AI-vurdering</span>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 text-xs gap-1.5"
+                                disabled={aiSearch.loading}
+                                onClick={async () => {
+                                    if (!noteEdit) return
+                                    setAiSearch({ loading: true, result: null, error: null })
+                                    try {
+                                        const res = await fetch("/api/aftalelicens/ai-soeg", {
+                                            method: "POST",
+                                            headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({
+                                                rawTitle: noteEdit.rawTitle,
+                                                channel: noteEdit.channel,
+                                                productionYear: noteEdit.productionYear,
+                                                broadcastDate: noteEdit.broadcastDate,
+                                                duration: noteEdit.duration,
+                                                examples: getTrainingExamples(20),
+                                                ...loadAiConfig("soeg"),
+                                            }),
+                                        })
+                                        const json = await res.json()
+                                        if (!res.ok) throw new Error(json.error ?? "Ukendt fejl")
+                                        setAiSearch({ loading: false, result: json, error: null })
+                                    } catch (e) {
+                                        setAiSearch({ loading: false, result: null, error: (e as Error).message })
+                                    }
+                                }}
+                            >
+                                {aiSearch.loading
+                                    ? <><Loader2 className="h-3 w-3 animate-spin" /> Søger...</>
+                                    : <><Search className="h-3 w-3" /> Søg med AI</>
+                                }
+                            </Button>
+                        </div>
+
+                        {aiSearch.error && (
+                            <p className="text-xs text-destructive rounded bg-destructive/10 px-2 py-1.5">{aiSearch.error}</p>
+                        )}
+
+                        {aiSearch.result && (() => {
+                            const r = aiSearch.result
+                            const relevantColor = r.relevant === "ja"
+                                ? "text-green-700 bg-green-50 border-green-200"
+                                : r.relevant === "nej"
+                                    ? "text-red-700 bg-red-50 border-red-200"
+                                    : "text-amber-700 bg-amber-50 border-amber-200"
+                            const relevantLabel = r.relevant === "ja" ? "Relevant" : r.relevant === "nej" ? "Ikke relevant" : "Usikker"
+                            return (
+                                <div className="rounded-lg border bg-muted/30 p-3 space-y-2 text-sm">
+                                    <p className="text-sm leading-snug">{r.hvadErDette}</p>
+                                    <div className="flex flex-wrap gap-1.5 items-center">
+                                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${relevantColor}`}>
+                                            {relevantLabel}
+                                        </span>
+                                        {r.vaerkType && r.vaerkType !== "ikke_relevant" && (
+                                            <span className="inline-flex items-center rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                                                {VAERK_TYPE_LABELS[r.vaerkType as VaerkType] ?? r.vaerkType}
+                                            </span>
+                                        )}
+                                        <span className="text-xs text-muted-foreground ml-auto">Sikkerhed: {r.confidence}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground leading-relaxed">{r.begrundelse}</p>
+                                    <div className="flex gap-2 pt-1">
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-xs flex-1 text-destructive border-destructive/40 hover:bg-destructive/10"
+                                            onClick={() => {
+                                                if (!noteEdit) return
+                                                saveFeedback({
+                                                    rawTitle: noteEdit.rawTitle,
+                                                    channel: noteEdit.channel,
+                                                    productionYear: noteEdit.productionYear,
+                                                    duration: noteEdit.duration,
+                                                    aiRelevant: r.relevant,
+                                                    aiVaerkType: r.vaerkType,
+                                                    userDecision: "rejected",
+                                                    timestamp: new Date().toISOString(),
+                                                })
+                                                const id = noteEdit.id
+                                                setNoteEdit(null)
+                                                rejectWithMatches(id)
+                                            }}
+                                        >
+                                            <X className="h-3 w-3 mr-1" /> Afvis
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            className="h-7 text-xs flex-1 bg-green-600 hover:bg-green-700 text-white"
+                                            onClick={() => {
+                                                if (!noteEdit) return
+                                                saveFeedback({
+                                                    rawTitle: noteEdit.rawTitle,
+                                                    channel: noteEdit.channel,
+                                                    productionYear: noteEdit.productionYear,
+                                                    duration: noteEdit.duration,
+                                                    aiRelevant: r.relevant,
+                                                    aiVaerkType: r.vaerkType,
+                                                    userDecision: "approved",
+                                                    timestamp: new Date().toISOString(),
+                                                })
+                                                const id = noteEdit.id
+                                                const vt = r.vaerkType as VaerkType | null ?? undefined
+                                                setNoteEdit(null)
+                                                approveWithMatches(id, vt)
+                                            }}
+                                        >
+                                            <Check className="h-3 w-3 mr-1" /> Godkend
+                                        </Button>
+                                    </div>
+                                </div>
+                            )
+                        })()}
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs text-muted-foreground">Note</Label>
+                        <Input
+                            value={noteEdit?.value ?? ""}
+                            onChange={e => setNoteEdit(prev => prev ? { ...prev, value: e.target.value } : null)}
+                            placeholder="Tilføj note om hvorfor dette er flagget..."
+                        />
+                    </div>
+
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setNoteEdit(null)}>Annuller</Button>
                         <Button onClick={() => {
                             if (noteEdit) {
-                                onUpdate(noteEdit.id, { sortStatus: "flagged", notes: noteEdit.value, sortedAt: new Date().toISOString() })
+                                const id = noteEdit.id
+                                const note = noteEdit.value
                                 setNoteEdit(null)
+                                flagWithMatches(id, note)
                                 toast.success("Flagget")
                             }
                         }}>
@@ -2289,7 +2552,18 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const [klumpBeloeb, setKlumpBeloeb] = useState("1000000")
     const [adminPct, setAdminPct] = useState("15")
     const [hensaettelserPct, setHensaettelserPct] = useState("10")
+    const [socialPct, setSocialPct] = useState("0")
     const [locked, setLocked] = useState(false)
+
+    // Load stamdata defaults from localStorage
+    useEffect(() => {
+        try {
+            const h = localStorage.getItem("dfks_hensaettelser_pct")
+            if (h !== null) setHensaettelserPct(h)
+            const s = localStorage.getItem("dfks_sociale_pct")
+            if (s !== null) setSocialPct(s)
+        } catch { /* ignore */ }
+    }, [])
     const [hensaettelsesKonto, setHensaettelsesKonto] = useState<{ id: string; batchLabel: string; amount: number; lockedAt: string; brugt: number }[]>(() => {
         if (typeof window === "undefined") return []
         try { return JSON.parse(localStorage.getItem("dfks_hensaettelser") ?? "[]") } catch { return [] }
@@ -2317,13 +2591,14 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
         toast.success("Vægte beregnet")
     }
 
-    const { netEfterAdmin, hensaettelserBeloeb, tilFordeling } = useMemo(() => {
+    const { netEfterAdmin, hensaettelserBeloeb, socialtBeloeb, tilFordeling } = useMemo(() => {
         const gross = Number(klumpBeloeb)
         const fee = gross * Number(adminPct) / 100
         const netEfterAdmin = gross - fee
         const hensaettelserBeloeb = netEfterAdmin * Number(hensaettelserPct) / 100
-        return { netEfterAdmin, hensaettelserBeloeb, tilFordeling: netEfterAdmin - hensaettelserBeloeb }
-    }, [klumpBeloeb, adminPct, hensaettelserPct])
+        const socialtBeloeb = netEfterAdmin * Number(socialPct) / 100
+        return { netEfterAdmin, hensaettelserBeloeb, socialtBeloeb, tilFordeling: netEfterAdmin - hensaettelserBeloeb - socialtBeloeb }
+    }, [klumpBeloeb, adminPct, hensaettelserPct, socialPct])
 
     const totalPoints = useMemo(() => weighted?.reduce((s, i) => s + i.points, 0) ?? 0, [weighted])
 
@@ -2410,7 +2685,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                     {/* Proof calculation */}
                     <div className="space-y-4">
                         <p className="text-sm font-medium">Prøveberegning</p>
-                        <div className="grid gap-4 sm:grid-cols-4 max-w-2xl">
+                        <div className="grid gap-4 sm:grid-cols-5 max-w-3xl">
                             <div className="space-y-1.5 sm:col-span-2">
                                 <Label className="text-xs">Klump-beløb (DKK)</Label>
                                 <Input
@@ -2450,9 +2725,24 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                     <span className="text-sm text-muted-foreground">%</span>
                                 </div>
                             </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs">Til sociale formål</Label>
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        type="number"
+                                        value={socialPct}
+                                        onChange={e => setSocialPct(e.target.value)}
+                                        className="w-20"
+                                        min="0"
+                                        max="100"
+                                        disabled={locked}
+                                    />
+                                    <span className="text-sm text-muted-foreground">%</span>
+                                </div>
+                            </div>
                         </div>
 
-                        <div className="rounded-lg bg-muted/50 border p-4 grid gap-3 sm:grid-cols-4 text-sm max-w-2xl">
+                        <div className="rounded-lg bg-muted/50 border p-4 grid gap-3 sm:grid-cols-5 text-sm max-w-3xl">
                             <div>
                                 <p className="text-xs text-muted-foreground">Brutto</p>
                                 <p className="font-semibold tabular-nums">
@@ -2469,6 +2759,12 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                 <p className="text-xs text-muted-foreground">Hensættelser ({hensaettelserPct}%)</p>
                                 <p className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
                                     −{hensaettelserBeloeb.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                </p>
+                            </div>
+                            <div>
+                                <p className="text-xs text-muted-foreground">Sociale formål ({socialPct}%)</p>
+                                <p className="font-semibold text-amber-600 dark:text-amber-400 tabular-nums">
+                                    −{socialtBeloeb.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
                                 </p>
                             </div>
                             <div>
@@ -2680,18 +2976,21 @@ export default function AftalelicensDetailPage() {
     const params = useParams()
     const id = params.id as string
 
-    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(() => {
-        // Load from localStorage if available, fall back to mock data
-        if (typeof window === "undefined") return genMockVaerker()
+    const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(genMockVaerker)
+
+    // Hydrate from localStorage after mount (avoids SSR/client mismatch)
+    useEffect(() => {
         try {
             const stored = localStorage.getItem(`dfks_batch_vaerker_${id}`)
             if (stored) {
                 const parsed = JSON.parse(stored) as AftalelicensVaerk[]
-                if (Array.isArray(parsed) && parsed.length > 0) return parsed
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    setVaerker(parsed)
+                    return
+                }
             }
         } catch { /* ignore */ }
-        return genMockVaerker()
-    })
+    }, [id])
     const [confirmedMatches, setConfirmedMatches] = useState<VaerkMatch[]>([])
     const batch = MOCK_BATCH // In real app: lookup by id
 

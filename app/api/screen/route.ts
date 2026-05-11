@@ -8,10 +8,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
+import { callAi } from "@/lib/ai-client"
+import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 
 export async function POST(req: NextRequest) {
     try {
-        const { system, userMessage } = await req.json()
+        const { system, userMessage, provider, model } = await req.json()
 
         if (!system || !userMessage) {
             return NextResponse.json(
@@ -20,46 +22,10 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        const apiKey = process.env.ANTHROPIC_API_KEY
-        console.log("[screen] API key present:", !!apiKey)
-        console.log("[screen] system length:", system?.length)
-        console.log("[screen] userMessage length:", userMessage?.length)
-        if (!apiKey) {
-            return NextResponse.json(
-                { error: "ANTHROPIC_API_KEY er ikke konfigureret på serveren" },
-                { status: 500 }
-            )
-        }
+        const aiProvider = provider ?? AI_CONFIG_DEFAULTS.kontrakt.provider
+        const aiModel    = model    ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
-        console.log("[screen] Calling Anthropic API...")
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 6000,
-                system,
-                messages: [{ role: "user", content: userMessage }],
-            }),
-        })
-
-        console.log("[screen] Anthropic response status:", response.status)
-        if (!response.ok) {
-            const err = await response.text()
-            console.error("[screen] Anthropic error:", err)
-            return NextResponse.json(
-                { error: `Claude API fejl: ${response.status} — ${err}` },
-                { status: response.status }
-            )
-        }
-
-        const data = await response.json()
-        const text =
-            data.content?.find((b: any) => b.type === "text")?.text ?? ""
+        const text = await callAi({ provider: aiProvider, model: aiModel, system, userMessage, maxTokens: 6000 })
 
         console.log("[screen] AI raw response (first 500 chars):", text.slice(0, 500))
 
