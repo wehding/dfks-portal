@@ -219,6 +219,17 @@ export const mockWorks: Work[] = [
         rights: { svod: false, copydan: true, royalty: false },
     },
     {
+        id: "w5b",
+        title: "Nordlys",
+        creditedRoles: ["Klipper"],
+        sharedCredit: false,
+        duration: 88,
+        contractId: "c2",
+        category: "documentary",
+        premiereYear: 2018,
+        rights: { svod: false, copydan: true, royalty: false },
+    },
+    {
         id: "w5",
         title: "Stormfulde Nætter",
         creditedRoles: ["Klipper"],

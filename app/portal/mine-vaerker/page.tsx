@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3 } from "lucide-react"
+import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3, Clock, CheckCircle2, X, Layers } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -29,7 +29,53 @@ import {
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip"
+import Link from "next/link"
 import type { Work } from "@/lib/types"
+
+// ── Aftalelicens-krav (spejler data fra /portal/aftalelicens) ─
+
+interface AftalelicensKravItem {
+    id: string
+    rawTitle: string
+    batchLabel: string
+    channel?: string
+    broadcastDate?: string
+    vaerkTypeLabel?: string
+    note?: string
+    submittedAt: string
+    status: "pending" | "approved" | "rejected"
+}
+
+// I real app: hentes fra DB baseret på logged-in bruger
+const MOCK_MINE_KRAV: AftalelicensKravItem[] = [
+    {
+        id: "krav_p1",
+        rawTitle: "Broen IV",
+        batchLabel: "Copydan Verdens TV 2023",
+        channel: "DR1",
+        broadcastDate: "2023-09-25",
+        vaerkTypeLabel: "TV-serie lang",
+        submittedAt: "2024-03-20T08:00:00",
+        status: "approved",
+    },
+    {
+        id: "krav_p2",
+        rawTitle: "Nattens løver",
+        batchLabel: "Copydan Verdens TV 2023",
+        channel: "DR1",
+        broadcastDate: "2023-12-07",
+        vaerkTypeLabel: "TV-serie lang",
+        note: "Klippet afsnit 3–6",
+        submittedAt: "2024-03-22T11:30:00",
+        status: "pending",
+    },
+]
+
+const KRAV_STATUS_CFG = {
+    pending:  { label: "Afventer afgørelse", variant: "secondary"   as const, icon: Clock },
+    approved: { label: "Godkendt",           variant: "default"     as const, icon: CheckCircle2 },
+    rejected: { label: "Afvist",             variant: "destructive" as const, icon: X },
+}
 
 function RightsBadges({ rights }: { rights: Work["rights"] }) {
     return (
@@ -98,11 +144,32 @@ function DurationDisplay({ work }: { work: Work }) {
     )
 }
 
+// Godkendte aftalelicens-krav som Work-rækker
+const approvedKravAsWorks: (Work & { fromAftalelicens: true; batchLabel: string })[] =
+    MOCK_MINE_KRAV
+        .filter(k => k.status === "approved")
+        .map(k => ({
+            id: k.id,
+            title: k.rawTitle,
+            creditedRoles: ["Klipper"],
+            sharedCredit: false,
+            duration: 0,
+            contractId: "",
+            category: "film" as Work["category"],
+            premiereYear: k.broadcastDate ? new Date(k.broadcastDate).getFullYear() : 0,
+            rights: { svod: false, copydan: true, royalty: false },
+            fromAftalelicens: true,
+            batchLabel: k.batchLabel,
+        }))
+
 export default function MineVaerkerPage() {
     const { t } = useI18n()
     const [previewPdf, setPreviewPdf] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
     const [exploitationWork, setExploitationWork] = useState<string | null>(null)
+
+    const pendingOrRejectedKrav = MOCK_MINE_KRAV.filter(k => k.status !== "approved")
+    const allWorks = [...mockWorks, ...approvedKravAsWorks]
 
     // Mock exploitation data per work
     const mockExploitation: Record<string, { platforms: { name: string; views: number; revenue: number }[]; totalRevenue: number; coverage: number }> = {
@@ -151,7 +218,7 @@ export default function MineVaerkerPage() {
         <div className="space-y-6">
             <PageHeader title={t("works.title")} subtitle={t("works.subtitle")} />
 
-            {mockWorks.length === 0 ? (
+            {allWorks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                     <Film className="h-10 w-10 text-muted-foreground/40" />
                     <h3 className="mt-4 text-sm font-medium">{t("works.noWorks")}</h3>
@@ -174,14 +241,22 @@ export default function MineVaerkerPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {mockWorks.map((work) => (
+                            {allWorks.map((work) => {
+                                const isAftalelicens = "fromAftalelicens" in work
+                                return (
                                 <TableRow key={work.id}>
                                     <TableCell>
-                                        <div>
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-medium">{work.title}</span>
-                                            <span className="ml-2 text-xs text-muted-foreground">
-                                                ({work.premiereYear})
+                                            <span className="text-xs text-muted-foreground">
+                                                ({work.premiereYear || "—"})
                                             </span>
+                                            {isAftalelicens && (
+                                                <Badge variant="outline" className="text-[10px] py-0 gap-0.5 font-normal">
+                                                    <Layers className="h-2.5 w-2.5" />
+                                                    {(work as typeof approvedKravAsWorks[0]).batchLabel}
+                                                </Badge>
+                                            )}
                                         </div>
                                     </TableCell>
                                     <TableCell>{work.creditedRoles.join(", ")}</TableCell>
@@ -217,36 +292,103 @@ export default function MineVaerkerPage() {
                                         <DurationDisplay work={work} />
                                     </TableCell>
                                     <TableCell>
-                                        <div className="flex gap-1">
-                                            <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                onClick={() => setPreviewPdf(work.contractId)}
-                                            >
-                                                <Eye className="h-4 w-4" />
-                                            </Button>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                <Download className="h-4 w-4" />
-                                            </Button>
-                                        </div>
+                                        {!isAftalelicens ? (
+                                            <div className="flex gap-1">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8"
+                                                    onClick={() => setPreviewPdf(work.contractId)}
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                    <Download className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
+                                        )}
                                     </TableCell>
                                     <TableCell>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-1.5 text-xs h-7"
-                                            onClick={() => setExploitationWork(work.id)}
-                                        >
-                                            <BarChart3 className="h-3 w-3" />
-                                            {t("works.seeExploitation")}
-                                        </Button>
+                                        {!isAftalelicens ? (
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-1.5 text-xs h-7"
+                                                onClick={() => setExploitationWork(work.id)}
+                                            >
+                                                <BarChart3 className="h-3 w-3" />
+                                                {t("works.seeExploitation")}
+                                            </Button>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
+                                        )}
                                     </TableCell>
                                 </TableRow>
-                            ))}
+                                )
+                            })}
                         </TableBody>
                     </Table>
                 </div>
+            )}
+
+            {/* Aftalelicens-krav — kun afventende og afviste */}
+            {pendingOrRejectedKrav.length > 0 && (
+                <section className="rounded-lg border">
+                    <div className="flex items-center justify-between px-5 py-4 border-b">
+                        <div className="flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-muted-foreground" />
+                            <h2 className="font-medium text-sm">Aftalelicens-krav</h2>
+                            {pendingOrRejectedKrav.some(k => k.status === "pending") && (
+                                <Badge variant="secondary" className="text-xs">
+                                    {pendingOrRejectedKrav.filter(k => k.status === "pending").length} afventer afgørelse
+                                </Badge>
+                            )}
+                        </div>
+                        <Button asChild variant="ghost" size="sm" className="text-xs gap-1">
+                            <Link href="/portal/aftalelicens">
+                                Søg flere titler
+                            </Link>
+                        </Button>
+                    </div>
+                    <div className="divide-y">
+                        {pendingOrRejectedKrav.map(krav => {
+                            const cfg = KRAV_STATUS_CFG[krav.status]
+                            return (
+                                <div key={krav.id} className="px-5 py-4 flex items-start justify-between gap-4">
+                                    <div className="space-y-0.5 min-w-0">
+                                        <p className="text-sm font-medium">{krav.rawTitle}</p>
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                                            <span>{krav.batchLabel}</span>
+                                            {krav.channel && <span>· {krav.channel}</span>}
+                                            {krav.broadcastDate && (
+                                                <span>· {new Date(krav.broadcastDate).toLocaleDateString("da-DK")}</span>
+                                            )}
+                                            {krav.vaerkTypeLabel && (
+                                                <Badge variant="outline" className="text-[10px] py-0 font-normal">
+                                                    {krav.vaerkTypeLabel}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        {krav.note && (
+                                            <p className="text-xs text-muted-foreground italic mt-0.5">&ldquo;{krav.note}&rdquo;</p>
+                                        )}
+                                    </div>
+                                    <div className="shrink-0 flex flex-col items-end gap-1">
+                                        <Badge variant={cfg.variant} className="gap-1 text-xs whitespace-nowrap">
+                                            <cfg.icon className="h-3 w-3" />
+                                            {cfg.label}
+                                        </Badge>
+                                        <span className="text-[10px] text-muted-foreground">
+                                            Indsendt {new Date(krav.submittedAt).toLocaleDateString("da-DK")}
+                                        </span>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </section>
             )}
 
             {/* Contract Preview Dialog */}
