@@ -28,8 +28,6 @@ MEGET STÆRKE indikatorer for relevans (godkend med høj sikkerhed):
 - Filmen er nomineret til eller har vundet en filmpris (Robert, Bodil, Oscar, BAFTA, Palme d'Or m.fl.)
 - Filmen er produceret af et kendt produktionsselskab (Zentropa, Nimbus, SF Studios, DR Fiktion m.fl.)
 
-Du har adgang til websøgning. Brug den til at slå specifikke titler op og find konkrete oplysninger: instruktør, produktionsselskab, festivalhistorik (CPH:DOX, IDFA m.fl.), priser. Søg altid på titlen + "film" eller "dokumentar" + evt. produktionsår. Brug kun verificerede oplysninger fra søgningen i hvadErDette — skriv ikke noget du ikke har bekræftet.
-
 Returner KUN et JSON-objekt — ingen tekst udenfor JSON.`
 
 interface FeedbackExample {
@@ -77,7 +75,7 @@ export async function POST(req: NextRequest) {
 
         const userMessage = `${kontekst}
 ${buildExamplesBlock(examples)}
-Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, vurder ud fra titel, kanal, varighed og år.
+Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, vurder ud fra titel, kanal, varighed og år. Returner KUN JSON — ingen tekst udenfor JSON-objektet.
 
 Korrektionerne ovenfor gælder KUN de nævnte specifikke titler. Lad dem ALDRIG påvirke confidence for andre titler.
 
@@ -107,8 +105,10 @@ Returner et JSON-objekt:
             enableWebSearch: aiProvider === "anthropic",
         })
 
-        const clean = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
-        const result = JSON.parse(clean)
+        // Extract JSON object even if surrounded by prose (web search may add preamble)
+        const jsonMatch = text.match(/\{[\s\S]*\}/)
+        if (!jsonMatch) throw new Error("AI returnerede intet JSON")
+        const result = JSON.parse(jsonMatch[0])
 
         return NextResponse.json(result)
     } catch (err) {

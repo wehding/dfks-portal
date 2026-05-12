@@ -79,9 +79,10 @@ async function callAnthropic(model: string, system: string, userMessage: string,
         const stopReason: string = data.stop_reason
         const content: ContentBlock[] = data.content ?? []
 
-        // Done — return the text response
+        // Done — return the last text block (web search may produce multiple text blocks)
         if (stopReason !== "tool_use") {
-            return content.find(b => b.type === "text")?.text ?? ""
+            const textBlocks = content.filter(b => b.type === "text" && b.text)
+            return textBlocks[textBlocks.length - 1]?.text ?? ""
         }
 
         // Model called a tool — append its turn and provide tool results
