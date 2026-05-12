@@ -2837,7 +2837,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const [hensaettelserPct, setHensaettelserPct] = useState("10")
     const [socialPct, setSocialPct] = useState("0")
     const [locked, setLocked] = useState(false)
-    const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalAmount: number; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number }[] }[] | null>(null)
+    const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: string[] }[] }[] | null>(null)
 
     // Load stamdata defaults from localStorage
     useEffect(() => {
