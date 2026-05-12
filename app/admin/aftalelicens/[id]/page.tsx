@@ -1459,6 +1459,7 @@ function SortTable({ vaerker, onUpdate }: {
                                         <span className="text-xs text-muted-foreground ml-auto">Sikkerhed: {r.confidence}</span>
                                     </div>
                                     <p className="text-xs text-muted-foreground leading-relaxed">{r.begrundelse}</p>
+                                    <p className="text-xs text-muted-foreground/60 italic">Specifikke navne og datoer kan være unøjagtige — verificér ved tvivl.</p>
                                     <div className="flex gap-2 pt-1">
                                         <Button
                                             variant="outline"
