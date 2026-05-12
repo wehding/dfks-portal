@@ -81,7 +81,8 @@ Korrektionerne ovenfor gælder KUN de nævnte specifikke titler. Lad dem ALDRIG 
 
 Returner et JSON-objekt:
 {
-  "hvadErDette": "<Beskriv programmet på dansk. Hvis du kender det med sikkerhed: angiv instruktør, handling/tema, programtype, og nævn eksplicit festivalpremiere (CPH:DOX, IDFA, Cannes, Berlin, Sundance m.fl.) eller priser (Robert, Bodil, Oscar m.fl.). Er du ikke sikker på specifikke navne eller datoer, så skriv 'sandsynligvis' eller 'muligvis' frem for at gætte. Kender du det ikke: beskriv hvad det sandsynligvis er ud fra metadata. Max 3 sætninger.>",
+  "kenderProgrammet": true | false,  // true KUN hvis du med sikkerhed kan identificere dette specifikke program fra din viden — ikke hvis du gætter ud fra metadata
+  "hvadErDette": "<Hvis kenderProgrammet=true: angiv hvad du ved med sikkerhed — instruktør, handling/tema, programtype, festivalpremiere (CPH:DOX, IDFA, Cannes m.fl.), priser (Robert, Bodil, Oscar m.fl.). Skriv kun det du er sikker på. Hvis kenderProgrammet=false: beskriv hvad det sandsynligvis er ud fra titel, kanal, varighed og år. Max 3 sætninger.>",
   "relevant": "ja" | "nej" | "usikker",
   "vaerkType": "<spillefilm | tv_serie_lang | tv_serie_kort | kortfilm | dokumentarfilm | dokumentarserie | dokuDrama | kort_dokumentar | ikke_relevant | null>",
   "begrundelse": "<Max 1 sætning om programmets TYPE — aldrig om korrektionsmønstre>",

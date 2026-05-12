@@ -595,6 +595,7 @@ function SortTable({ vaerker, onUpdate }: {
     const [aiSearch, setAiSearch] = useState<{
         loading: boolean
         result: {
+            kenderProgrammet?: boolean
             hvadErDette: string
             relevant: "ja" | "nej" | "usikker"
             vaerkType: string | null
@@ -1459,7 +1460,11 @@ function SortTable({ vaerker, onUpdate }: {
                                         <span className="text-xs text-muted-foreground ml-auto">Sikkerhed: {r.confidence}</span>
                                     </div>
                                     <p className="text-xs text-muted-foreground leading-relaxed">{r.begrundelse}</p>
-                                    <p className="text-xs text-muted-foreground/60 italic">Specifikke navne og datoer kan være unøjagtige — verificér ved tvivl.</p>
+                                    <p className="text-xs italic text-muted-foreground/60">
+                                        {r.kenderProgrammet
+                                            ? "Baseret på specifik programviden — verificér navne og datoer ved tvivl."
+                                            : "AI kender ikke dette specifikke program — vurdering baseret på metadata."}
+                                    </p>
                                     <div className="flex gap-2 pt-1">
                                         <Button
                                             variant="outline"
