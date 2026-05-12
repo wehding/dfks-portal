@@ -1550,193 +1550,6 @@ function SortTable({ vaerker, onUpdate }: {
     )
 }
 
-// ── Rights assignment ─────────────────────────────────────────
-
-function RightsTab({ vaerker, confirmedMatches }: {
-    vaerker: AftalelicensVaerk[]
-    confirmedMatches: VaerkMatch[]
-}) {
-    const approved = vaerker.filter(v => v.sortStatus === "approved" && v.vaerkType)
-    const [rights, setRights] = useState<Record<string, AftalelicensRettighed[]>>({})
-    const [seeded, setSeeded] = useState(false)
-    const [addDialog, setAddDialog] = useState<string | null>(null) // vaerkId
-    const [newName, setNewName] = useState("")
-    const [newShare, setNewShare] = useState("100")
-
-    // Seed rights from Parring when parring is first confirmed
-    useEffect(() => {
-        if (seeded || confirmedMatches.length === 0) return
-        const seed: Record<string, AftalelicensRettighed[]> = {}
-        confirmedMatches.forEach(m => {
-            if (m.rettighedshavere.length > 0) {
-                seed[m.vaerkId] = m.rettighedshavere.map((r, i) => ({
-                    id: `r_auto_${m.vaerkId}_${i}`,
-                    vaerkId: m.vaerkId,
-                    name: r.name,
-                    userId: r.userId,
-                    sharePercent: r.sharePercent,
-                    contractVerified: !!r.userId,
-                }))
-            }
-        })
-        setRights(seed)
-        setSeeded(true)
-    }, [confirmedMatches, seeded])
-
-    const handleAdd = (vaerkId: string) => {
-        if (!newName.trim()) return
-        const r: AftalelicensRettighed = {
-            id: `r_${Date.now()}`,
-            vaerkId,
-            name: newName.trim(),
-            sharePercent: Number(newShare),
-            contractVerified: false,
-        }
-        setRights(prev => ({ ...prev, [vaerkId]: [...(prev[vaerkId] ?? []), r] }))
-        setNewName("")
-        setNewShare("100")
-        setAddDialog(null)
-        toast.success("Rettighedshaver tilknyttet")
-    }
-
-    const handleRemove = (vaerkId: string, retId: string) => {
-        setRights(prev => ({ ...prev, [vaerkId]: (prev[vaerkId] ?? []).filter(r => r.id !== retId) }))
-    }
-
-    if (approved.length === 0) {
-        return (
-            <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
-                Sorter og godkend værker først for at tilknytte rettighedshavere
-            </div>
-        )
-    }
-
-    return (
-        <div className="space-y-3">
-            {seeded ? (
-                <div className="flex items-start gap-2 rounded-lg border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/20 px-3 py-2.5 text-xs text-green-800 dark:text-green-300">
-                    <Database className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                    Rettighedshavere er automatisk hentet fra værksdatabasen via Parring. Du kan tilpasse dem nedenfor.
-                </div>
-            ) : (
-                <p className="text-sm text-muted-foreground">
-                    Tilknyt klippere til de godkendte værker. Fuldfør Parring først for at auto-populere fra værksdatabasen.
-                </p>
-            )}
-            <div className="rounded-lg border divide-y">
-                {approved.map(v => {
-                    const vaerkRights = rights[v.id] ?? []
-                    return (
-                        <div key={v.id} className="p-4">
-                            <div className="flex items-start justify-between gap-4">
-                                <div>
-                                    <p className="text-sm font-medium">{v.rawTitle}</p>
-                                    <p className="text-xs text-muted-foreground">{v.vaerkType ? VAERK_TYPE_LABELS[v.vaerkType] : "—"} · {v.duration} min</p>
-                                </div>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="shrink-0 gap-1 text-xs"
-                                    onClick={() => setAddDialog(v.id)}
-                                >
-                                    <Users className="h-3.5 w-3.5" />
-                                    Tilknyt klipper
-                                </Button>
-                            </div>
-                            {vaerkRights.length > 0 && (
-                                <div className="mt-3 space-y-1">
-                                    {vaerkRights.map(r => (
-                                        <div key={r.id} className="flex items-center justify-between text-xs rounded bg-muted/50 px-3 py-1.5">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium">{r.name}</span>
-                                                {r.contractVerified && (
-                                                    <Badge variant="outline" className="text-[10px] py-0 gap-0.5">
-                                                        <Check className="h-2.5 w-2.5" />kontrakt
-                                                    </Badge>
-                                                )}
-                                                {r.id.startsWith("r_auto_") && (
-                                                    <Badge variant="secondary" className="text-[10px] py-0">DB</Badge>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-3">
-                                                <span className="text-muted-foreground font-mono">{r.sharePercent}%</span>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-5 w-5 text-destructive hover:text-destructive"
-                                                    onClick={() => handleRemove(v.id, r.id)}
-                                                >
-                                                    <X className="h-3 w-3" />
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {vaerkRights.reduce((s, r) => s + r.sharePercent, 0) !== 100 && (
-                                        <p className="text-[10px] text-amber-600 dark:text-amber-400 pl-1">
-                                            Andele summer til {vaerkRights.reduce((s, r) => s + r.sharePercent, 0)}% — juster til 100%
-                                        </p>
-                                    )}
-                                </div>
-                            )}
-                            {vaerkRights.length === 0 && (
-                                <p className="mt-2 text-xs text-muted-foreground italic">Ingen klippere tilknyttet endnu</p>
-                            )}
-                        </div>
-                    )
-                })}
-            </div>
-
-            {/* Add rights dialog */}
-            <Dialog open={!!addDialog} onOpenChange={() => setAddDialog(null)}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Tilknyt klipper</DialogTitle>
-                        <DialogDescription>Søg i kontraktarkivet eller tilknyt manuelt</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                        <div className="space-y-1.5">
-                            <Label className="text-xs">Klipper</Label>
-                            <Select onValueChange={v => setNewName(MOCK_KLIPPERE.find(k => k.id === v)?.name ?? "")}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Vælg fra kontraktarkiv..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {MOCK_KLIPPERE.map(k => (
-                                        <SelectItem key={k.id} value={k.id}>{k.name}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground">— eller skriv manuelt —</p>
-                            <Input
-                                value={newName}
-                                onChange={e => setNewName(e.target.value)}
-                                placeholder="Navn..."
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label className="text-xs">Andel (%)</Label>
-                            <Input
-                                type="number"
-                                value={newShare}
-                                onChange={e => setNewShare(e.target.value)}
-                                min="0"
-                                max="100"
-                                className="w-24"
-                            />
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setAddDialog(null)}>Annuller</Button>
-                        <Button onClick={() => addDialog && handleAdd(addDialog)} disabled={!newName.trim()}>
-                            Tilknyt
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </div>
-    )
-}
-
 // ── Parring med værksdatabase ─────────────────────────────────
 
 interface VaerkMatch {
@@ -1899,6 +1712,9 @@ function ParringTab({ vaerker, onConfirmed }: {
     const [newWorkTitle, setNewWorkTitle] = useState("")
     const [newWorkType, setNewWorkType] = useState<VaerkType>("dokumentarfilm")
     const [newWorkYear, setNewWorkYear] = useState(String(new Date().getFullYear()))
+    const [addRetDialog, setAddRetDialog] = useState<string | null>(null) // vaerkId
+    const [addRetName, setAddRetName] = useState("")
+    const [addRetShare, setAddRetShare] = useState("100")
 
     const autoCount   = matches.filter(m => m.matchScore === "auto").length
     const fuzzyCount  = matches.filter(m => m.matchScore === "fuzzy").length
@@ -1994,6 +1810,25 @@ function ParringTab({ vaerker, onConfirmed }: {
 
     const toggleConfirm = (vaerkId: string) => {
         setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? { ...m, confirmed: !m.confirmed } : m))
+    }
+
+    const addRettighed = (vaerkId: string) => {
+        if (!addRetName.trim()) return
+        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+            ...m,
+            rettighedshavere: [...m.rettighedshavere, { name: addRetName.trim(), roles: [], sharePercent: Number(addRetShare) || 100 }],
+        } : m))
+        setAddRetName("")
+        setAddRetShare("100")
+        setAddRetDialog(null)
+        toast.success("Klipper tilknyttet")
+    }
+
+    const removeRettighed = (vaerkId: string, idx: number) => {
+        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+            ...m,
+            rettighedshavere: m.rettighedshavere.filter((_, i) => i !== idx),
+        } : m))
     }
 
     if (vaerker.filter(v => v.sortStatus === "approved").length === 0) {
@@ -2117,20 +1952,30 @@ function ParringTab({ vaerker, onConfirmed }: {
                                     )}
                                 </TableCell>
                                 <TableCell>
-                                    {m.rettighedshavere.length > 0 ? (
-                                        <div className="space-y-0.5">
-                                            {m.rettighedshavere.map((r, i) => (
-                                                <div key={i} className="flex items-baseline gap-1.5 text-xs">
-                                                    <span className="font-medium">{r.name}</span>
-                                                    {r.roles.length > 0 && (
-                                                        <span className="text-muted-foreground">({r.roles.join(", ")})</span>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <span className="text-xs text-muted-foreground">—</span>
-                                    )}
+                                    <div className="space-y-0.5">
+                                        {m.rettighedshavere.map((r, i) => (
+                                            <div key={i} className="flex items-center gap-1 text-xs group">
+                                                <span className="font-medium">{r.name}</span>
+                                                {r.roles.length > 0 && (
+                                                    <span className="text-muted-foreground">({r.roles.join(", ")})</span>
+                                                )}
+                                                <button
+                                                    onClick={() => removeRettighed(m.vaerkId, i)}
+                                                    className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 ml-0.5 shrink-0"
+                                                    title="Fjern"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <button
+                                            onClick={() => { setAddRetDialog(m.vaerkId); setAddRetName(""); setAddRetShare("100") }}
+                                            className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors mt-0.5"
+                                        >
+                                            <Plus className="h-3 w-3" />
+                                            Tilknyt klipper
+                                        </button>
+                                    </div>
                                 </TableCell>
                                 <TableCell>
                                     {m.hasDuplicates ? (
@@ -2219,11 +2064,11 @@ function ParringTab({ vaerker, onConfirmed }: {
                 <div className="flex items-center justify-between rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm text-green-800 dark:text-green-300">
                         <Check className="h-4 w-4" />
-                        Alle titler er parret og bekræftet — rettighedshavere er klar til trin 3
+                        Alle titler er parret og bekræftet — rettighedshavere er klar
                     </div>
-                    <Button size="sm" onClick={() => { setConfirmed(true); onConfirmed(matches); toast.success("Parring låst — rettighedshavere er klar") }}>
+                    <Button size="sm" onClick={() => { setConfirmed(true); onConfirmed(matches); toast.success("Parring og rettighedshavere låst") }}>
                         <Lock className="mr-2 h-3.5 w-3.5" />
-                        Lås parring
+                        Lås parring og rettighedshavere
                     </Button>
                 </div>
             )}
@@ -2231,7 +2076,7 @@ function ParringTab({ vaerker, onConfirmed }: {
             {confirmed && (
                 <div className="flex items-center gap-2 rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3 text-sm text-green-800 dark:text-green-300">
                     <Lock className="h-4 w-4" />
-                    Parring låst — fortsæt til Rettighedshavere
+                    Parring og rettighedshavere låst — fortsæt til Vægtning og beregning
                 </div>
             )}
 
@@ -2280,6 +2125,47 @@ function ParringTab({ vaerker, onConfirmed }: {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => { setSearchDialog(null); setWorkSearch("") }}>Luk</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Tilknyt klipper dialog */}
+            <Dialog open={!!addRetDialog} onOpenChange={() => setAddRetDialog(null)}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>Tilknyt klipper</DialogTitle>
+                        <DialogDescription>
+                            Tilføj en rettighedshaver til dette værk
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Navn</Label>
+                            <Input
+                                value={addRetName}
+                                onChange={e => setAddRetName(e.target.value)}
+                                placeholder="Klippers navn..."
+                                autoFocus
+                                onKeyDown={e => e.key === "Enter" && addRetDialog && addRettighed(addRetDialog)}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Andel (%)</Label>
+                            <Input
+                                type="number"
+                                value={addRetShare}
+                                onChange={e => setAddRetShare(e.target.value)}
+                                min="1"
+                                max="100"
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setAddRetDialog(null)}>Annuller</Button>
+                        <Button onClick={() => addRetDialog && addRettighed(addRetDialog)} disabled={!addRetName.trim()}>
+                            <Plus className="mr-2 h-3.5 w-3.5" />
+                            Tilknyt
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -3146,13 +3032,10 @@ export default function AftalelicensDetailPage() {
                         {!sortingComplete && <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-amber-500 inline-block" />}
                     </TabsTrigger>
                     <TabsTrigger value="parring" disabled={!sortingComplete}>
-                        2. Parring
-                    </TabsTrigger>
-                    <TabsTrigger value="rettigheder" disabled={!sortingComplete}>
-                        3. Rettighedshavere
+                        2. Parring og rettighedshavere
                     </TabsTrigger>
                     <TabsTrigger value="beregning" disabled={!sortingComplete}>
-                        4. Vægtning og beregning
+                        3. Vægtning og beregning
                     </TabsTrigger>
                     <TabsTrigger value="krav" className="relative">
                         Klipperkrav
@@ -3170,10 +3053,6 @@ export default function AftalelicensDetailPage() {
 
                 <TabsContent value="parring" className="mt-4">
                     <ParringTab vaerker={vaerker} onConfirmed={setConfirmedMatches} />
-                </TabsContent>
-
-                <TabsContent value="rettigheder" className="mt-4">
-                    <RightsTab vaerker={vaerker} confirmedMatches={confirmedMatches} />
                 </TabsContent>
 
                 <TabsContent value="beregning" className="mt-4">
