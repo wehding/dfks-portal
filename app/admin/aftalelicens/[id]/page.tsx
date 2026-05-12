@@ -7,7 +7,7 @@ import {
     ArrowLeft, Check, X, Flag, Search, ChevronDown, Download,
     Users, Calculator, Lock, Loader2, ExternalLink, Info, Save,
     ChevronsUpDown, ChevronUp, FileText, Clock, AlertTriangle,
-    Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff,
+    Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
@@ -2092,9 +2092,20 @@ function ParringTab({ vaerker, onConfirmed }: {
             )}
 
             {confirmed && (
-                <div className="flex items-center gap-2 rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3 text-sm text-green-800 dark:text-green-300">
-                    <Lock className="h-4 w-4" />
-                    Parring låst — fortsæt til Vægtning og beregning
+                <div className="flex items-center justify-between rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm text-green-800 dark:text-green-300">
+                        <Lock className="h-4 w-4" />
+                        Parring låst — fortsæt til Vægtning og beregning
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30 gap-1"
+                        onClick={() => setConfirmed(false)}
+                    >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Ret parring
+                    </Button>
                 </div>
             )}
 
