@@ -1713,6 +1713,7 @@ function ParringTab({ vaerker, onConfirmed }: {
     const [newWorkType, setNewWorkType] = useState<VaerkType>("dokumentarfilm")
     const [newWorkYear, setNewWorkYear] = useState(String(new Date().getFullYear()))
     const [bulkCreateDialog, setBulkCreateDialog] = useState(false)
+    const [bulkEditItems, setBulkEditItems] = useState<{ vaerkId: string; title: string; vaerkType: VaerkType }[]>([])
 
     const autoCount   = matches.filter(m => m.matchScore === "auto").length
     const fuzzyCount  = matches.filter(m => m.matchScore === "fuzzy").length
@@ -1753,12 +1754,11 @@ function ParringTab({ vaerker, onConfirmed }: {
     }
 
     const handleBulkCreateWorks = () => {
-        const unmatched = matches.filter(m => m.matchScore === "none" && !m.newWorkCreated)
-        if (unmatched.length === 0) return
-        const newWorks: FuzzyWork[] = unmatched.map(m => ({
-            id: `new_${m.vaerkId}`,
-            title: m.rawTitle,
-            category: m.vaerkType ?? "dokumentarfilm",
+        if (bulkEditItems.length === 0) return
+        const newWorks: FuzzyWork[] = bulkEditItems.map(item => ({
+            id: `new_${item.vaerkId}`,
+            title: item.title.trim() || (matches.find(m => m.vaerkId === item.vaerkId)?.rawTitle ?? item.title),
+            category: item.vaerkType,
         }))
         setExtraWorks(prev => [...prev, ...newWorks])
         setMatches(prev => prev.map(m => {
@@ -1768,7 +1768,7 @@ function ParringTab({ vaerker, onConfirmed }: {
         }))
         setBulkCreateDialog(false)
         window.open("/admin/vaerker", "_blank")
-        toast.success(`${unmatched.length} nye værker klar — tilknyt klippere i Værksdatabasen`)
+        toast.success(`${bulkEditItems.length} nye værker klar — tilknyt klippere i Værksdatabasen`)
     }
 
     const handleCreateWork = (vaerkId: string) => {
@@ -2063,7 +2063,14 @@ function ParringTab({ vaerker, onConfirmed }: {
                         size="sm"
                         variant="outline"
                         className="border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 gap-1.5"
-                        onClick={() => setBulkCreateDialog(true)}
+                        onClick={() => {
+                            setBulkEditItems(matches.filter(m => m.matchScore === "none" && !m.newWorkCreated).map(m => ({
+                                vaerkId: m.vaerkId,
+                                title: m.rawTitle,
+                                vaerkType: m.vaerkType ?? "dokumentarfilm",
+                            })))
+                            setBulkCreateDialog(true)
+                        }}
                     >
                         <Plus className="h-3.5 w-3.5" />
                         Opret alle {noneCount} i DB
@@ -2093,26 +2100,44 @@ function ParringTab({ vaerker, onConfirmed }: {
 
             {/* Bulk opret i DB dialog */}
             <Dialog open={bulkCreateDialog} onOpenChange={setBulkCreateDialog}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="max-w-2xl">
                     <DialogHeader>
-                        <DialogTitle>Bulk-opret {noneCount} nye værker i DB</DialogTitle>
+                        <DialogTitle>Opret {bulkEditItems.length} nye værker i databasen</DialogTitle>
                         <DialogDescription>
-                            Alle {noneCount} umatchede titler oprettes som nye værker i Værksdatabasen. Værksdatabasen åbnes i en ny fane, hvor du kan tilknytte klippere og fordelingsnøgler.
+                            Ret titel og værktype inden oprettelse. Klippere og fordelingsnøgler tilknyttes i Værksdatabasen efterfølgende.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="rounded-lg border divide-y max-h-48 overflow-y-auto">
-                        {matches.filter(m => m.matchScore === "none" && !m.newWorkCreated).map(m => (
-                            <div key={m.vaerkId} className="px-3 py-2 text-sm">
-                                <span className="font-medium">{m.rawTitle}</span>
-                                {m.vaerkType && <span className="ml-2 text-xs text-muted-foreground">{VAERK_TYPE_LABELS[m.vaerkType]}</span>}
+                    <div className="rounded-lg border divide-y max-h-96 overflow-y-auto">
+                        <div className="grid grid-cols-[1fr_180px] gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground bg-muted/40">
+                            <span>Titel</span>
+                            <span>Værktype</span>
+                        </div>
+                        {bulkEditItems.map((item, idx) => (
+                            <div key={item.vaerkId} className="grid grid-cols-[1fr_180px] gap-2 px-3 py-2 items-center">
+                                <Input
+                                    value={item.title}
+                                    onChange={e => setBulkEditItems(prev => prev.map((it, i) => i === idx ? { ...it, title: e.target.value } : it))}
+                                    className="h-7 text-sm"
+                                />
+                                <Select
+                                    value={item.vaerkType}
+                                    onValueChange={v => setBulkEditItems(prev => prev.map((it, i) => i === idx ? { ...it, vaerkType: v as VaerkType } : it))}
+                                >
+                                    <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {(Object.keys(VAERK_TYPE_LABELS) as VaerkType[]).map(t => (
+                                            <SelectItem key={t} value={t} className="text-xs">{VAERK_TYPE_LABELS[t]}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
                         ))}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setBulkCreateDialog(false)}>Annuller</Button>
-                        <Button onClick={handleBulkCreateWorks}>
+                        <Button onClick={handleBulkCreateWorks} disabled={bulkEditItems.some(it => !it.title.trim())}>
                             <Plus className="mr-2 h-3.5 w-3.5" />
-                            Opret {noneCount} værker i DB
+                            Opret {bulkEditItems.length} værker i DB
                         </Button>
                     </DialogFooter>
                 </DialogContent>
