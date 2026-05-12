@@ -14,14 +14,15 @@ export interface AiCallOptions {
     system: string
     userMessage: string
     maxTokens?: number
+    enableWebSearch?: boolean
 }
 
 export async function callAi(opts: AiCallOptions): Promise<string> {
-    const { provider, model, system, userMessage, maxTokens = 4096 } = opts
+    const { provider, model, system, userMessage, maxTokens = 4096, enableWebSearch = false } = opts
 
     switch (provider) {
         case "anthropic":
-            return callAnthropic(model, system, userMessage, maxTokens)
+            return callAnthropic(model, system, userMessage, maxTokens, enableWebSearch)
         case "openai":
             return callOpenAi(model, system, userMessage, maxTokens)
         case "google":
@@ -33,31 +34,71 @@ export async function callAi(opts: AiCallOptions): Promise<string> {
 
 // ── Anthropic ─────────────────────────────────────────────────
 
-async function callAnthropic(model: string, system: string, userMessage: string, maxTokens: number): Promise<string> {
+async function callAnthropic(model: string, system: string, userMessage: string, maxTokens: number, enableWebSearch = false): Promise<string> {
     const apiKey = getApiKey("anthropic")
     if (!apiKey) throw new Error("Anthropic API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
 
     const ALLOWED = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"]
     const safeModel = ALLOWED.includes(model) ? model : "claude-sonnet-4-6"
 
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
+    const headers = {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        ...(enableWebSearch ? { "anthropic-beta": "web-search-2025-03-05" } : {}),
+    }
+
+    const tools = enableWebSearch
+        ? [{ type: "web_search_20250305", name: "web_search" }]
+        : undefined
+
+    type ContentBlock = { type: string; text?: string; id?: string; name?: string; input?: unknown; content?: unknown }
+    type Message = { role: string; content: string | ContentBlock[] }
+
+    const messages: Message[] = [{ role: "user", content: userMessage }]
+
+    // Multi-turn loop for web search tool use (max 5 rounds)
+    for (let i = 0; i < 5; i++) {
+        const body: Record<string, unknown> = {
             model: safeModel,
             max_tokens: maxTokens,
             system,
-            messages: [{ role: "user", content: userMessage }],
-        }),
-    })
+            messages,
+            ...(tools ? { tools } : {}),
+        }
 
-    if (!res.ok) throw new Error(`Anthropic API fejl: ${res.status} — ${await res.text()}`)
-    const data = await res.json()
-    return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? ""
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+        })
+
+        if (!res.ok) throw new Error(`Anthropic API fejl: ${res.status} — ${await res.text()}`)
+        const data = await res.json()
+
+        const stopReason: string = data.stop_reason
+        const content: ContentBlock[] = data.content ?? []
+
+        // Done — return the text response
+        if (stopReason !== "tool_use") {
+            return content.find(b => b.type === "text")?.text ?? ""
+        }
+
+        // Model called a tool — append its turn and provide tool results
+        messages.push({ role: "assistant", content })
+
+        const toolResults = content
+            .filter(b => b.type === "tool_use")
+            .map(b => ({
+                type: "tool_result",
+                tool_use_id: b.id,
+                content: "Search executed.",
+            }))
+
+        messages.push({ role: "user", content: toolResults })
+    }
+
+    return ""
 }
 
 // ── OpenAI ────────────────────────────────────────────────────

@@ -24,9 +24,11 @@ VIGTIGT: Kanal alene er IKKE nok til at afvise. En dokumentarfilm på DR2 er sta
 Varighed: 50-90 min = sandsynlig spillefilm. Over 90 min = næsten altid spillefilm. Under 20 min = kortfilm/kort dokumentar.
 
 MEGET STÆRKE indikatorer for relevans (godkend med høj sikkerhed):
-- Filmen har haft premiere på en filmfestival: CPH:DOX, IDFA, Sundance, Tribeca, Hot Docs, Cannes, Berlin, Venice, Tribeca, BIFF, Nordisk Panorama, Odense Film Festival m.fl.
+- Filmen har haft premiere på en filmfestival: CPH:DOX, IDFA, Sundance, Tribeca, Hot Docs, Cannes, Berlin, Venice, BIFF, Nordisk Panorama, Odense Film Festival m.fl.
 - Filmen er nomineret til eller har vundet en filmpris (Robert, Bodil, Oscar, BAFTA, Palme d'Or m.fl.)
 - Filmen er produceret af et kendt produktionsselskab (Zentropa, Nimbus, SF Studios, DR Fiktion m.fl.)
+
+Du har adgang til websøgning. Brug den til at slå specifikke titler op og find konkrete oplysninger: instruktør, produktionsselskab, festivalhistorik (CPH:DOX, IDFA m.fl.), priser. Søg altid på titlen + "film" eller "dokumentar" + evt. produktionsår. Brug kun verificerede oplysninger fra søgningen i hvadErDette — skriv ikke noget du ikke har bekræftet.
 
 Returner KUN et JSON-objekt — ingen tekst udenfor JSON.`
 
@@ -96,7 +98,14 @@ Returner et JSON-objekt:
   "confidence": "høj" | "mellem" | "lav"
 }`
 
-        const text = await callAi({ provider: aiProvider, model: aiModel, system: SYSTEM, userMessage, maxTokens: 512 })
+        const text = await callAi({
+            provider: aiProvider,
+            model: aiModel,
+            system: SYSTEM,
+            userMessage,
+            maxTokens: 2048,
+            enableWebSearch: aiProvider === "anthropic",
+        })
 
         const clean = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim()
         const result = JSON.parse(clean)
