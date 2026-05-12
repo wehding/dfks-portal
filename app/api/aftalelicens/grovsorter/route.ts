@@ -44,6 +44,8 @@ Tvivl om journalistisk vs. dokumentar → "usikker".
 Vigtige regler:
 - Borgen, Broen, Matador, Klovn og lignende kendte serier = "godkend" (tv_serie_lang)
 - Debatmagasiner og talkshows = "afvis" selvom de har klipning
+- Film med festivalhistorik (CPH:DOX, IDFA, Cannes, Berlin, Sundance m.fl.) = altid "godkend" med høj sikkerhed
+- Film nomineret til eller vinder af filmpris (Robert, Bodil, Oscar m.fl.) = altid "godkend"
 - Returnér KUN et JSON-array — ingen tekst udenfor JSON`
 
 // Regelbaseret præ-filter — titelbaserede afvisningsmønstre

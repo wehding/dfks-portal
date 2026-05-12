@@ -564,6 +564,16 @@ function SortTable({ vaerker, onUpdate }: {
             toast.success(`${toReject.length} titel${toReject.length !== 1 ? "r" : ""} afvist automatisk`)
     }
 
+    // Re-anvend filtreringsregler når vaerker-data udskiftes (real data erstatter mock)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (vaerker.length > 0 && currentRulesRef.current.some(r => r.active)) {
+            autoRejectedRef.current = new Set()
+            handleRulesChange(currentRulesRef.current)
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vaerker.length])
+
     const PAGE_SIZE = 200
     const [page, setPage] = useState(0)
     const [filter, setFilter] = useState<"all" | SortStatus>("all")

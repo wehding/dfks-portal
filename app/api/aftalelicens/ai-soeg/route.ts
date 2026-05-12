@@ -16,7 +16,17 @@ const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper
 
 DFKS administrerer klipperrettigheder for FILMVÆRKER: spillefilm, tv-drama-serier, dokumentarfilm, kortfilm, dokumentarserier og lignende kreative filmproduktioner med professionel klipning.
 
-IKKE relevant: nyheder, sport, vejrudsigt, talkshows, quiz, reality, go' morgen-shows, debatprogrammer, underholdning uden filmisk klipning.
+RELEVANT: spillefilm, tv-drama, dokumentarfilm, kortfilm, animationsfilm, dokumentarserie, doku-drama — uanset kanal.
+IKKE relevant: nyheder, sport, vejrudsigt, talkshows, quiz, reality, go' morgen-shows, debatprogrammer, underholdning uden filmisk klipning, JOURNALISTISKE PROGRAMMER (nyhedsmagasiner, forbrugerjournalistik som Kontant, faktachek som Detektor, investigativ journalistik).
+
+VIGTIGT: Kanal alene er IKKE nok til at afvise. En dokumentarfilm på DR2 er stadig relevant. Skelnet er: fortæller programmet en kreativ/kunstnerisk historie (relevant) eller undersøger/rapporterer det en sag journalistisk (ikke relevant)?
+
+Varighed: 50-90 min = sandsynlig spillefilm. Over 90 min = næsten altid spillefilm. Under 20 min = kortfilm/kort dokumentar.
+
+MEGET STÆRKE indikatorer for relevans (godkend med høj sikkerhed):
+- Filmen har haft premiere på en filmfestival: CPH:DOX, IDFA, Sundance, Tribeca, Hot Docs, Cannes, Berlin, Venice, Tribeca, BIFF, Nordisk Panorama, Odense Film Festival m.fl.
+- Filmen er nomineret til eller har vundet en filmpris (Robert, Bodil, Oscar, BAFTA, Palme d'Or m.fl.)
+- Filmen er produceret af et kendt produktionsselskab (Zentropa, Nimbus, SF Studios, DR Fiktion m.fl.)
 
 Returner KUN et JSON-objekt — ingen tekst udenfor JSON.`
 
@@ -30,14 +40,18 @@ interface FeedbackExample {
 
 function buildExamplesBlock(examples: FeedbackExample[]): string {
     if (!examples.length) return ""
-    const lines = examples.map(e => {
+    // Kun korrektioner — tilfælde hvor AI tog fejl. Undgå over-generalisering fra enige eksempler.
+    const corrections = examples.filter(e =>
+        (e.aiRelevant === "ja" && e.userDecision === "rejected") ||
+        (e.aiRelevant === "nej" && e.userDecision === "approved")
+    )
+    if (!corrections.length) return ""
+    const lines = corrections.map(e => {
         const ctx = [e.rawTitle, e.channel ? `(${e.channel})` : ""].filter(Boolean).join(" ")
-        const aiSaid = e.aiRelevant === "ja" ? "relevant" : e.aiRelevant === "nej" ? "ikke relevant" : "usikker"
-        const userSaid = e.userDecision === "approved" ? "godkendt" : "afvist"
-        const match = (e.aiRelevant === "ja") === (e.userDecision === "approved")
-        return `- "${ctx}" → AI: ${aiSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}, bruger: ${userSaid}${match ? "" : " ← KORREKTION"}`
+        const userSaid = e.userDecision === "approved" ? "relevant" : "ikke relevant"
+        return `- "${ctx}" → korrekt svar: ${userSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}`
     })
-    return `\nTidligere sorteringer (lær af disse):\n${lines.join("\n")}\n`
+    return `\nKorrektioner fra tidligere søgninger (disse specifikke titler — generaliser ikke til hele kategorier):\n${lines.join("\n")}\n`
 }
 
 export async function POST(req: NextRequest) {
@@ -61,12 +75,14 @@ export async function POST(req: NextRequest) {
 
         const userMessage = `${kontekst}
 ${buildExamplesBlock(examples)}
-Vurder denne TV-titel og returner et JSON-objekt:
+Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, så vurder ud fra titel, kanal, varighed og år.
+
+Returner et JSON-objekt:
 {
-  "hvadErDette": "<Kort beskrivelse af programmet på dansk, 1-2 sætninger>",
+  "hvadErDette": "<Beskriv programmet på dansk. Hvis du kender det: angiv instruktør, handling/tema og programtype. Hvis ikke: beskriv hvad det sandsynligvis er ud fra metadata. Max 3 sætninger.>",
   "relevant": "ja" | "nej" | "usikker",
   "vaerkType": "<spillefilm | tv_serie_lang | tv_serie_kort | kortfilm | dokumentarfilm | dokumentarserie | dokuDrama | kort_dokumentar | ikke_relevant | null>",
-  "begrundelse": "<Begrundelse for vurdering, max 2 sætninger på dansk>",
+  "begrundelse": "<Max 1 sætning: hvorfor er det relevant eller ikke relevant for klipperrettigheder>",
   "confidence": "høj" | "mellem" | "lav"
 }`
 
