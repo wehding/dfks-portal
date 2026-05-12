@@ -766,6 +766,14 @@ function SortTable({ vaerker, onUpdate }: {
                             sortedAt: new Date().toISOString(),
                             sortedBy: "ai",
                         })
+                    } else {
+                        // "usikker" → sæt flag og gem AI's begrundelse som note
+                        onUpdate(r.id, {
+                            sortStatus: "flagged",
+                            notes: r.reason ?? "AI usikker på klassifikation",
+                            sortedAt: new Date().toISOString(),
+                            sortedBy: "ai",
+                        })
                     }
                 }
             } catch (err) {
@@ -944,6 +952,10 @@ function SortTable({ vaerker, onUpdate }: {
     }
 
     const pending = vaerker.filter(v => v.sortStatus === "pending").length
+    const approvedCount = vaerker.filter(v => v.sortStatus === "approved").length
+    const rejectedCount = vaerker.filter(v => v.sortStatus === "rejected").length
+    const filterRejectedCount = vaerker.filter(v => v.sortStatus === "rejected" && v.sortedBy === "filter").length
+    const flaggedCount = vaerker.filter(v => v.sortStatus === "flagged").length
     const total = vaerker.length
     const progress = total > 0 ? Math.round(((total - pending) / total) * 100) : 100
 
@@ -961,6 +973,32 @@ function SortTable({ vaerker, onUpdate }: {
                             <span className="text-muted-foreground">{progress}%</span>
                         </div>
                         <Progress value={progress} className="h-2" />
+                        {/* Opdeling af sorterede titler */}
+                        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground pt-1">
+                            {approvedCount > 0 && (
+                                <span className="text-green-600 dark:text-green-400">
+                                    ✓ {approvedCount} godkendt
+                                </span>
+                            )}
+                            {rejectedCount > 0 && (
+                                <span className="text-destructive">
+                                    ✗ {rejectedCount} afvist
+                                    {filterRejectedCount > 0 && (
+                                        <span className="opacity-70"> ({filterRejectedCount} af filtreringsregler)</span>
+                                    )}
+                                </span>
+                            )}
+                            {flaggedCount > 0 && (
+                                <span className="text-amber-600 dark:text-amber-400">
+                                    ⚑ {flaggedCount} flagget
+                                </span>
+                            )}
+                            {pending > 0 && (
+                                <span>
+                                    ⋯ {pending} afventende
+                                </span>
+                            )}
+                        </div>
                         {aiProgress && (
                             <div className="flex items-center justify-between text-xs text-muted-foreground pt-0.5">
                                 <span className="flex items-center gap-1.5">
