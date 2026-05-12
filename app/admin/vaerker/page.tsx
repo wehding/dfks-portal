@@ -88,6 +88,7 @@ export default function VaerkerPage() {
     const [filterYear, setFilterYear] = useState("all")
     const [filterKey, setFilterKey] = useState("all")
     const [filterContract, setFilterContract] = useState("all")
+    const [filterEditors, setFilterEditors] = useState("all")
     const [sortField, setSortField] = useState<SortField>("number")
     const [sortDir, setSortDir] = useState<SortDir>("asc")
 
@@ -108,7 +109,10 @@ export default function VaerkerPage() {
                 (filterKey === "pending" && ["proposed", "negotiating", "accepted"].includes(w.distributionKeyStatus ?? "")) ||
                 (filterKey === "missing" && (!w.distributionKeyStatus || w.distributionKeyStatus === "draft"))
             const matchContract = filterContract === "all" || w.contractStatus === filterContract
-            return matchSearch && matchType && matchYear && matchKey && matchContract
+            const matchEditors = filterEditors === "all" ||
+                (filterEditors === "none" && w.editors.length === 0) ||
+                (filterEditors === "has" && w.editors.length > 0)
+            return matchSearch && matchType && matchYear && matchKey && matchContract && matchEditors
         })
 
         result.sort((a, b) => {
@@ -125,7 +129,7 @@ export default function VaerkerPage() {
             return sortDir === "asc" ? cmp : -cmp
         })
         return result
-    }, [search, filterType, filterYear, filterKey, filterContract, sortField, sortDir])
+    }, [search, filterType, filterYear, filterKey, filterContract, filterEditors, sortField, sortDir])
 
     const toggleSort = (field: SortField) => {
         if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc")
@@ -195,6 +199,16 @@ export default function VaerkerPage() {
                         <SelectItem value="missing">Ingen nøgle</SelectItem>
                     </SelectContent>
                 </Select>
+                <Select value={filterEditors} onValueChange={setFilterEditors}>
+                    <SelectTrigger className="w-[150px]">
+                        <SelectValue placeholder="Klippere" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="all">Alle klippere</SelectItem>
+                        <SelectItem value="none">Ingen klippere</SelectItem>
+                        <SelectItem value="has">Har klippere</SelectItem>
+                    </SelectContent>
+                </Select>
                 <Select value={filterContract} onValueChange={setFilterContract}>
                     <SelectTrigger className="w-[150px]">
                         <SelectValue placeholder="Kontrakt" />
@@ -243,7 +257,7 @@ export default function VaerkerPage() {
                                 <TableCell className="tabular-nums text-sm text-muted-foreground">{w.premiereYear}</TableCell>
                                 <TableCell>
                                     {w.editors.length === 0 ? (
-                                        <span className="text-xs text-muted-foreground">—</span>
+                                        <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Ingen klippere</span>
                                     ) : (
                                         <div className="flex items-center gap-1.5">
                                             <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
