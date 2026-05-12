@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3, Clock, CheckCircle2, X, Layers } from "lucide-react"
+import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3, Clock, CheckCircle2, X, Layers, SearchCheck, Send } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -21,9 +21,12 @@ import {
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
+    DialogFooter,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 import {
     Tooltip,
     TooltipContent,
@@ -69,6 +72,23 @@ const MOCK_MINE_KRAV: AftalelicensKravItem[] = [
         submittedAt: "2024-03-22T11:30:00",
         status: "pending",
     },
+]
+
+// ── Efterlysning — værker uden klipper ────────────────────────
+
+interface EfterlysningItem {
+    id: string
+    title: string
+    type: string
+    premiereYear: number
+    productionNumber: string
+}
+
+const MOCK_EFTERLYSNINGER: EfterlysningItem[] = [
+    { id: "e1", title: "Skruk Sæson 1", type: "TV-serie", premiereYear: 2022, productionNumber: "005" },
+    { id: "e2", title: "Frihavn", type: "TV-serie", premiereYear: 2023, productionNumber: "013" },
+    { id: "e3", title: "Den store dag", type: "Dokumentarfilm", premiereYear: 2023, productionNumber: "014" },
+    { id: "e4", title: "Landet bag ved", type: "Spillefilm", premiereYear: 2024, productionNumber: "015" },
 ]
 
 const KRAV_STATUS_CFG = {
@@ -167,6 +187,9 @@ export default function MineVaerkerPage() {
     const [previewPdf, setPreviewPdf] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
     const [exploitationWork, setExploitationWork] = useState<string | null>(null)
+    const [meldDialog, setMeldDialog] = useState<EfterlysningItem | null>(null)
+    const [meldNote, setMeldNote] = useState("")
+    const [meldSent, setMeldSent] = useState<Set<string>>(new Set())
 
     const pendingOrRejectedKrav = MOCK_MINE_KRAV.filter(k => k.status !== "approved")
     const allWorks = [...mockWorks, ...approvedKravAsWorks]
@@ -390,6 +413,81 @@ export default function MineVaerkerPage() {
                     </div>
                 </section>
             )}
+
+            {/* Efterlysning — værker uden klipper */}
+            <section className="rounded-lg border">
+                <div className="flex items-center gap-2 px-5 py-4 border-b">
+                    <SearchCheck className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <h2 className="font-medium text-sm">Efterlysning — kender du disse værker?</h2>
+                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30">
+                        {MOCK_EFTERLYSNINGER.filter(e => !meldSent.has(e.id)).length} uden klipper
+                    </Badge>
+                </div>
+                <p className="px-5 pt-3 pb-1 text-sm text-muted-foreground">
+                    DFKS har registreret følgende værker uden tilknyttet klipper. Har du klippet et af disse, så meld dig nedenfor.
+                </p>
+                <div className="divide-y">
+                    {MOCK_EFTERLYSNINGER.map(item => (
+                        <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium">{item.title}</p>
+                                <p className="text-xs text-muted-foreground">{item.type} · {item.premiereYear} · #{item.productionNumber}</p>
+                            </div>
+                            {meldSent.has(item.id) ? (
+                                <Badge variant="outline" className="gap-1 text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950 shrink-0">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Meldt til DFKS
+                                </Badge>
+                            ) : (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="shrink-0 text-xs gap-1.5"
+                                    onClick={() => { setMeldDialog(item); setMeldNote("") }}
+                                >
+                                    <Users className="h-3.5 w-3.5" />
+                                    Jeg klippede dette
+                                </Button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            {/* Meld-dialog */}
+            <Dialog open={!!meldDialog} onOpenChange={() => setMeldDialog(null)}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Meld dig som klipper</DialogTitle>
+                        <DialogDescription>
+                            {meldDialog?.title} ({meldDialog?.premiereYear}) · {meldDialog?.type}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <p className="text-sm text-muted-foreground">
+                            Tilføj evt. en kort note om din rolle — DFKS kontakter dig for at verificere og tilknytte dig til værket.
+                        </p>
+                        <Textarea
+                            value={meldNote}
+                            onChange={e => setMeldNote(e.target.value)}
+                            placeholder="Fx: Klippede afsnit 2–5, sæson 1. Kontrakt via Zentropa..."
+                            rows={3}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setMeldDialog(null)}>Annuller</Button>
+                        <Button onClick={() => {
+                            if (meldDialog) {
+                                setMeldSent(prev => new Set([...prev, meldDialog.id]))
+                                setMeldDialog(null)
+                            }
+                        }}>
+                            <Send className="mr-2 h-3.5 w-3.5" />
+                            Send til DFKS
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Contract Preview Dialog */}
             <Dialog open={!!previewPdf} onOpenChange={() => { setPreviewPdf(null); setLocalPdfUrl(null) }}>
