@@ -77,7 +77,14 @@ export async function POST(req: NextRequest) {
 ${buildExamplesBlock(examples)}
 Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, vurder ud fra titel, kanal, varighed og år.
 
-Korrektionerne ovenfor gælder KUN de nævnte specifikke titler. Lad dem ALDRIG påvirke vurderingen af andre titler eller sænke din confidence for en ny titel. En 50+ min dansk dokumentarfilm på DR2 er relevant med høj sikkerhed, medmindre du konkret ved den er journalistisk.
+Korrektionerne ovenfor gælder KUN de nævnte specifikke titler. Lad dem ALDRIG påvirke confidence for andre titler.
+
+Confidence-regler (følg disse strengt):
+- 50+ min, personlig/narrativ titel, ikke-nyhedskanal → "ja" + "høj" confidence
+- Kendt festival/pris → "ja" + "høj" confidence
+- Klar nyhedstitel (TV Avisen, Sporten m.fl.) → "nej" + "høj" confidence
+- Ægte tvetydighed (kunne være journalistisk eller dokumentar) → "usikker" + "lav" confidence
+- Metadata peger på dokumentar men du er lidt i tvivl → "ja" + "mellem" confidence
 
 Returner et JSON-objekt:
 {
