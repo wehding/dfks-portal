@@ -10,6 +10,7 @@ import {
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
+import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { loadAiConfig } from "@/lib/ai-providers"
 import { PageHeader } from "@/components/page-header"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -685,14 +686,41 @@ function SortTable({ vaerker, onUpdate }: {
             }
         }
 
-        if (dbMatch > 0) toast.info(`${dbMatch} titler matchet i DB — sender ${unmatched.length} til AI`)
+        if (dbMatch > 0) toast.info(`${dbMatch} titler matchet i DB`)
+
+        // ── Trin 1.5: Historik-filter — kendte titler fra tidligere batches ──
+        let histMatch = 0
+        const afterHistory: typeof unmatched = []
+        for (const v of unmatched) {
+            const hist = findInHistory(v.rawTitle, v.channel)
+            if (hist) {
+                onUpdate(v.id, {
+                    sortStatus: hist.decision,
+                    vaerkType: hist.vaerkType as VaerkType | undefined,
+                    sortedAt: new Date().toISOString(),
+                    sortedBy: "historik",
+                })
+                allSuggestions.set(v.id, {
+                    status: hist.decision === "approved" ? "godkend" : "afvis",
+                    type: hist.vaerkType,
+                    reason: `Fra historik (set ${hist.count}×)`,
+                })
+                if (hist.decision === "approved") godkendt++
+                else afvist++
+                histMatch++
+            } else {
+                afterHistory.push(v)
+            }
+        }
+
+        if (histMatch > 0) toast.info(`${histMatch} titler matchet i historik — sender ${afterHistory.length} til AI`)
 
         // ── Trin 2: AI kun på ukendte titler ────────────────────
-        setAiProgress({ done: 0, total: unmatched.length })
+        setAiProgress({ done: 0, total: afterHistory.length })
 
-        const batches: typeof unmatched[] = []
-        for (let i = 0; i < unmatched.length; i += BATCH_SIZE) {
-            batches.push(unmatched.slice(i, i + BATCH_SIZE))
+        const batches: typeof afterHistory[] = []
+        for (let i = 0; i < afterHistory.length; i += BATCH_SIZE) {
+            batches.push(afterHistory.slice(i, i + BATCH_SIZE))
         }
 
         let stopped = false
@@ -710,7 +738,7 @@ function SortTable({ vaerker, onUpdate }: {
                             rawTitle: v.rawTitle,
                             channel: v.channel,
                             duration: v.duration,
-                            vaerkType: v.vaerkType ?? null,
+                            productionYear: v.productionYear,
                         })),
                         examples: getTrainingExamples(20),
                         ...loadAiConfig("grovsorter"),
@@ -744,7 +772,7 @@ function SortTable({ vaerker, onUpdate }: {
                 if ((err as Error).name === "AbortError") { stopped = true; break }
                 fejl += batch.length
             }
-            setAiProgress({ done: Math.min((b + 1) * BATCH_SIZE, unmatched.length), total: unmatched.length })
+            setAiProgress({ done: Math.min((b + 1) * BATCH_SIZE, afterHistory.length), total: afterHistory.length })
         }
 
         setAiSuggestions(allSuggestions)
@@ -2995,7 +3023,37 @@ export default function AftalelicensDetailPage() {
     const batch = MOCK_BATCH // In real app: lookup by id
 
     const updateVaerk = (vaerkId: string, patch: Partial<AftalelicensVaerk>) => {
-        setVaerker(prev => prev.map(v => v.id === vaerkId ? { ...v, ...patch } : v))
+        setVaerker(prev => {
+            const current = prev.find(v => v.id === vaerkId)
+            if (current && patch.sortStatus && patch.sortStatus !== current.sortStatus) {
+                // Gem AI-korrektioner som feedback (til few-shot eksempler)
+                if (
+                    current.sortedBy === "ai" &&
+                    (patch.sortStatus === "approved" || patch.sortStatus === "rejected")
+                ) {
+                    saveFeedback({
+                        rawTitle: current.rawTitle,
+                        channel: current.channel,
+                        productionYear: current.productionYear,
+                        duration: current.duration,
+                        aiRelevant: current.sortStatus === "approved" ? "ja" : "nej",
+                        aiVaerkType: current.vaerkType ?? null,
+                        userDecision: patch.sortStatus,
+                        timestamp: new Date().toISOString(),
+                    })
+                }
+                // Gem ALLE godkend/afvis-beslutninger i historik (bruges som pre-filter fremover)
+                if (patch.sortStatus === "approved" || patch.sortStatus === "rejected") {
+                    recordDecision(
+                        current.rawTitle,
+                        patch.sortStatus,
+                        current.channel,
+                        (patch.vaerkType ?? current.vaerkType) as string | undefined,
+                    )
+                }
+            }
+            return prev.map(v => v.id === vaerkId ? { ...v, ...patch } : v)
+        })
     }
 
     const sortingComplete = vaerker.every(v => v.sortStatus !== "pending")

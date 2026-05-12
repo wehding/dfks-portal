@@ -1,8 +1,9 @@
 /**
  * app/api/aftalelicens/grovsorter/route.ts
  *
- * Bruger Claude til at grovsortera TV-titler fra Copydan-data.
- * Modtager en batch af titler og returnerer forslag: afvis / godkend / usikker + værktype.
+ * Grovsortering af TV-titler fra Copydan-data.
+ * Trin 1: regelbaseret præ-filter (hurtig, høj præcision)
+ * Trin 2: AI-klassifikation af de resterende tvetydige titler
  */
 
 import { NextRequest, NextResponse } from "next/server"
@@ -14,19 +15,112 @@ const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper
 DFKS administrerer klipperrettigheder for FILMVÆRKER: spillefilm, tv-drama-serier, dokumentarfilm, kortfilm, dokumentarserier og lignende kreative filmproduktioner med professionel klipning.
 
 Klassificer hver titel som én af:
-- "afvis": Indhold der IKKE har klipperrettigheder. Typisk: nyheder (TV Avisen, Nyhederne, Lorry Nyheder), sport (Sportsnyt, Sporten, fodbold, håndbold), vejrudsigt, talkshows, quizprogrammer (Jeopardy, Hvem vil være millionær), reality (Big Brother, Paradise Hotel), debatprogrammer (Deadline, Debatten), underholdningsprogrammer uden filmisk klipning, Go' morgen-shows, reklamespots, børne-legeplatforme.
+- "afvis": Indhold uden klipperrettigheder: nyheder, sport, vejrudsigt, talkshows, quizshows, reality, debatprogrammer, morgenmagasiner, reklamespots, børne-legeplatforme, underholdning uden filmisk klipning.
 - "godkend": Filmværker med klipperrettigheder — spillefilm, tv-drama, dokumentarfilm, kortfilm, animationsfilm, dokumentarserie, doku-drama.
-- "usikker": Titler der ikke kan klassificeres præcist ud fra titlen alene (f.eks. tvetydige titler).
+- "usikker": Kan ikke klassificeres sikkert ud fra de tilgængelige oplysninger.
 
-For "godkend": angiv den mest sandsynlige værktype:
+For "godkend": angiv mest sandsynlige værktype:
   spillefilm | tv_serie_lang | tv_serie_kort | kortfilm | dokumentarfilm | dokumentarserie | dokuDrama | kort_dokumentar
 
+Varighed som stærk indikator:
+- Under 3 min → "afvis" (promo/spot/trailer)
+- 3–20 min → sandsynlig kortfilm eller kort_dokumentar
+- 20–50 min → sandsynlig tv_serie_kort eller dokumentarfilm
+- 50–90 min → sandsynlig spillefilm eller tv_serie_lang
+- Over 90 min → næsten altid spillefilm
+
+Produktionsår som indikator:
+- År 1900–1989 → næsten aldrig nyheder/debat → sandsynlig spillefilm eller dokumentar
+- År 1990–2000 → vurder på titel og kanal
+
+Episodemønstre (titel indeholder " - 1", "afsnit", "episode", "s0", "(1:", "(2:") → serie → tv_serie_lang eller tv_serie_kort
+
 Vigtige regler:
-- Genudsendelser af nyheder/sport = "afvis"
-- Serier som Borgen, Broen, Matador, Klovn = "godkend" (tv_serie_lang)
-- Korte dokumentarer under 20 min = "godkend" (kort_dokumentar)
+- Borgen, Broen, Matador, Klovn og lignende kendte serier = "godkend" (tv_serie_lang)
 - Debatmagasiner og talkshows = "afvis" selvom de har klipning
 - Returnér KUN et JSON-array — ingen tekst udenfor JSON`
+
+// Regelbaseret præ-filter — titelbaserede afvisningsmønstre
+const REJECT_TITLE_RE = [
+    /\btv\s*avisen\b/i,
+    /\bnyhederne\b/i,
+    /\blorry\s*nyheder\b/i,
+    /\bdr\s*nyheder\b/i,
+    /\bvejret\b/i,
+    /\bvejrudsigt\b/i,
+    /\bsporten\b/i,
+    /\bsportsnyt\b/i,
+    /\bgo'?\s*morgen\b/i,
+    /\bgod\s*morgen\b/i,
+    /\bdeadline\b/i,
+    /\bdebatten\b/i,
+    /\bpresselogen\b/i,
+    /\bjeopardy\b/i,
+    /\bhvem\s+vil\s+v[æe]re\s+million[æe]r\b/i,
+    /\bparadise\s*hotel\b/i,
+    /\bbig\s*brother\b/i,
+    /\breklame(blok)?\b/i,
+    /\bdirekte\s+fra\b/i,
+    /\bvm\s+i\b/i,
+    /\bem\s+i\b/i,
+]
+
+// Kanalbaserede afvisningsmønstre
+const REJECT_CHANNEL_RE = [
+    /^tv\s*2?\s*news$/i,
+    /^dr\s*nyheder$/i,
+    /^eurosport/i,
+]
+
+// Kanalbaserede godkendelsesmønstre
+const APPROVE_CHANNEL_RE = [
+    /^tv\s*2?\s*film$/i,
+    /^film\s*4$/i,
+    /^canal\s*\+?\s*film/i,
+    /^filmstriben$/i,
+    /^dr\s*ramasjang$/i,
+]
+
+interface Item {
+    id: string
+    rawTitle: string
+    channel?: string
+    duration?: number
+    productionYear?: number
+}
+
+type PreResult = { status: "afvis" | "godkend"; type?: string; reason: string }
+
+function preFilter(item: Item): PreResult | null {
+    // Varighed under 3 min → promo/spot
+    if (item.duration !== undefined && item.duration > 0 && item.duration < 3) {
+        return { status: "afvis", reason: "Varighed under 3 min" }
+    }
+
+    // Kanalbaseret godkendelse
+    if (item.channel) {
+        for (const re of APPROVE_CHANNEL_RE) {
+            if (re.test(item.channel)) {
+                return { status: "godkend", reason: `Filmkanal: ${item.channel}` }
+            }
+        }
+        // Kanalbaseret afvisning
+        for (const re of REJECT_CHANNEL_RE) {
+            if (re.test(item.channel)) {
+                return { status: "afvis", reason: `Nyhedskanal: ${item.channel}` }
+            }
+        }
+    }
+
+    // Titelbaseret afvisning
+    for (const re of REJECT_TITLE_RE) {
+        if (re.test(item.rawTitle)) {
+            return { status: "afvis", reason: "Titelgenkendelse" }
+        }
+    }
+
+    return null
+}
 
 interface FeedbackExample {
     rawTitle: string
@@ -46,9 +140,9 @@ function buildExamplesBlock(examples: FeedbackExample[]): string {
     const lines = corrections.map(e => {
         const ctx = [e.rawTitle, e.channel ? `(${e.channel})` : ""].filter(Boolean).join(" ")
         const userSaid = e.userDecision === "approved" ? "godkend" : "afvis"
-        return `- "${ctx}" → skal klassificeres som: ${userSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}`
+        return `- "${ctx}" → ${userSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}`
     })
-    return `\nBruger-korrektioner fra tidligere sorteringer (højeste prioritet):\n${lines.join("\n")}\n`
+    return `\nBruger-korrektioner (højeste prioritet — følg disse altid):\n${lines.join("\n")}\n`
 }
 
 export async function POST(req: NextRequest) {
@@ -62,20 +156,35 @@ export async function POST(req: NextRequest) {
         const aiProvider = provider ?? AI_CONFIG_DEFAULTS.grovsorter.provider
         const aiModel    = model    ?? AI_CONFIG_DEFAULTS.grovsorter.model
 
-        // Byg titelliste — ét element per linje med al tilgængelig kontekst
-        const list = items.map((item: { id: string; rawTitle: string; channel?: string; duration?: number; vaerkType?: string | null }) =>
-            [
-                item.id,
-                item.rawTitle,
-                item.channel ? `(${item.channel})` : "",
-                item.duration ? `[${item.duration} min]` : "",
-                item.vaerkType ? `[allerede klassificeret: ${item.vaerkType}]` : "",
-            ].filter(Boolean).join(" ")
-        ).join("\n")
+        // Trin 1: Præ-filter — sortér åbenlyse tilfælde fra uden AI
+        const preResults = new Map<string, { status: string; type?: string; reason: string }>()
+        const aiItems: Item[] = []
 
-        const userMessage = `Klassificer følgende ${items.length} TV-titler fra Copydan Verdens TV.
+        for (const item of items as Item[]) {
+            const pre = preFilter(item)
+            if (pre) {
+                preResults.set(item.id, pre)
+            } else {
+                aiItems.push(item)
+            }
+        }
 
-Bemærk: Titler markeret med [allerede klassificeret: X] har en brugervalgt værktype — anvend dette som stærk kontekst. En dokumentarserie er f.eks. altid et filmværk der skal godkendes, uanset om titlen lyder som en debat.
+        // Trin 2: AI kun for tvetydige titler
+        let aiResults: { id: string; status: string; type?: string; reason: string }[] = []
+
+        if (aiItems.length > 0) {
+            const list = aiItems.map(item =>
+                [
+                    item.id,
+                    item.rawTitle,
+                    item.channel ? `(${item.channel})` : "",
+                    item.duration ? `[${item.duration} min]` : "",
+                    item.productionYear ? `[${item.productionYear}]` : "",
+                ].filter(Boolean).join(" ")
+            ).join("\n")
+
+            const userMessage = `Klassificer følgende ${aiItems.length} TV-titler fra Copydan Verdens TV.
+Format per linje: <id> <titel> (<kanal>) [varighed min] [produktionsår]
 ${buildExamplesBlock(examples)}
 ${list}
 
@@ -89,24 +198,32 @@ Returner et JSON-array med ét objekt per titel:
   }
 ]`
 
-        const text = await callAi({ provider: aiProvider, model: aiModel, system: SYSTEM, userMessage, maxTokens: 8192 })
+            const text = await callAi({ provider: aiProvider, model: aiModel, system: SYSTEM, userMessage, maxTokens: 8192 })
 
-        const clean = text
-            .replace(/^```json\s*/i, "")
-            .replace(/^```\s*/i, "")
-            .replace(/\s*```$/i, "")
-            .trim()
+            const clean = text
+                .replace(/^```json\s*/i, "")
+                .replace(/^```\s*/i, "")
+                .replace(/\s*```$/i, "")
+                .trim()
 
-        let results: unknown[]
-        try {
-            results = JSON.parse(clean)
-        } catch {
-            console.error("[grovsorter] JSON parse error. Raw:", text.slice(0, 500))
-            return NextResponse.json(
-                { error: "AI returnerede ugyldigt JSON — prøv igen" },
-                { status: 500 }
-            )
+            try {
+                aiResults = JSON.parse(clean)
+            } catch {
+                console.error("[grovsorter] JSON parse error. Raw:", text.slice(0, 500))
+                return NextResponse.json(
+                    { error: "AI returnerede ugyldigt JSON — prøv igen" },
+                    { status: 500 }
+                )
+            }
         }
+
+        // Sammensæt resultater: præ-filter + AI
+        const results = [
+            ...Array.from(preResults.entries()).map(([id, r]) => ({ id, ...r })),
+            ...aiResults,
+        ]
+
+        console.log(`[grovsorter] ${items.length} titler → ${preResults.size} præ-filter, ${aiItems.length} AI`)
 
         return NextResponse.json({ results })
     } catch (err: unknown) {
