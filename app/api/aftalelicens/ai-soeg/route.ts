@@ -49,9 +49,9 @@ function buildExamplesBlock(examples: FeedbackExample[]): string {
     const lines = corrections.map(e => {
         const ctx = [e.rawTitle, e.channel ? `(${e.channel})` : ""].filter(Boolean).join(" ")
         const userSaid = e.userDecision === "approved" ? "relevant" : "ikke relevant"
-        return `- "${ctx}" → korrekt svar: ${userSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}`
+        return `- "${ctx}" → ${userSaid}${e.aiVaerkType ? ` (${e.aiVaerkType})` : ""}`
     })
-    return `\nKorrektioner fra tidligere søgninger (disse specifikke titler — generaliser ikke til hele kategorier):\n${lines.join("\n")}\n`
+    return `\nKorrektioner for DISSE SPECIFIKKE titler (VIGTIGT: brug dem KUN til eksakt match på titelnavn — træk ALDRIG generelle konklusioner om kanaler, genrer eller kategorier fra dem):\n${lines.join("\n")}\n`
 }
 
 export async function POST(req: NextRequest) {
@@ -75,14 +75,16 @@ export async function POST(req: NextRequest) {
 
         const userMessage = `${kontekst}
 ${buildExamplesBlock(examples)}
-Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, så vurder ud fra titel, kanal, varighed og år.
+Slå denne titel op i din viden om dansk TV og film. Kender du dette specifikke program, så brug den viden. Kender du det ikke, vurder ud fra titel, kanal, varighed og år.
+
+Korrektionerne ovenfor gælder KUN de nævnte specifikke titler. Lad dem ALDRIG påvirke vurderingen af andre titler eller sænke din confidence for en ny titel. En 50+ min dansk dokumentarfilm på DR2 er relevant med høj sikkerhed, medmindre du konkret ved den er journalistisk.
 
 Returner et JSON-objekt:
 {
-  "hvadErDette": "<Beskriv programmet på dansk. Hvis du kender det: angiv instruktør, handling/tema og programtype. Hvis ikke: beskriv hvad det sandsynligvis er ud fra metadata. Max 3 sætninger.>",
+  "hvadErDette": "<Beskriv programmet på dansk. Hvis du kender det: angiv instruktør, handling/tema, programtype, og — VIGTIGT — nævn eksplicit hvis filmen har haft festivalpremiere (CPH:DOX, IDFA, Cannes, Berlin, Sundance m.fl.) eller er nomineret til/vundet priser (Robert, Bodil, Oscar m.fl.). Hvis ikke: beskriv hvad det sandsynligvis er ud fra metadata. Max 3 sætninger.>",
   "relevant": "ja" | "nej" | "usikker",
   "vaerkType": "<spillefilm | tv_serie_lang | tv_serie_kort | kortfilm | dokumentarfilm | dokumentarserie | dokuDrama | kort_dokumentar | ikke_relevant | null>",
-  "begrundelse": "<Max 1 sætning: hvorfor er det relevant eller ikke relevant for klipperrettigheder>",
+  "begrundelse": "<Max 1 sætning om programmets TYPE — aldrig om korrektionsmønstre>",
   "confidence": "høj" | "mellem" | "lav"
 }`
 
