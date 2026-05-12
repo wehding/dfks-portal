@@ -15,7 +15,7 @@ const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper
 DFKS administrerer klipperrettigheder for FILMVÆRKER: spillefilm, tv-drama-serier, dokumentarfilm, kortfilm, dokumentarserier og lignende kreative filmproduktioner med professionel klipning.
 
 Klassificer hver titel som én af:
-- "afvis": Indhold uden klipperrettigheder: nyheder, sport, vejrudsigt, talkshows, quizshows, reality, debatprogrammer, morgenmagasiner, reklamespots, børne-legeplatforme, underholdning uden filmisk klipning.
+- "afvis": Indhold uden klipperrettigheder: nyheder, sport, vejrudsigt, talkshows, quizshows, reality, debatprogrammer, morgenmagasiner, reklamespots, børne-legeplatforme, underholdning uden filmisk klipning — og JOURNALISTISKE PROGRAMMER (se nedenfor).
 - "godkend": Filmværker med klipperrettigheder — spillefilm, tv-drama, dokumentarfilm, kortfilm, animationsfilm, dokumentarserie, doku-drama.
 - "usikker": Kan ikke klassificeres sikkert ud fra de tilgængelige oplysninger.
 
@@ -34,6 +34,12 @@ Produktionsår som indikator:
 - År 1990–2000 → vurder på titel og kanal
 
 Episodemønstre (titel indeholder " - 1", "afsnit", "episode", "s0", "(1:", "(2:") → serie → tv_serie_lang eller tv_serie_kort
+
+JOURNALISTISKE PROGRAMMER = altid "afvis" hos DFKS:
+Journalistiske programmer har IKKE klipperrettigheder, selvom de ligner dokumentar eller har professionel klipning.
+Dette gælder: nyhedsmagasiner (f.eks. 21 Søndag, Magasinet, Indblik), forbrugerjournalistik (Kontant, Luksusfælden), faktachek-programmer (Detektor), reportageserier, investigativ journalistik, pressekonferencer, politiske magasiner, interview-programmer med journalistisk vinkel.
+SKELNE: En dokumentarfilm fortæller en kreativ/kunstnerisk historie = "godkend". Et journalistisk program undersøger/rapporterer en sag = "afvis".
+Tvivl om journalistisk vs. dokumentar → "usikker".
 
 Vigtige regler:
 - Borgen, Broen, Matador, Klovn og lignende kendte serier = "godkend" (tv_serie_lang)
@@ -63,6 +69,15 @@ const REJECT_TITLE_RE = [
     /\bdirekte\s+fra\b/i,
     /\bvm\s+i\b/i,
     /\bem\s+i\b/i,
+    // Journalistiske programmer
+    /\bkontant\b/i,
+    /\bdetektor\b/i,
+    /\bluksusfaelden\b/i,
+    /\bluksusf[æe]lden\b/i,
+    /\b21\s+s[øo]ndag\b/i,
+    /\bpressekonference\b/i,
+    /\bpolitiken\s+tv\b/i,
+    /\baftenshowet\b/i,
 ]
 
 // Kanalbaserede afvisningsmønstre
