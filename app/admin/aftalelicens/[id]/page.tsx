@@ -1712,9 +1712,6 @@ function ParringTab({ vaerker, onConfirmed }: {
     const [newWorkTitle, setNewWorkTitle] = useState("")
     const [newWorkType, setNewWorkType] = useState<VaerkType>("dokumentarfilm")
     const [newWorkYear, setNewWorkYear] = useState(String(new Date().getFullYear()))
-    const [addRetDialog, setAddRetDialog] = useState<string | null>(null) // vaerkId
-    const [addRetName, setAddRetName] = useState("")
-    const [addRetShare, setAddRetShare] = useState("100")
 
     const autoCount   = matches.filter(m => m.matchScore === "auto").length
     const fuzzyCount  = matches.filter(m => m.matchScore === "fuzzy").length
@@ -1772,7 +1769,9 @@ function ParringTab({ vaerker, onConfirmed }: {
         } : m))
         setNewWorkDialog(null)
         setNewWorkTitle("")
-        toast.success(`Nyt værk oprettet: "${newWork.title}"`)
+        // Åbn værksdatabasen i ny fane så brugeren kan tilknytte klippere og fordelingsnøgle
+        window.open("/admin/vaerker", "_blank")
+        toast.success(`"${newWorkTitle.trim()}" klar — tilknyt klippere i Værksdatabasen`)
     }
 
     const linkWork = (vaerkId: string, work: { id: string; title: string }) => {
@@ -1812,24 +1811,6 @@ function ParringTab({ vaerker, onConfirmed }: {
         setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? { ...m, confirmed: !m.confirmed } : m))
     }
 
-    const addRettighed = (vaerkId: string) => {
-        if (!addRetName.trim()) return
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
-            ...m,
-            rettighedshavere: [...m.rettighedshavere, { name: addRetName.trim(), roles: [], sharePercent: Number(addRetShare) || 100 }],
-        } : m))
-        setAddRetName("")
-        setAddRetShare("100")
-        setAddRetDialog(null)
-        toast.success("Klipper tilknyttet")
-    }
-
-    const removeRettighed = (vaerkId: string, idx: number) => {
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
-            ...m,
-            rettighedshavere: m.rettighedshavere.filter((_, i) => i !== idx),
-        } : m))
-    }
 
     if (vaerker.filter(v => v.sortStatus === "approved").length === 0) {
         return (
@@ -1952,30 +1933,22 @@ function ParringTab({ vaerker, onConfirmed }: {
                                     )}
                                 </TableCell>
                                 <TableCell>
-                                    <div className="space-y-0.5">
-                                        {m.rettighedshavere.map((r, i) => (
-                                            <div key={i} className="flex items-center gap-1 text-xs group">
-                                                <span className="font-medium">{r.name}</span>
-                                                {r.roles.length > 0 && (
-                                                    <span className="text-muted-foreground">({r.roles.join(", ")})</span>
-                                                )}
-                                                <button
-                                                    onClick={() => removeRettighed(m.vaerkId, i)}
-                                                    className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100 ml-0.5 shrink-0"
-                                                    title="Fjern"
-                                                >
-                                                    <X className="h-3 w-3" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                        <button
-                                            onClick={() => { setAddRetDialog(m.vaerkId); setAddRetName(""); setAddRetShare("100") }}
-                                            className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors mt-0.5"
-                                        >
-                                            <Plus className="h-3 w-3" />
-                                            Tilknyt klipper
-                                        </button>
-                                    </div>
+                                    {m.rettighedshavere.length > 0 ? (
+                                        <div className="space-y-0.5">
+                                            {m.rettighedshavere.map((r, i) => (
+                                                <div key={i} className="flex items-baseline gap-1.5 text-xs">
+                                                    <span className="font-medium">{r.name}</span>
+                                                    {r.roles.length > 0 && (
+                                                        <span className="text-muted-foreground">({r.roles.join(", ")})</span>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : m.matchedWorkId ? (
+                                        <span className="text-xs text-amber-600 dark:text-amber-400 italic">Ingen klippere i DB</span>
+                                    ) : (
+                                        <span className="text-xs text-muted-foreground">—</span>
+                                    )}
                                 </TableCell>
                                 <TableCell>
                                     {m.hasDuplicates ? (
@@ -2064,11 +2037,11 @@ function ParringTab({ vaerker, onConfirmed }: {
                 <div className="flex items-center justify-between rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm text-green-800 dark:text-green-300">
                         <Check className="h-4 w-4" />
-                        Alle titler er parret og bekræftet — rettighedshavere er klar
+                        Alle titler er parret og bekræftet — klar til beregning
                     </div>
-                    <Button size="sm" onClick={() => { setConfirmed(true); onConfirmed(matches); toast.success("Parring og rettighedshavere låst") }}>
+                    <Button size="sm" onClick={() => { setConfirmed(true); onConfirmed(matches); toast.success("Parring låst") }}>
                         <Lock className="mr-2 h-3.5 w-3.5" />
-                        Lås parring og rettighedshavere
+                        Lås parring
                     </Button>
                 </div>
             )}
@@ -2076,7 +2049,7 @@ function ParringTab({ vaerker, onConfirmed }: {
             {confirmed && (
                 <div className="flex items-center gap-2 rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3 text-sm text-green-800 dark:text-green-300">
                     <Lock className="h-4 w-4" />
-                    Parring og rettighedshavere låst — fortsæt til Vægtning og beregning
+                    Parring låst — fortsæt til Vægtning og beregning
                 </div>
             )}
 
@@ -2129,54 +2102,13 @@ function ParringTab({ vaerker, onConfirmed }: {
                 </DialogContent>
             </Dialog>
 
-            {/* Tilknyt klipper dialog */}
-            <Dialog open={!!addRetDialog} onOpenChange={() => setAddRetDialog(null)}>
-                <DialogContent className="max-w-sm">
-                    <DialogHeader>
-                        <DialogTitle>Tilknyt klipper</DialogTitle>
-                        <DialogDescription>
-                            Tilføj en rettighedshaver til dette værk
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                        <div className="space-y-1.5">
-                            <Label className="text-xs">Navn</Label>
-                            <Input
-                                value={addRetName}
-                                onChange={e => setAddRetName(e.target.value)}
-                                placeholder="Klippers navn..."
-                                autoFocus
-                                onKeyDown={e => e.key === "Enter" && addRetDialog && addRettighed(addRetDialog)}
-                            />
-                        </div>
-                        <div className="space-y-1.5">
-                            <Label className="text-xs">Andel (%)</Label>
-                            <Input
-                                type="number"
-                                value={addRetShare}
-                                onChange={e => setAddRetShare(e.target.value)}
-                                min="1"
-                                max="100"
-                            />
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setAddRetDialog(null)}>Annuller</Button>
-                        <Button onClick={() => addRetDialog && addRettighed(addRetDialog)} disabled={!addRetName.trim()}>
-                            <Plus className="mr-2 h-3.5 w-3.5" />
-                            Tilknyt
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
             {/* Opret nyt værk dialog */}
             <Dialog open={!!newWorkDialog} onOpenChange={() => setNewWorkDialog(null)}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
-                        <DialogTitle>Opret nyt værk</DialogTitle>
+                        <DialogTitle>Opret nyt værk i databasen</DialogTitle>
                         <DialogDescription>
-                            Tilføj et nyt værk til databasen og par det med denne titel
+                            Opretter værket i Værksdatabasen. Klippere og fordelingsnøgle tilknyttes dér efterfølgende.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
@@ -2220,7 +2152,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                         <Button variant="outline" onClick={() => setNewWorkDialog(null)}>Annuller</Button>
                         <Button onClick={() => newWorkDialog && handleCreateWork(newWorkDialog)} disabled={!newWorkTitle.trim()}>
                             <Plus className="mr-2 h-3.5 w-3.5" />
-                            Opret og par
+                            Opret i DB og par
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -3032,7 +2964,7 @@ export default function AftalelicensDetailPage() {
                         {!sortingComplete && <span className="ml-1.5 h-1.5 w-1.5 rounded-full bg-amber-500 inline-block" />}
                     </TabsTrigger>
                     <TabsTrigger value="parring" disabled={!sortingComplete}>
-                        2. Parring og rettighedshavere
+                        2. Parring
                     </TabsTrigger>
                     <TabsTrigger value="beregning" disabled={!sortingComplete}>
                         3. Vægtning og beregning
