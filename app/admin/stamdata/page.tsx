@@ -504,8 +504,8 @@ function FilterRulesTab() {
 
 const DEFAULT_VAEGTE: VaerkVaegt[] = [
     { type: "spillefilm",      label: "Spillefilm",          weight: 200 },
-    { type: "tv_serie_lang",   label: "Tung seriefiktion",   weight: 100 },
-    { type: "tv_serie_kort",   label: "Seriefiktion",        weight: 50  },
+    { type: "tv_serie_lang",   label: "Lang seriefiktion",   weight: 100 },
+    { type: "tv_serie_kort",   label: "Kort seriefiktion",   weight: 50  },
     { type: "kortfilm",        label: "Novellefilm",         weight: 150 },
     { type: "dokumentarserie", label: "Tung seriedok.",      weight: 100 },
     { type: "dokuDrama",       label: "DokuDrama",           weight: 200 },
@@ -521,6 +521,8 @@ const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
     dokSerieLangMin:  38,
     dokSerieKortPoints: 50,
     supplerendeKlipFaktor: 0.3,
+    genudsendelseFaktor: 0.5,
+    genudsendelseMaaneder: 1,
 }
 
 function loadVaegte(): VaerkVaegt[] {
@@ -600,7 +602,7 @@ function VaegteTab() {
     }
 
     return (
-        <div className="space-y-6 max-w-xl">
+        <div className="space-y-6 max-w-2xl">
             <div className="flex items-start gap-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-xs text-blue-800 dark:text-blue-300">
                 <Save className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 <div className="space-y-1">
@@ -657,10 +659,10 @@ function VaegteTab() {
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead>Niveau</TableHead>
-                            <TableHead className="text-xs text-muted-foreground font-normal">Varighed</TableHead>
+                            <TableHead className="w-[100px]">Niveau</TableHead>
+                            <TableHead className="text-xs text-muted-foreground font-normal w-[130px]">Varighed</TableHead>
                             <TableHead className="text-xs text-muted-foreground font-normal">Eksempler</TableHead>
-                            <TableHead className="w-[110px]">Point pr. værk</TableHead>
+                            <TableHead className="w-[110px] text-right">Point pr. min.</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -680,8 +682,8 @@ function VaegteTab() {
                                 </div>
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">Kampen om Grønland, Gasolin</TableCell>
-                            <TableCell>
-                                <Input type="number" value={extra.dokLangPoints} onChange={e => setExtraField("dokLangPoints", Number(e.target.value))} className="h-8 w-24 text-sm" step="10" min="0" />
+                            <TableCell className="text-right">
+                                <Input type="number" value={extra.dokLangPoints} onChange={e => setExtraField("dokLangPoints", Number(e.target.value))} className="h-8 w-20 text-sm ml-auto" step="10" min="0" />
                             </TableCell>
                         </TableRow>
                         <TableRow>
@@ -699,18 +701,18 @@ function VaegteTab() {
                                 </div>
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">De skygger vi arver, Vi lader billedet stå</TableCell>
-                            <TableCell>
-                                <Input type="number" value={extra.dokMellemPoints} onChange={e => setExtraField("dokMellemPoints", Number(e.target.value))} className="h-8 w-24 text-sm" step="10" min="0" />
+                            <TableCell className="text-right">
+                                <Input type="number" value={extra.dokMellemPoints} onChange={e => setExtraField("dokMellemPoints", Number(e.target.value))} className="h-8 w-20 text-sm ml-auto" step="10" min="0" />
                             </TableCell>
                         </TableRow>
                         <TableRow>
-                            <TableCell className="text-sm font-medium">Tung seriedok.</TableCell>
+                            <TableCell className="text-sm font-medium">Kort</TableCell>
                             <TableCell className="text-xs text-muted-foreground">
-                                &lt; {extra.dokMellemMin} min. / serie
+                                &lt; {extra.dokMellemMin} min.
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">Historien om Danmark, Vilde Vidunderlige Danmark</TableCell>
-                            <TableCell>
-                                <Input type="number" value={extra.dokKortPoints} onChange={e => setExtraField("dokKortPoints", Number(e.target.value))} className="h-8 w-24 text-sm" step="10" min="0" />
+                            <TableCell className="text-right">
+                                <Input type="number" value={extra.dokKortPoints} onChange={e => setExtraField("dokKortPoints", Number(e.target.value))} className="h-8 w-20 text-sm ml-auto" step="10" min="0" />
                             </TableCell>
                         </TableRow>
                     </TableBody>
@@ -793,29 +795,43 @@ function VaegteTab() {
                 </Table>
             </div>
 
-            {/* Supplerende klip */}
+            {/* Genudsendelser */}
             <div className="rounded-lg border">
                 <div className="px-4 py-3 border-b">
-                    <h3 className="text-sm font-medium">Supplerende klip (B-klippere)</h3>
+                    <h3 className="text-sm font-medium">Genudsendelser</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                        B-klipperes points vægtes med denne faktor. Ved 2 eller flere A-klippere på en produktion bortfalder B-klippere helt.
+                        En udsendelse tæller som genudsendelse hvis samme titel sendes igen inden for det definerede tidsvindue.
                     </p>
                 </div>
-                <div className="px-4 py-4">
+                <div className="px-4 py-4 space-y-4">
                     <div className="flex items-center gap-3">
-                        <Label className="text-sm w-32">Faktor (B-klipper)</Label>
+                        <Label className="text-sm w-48">Tidsvindue (måneder)</Label>
                         <div className="flex items-center gap-2">
                             <Input
                                 type="number"
-                                value={extra.supplerendeKlipFaktor}
-                                onChange={e => setExtraField("supplerendeKlipFaktor", Number(e.target.value))}
-                                className="h-8 w-24 text-sm"
+                                value={extra.genudsendelseMaaneder}
+                                onChange={e => setExtraField("genudsendelseMaaneder", Number(e.target.value))}
+                                className="h-8 w-20 text-sm"
+                                step="1"
+                                min="1"
+                            />
+                            <span className="text-sm text-muted-foreground">måned(er)</span>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Label className="text-sm w-48">Point-faktor (genudsendelse)</Label>
+                        <div className="flex items-center gap-2">
+                            <Input
+                                type="number"
+                                value={extra.genudsendelseFaktor}
+                                onChange={e => setExtraField("genudsendelseFaktor", Number(e.target.value))}
+                                className="h-8 w-20 text-sm"
                                 step="0.05"
                                 min="0"
                                 max="1"
                             />
                             <span className="text-sm text-muted-foreground">
-                                ({(extra.supplerendeKlipFaktor * 100).toFixed(0)}%)
+                                ({(extra.genudsendelseFaktor * 100).toFixed(0)}% af normale point)
                             </span>
                         </div>
                     </div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useRef } from "react"
+import React, { useState, useMemo, useEffect, useRef } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
@@ -172,7 +172,15 @@ function genMockVaerker(): AftalelicensVaerk[] {
         sortStatus: "pending" as SortStatus,
     }))
 
-    return [...filmItems, ...noiseItems]
+    // Ekstra udsendelser af Mørke sider S1E2 — simulerer at samme afsnit sendes flere gange
+    // To i september (samme måned som original → genudsendelse), én i november (ny måned → fuld pris)
+    const s1e2Extra: AftalelicensVaerk[] = [
+        { id: "vaerk_s1e2_b", batchId: "batch1", rawTitle: "Mørke sider S1E2", channel: "DR2", broadcastDate: "2023-09-28", duration: 48, isGenudsendelse: false, vaerkType: "dokumentarserie", sortStatus: "approved", season: 1, episode: 2 },
+        { id: "vaerk_s1e2_c", batchId: "batch1", rawTitle: "Mørke sider S1E2", channel: "DR2", broadcastDate: "2023-09-30", duration: 48, isGenudsendelse: false, vaerkType: "dokumentarserie", sortStatus: "approved", season: 1, episode: 2 },
+        { id: "vaerk_s1e2_d", batchId: "batch1", rawTitle: "Mørke sider S1E2", channel: "DR2", broadcastDate: "2023-11-10", duration: 48, isGenudsendelse: false, vaerkType: "dokumentarserie", sortStatus: "approved", season: 1, episode: 2 },
+    ]
+
+    return [...filmItems, ...noiseItems, ...s1e2Extra]
 }
 
 const MOCK_KLIPPERE = [
@@ -1699,6 +1707,83 @@ function autoMatch(vaerker: AftalelicensVaerk[]): VaerkMatch[] {
         })
 }
 
+// ── Series/season grouping helpers ────────────────────────────
+
+function stripSeriesId(title: string) {
+    return title
+        .replace(/\s*[Ss]\d+\s*[Ee]\d+/g, "")
+        .replace(/\s*[Ss]æson\s*\d+/gi, "")
+        .replace(/\s*[Aa]fsnit\s*\d+/gi, "")
+        .replace(/\s*[-–]\s*\d+\s*$/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+function getSeasonFromTitle(title: string): number | null {
+    const m = title.match(/\b[Ss](\d+)[Ee]\d+/) ?? title.match(/[Ss]æson\s*(\d+)/i)
+    return m ? parseInt(m[1]) : null
+}
+
+interface MatchGroup {
+    key: string
+    baseTitle: string
+    season?: number
+    episodes: VaerkMatch[]
+    matchedWorkId?: string
+    matchedWorkTitle?: string
+    matchScore: "auto" | "fuzzy" | "manual" | "none"
+    fuzzyMatches?: FuzzyMatch[]
+    rettighedshavere: VaerkMatch["rettighedshavere"]
+    confirmed: boolean
+    isGrouped: boolean
+    vaerkType?: VaerkType
+    newWorkCreated?: boolean
+    hasDuplicates?: boolean
+}
+
+function buildGroups(matches: VaerkMatch[]): MatchGroup[] {
+    const buckets = new Map<string, VaerkMatch[]>()
+    for (const m of matches) {
+        const season = m.season ?? getSeasonFromTitle(m.rawTitle)
+        const key = season != null
+            ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
+            : m.vaerkId
+        if (!buckets.has(key)) buckets.set(key, [])
+        buckets.get(key)!.push(m)
+    }
+
+    return Array.from(buckets.entries()).map(([key, episodes]) => {
+        const first = episodes[0]
+        const season = first.season ?? getSeasonFromTitle(first.rawTitle) ?? undefined
+        const isGrouped = episodes.length > 1 || season != null
+        const baseTitle = season != null ? (stripSeriesId(first.rawTitle) || first.rawTitle) : first.rawTitle
+
+        const allWorkId = first.matchedWorkId
+        const allSameWork = episodes.every(e => e.matchedWorkId === allWorkId)
+        const matchedWorkId = allSameWork ? allWorkId : undefined
+        const matchedWorkTitle = allSameWork ? first.matchedWorkTitle : undefined
+        const matchScore: MatchGroup["matchScore"] = matchedWorkId ? first.matchScore : "none"
+        const confirmed = episodes.every(e => e.confirmed)
+
+        return {
+            key,
+            baseTitle,
+            season,
+            episodes,
+            matchedWorkId,
+            matchedWorkTitle,
+            matchScore,
+            fuzzyMatches: first.fuzzyMatches,
+            rettighedshavere: first.rettighedshavere,
+            confirmed,
+            isGrouped,
+            vaerkType: first.vaerkType,
+            newWorkCreated: episodes.some(e => e.newWorkCreated),
+            hasDuplicates: first.hasDuplicates,
+        }
+    })
+}
+
 function ParringTab({ vaerker, onConfirmed }: {
     vaerker: AftalelicensVaerk[]
     onConfirmed: (matches: VaerkMatch[]) => void
@@ -1714,11 +1799,36 @@ function ParringTab({ vaerker, onConfirmed }: {
     const [newWorkYear, setNewWorkYear] = useState(String(new Date().getFullYear()))
     const [bulkCreateDialog, setBulkCreateDialog] = useState(false)
     const [bulkEditItems, setBulkEditItems] = useState<{ vaerkId: string; title: string; vaerkType: VaerkType }[]>([])
+    const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+    const [matchFilter, setMatchFilter] = useState<"alle" | "uden_match" | "dublikat" | "med_match">("alle")
+    const [sortCol, setSortCol] = useState<"titel" | "type" | "match" | null>(null)
+    const [sortDir, setSortDir] = useState<"asc" | "desc">("asc")
+
+    const groups = useMemo(() => buildGroups(matches), [matches])
+
+    const filteredGroups = useMemo(() => {
+        let result = groups
+        if (matchFilter === "uden_match") result = result.filter(g => g.matchScore === "none" && !g.newWorkCreated)
+        else if (matchFilter === "dublikat") result = result.filter(g => !!g.hasDuplicates)
+        else if (matchFilter === "med_match") result = result.filter(g => !!g.matchedWorkId || !!g.newWorkCreated)
+        if (!sortCol) return result
+        return [...result].sort((a, b) => {
+            let cmp = 0
+            if (sortCol === "titel") cmp = a.baseTitle.localeCompare(b.baseTitle, "da")
+            if (sortCol === "type") cmp = (a.vaerkType ?? "").localeCompare(b.vaerkType ?? "")
+            if (sortCol === "match") {
+                const order: Record<string, number> = { auto: 0, fuzzy: 1, manual: 1, none: 2 }
+                cmp = (order[a.matchScore] ?? 3) - (order[b.matchScore] ?? 3)
+            }
+            return sortDir === "asc" ? cmp : -cmp
+        })
+    }, [groups, matchFilter, sortCol, sortDir])
 
     const autoCount   = matches.filter(m => m.matchScore === "auto").length
     const fuzzyCount  = matches.filter(m => m.matchScore === "fuzzy").length
     const manualCount = matches.filter(m => m.matchScore === "manual").length
-    const noneCount   = matches.filter(m => m.matchScore === "none" && !m.newWorkCreated).length
+    const noneGroups  = groups.filter(g => g.matchScore === "none" && !g.newWorkCreated)
+    const noneCount   = noneGroups.length
     const newCount    = matches.filter(m => m.newWorkCreated).length
     const allConfirmed = matches.every(m => m.confirmed)
 
@@ -1732,7 +1842,7 @@ function ParringTab({ vaerker, onConfirmed }: {
         return all.filter(w => w.title.toLowerCase().includes(q))
     }, [workSearch, extraWorks])
 
-    const linkFuzzy = (vaerkId: string, fuzzyWork: FuzzyWork) => {
+    const linkFuzzy = (groupKey: string, fuzzyWork: FuzzyWork) => {
         const realWork = mockWorks.find(w => w.id === fuzzyWork.id)
         const contracts = realWork ? mockContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(realWork.title)) : []
         const equalShare = contracts.length > 0 ? Math.round(100 / contracts.length) : 100
@@ -1742,7 +1852,9 @@ function ParringTab({ vaerker, onConfirmed }: {
             roles: c.creditedRoles ?? [],
             sharePercent: equalShare,
         }))
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+        const group = groups.find(g => g.key === groupKey)
+        const vaerkIds = group?.episodes.map(e => e.vaerkId) ?? [groupKey]
+        setMatches(prev => prev.map(m => vaerkIds.includes(m.vaerkId) ? {
             ...m,
             matchedWorkId: fuzzyWork.id,
             matchedWorkTitle: fuzzyWork.title,
@@ -1755,14 +1867,21 @@ function ParringTab({ vaerker, onConfirmed }: {
 
     const handleBulkCreateWorks = () => {
         if (bulkEditItems.length === 0) return
-        const newWorks: FuzzyWork[] = bulkEditItems.map(item => ({
-            id: `new_${item.vaerkId}`,
-            title: item.title.trim() || (matches.find(m => m.vaerkId === item.vaerkId)?.rawTitle ?? item.title),
+        // bulkEditItems.vaerkId holds the group key
+        const newWorks: (FuzzyWork & { groupKey: string })[] = bulkEditItems.map(item => ({
+            id: `new_${item.vaerkId.replace(/[^a-z0-9]/gi, "_")}`,
+            title: item.title.trim(),
             category: item.vaerkType,
+            groupKey: item.vaerkId,
         }))
         setExtraWorks(prev => [...prev, ...newWorks])
         setMatches(prev => prev.map(m => {
-            const nw = newWorks.find(w => w.id === `new_${m.vaerkId}`)
+            // Find which group this match belongs to
+            const season = m.season ?? getSeasonFromTitle(m.rawTitle)
+            const groupKey = season != null
+                ? `${normalizeTitle(stripSeriesId(m.rawTitle))}:s${season}`
+                : m.vaerkId
+            const nw = newWorks.find(w => w.groupKey === groupKey)
             if (!nw) return m
             return { ...m, matchedWorkId: nw.id, matchedWorkTitle: nw.title, matchScore: "manual" as const, newWorkCreated: true, confirmed: true }
         }))
@@ -1771,7 +1890,10 @@ function ParringTab({ vaerker, onConfirmed }: {
         toast.success(`${bulkEditItems.length} nye værker klar — tilknyt klippere i Værksdatabasen`)
     }
 
-    const handleCreateWork = (vaerkId: string) => {
+    const getGroupVaerkIds = (groupKey: string) =>
+        groups.find(g => g.key === groupKey)?.episodes.map(e => e.vaerkId) ?? [groupKey]
+
+    const handleCreateWork = (groupKey: string) => {
         if (!newWorkTitle.trim()) return
         const newWork: FuzzyWork = {
             id: `new_${Date.now()}`,
@@ -1779,7 +1901,8 @@ function ParringTab({ vaerker, onConfirmed }: {
             category: newWorkType,
         }
         setExtraWorks(prev => [...prev, newWork])
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+        const vaerkIds = getGroupVaerkIds(groupKey)
+        setMatches(prev => prev.map(m => vaerkIds.includes(m.vaerkId) ? {
             ...m,
             matchedWorkId: newWork.id,
             matchedWorkTitle: newWork.title,
@@ -1789,12 +1912,11 @@ function ParringTab({ vaerker, onConfirmed }: {
         } : m))
         setNewWorkDialog(null)
         setNewWorkTitle("")
-        // Åbn værksdatabasen i ny fane så brugeren kan tilknytte klippere og fordelingsnøgle
         window.open("/admin/vaerker", "_blank")
         toast.success(`"${newWorkTitle.trim()}" klar — tilknyt klippere i Værksdatabasen`)
     }
 
-    const linkWork = (vaerkId: string, work: { id: string; title: string }) => {
+    const linkWork = (groupKey: string, work: { id: string; title: string }) => {
         const contracts = mockContracts.filter(c => normalizeTitle(c.title) === normalizeTitle(work.title))
         const equalShare = contracts.length > 0 ? Math.round(100 / contracts.length) : 100
         const rettigheder = contracts.map(c => ({
@@ -1803,7 +1925,8 @@ function ParringTab({ vaerker, onConfirmed }: {
             roles: c.creditedRoles ?? [],
             sharePercent: equalShare,
         }))
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+        const vaerkIds = getGroupVaerkIds(groupKey)
+        setMatches(prev => prev.map(m => vaerkIds.includes(m.vaerkId) ? {
             ...m,
             matchedWorkId: work.id,
             matchedWorkTitle: work.title,
@@ -1816,8 +1939,9 @@ function ParringTab({ vaerker, onConfirmed }: {
         toast.success(`Parret med "${work.title}"`)
     }
 
-    const unlinkWork = (vaerkId: string) => {
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? {
+    const unlinkWork = (groupKey: string) => {
+        const vaerkIds = getGroupVaerkIds(groupKey)
+        setMatches(prev => prev.map(m => vaerkIds.includes(m.vaerkId) ? {
             ...m,
             matchedWorkId: undefined,
             matchedWorkTitle: undefined,
@@ -1827,8 +1951,11 @@ function ParringTab({ vaerker, onConfirmed }: {
         } : m))
     }
 
-    const toggleConfirm = (vaerkId: string) => {
-        setMatches(prev => prev.map(m => m.vaerkId === vaerkId ? { ...m, confirmed: !m.confirmed } : m))
+    const toggleConfirm = (groupKey: string) => {
+        const vaerkIds = getGroupVaerkIds(groupKey)
+        const group = groups.find(g => g.key === groupKey)
+        const allConfirmedNow = group?.confirmed ?? false
+        setMatches(prev => prev.map(m => vaerkIds.includes(m.vaerkId) ? { ...m, confirmed: !allConfirmedNow } : m))
     }
 
 
@@ -1882,173 +2009,272 @@ function ParringTab({ vaerker, onConfirmed }: {
                 </div>
             </div>
 
+            {/* Filter toolbar */}
+            {(() => {
+                const filters: { key: typeof matchFilter; label: string; count: number }[] = [
+                    { key: "alle",       label: "Alle",         count: groups.length },
+                    { key: "med_match",  label: "Med match",    count: groups.filter(g => !!g.matchedWorkId || !!g.newWorkCreated).length },
+                    { key: "uden_match", label: "Uden match",   count: groups.filter(g => g.matchScore === "none" && !g.newWorkCreated).length },
+                    { key: "dublikat",   label: "Dublikat",     count: groups.filter(g => !!g.hasDuplicates).length },
+                ]
+                return (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        {filters.map(f => (
+                            <button
+                                key={f.key}
+                                onClick={() => setMatchFilter(f.key)}
+                                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors border ${
+                                    matchFilter === f.key
+                                        ? "bg-primary text-primary-foreground border-primary"
+                                        : "bg-background hover:bg-muted border-input"
+                                }`}
+                            >
+                                {f.label}
+                                <span className={`rounded-full px-1.5 py-0 text-[10px] font-semibold ${matchFilter === f.key ? "bg-white/20 text-inherit" : "bg-muted text-muted-foreground"}`}>
+                                    {f.count}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )
+            })()}
+
             {/* Match table */}
             <div className="rounded-lg border overflow-x-auto">
                 <Table>
                     <TableHeader>
-                        <TableRow>
-                            <TableHead>Titel (batch)</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead>Matchet værk</TableHead>
-                            <TableHead>Rettighedshavere</TableHead>
-                            <TableHead className="w-[100px]">Match</TableHead>
-                            <TableHead className="w-[120px]" />
-                        </TableRow>
+                        {(() => {
+                            const toggleSort = (col: typeof sortCol) => {
+                                if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc")
+                                else { setSortCol(col); setSortDir("asc") }
+                            }
+                            const SortIcon = ({ col }: { col: typeof sortCol }) =>
+                                sortCol === col
+                                    ? (sortDir === "asc" ? <ChevronUp className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />)
+                                    : <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-40" />
+                            return (
+                                <TableRow>
+                                    <TableHead>
+                                        <button onClick={() => toggleSort("titel")} className="flex items-center gap-1 hover:text-foreground">
+                                            Titel (batch) <SortIcon col="titel" />
+                                        </button>
+                                    </TableHead>
+                                    <TableHead>
+                                        <button onClick={() => toggleSort("type")} className="flex items-center gap-1 hover:text-foreground">
+                                            Type <SortIcon col="type" />
+                                        </button>
+                                    </TableHead>
+                                    <TableHead>Matchet værk</TableHead>
+                                    <TableHead>Rettighedshavere</TableHead>
+                                    <TableHead className="w-[100px]">
+                                        <button onClick={() => toggleSort("match")} className="flex items-center gap-1 hover:text-foreground">
+                                            Match <SortIcon col="match" />
+                                        </button>
+                                    </TableHead>
+                                    <TableHead className="w-[120px]" />
+                                </TableRow>
+                            )
+                        })()}
                     </TableHeader>
                     <TableBody>
-                        {matches.map(m => (
-                            <TableRow key={m.vaerkId} className={m.confirmed ? "" : "bg-amber-50/40 dark:bg-amber-950/10"}>
-                                <TableCell>
-                                    <p className="text-sm font-medium">{m.rawTitle}</p>
-                                    <p className="text-xs text-muted-foreground">
-                                        {m.season != null && `S${m.season}`}
-                                        {m.episode != null && `E${m.episode}`}
-                                        {m.season != null || m.episode != null ? " · " : ""}
-                                        {m.duration ? `${m.duration} min` : ""}
-                                        {m.productionYear != null && ` · ${m.productionYear}`}
-                                    </p>
-                                </TableCell>
-                                <TableCell className="text-xs text-muted-foreground">
-                                    {m.vaerkType ? VAERK_TYPE_LABELS[m.vaerkType] : "—"}
-                                </TableCell>
-                                <TableCell>
-                                    {m.matchedWorkTitle ? (
-                                        <div className="flex items-center gap-1.5">
-                                            <span className="text-sm">{m.matchedWorkTitle}</span>
-                                            {m.newWorkCreated && (
-                                                <Badge variant="outline" className="text-[10px] py-0 text-blue-600 border-blue-300">ny</Badge>
-                                            )}
-                                            <button
-                                                onClick={() => unlinkWork(m.vaerkId)}
-                                                className="text-muted-foreground hover:text-destructive transition-colors"
-                                                title="Fjern parring"
-                                            >
-                                                <X className="h-3.5 w-3.5" />
-                                            </button>
-                                        </div>
-                                    ) : m.fuzzyMatches && m.fuzzyMatches.length > 0 ? (
-                                        <div className="space-y-1">
-                                            {m.fuzzyMatches.map((fm, i) => (
-                                                <div key={i} className="flex items-center gap-1.5">
-                                                    <button
-                                                        className="text-xs text-left hover:text-primary transition-colors flex items-center gap-1"
-                                                        onClick={() => linkFuzzy(m.vaerkId, fm.work)}
-                                                        title="Klik for at parre med dette værk"
-                                                    >
-                                                        <span className={i === 0 ? "font-medium" : "text-muted-foreground"}>{fm.work.title}</span>
-                                                        {fm.work.productionYear != null && (
-                                                            <span className="text-[10px] text-muted-foreground">({fm.work.productionYear})</span>
-                                                        )}
-                                                        {fm.score < 1 && (
-                                                            <span className="text-[10px] font-mono rounded px-1 bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                                                                {Math.round(fm.score * 100)}%
-                                                            </span>
-                                                        )}
-                                                    </button>
+                        {filteredGroups.map(g => {
+                            const isExpanded = expandedGroups.has(g.key)
+                            const toggleExpand = () => setExpandedGroups(prev => {
+                                const next = new Set(prev)
+                                if (next.has(g.key)) next.delete(g.key); else next.add(g.key)
+                                return next
+                            })
+                            return (
+                                <React.Fragment key={g.key}>
+                                <TableRow className={g.confirmed ? "" : "bg-amber-50/40 dark:bg-amber-950/10"}>
+                                    <TableCell>
+                                        {g.isGrouped ? (
+                                            <div className="flex items-start gap-1.5">
+                                                <button
+                                                    onClick={toggleExpand}
+                                                    className="mt-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                                                    title={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                                                >
+                                                    <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
+                                                </button>
+                                                <div>
+                                                    <p className="text-sm font-medium">{g.baseTitle}</p>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {g.season != null && `Sæson ${g.season} · `}
+                                                        {g.episodes.length} afsnit
+                                                        {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
+                                                    </p>
                                                 </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <span className="text-xs text-muted-foreground italic">Ikke matchet</span>
-                                    )}
-                                </TableCell>
-                                <TableCell>
-                                    {m.rettighedshavere.length > 0 ? (
-                                        <div className="space-y-0.5">
-                                            {m.rettighedshavere.map((r, i) => (
-                                                <div key={i} className="flex items-baseline gap-1.5 text-xs">
-                                                    <span className="font-medium">{r.name}</span>
-                                                    {r.roles.length > 0 && (
-                                                        <span className="text-muted-foreground">({r.roles.join(", ")})</span>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : m.matchedWorkId ? (
-                                        <span className="text-xs text-amber-600 dark:text-amber-400 italic">Ingen klippere i DB</span>
-                                    ) : (
-                                        <span className="text-xs text-muted-foreground">—</span>
-                                    )}
-                                </TableCell>
-                                <TableCell>
-                                    {m.hasDuplicates ? (
-                                        <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
-                                            <AlertTriangle className="h-3 w-3" />
-                                            Duplikat
-                                        </Badge>
-                                    ) : (
-                                        <Badge
-                                            variant={m.matchScore === "auto" ? "default" : m.matchScore === "fuzzy" ? "secondary" : m.matchScore === "manual" ? "secondary" : "outline"}
-                                            className={`text-xs gap-1 ${m.matchScore === "fuzzy" ? "border-violet-300 text-violet-700 dark:text-violet-300" : ""}`}
-                                        >
-                                            {m.matchScore === "auto" && <Link2 className="h-3 w-3" />}
-                                            {m.matchScore === "fuzzy" && <Search className="h-3 w-3" />}
-                                            {m.matchScore === "manual" && <Database className="h-3 w-3" />}
-                                            {m.matchScore === "none" && <Link2Off className="h-3 w-3" />}
-                                            {m.matchScore === "auto" ? "Auto" : m.matchScore === "fuzzy" ? "Fuzzy" : m.matchScore === "manual" ? "Manuelt" : "Ingen match"}
-                                        </Badge>
-                                    )}
-                                </TableCell>
-                                <TableCell>
-                                    <div className="flex gap-1 flex-wrap">
-                                        {!m.matchedWorkId && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 text-xs gap-1"
-                                                onClick={() => { setSearchDialog(m.vaerkId); setWorkSearch("") }}
-                                            >
-                                                <Search className="h-3 w-3" />
-                                                Søg i DB
-                                            </Button>
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                <p className="text-sm font-medium">{g.baseTitle}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {g.episodes[0]?.duration ? `${g.episodes[0].duration} min` : ""}
+                                                    {g.episodes[0]?.productionYear != null && ` · ${g.episodes[0].productionYear}`}
+                                                </p>
+                                            </div>
                                         )}
-                                        {!m.matchedWorkId && (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"
-                                                onClick={() => {
-                                                    setNewWorkDialog(m.vaerkId)
-                                                    setNewWorkTitle(m.rawTitle)
-                                                    setNewWorkType(m.vaerkType ?? "dokumentarfilm")
-                                                }}
-                                            >
-                                                <Plus className="h-3 w-3" />
-                                                Opret nyt
-                                            </Button>
+                                    </TableCell>
+                                    <TableCell className="text-xs text-muted-foreground">
+                                        {g.vaerkType ? VAERK_TYPE_LABELS[g.vaerkType] : "—"}
+                                    </TableCell>
+                                    <TableCell>
+                                        {g.matchedWorkTitle ? (
+                                            <div className="flex items-center gap-1.5">
+                                                <span className="text-sm">{g.matchedWorkTitle}</span>
+                                                {g.newWorkCreated && (
+                                                    <Badge variant="outline" className="text-[10px] py-0 text-blue-600 border-blue-300">ny</Badge>
+                                                )}
+                                                <button
+                                                    onClick={() => unlinkWork(g.key)}
+                                                    className="text-muted-foreground hover:text-destructive transition-colors"
+                                                    title="Fjern parring"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ) : g.fuzzyMatches && g.fuzzyMatches.length > 0 ? (
+                                            <div className="space-y-1">
+                                                {g.fuzzyMatches.map((fm, i) => (
+                                                    <div key={i} className="flex items-center gap-1.5">
+                                                        <button
+                                                            className="text-xs text-left hover:text-primary transition-colors flex items-center gap-1"
+                                                            onClick={() => linkFuzzy(g.key, fm.work)}
+                                                            title="Klik for at parre med dette værk"
+                                                        >
+                                                            <span className={i === 0 ? "font-medium" : "text-muted-foreground"}>{fm.work.title}</span>
+                                                            {fm.work.productionYear != null && (
+                                                                <span className="text-[10px] text-muted-foreground">({fm.work.productionYear})</span>
+                                                            )}
+                                                            {fm.score < 1 && (
+                                                                <span className="text-[10px] font-mono rounded px-1 bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                                                                    {Math.round(fm.score * 100)}%
+                                                                </span>
+                                                            )}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground italic">Ikke matchet</span>
                                         )}
-                                        {!m.matchedWorkId && !m.confirmed && !m.fuzzyMatches && (
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-7 text-xs gap-1 text-muted-foreground"
-                                                onClick={() => toggleConfirm(m.vaerkId)}
-                                            >
-                                                <Check className="h-3 w-3" />
-                                                Ingen match
-                                            </Button>
+                                    </TableCell>
+                                    <TableCell>
+                                        {g.rettighedshavere.length > 0 ? (
+                                            <div className="space-y-0.5">
+                                                {g.rettighedshavere.map((r, i) => (
+                                                    <div key={i} className="flex items-baseline gap-1.5 text-xs">
+                                                        <span className="font-medium">{r.name}</span>
+                                                        {r.roles.length > 0 && (
+                                                            <span className="text-muted-foreground">({r.roles.join(", ")})</span>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : g.matchedWorkId ? (
+                                            <span className="text-xs text-amber-600 dark:text-amber-400 italic">Ingen klippere i DB</span>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
                                         )}
-                                        {!m.matchedWorkId && m.confirmed && (
-                                            <Badge variant="outline" className="text-xs gap-1 h-7 px-2">
-                                                <Check className="h-3 w-3 text-muted-foreground" />
-                                                Bekræftet ingen match
+                                    </TableCell>
+                                    <TableCell>
+                                        {g.hasDuplicates ? (
+                                            <Badge variant="outline" className="text-xs gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
+                                                <AlertTriangle className="h-3 w-3" />
+                                                Duplikat
+                                            </Badge>
+                                        ) : (
+                                            <Badge
+                                                variant={g.matchScore === "auto" ? "default" : g.matchScore === "fuzzy" ? "secondary" : g.matchScore === "manual" ? "secondary" : "outline"}
+                                                className={`text-xs gap-1 ${g.matchScore === "fuzzy" ? "border-violet-300 text-violet-700 dark:text-violet-300" : ""}`}
+                                            >
+                                                {g.matchScore === "auto" && <Link2 className="h-3 w-3" />}
+                                                {g.matchScore === "fuzzy" && <Search className="h-3 w-3" />}
+                                                {g.matchScore === "manual" && <Database className="h-3 w-3" />}
+                                                {g.matchScore === "none" && <Link2Off className="h-3 w-3" />}
+                                                {g.matchScore === "auto" ? "Auto" : g.matchScore === "fuzzy" ? "Fuzzy" : g.matchScore === "manual" ? "Manuelt" : "Ingen match"}
                                             </Badge>
                                         )}
-                                        {m.matchedWorkId && (
-                                            <Button
-                                                variant={m.confirmed ? "default" : "outline"}
-                                                size="sm"
-                                                className="h-7 text-xs gap-1"
-                                                onClick={() => toggleConfirm(m.vaerkId)}
-                                            >
-                                                <Check className="h-3 w-3" />
-                                                {m.confirmed ? "Bekræftet" : "Bekræft"}
-                                            </Button>
-                                        )}
-                                    </div>
-                                </TableCell>
-                            </TableRow>
-                        ))}
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex gap-1 flex-wrap">
+                                            {!g.matchedWorkId && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7 text-xs gap-1"
+                                                    onClick={() => { setSearchDialog(g.key); setWorkSearch("") }}
+                                                >
+                                                    <Search className="h-3 w-3" />
+                                                    Søg i DB
+                                                </Button>
+                                            )}
+                                            {!g.matchedWorkId && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7 text-xs gap-1 text-blue-600 border-blue-200 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"
+                                                    onClick={() => {
+                                                        setNewWorkDialog(g.key)
+                                                        setNewWorkTitle(g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""))
+                                                        setNewWorkType(g.vaerkType ?? "dokumentarfilm")
+                                                    }}
+                                                >
+                                                    <Plus className="h-3 w-3" />
+                                                    Opret nyt
+                                                </Button>
+                                            )}
+                                            {!g.matchedWorkId && !g.confirmed && !g.fuzzyMatches && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 text-xs gap-1 text-muted-foreground"
+                                                    onClick={() => toggleConfirm(g.key)}
+                                                >
+                                                    <Check className="h-3 w-3" />
+                                                    Ingen match
+                                                </Button>
+                                            )}
+                                            {!g.matchedWorkId && g.confirmed && (
+                                                <Badge variant="outline" className="text-xs gap-1 h-7 px-2">
+                                                    <Check className="h-3 w-3 text-muted-foreground" />
+                                                    Bekræftet ingen match
+                                                </Badge>
+                                            )}
+                                            {g.matchedWorkId && (
+                                                <Button
+                                                    variant={g.confirmed ? "default" : "outline"}
+                                                    size="sm"
+                                                    className="h-7 text-xs gap-1"
+                                                    onClick={() => toggleConfirm(g.key)}
+                                                >
+                                                    <Check className="h-3 w-3" />
+                                                    {g.confirmed ? "Bekræftet" : "Bekræft"}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                                {/* Episode sub-rows for series groups */}
+                                {g.isGrouped && isExpanded && g.episodes.map(ep => {
+                                    const epLabel = ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0]
+                                        ?? (ep.episode != null ? `E${ep.episode}` : ep.rawTitle)
+                                    return (
+                                        <TableRow key={ep.vaerkId} className="bg-muted/20 dark:bg-muted/10">
+                                            <TableCell className="pl-9 py-2">
+                                                <p className="text-xs text-muted-foreground">
+                                                    ↳ <span className="font-mono">{epLabel}</span>
+                                                    {ep.duration ? ` · ${ep.duration} min` : ""}
+                                                </p>
+                                            </TableCell>
+                                            <TableCell colSpan={5} />
+                                        </TableRow>
+                                    )
+                                })}
+                                </React.Fragment>
+                            )
+                        })}
                     </TableBody>
                 </Table>
             </div>
@@ -2064,10 +2290,10 @@ function ParringTab({ vaerker, onConfirmed }: {
                         variant="outline"
                         className="border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 gap-1.5"
                         onClick={() => {
-                            setBulkEditItems(matches.filter(m => m.matchScore === "none" && !m.newWorkCreated).map(m => ({
-                                vaerkId: m.vaerkId,
-                                title: m.rawTitle,
-                                vaerkType: m.vaerkType ?? "dokumentarfilm",
+                            setBulkEditItems(noneGroups.map(g => ({
+                                vaerkId: g.key,
+                                title: g.baseTitle + (g.season != null ? ` Sæson ${g.season}` : ""),
+                                vaerkType: g.vaerkType ?? "dokumentarfilm",
                             })))
                             setBulkCreateDialog(true)
                         }}
@@ -2474,6 +2700,58 @@ function ClaimsTab({ batchId, batchStatus }: { batchId: string; batchStatus: str
 
 // ── Weighting & proof calculation ─────────────────────────────
 
+type WeightedItem = AftalelicensVaegtet & { tierLabel?: string; base?: number; broadcastDate?: string }
+
+interface WeightGroup {
+    key: string
+    baseTitle: string
+    season?: number
+    items: WeightedItem[]
+    isGrouped: boolean
+    vaerkType: VaerkType
+    totalDuration: number
+    totalPoints: number
+    totalShare: number
+    totalEstimated?: number
+    base?: number
+    tierLabel?: string
+}
+
+function buildWeightGroups(weighted: WeightedItem[]): WeightGroup[] {
+    const buckets = new Map<string, WeightedItem[]>()
+    for (const w of weighted) {
+        const season = getSeasonFromTitle(w.rawTitle)
+        const key = season != null
+            ? `${normalizeTitle(stripSeriesId(w.rawTitle))}:s${season}`
+            : w.vaerkId
+        if (!buckets.has(key)) buckets.set(key, [])
+        buckets.get(key)!.push(w)
+    }
+
+    return Array.from(buckets.entries()).map(([key, items]) => {
+        const first = items[0]
+        const season = getSeasonFromTitle(first.rawTitle) ?? undefined
+        const isGrouped = items.length > 1 || season != null
+        const baseTitle = season != null ? (stripSeriesId(first.rawTitle) || first.rawTitle) : first.rawTitle
+        const hasEstimated = first.estimatedAmount !== undefined
+
+        return {
+            key,
+            baseTitle,
+            season,
+            items,
+            isGrouped,
+            vaerkType: first.vaerkType,
+            totalDuration: items.reduce((s, i) => s + i.duration, 0),
+            totalPoints: items.reduce((s, i) => s + i.points, 0),
+            totalShare: items.reduce((s, i) => s + i.shareOfTotal, 0),
+            totalEstimated: hasEstimated ? items.reduce((s, i) => s + (i.estimatedAmount ?? 0), 0) : undefined,
+            base: first.base,
+            tierLabel: first.tierLabel,
+        }
+    })
+}
+
 const DEFAULT_VAEGTE: Record<VaerkType, number> = {
     spillefilm:      200,
     tv_serie_lang:   100,
@@ -2495,6 +2773,8 @@ const DEFAULT_VAEGT_EXTRA: AftalelicensVaegtExtra = {
     dokSerieLangMin: 38,
     dokSerieKortPoints: 50,
     supplerendeKlipFaktor: 0.3,
+    genudsendelseFaktor: 0.5,
+    genudsendelseMaaneder: 1,
 }
 
 function loadVaegte(): Record<VaerkType, number> {
@@ -2549,12 +2829,15 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const vaegte = loadVaegte()
     const extra = loadVaegtExtra()
 
-    const [weighted, setWeighted] = useState<(AftalelicensVaegtet & { tierLabel?: string })[] | null>(null)
+    const [weighted, setWeighted] = useState<WeightedItem[] | null>(null)
+    const [expandedWeightGroups, setExpandedWeightGroups] = useState<Set<string>>(new Set())
+    const weightGroups = useMemo(() => weighted ? buildWeightGroups(weighted) : [], [weighted])
     const [klumpBeloeb, setKlumpBeloeb] = useState("1000000")
     const [adminPct, setAdminPct] = useState("15")
     const [hensaettelserPct, setHensaettelserPct] = useState("10")
     const [socialPct, setSocialPct] = useState("0")
     const [locked, setLocked] = useState(false)
+    const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalAmount: number; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number }[] }[] | null>(null)
 
     // Load stamdata defaults from localStorage
     useEffect(() => {
@@ -2571,7 +2854,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     })
 
     const handleBeregn = () => {
-        const items: (AftalelicensVaegtet & { tierLabel?: string; base?: number })[] = approved.map(v => {
+        const items: WeightedItem[] = approved.map(v => {
             const { points, base, tierLabel } = beregnPoints(v.vaerkType!, v.duration, vaegte, extra)
             return {
                 vaerkId: v.id,
@@ -2579,16 +2862,49 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                 vaerkType: v.vaerkType!,
                 duration: v.duration ?? 0,
                 viewCount: v.viewCount,
-                isGenudsendelse: v.isGenudsendelse ?? false,
+                isGenudsendelse: false, // beregnes nedenfor
                 points,
                 shareOfTotal: 0,
                 tierLabel,
                 base,
+                broadcastDate: v.broadcastDate,
             }
         })
+
+        // Detektér genudsendelser ud fra stamdata-indstillinger:
+        // samme titel genudsendt inden for genudsendelseMaaneder måneder af seneste premiere = genudsendelse
+        const monthDiff = (a: string, b: string) => {
+            const da = new Date(a), db = new Date(b)
+            return (db.getFullYear() - da.getFullYear()) * 12 + (db.getMonth() - da.getMonth())
+        }
+        const byTitle = new Map<string, WeightedItem[]>()
+        for (const item of items) {
+            const key = normalizeTitle(item.rawTitle)
+            if (!byTitle.has(key)) byTitle.set(key, [])
+            byTitle.get(key)!.push(item)
+        }
+        for (const group of byTitle.values()) {
+            if (group.length <= 1) continue
+            group.sort((a, b) => (a.broadcastDate ?? "").localeCompare(b.broadcastDate ?? ""))
+            let refDate = group[0].broadcastDate ?? ""
+            group.forEach((item, idx) => {
+                if (idx === 0) return
+                const diff = refDate ? monthDiff(refDate, item.broadcastDate ?? refDate) : 0
+                if (diff < extra.genudsendelseMaaneder) {
+                    item.isGenudsendelse = true
+                    item.points = Math.round(item.points * extra.genudsendelseFaktor)
+                } else {
+                    refDate = item.broadcastDate ?? refDate
+                }
+            })
+        }
+
         const totalPoints = items.reduce((s, i) => s + i.points, 0)
         items.forEach(i => { i.shareOfTotal = totalPoints > 0 ? i.points / totalPoints : 0 })
         setWeighted(items)
+        // Fold alle seriegrupperne ud som standard
+        const groups = buildWeightGroups(items)
+        setExpandedWeightGroups(new Set(groups.filter(g => g.isGrouped).map(g => g.key)))
         toast.success("Vægte beregnet")
     }
 
@@ -2633,6 +2949,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-[90px]">Dato</TableHead>
                                     <TableHead>Titel</TableHead>
                                     <TableHead>Værktype</TableHead>
                                     <TableHead className="text-right w-[70px]">Min.</TableHead>
@@ -2646,29 +2963,108 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {weighted.map(w => {
-                                    const wExt = w as typeof w & { tierLabel?: string; base?: number }
+                                {weightGroups.map(g => {
+                                    const isExpanded = expandedWeightGroups.has(g.key)
+                                    const toggleExpand = () => setExpandedWeightGroups(prev => {
+                                        const next = new Set(prev)
+                                        if (next.has(g.key)) next.delete(g.key); else next.add(g.key)
+                                        return next
+                                    })
+                                    const hasEstimated = g.totalEstimated !== undefined
                                     return (
-                                        <TableRow key={w.vaerkId}>
-                                            <TableCell className="text-sm font-medium">{w.rawTitle}</TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">{VAERK_TYPE_LABELS[w.vaerkType]}</TableCell>
-                                            <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{w.duration || "—"}</TableCell>
-                                            <TableCell className="text-right font-mono text-xs font-medium">{wExt.base ?? "—"}</TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">{wExt.tierLabel ?? "—"}</TableCell>
-                                            <TableCell className="text-right font-mono text-sm font-medium tabular-nums">
-                                                {w.points.toLocaleString("da-DK")}
-                                            </TableCell>
-                                            <TableCell className="text-right text-sm tabular-nums">{(w.shareOfTotal * 100).toFixed(2)}%</TableCell>
-                                            {w.estimatedAmount !== undefined && (
-                                                <TableCell className="text-right font-mono text-sm tabular-nums">
-                                                    {w.estimatedAmount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                        <React.Fragment key={g.key}>
+                                        {/* Gruppeoverskrift for serier — samlet sum når foldet, kun overskrift når udfoldet */}
+                                        {g.isGrouped ? (
+                                            <TableRow className="bg-muted/10">
+                                                <TableCell />
+                                                <TableCell className="text-sm font-medium">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <button onClick={toggleExpand} className="text-muted-foreground hover:text-foreground transition-colors shrink-0" title={isExpanded ? "Skjul afsnit" : "Vis afsnit"}>
+                                                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
+                                                        </button>
+                                                        <div>
+                                                            <span>{g.baseTitle}</span>
+                                                            <span className="ml-1 text-xs text-muted-foreground font-normal">
+                                                                {g.season != null && `Sæson ${g.season} · `}{g.items.length} udsendelser
+                                                            </span>
+                                                        </div>
+                                                    </div>
                                                 </TableCell>
-                                            )}
-                                        </TableRow>
+                                                <TableCell className="text-xs text-muted-foreground">{VAERK_TYPE_LABELS[g.vaerkType]}</TableCell>
+                                                {isExpanded ? (
+                                                    <TableCell colSpan={hasEstimated ? 7 : 6} />
+                                                ) : (
+                                                    <>
+                                                        <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{g.totalDuration || "—"}</TableCell>
+                                                        <TableCell />
+                                                        <TableCell />
+                                                        <TableCell className="text-right font-mono text-sm font-medium tabular-nums">{g.totalPoints.toLocaleString("da-DK")}</TableCell>
+                                                        <TableCell className="text-right text-sm tabular-nums">{(g.totalShare * 100).toFixed(2)}%</TableCell>
+                                                        {hasEstimated && (
+                                                            <TableCell className="text-right font-mono text-sm tabular-nums">
+                                                                {g.totalEstimated!.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                            </TableCell>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </TableRow>
+                                        ) : (
+                                            /* Enkelt værk — fuld række */
+                                            <TableRow>
+                                                <TableCell className="text-xs text-muted-foreground font-mono tabular-nums">
+                                                    {g.items[0]?.broadcastDate
+                                                        ? new Date(g.items[0].broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })
+                                                        : "—"}
+                                                </TableCell>
+                                                <TableCell className="text-sm font-medium">{g.baseTitle}</TableCell>
+                                                <TableCell className="text-xs text-muted-foreground">{VAERK_TYPE_LABELS[g.vaerkType]}</TableCell>
+                                                <TableCell className="text-right text-xs text-muted-foreground tabular-nums">{g.totalDuration || "—"}</TableCell>
+                                                <TableCell className="text-right font-mono text-xs font-medium">{g.base ?? "—"}</TableCell>
+                                                <TableCell className="text-xs text-muted-foreground">{g.tierLabel ?? "—"}</TableCell>
+                                                <TableCell className="text-right font-mono text-sm font-medium tabular-nums">{g.totalPoints.toLocaleString("da-DK")}</TableCell>
+                                                <TableCell className="text-right text-sm tabular-nums">{(g.totalShare * 100).toFixed(2)}%</TableCell>
+                                                {hasEstimated && (
+                                                    <TableCell className="text-right font-mono text-sm tabular-nums">
+                                                        {g.totalEstimated!.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                    </TableCell>
+                                                )}
+                                            </TableRow>
+                                        )}
+                                        {/* Afsnitsrækker — individuelle tal pr. afsnit */}
+                                        {g.isGrouped && isExpanded && g.items.map(ep => {
+                                            const epLabel = ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0] ?? ep.rawTitle
+                                            return (
+                                                <TableRow key={ep.vaerkId} className="bg-muted/20 dark:bg-muted/10">
+                                                    <TableCell className="py-2 text-xs text-muted-foreground font-mono tabular-nums">
+                                                        {ep.broadcastDate
+                                                            ? new Date(ep.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })
+                                                            : "—"}
+                                                    </TableCell>
+                                                    <TableCell className="pl-9 py-2 text-xs text-muted-foreground">
+                                                        ↳ <span className="font-mono">{epLabel}</span>
+                                                        {ep.isGenudsendelse && (
+                                                            <span className="ml-1.5 inline-flex items-center rounded px-1 py-0 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">½</span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="py-2" />
+                                                    <TableCell className="text-right text-xs tabular-nums py-2">{ep.duration || "—"}</TableCell>
+                                                    <TableCell className="text-right font-mono text-xs py-2">{ep.base ?? "—"}</TableCell>
+                                                    <TableCell className="text-xs text-muted-foreground py-2">{ep.tierLabel ?? "—"}</TableCell>
+                                                    <TableCell className="text-right font-mono text-xs font-medium tabular-nums py-2">{ep.points.toLocaleString("da-DK")}</TableCell>
+                                                    <TableCell className="text-right text-xs tabular-nums py-2">{(ep.shareOfTotal * 100).toFixed(2)}%</TableCell>
+                                                    {ep.estimatedAmount !== undefined && (
+                                                        <TableCell className="text-right font-mono text-xs tabular-nums py-2">
+                                                            {ep.estimatedAmount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                        </TableCell>
+                                                    )}
+                                                </TableRow>
+                                            )
+                                        })}
+                                        </React.Fragment>
                                     )
                                 })}
                                 <TableRow className="font-medium bg-muted/30">
-                                    <TableCell colSpan={5}>I alt</TableCell>
+                                    <TableCell colSpan={6}>I alt</TableCell>
                                     <TableCell className="text-right font-mono tabular-nums">{totalPoints.toLocaleString("da-DK")}</TableCell>
                                     <TableCell className="text-right">100%</TableCell>
                                     {weighted[0]?.estimatedAmount !== undefined && (
@@ -2806,6 +3202,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                 onClick={() => {
                                     if (!locked) {
                                         setLocked(true)
+
                                         // Registrer hensættelse på kontoen
                                         const entry = {
                                             id: `h_${Date.now()}`,
@@ -2817,7 +3214,50 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                         const updated = [...hensaettelsesKonto, entry]
                                         setHensaettelsesKonto(updated)
                                         localStorage.setItem("dfks_hensaettelser", JSON.stringify(updated))
-                                        toast.success(`Beregning låst — ${Math.round(hensaettelserBeloeb).toLocaleString("da-DK")} kr. hensat`)
+
+                                        // Overfør betalinger til værksdatabasen (localStorage)
+                                        const gross = Number(klumpBeloeb)
+                                        const batchAdminFee = gross * Number(adminPct) / 100
+                                        const vaerkRecords = weightGroups
+                                            .filter(g => g.totalEstimated !== undefined && g.totalEstimated > 0)
+                                            .map(g => {
+                                                const match = confirmedMatches.find(m => m.vaerkId === g.items[0].vaerkId)
+                                                const workId = match?.matchedWorkId
+                                                const workTitle = match?.matchedWorkTitle ?? g.baseTitle
+                                                const workShare = tilFordeling > 0 ? g.totalEstimated! / tilFordeling : 0
+                                                return {
+                                                    workId,
+                                                    workTitle,
+                                                    vaerkType: g.vaerkType,
+                                                    totalPoints: g.totalPoints,
+                                                    totalAmount: Math.round(g.totalEstimated!),
+                                                    adminFeeAmount: Math.round(workShare * batchAdminFee),
+                                                    episodes: g.isGrouped ? g.items.map(ep => {
+                                                        const epMatch = confirmedMatches.find(m => m.vaerkId === ep.vaerkId)
+                                                        return {
+                                                            episodeLabel: ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0] ?? ep.rawTitle,
+                                                            broadcastDate: ep.broadcastDate,
+                                                            isGenudsendelse: ep.isGenudsendelse,
+                                                            points: ep.points,
+                                                            amount: Math.round(ep.estimatedAmount ?? 0),
+                                                            klippere: epMatch?.rettighedshavere?.map(r => r.name) ?? [],
+                                                        }
+                                                    }) : undefined,
+                                                }
+                                            })
+
+                                        const dbEntry = {
+                                            id: `al_${Date.now()}`,
+                                            batchLabel,
+                                            lockedAt: new Date().toISOString(),
+                                            totalAmount: Math.round(tilFordeling),
+                                            vaerker: vaerkRecords,
+                                        }
+                                        const existingDb: typeof dbEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
+                                        localStorage.setItem("dfks_al_udbetalinger", JSON.stringify([...existingDb, dbEntry]))
+                                        setDbTransfer(vaerkRecords)
+
+                                        toast.success(`Beregning låst — betalinger overført til ${vaerkRecords.length} værker`)
                                     }
                                 }}
                                 disabled={locked}
@@ -2827,6 +3267,72 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                             </Button>
                         </div>
                     </div>
+
+                    {/* Overført til værksdatabasen */}
+                    {dbTransfer && dbTransfer.length > 0 && (
+                        <>
+                            <Separator />
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2">
+                                    <Database className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                    <p className="text-sm font-medium">Overført til værksdatabasen</p>
+                                    <span className="text-xs text-muted-foreground">— {dbTransfer.length} værker opdateret</span>
+                                </div>
+                                <div className="rounded-lg border overflow-hidden">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead>Værk</TableHead>
+                                                <TableHead>Værktype</TableHead>
+                                                <TableHead className="text-right">Point</TableHead>
+                                                <TableHead className="text-right">Beløb</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {dbTransfer.map((w, i) => (
+                                                <React.Fragment key={i}>
+                                                    <TableRow>
+                                                        <TableCell className="text-sm font-medium">
+                                                            {w.workTitle}
+                                                            {!w.workId && <span className="ml-1.5 text-[10px] text-amber-600 font-normal">(ikke matchet)</span>}
+                                                        </TableCell>
+                                                        <TableCell className="text-xs text-muted-foreground">{VAERK_TYPE_LABELS[w.vaerkType]}</TableCell>
+                                                        {w.episodes ? (
+                                                            <>
+                                                                <TableCell />
+                                                                <TableCell />
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <TableCell className="text-right font-mono text-xs">{w.totalPoints?.toLocaleString("da-DK")}</TableCell>
+                                                                <TableCell className="text-right font-mono text-sm font-medium">
+                                                                    {w.totalAmount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                                </TableCell>
+                                                            </>
+                                                        )}
+                                                    </TableRow>
+                                                    {w.episodes?.map((ep, j) => (
+                                                        <TableRow key={j} className="bg-muted/20">
+                                                            <TableCell className="pl-8 py-1.5 text-xs text-muted-foreground">
+                                                                ↳ <span className="font-mono">{ep.episodeLabel}</span>
+                                                                {ep.broadcastDate && <span className="ml-1.5">{new Date(ep.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })}</span>}
+                                                                {ep.isGenudsendelse && <span className="ml-1.5 inline-flex items-center rounded px-1 py-0 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">½</span>}
+                                                            </TableCell>
+                                                            <TableCell className="py-1.5" />
+                                                            <TableCell className="text-right font-mono text-xs py-1.5">{ep.points.toLocaleString("da-DK")}</TableCell>
+                                                            <TableCell className="text-right font-mono text-xs py-1.5">
+                                                                {ep.amount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </React.Fragment>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </div>
+                        </>
+                    )}
 
                     {/* Hensættelseskonto */}
                     {hensaettelsesKonto.length > 0 && (

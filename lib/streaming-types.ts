@@ -325,6 +325,9 @@ export interface AftalelicensVaegtExtra {
     dokSerieKortPoints: number  // < dokSerieLangMin → default 50
     // Supplerende klip (B-klippere)
     supplerendeKlipFaktor: number   // Faktor for B-klippere: default 0.3
+    // Genudsendelser
+    genudsendelseFaktor: number     // Point-faktor for genudsendelse: default 0.5 (halvt)
+    genudsendelseMaaneder: number   // Antal måneder hvori gentagelse tæller som genudsendelse: default 1
 }
 
 // En importeret batch af rådata

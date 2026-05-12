@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
     ArrowLeft, Plus, Lock, CheckCircle2, Clock, AlertCircle,
     ExternalLink, ChevronDown, ChevronUp, Download, Users, Pencil,
-    Film, Tv, Copy,
+    Film, Tv, Copy, Database,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -205,7 +205,7 @@ const mockData: Record<string, MockProductionDetail> = {
     },
     "005": {
         id: "005", productionNumber: "005", title: "Skruk Sæson 1",
-        type: "tv_series_original", premiereYear: 2022,
+        type: "tv_series_original", premiereYear: 2022, season: 1,
         licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2022-01-01", createdBy: "admin",
         editors: [
@@ -485,6 +485,52 @@ export default function StreamingDetailPage() {
     const [showAddEditor, setShowAddEditor] = useState(false)
     const [showCreateKey, setShowCreateKey] = useState(false)
 
+    // ── Aftalelicens-betalinger fra localStorage ───────────────
+    interface AlEpisode { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: string[] }
+    interface AlVaerk { workId?: string; workTitle: string; vaerkType: string; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; episodes?: AlEpisode[]; status?: "pending" | "paid" }
+    interface AlEntry { id: string; batchLabel: string; lockedAt: string; totalAmount: number; vaerker: AlVaerk[] }
+
+    const [alBetalinger, setAlBetalinger] = useState<{ entry: AlEntry; vaerk: AlVaerk }[]>([])
+    const [expandedAl, setExpandedAl] = useState<string | null>(null)
+
+    useEffect(() => {
+        const stored: AlEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
+        // Seed demo data for work "002" (Nisser — TV-serie) if nothing stored yet
+        if (!stored.some(e => e.vaerker.some(v => v.workId === "002"))) {
+            const demo: AlEntry = {
+                id: "al_demo_002",
+                batchLabel: "Copydan Verdens TV 2023",
+                lockedAt: new Date().toISOString(),
+                totalAmount: 765000,
+                vaerker: [
+                    {
+                        workId: "002",
+                        workTitle: "Nisser",
+                        vaerkType: "tv_serie_lang",
+                        totalPoints: 12000,
+                        totalAmount: 98816,
+                        adminFeeAmount: 17438,
+                        episodes: [
+                            { episodeLabel: "S1E1", broadcastDate: "2023-09-21", isGenudsendelse: false, points: 4800, amount: 39526, klippere: ["Michael Bauer"] },
+                            { episodeLabel: "S1E2", broadcastDate: "2023-09-28", isGenudsendelse: false, points: 4800, amount: 39526, klippere: ["Ida Bregninge"] },
+                            { episodeLabel: "S1E2", broadcastDate: "2023-09-30", isGenudsendelse: true, points: 2400, amount: 19764, klippere: ["Ida Bregninge"] },
+                        ],
+                    },
+                ],
+            }
+            const updated = [...stored, demo]
+            localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(updated))
+            stored.push(demo)
+        }
+        const result: { entry: AlEntry; vaerk: AlVaerk }[] = []
+        for (const entry of stored) {
+            for (const vaerk of entry.vaerker) {
+                if (vaerk.workId === id) result.push({ entry, vaerk })
+            }
+        }
+        setAlBetalinger(result)
+    }, [id])
+
     const production = mockData[id]
 
     if (!production) {
@@ -507,6 +553,8 @@ export default function StreamingDetailPage() {
     const totalReceived = allPayouts.reduce((s, p) => s + p.grossAmount, 0)
     const totalNet = allPayouts.reduce((s, p) => s + p.netAmount, 0)
     const totalAdmin = allPayouts.reduce((s, p) => s + p.adminFeeAmount, 0)
+    const alTotal = alBetalinger.reduce((s, { vaerk }) => s + vaerk.totalAmount, 0)
+    const alAdminFee = alBetalinger.reduce((s, { vaerk }) => s + (vaerk.adminFeeAmount ?? 0), 0)
     const pendingPayouts = allPayouts.filter(p => p.status === "pending" || p.status === "distributing")
     const canExport = production.distributionKey?.status === "locked" && pendingPayouts.length > 0
 
@@ -544,16 +592,13 @@ export default function StreamingDetailPage() {
                         <span>·</span>
                         {production.type.startsWith("film") ? <Film className="h-3.5 w-3.5" /> : <Tv className="h-3.5 w-3.5" />}
                         <span>{typeLabel(production.type)}</span>
-                        {production.season && <><span>·</span><span>Sæson {production.season}</span></>}
                         <span>·</span>
                         <span>{production.premiereYear}</span>
                     </div>
                     <h1 className="text-2xl font-semibold tracking-tight">{production.title}</h1>
-                    <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>Licens: {production.licenseDurationYears} år fra {production.licenseStartYear}</span>
-                        <span>·</span>
-                        <span className={licenseYearsRemaining < 5 ? "text-amber-600" : ""}>{licenseYearsRemaining} år tilbage</span>
-                    </div>
+                    {production.season && (
+                        <p className="mt-0.5 text-sm text-muted-foreground">Sæson {production.season}</p>
+                    )}
                 </div>
                 <Button variant="outline" size="sm" className="gap-1.5">
                     <Pencil className="h-3.5 w-3.5" />
@@ -565,15 +610,18 @@ export default function StreamingDetailPage() {
             <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Modtaget i alt</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived + alTotal)}</p>
+                    {alTotal > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alTotal)} aftalelicens</p>}
                 </div>
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Udbetalt til klippere</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalNet)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalNet + alTotal)}</p>
+                    {alTotal > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alTotal)} aftalelicens</p>}
                 </div>
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Adm. gebyr i alt</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalAdmin)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalAdmin + alAdminFee)}</p>
+                    {alAdminFee > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alAdminFee)} aftalelicens</p>}
                 </div>
             </div>
 
@@ -718,7 +766,13 @@ export default function StreamingDetailPage() {
             {/* Udbetalinger — grupperet per udnyttelse */}
             <div className="rounded-lg border">
                 <div className="flex items-center justify-between px-4 py-3 border-b">
-                    <h2 className="font-medium">Udbetalinger</h2>
+                    <div>
+                        <h2 className="font-medium">Udbetalinger</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Licens: {production.licenseDurationYears} år fra {production.licenseStartYear}
+                            <span className={`ml-1.5 ${licenseYearsRemaining < 5 ? "text-amber-600" : ""}`}>· {licenseYearsRemaining} år tilbage</span>
+                        </p>
+                    </div>
                     <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setActiveExploitationId(undefined); setShowRegister(true) }}>
                         <Plus className="h-3.5 w-3.5" />
                         Registrér betaling
@@ -836,6 +890,72 @@ export default function StreamingDetailPage() {
                     </div>
                 )}
             </div>
+
+            {/* Aftalelicens-betalinger */}
+            {alBetalinger.length > 0 && (
+                <div className="rounded-lg border">
+                    <div className="flex items-center gap-2 px-4 py-3 border-b">
+                        <Database className="h-4 w-4 text-muted-foreground" />
+                        <h2 className="font-medium">Aftalelicens-betalinger</h2>
+                    </div>
+                    <div className="divide-y">
+                        {alBetalinger.map(({ entry, vaerk }, i) => {
+                            const key = `${entry.id}_${i}`
+                            const isExpanded = expandedAl === key
+                            const status = vaerk.status ?? "pending"
+                            return (
+                                <div key={key}>
+                                    <button
+                                        className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                        onClick={() => setExpandedAl(isExpanded ? null : key)}
+                                    >
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium">{entry.batchLabel}</p>
+                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                Låst {new Date(entry.lockedAt).toLocaleDateString("da-DK")}
+                                            </p>
+                                        </div>
+                                        <p className="text-sm font-medium tabular-nums">
+                                            {vaerk.totalAmount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                        </p>
+                                        <PayoutStatusBadge status={status} />
+                                        {isExpanded
+                                            ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                                            : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                        }
+                                    </button>
+                                    {isExpanded && vaerk.episodes && vaerk.episodes.length > 0 && (
+                                        <div className="px-4 pb-4 pt-1 border-t bg-muted/20">
+                                            <div className="rounded-md border divide-y text-xs bg-card">
+                                                {vaerk.episodes.map((ep, j) => (
+                                                    <div key={j} className="flex items-center gap-2 px-3 py-2">
+                                                        <span className="font-mono text-muted-foreground">↳</span>
+                                                        <span className="font-mono">{ep.episodeLabel}</span>
+                                                        {ep.broadcastDate && (
+                                                            <span className="text-muted-foreground">
+                                                                {new Date(ep.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                                                            </span>
+                                                        )}
+                                                        {ep.isGenudsendelse && (
+                                                            <span className="inline-flex items-center rounded px-1 py-0 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">½</span>
+                                                        )}
+                                                        {ep.klippere && ep.klippere.length > 0 && (
+                                                            <span className="text-muted-foreground">{ep.klippere.join(", ")}</span>
+                                                        )}
+                                                        <span className="ml-auto tabular-nums font-medium">
+                                                            {ep.amount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
 
             {/* Dialogs */}
             <RegisterPayoutDialog
