@@ -1712,6 +1712,7 @@ function ParringTab({ vaerker, onConfirmed }: {
     const [newWorkTitle, setNewWorkTitle] = useState("")
     const [newWorkType, setNewWorkType] = useState<VaerkType>("dokumentarfilm")
     const [newWorkYear, setNewWorkYear] = useState(String(new Date().getFullYear()))
+    const [bulkCreateDialog, setBulkCreateDialog] = useState(false)
 
     const autoCount   = matches.filter(m => m.matchScore === "auto").length
     const fuzzyCount  = matches.filter(m => m.matchScore === "fuzzy").length
@@ -1749,6 +1750,25 @@ function ParringTab({ vaerker, onConfirmed }: {
             confirmed: true,
         } : m))
         toast.success(`Fuzzy-parret med "${fuzzyWork.title}"`)
+    }
+
+    const handleBulkCreateWorks = () => {
+        const unmatched = matches.filter(m => m.matchScore === "none" && !m.newWorkCreated)
+        if (unmatched.length === 0) return
+        const newWorks: FuzzyWork[] = unmatched.map(m => ({
+            id: `new_${m.vaerkId}`,
+            title: m.rawTitle,
+            category: m.vaerkType ?? "dokumentarfilm",
+        }))
+        setExtraWorks(prev => [...prev, ...newWorks])
+        setMatches(prev => prev.map(m => {
+            const nw = newWorks.find(w => w.id === `new_${m.vaerkId}`)
+            if (!nw) return m
+            return { ...m, matchedWorkId: nw.id, matchedWorkTitle: nw.title, matchScore: "manual" as const, newWorkCreated: true, confirmed: true }
+        }))
+        setBulkCreateDialog(false)
+        window.open("/admin/vaerker", "_blank")
+        toast.success(`${unmatched.length} nye værker klar — tilknyt klippere i Værksdatabasen`)
     }
 
     const handleCreateWork = (vaerkId: string) => {
@@ -2033,6 +2053,24 @@ function ParringTab({ vaerker, onConfirmed }: {
                 </Table>
             </div>
 
+            {noneCount > 0 && !confirmed && (
+                <div className="flex items-center justify-between rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-4 py-3">
+                    <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+                        <Link2Off className="h-4 w-4 shrink-0" />
+                        <span><span className="font-semibold">{noneCount}</span> {noneCount === 1 ? "titel mangler" : "titler mangler"} match i databasen</span>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 gap-1.5"
+                        onClick={() => setBulkCreateDialog(true)}
+                    >
+                        <Plus className="h-3.5 w-3.5" />
+                        Opret alle {noneCount} i DB
+                    </Button>
+                </div>
+            )}
+
             {allConfirmed && matches.length > 0 && !confirmed && (
                 <div className="flex items-center justify-between rounded-lg border border-green-300 dark:border-green-800 bg-green-50 dark:bg-green-950/20 px-4 py-3">
                     <div className="flex items-center gap-2 text-sm text-green-800 dark:text-green-300">
@@ -2052,6 +2090,33 @@ function ParringTab({ vaerker, onConfirmed }: {
                     Parring låst — fortsæt til Vægtning og beregning
                 </div>
             )}
+
+            {/* Bulk opret i DB dialog */}
+            <Dialog open={bulkCreateDialog} onOpenChange={setBulkCreateDialog}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Bulk-opret {noneCount} nye værker i DB</DialogTitle>
+                        <DialogDescription>
+                            Alle {noneCount} umatchede titler oprettes som nye værker i Værksdatabasen. Værksdatabasen åbnes i en ny fane, hvor du kan tilknytte klippere og fordelingsnøgler.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-lg border divide-y max-h-48 overflow-y-auto">
+                        {matches.filter(m => m.matchScore === "none" && !m.newWorkCreated).map(m => (
+                            <div key={m.vaerkId} className="px-3 py-2 text-sm">
+                                <span className="font-medium">{m.rawTitle}</span>
+                                {m.vaerkType && <span className="ml-2 text-xs text-muted-foreground">{VAERK_TYPE_LABELS[m.vaerkType]}</span>}
+                            </div>
+                        ))}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBulkCreateDialog(false)}>Annuller</Button>
+                        <Button onClick={handleBulkCreateWorks}>
+                            <Plus className="mr-2 h-3.5 w-3.5" />
+                            Opret {noneCount} værker i DB
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Manual search dialog */}
             <Dialog open={!!searchDialog} onOpenChange={() => { setSearchDialog(null); setWorkSearch("") }}>
