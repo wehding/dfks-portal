@@ -232,6 +232,7 @@ export default function AdminValideringPage() {
                 distribution: ed.distribution?.join(", ") ?? "", collectiveAgreementName: ed.collectiveAgreementName ?? "",
                 gender: ed.gender ?? "", holidayPayRate: ed.holidayPayRate ?? "",
                 betaRate: ed.betaRate ?? "", specialNotes: ed.specialNotes ?? "",
+                collectiveAgreement: ed.collectiveAgreement ?? false,
                 isFreelanceContract: ed.isFreelanceContract ?? false,
                 collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
             })
@@ -499,14 +500,14 @@ export default function AdminValideringPage() {
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F label={t("admin.validation.holidayPay")}>
                                         <div className="flex items-center gap-2">
-                                            <Input type="number" step="0.1" value={String(formData.holidayPayRate ?? data?.holidayPayRate ?? "")} onChange={(e) => setField("holidayPayRate", e.target.value)} placeholder="12.5" />
-                                            <span className="text-sm text-muted-foreground">%</span>
+                                            <Input type="number" step="0.1" value={String(formData.holidayPayRate ?? data?.holidayPayRate ?? "")} onChange={(e) => setField("holidayPayRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
+                                            {(formData.holidayPayRate || data?.holidayPayRate) && <span className="text-sm text-muted-foreground">%</span>}
                                         </div>
                                     </F>
                                     <F label={t("admin.validation.beta")}>
                                         <div className="flex items-center gap-2">
-                                            <Input type="number" step="0.01" value={String(formData.betaRate ?? data?.betaRate ?? "")} onChange={(e) => setField("betaRate", e.target.value)} placeholder="0.6" />
-                                            <span className="text-sm text-muted-foreground">%</span>
+                                            <Input type="number" step="0.01" value={String(formData.betaRate ?? data?.betaRate ?? "")} onChange={(e) => setField("betaRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
+                                            {(formData.betaRate || data?.betaRate) && <span className="text-sm text-muted-foreground">%</span>}
                                         </div>
                                     </F>
                                 </div>

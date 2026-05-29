@@ -2837,7 +2837,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     const [hensaettelserPct, setHensaettelserPct] = useState("10")
     const [socialPct, setSocialPct] = useState("0")
     const [locked, setLocked] = useState(false)
-    const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: string[] }[] }[] | null>(null)
+    const [dbTransfer, setDbTransfer] = useState<{ workId?: string; workTitle: string; vaerkType: VaerkType; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[]; episodes?: { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: { name: string; userId?: string; sharePercent: number; amount: number }[] }[] }[] | null>(null)
 
     // Load stamdata defaults from localStorage
     useEffect(() => {
@@ -3232,15 +3232,40 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
                                                     totalPoints: g.totalPoints,
                                                     totalAmount: Math.round(g.totalEstimated!),
                                                     adminFeeAmount: Math.round(workShare * batchAdminFee),
+                                                    klippere: !g.isGrouped ? (() => {
+                                                        // Brug fordelingsnøgle fra værksdatabasen for enkeltstående værker
+                                                        const distKeys: Record<string, { shares: { name: string; userId?: string; sharePercent: number }[] }> =
+                                                            JSON.parse(localStorage.getItem("dfks_distribution_keys") ?? "{}")
+                                                        const distKey = workId ? distKeys[workId] : undefined
+                                                        const shares = distKey?.shares ?? (match?.rettighedshavere ?? []).map(r => ({
+                                                            name: r.name, userId: r.userId, sharePercent: r.sharePercent,
+                                                        }))
+                                                        return shares.map(s => ({
+                                                            name: s.name,
+                                                            userId: s.userId,
+                                                            sharePercent: s.sharePercent,
+                                                            amount: Math.round(g.totalEstimated! * s.sharePercent / 100),
+                                                        }))
+                                                    })() : undefined,
                                                     episodes: g.isGrouped ? g.items.map(ep => {
                                                         const epMatch = confirmedMatches.find(m => m.vaerkId === ep.vaerkId)
+                                                        const epAmount = Math.round(ep.estimatedAmount ?? 0)
+                                                        // Ligeligt fordelt mellem krediterede klippere på afsnittet
+                                                        const credited = epMatch?.rettighedshavere ?? []
+                                                        const n = credited.length || 1
+                                                        const equalShare = Math.round(100 / n)
                                                         return {
                                                             episodeLabel: ep.rawTitle.match(/[Ss]\d+[Ee]\d+/)?.[0] ?? ep.rawTitle,
                                                             broadcastDate: ep.broadcastDate,
                                                             isGenudsendelse: ep.isGenudsendelse,
                                                             points: ep.points,
-                                                            amount: Math.round(ep.estimatedAmount ?? 0),
-                                                            klippere: epMatch?.rettighedshavere?.map(r => r.name) ?? [],
+                                                            amount: epAmount,
+                                                            klippere: credited.map((r, i) => ({
+                                                                name: r.name,
+                                                                userId: r.userId,
+                                                                sharePercent: i === credited.length - 1 ? 100 - equalShare * (n - 1) : equalShare,
+                                                                amount: Math.round(epAmount / n),
+                                                            })),
                                                         }
                                                     }) : undefined,
                                                 }

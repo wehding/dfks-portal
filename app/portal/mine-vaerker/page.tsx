@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3, Clock, CheckCircle2, X, Layers, SearchCheck, Send } from "lucide-react"
+import { Film, Download, Users, Eye, Upload, BarChart3, Clock, CheckCircle2, X, Layers, SearchCheck, Send, Info } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -27,6 +27,7 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import {
     Tooltip,
     TooltipContent,
@@ -124,36 +125,12 @@ function RightsBadges({ rights }: { rights: Work["rights"] }) {
 
 function DurationDisplay({ work }: { work: Work }) {
     const { t } = useI18n()
-    const [expanded, setExpanded] = useState(false)
 
     if (work.episodes && work.episodes.length > 0) {
-        const totalMin = work.episodes.reduce((s, e) => s + e.duration, 0)
         return (
-            <div>
-                <button
-                    onClick={() => setExpanded(!expanded)}
-                    className="inline-flex items-center gap-1 text-sm tabular-nums hover:text-foreground transition-colors"
-                >
-                    {work.episodes.length} {t("works.episodes")}
-                    {expanded ? (
-                        <ChevronUp className="h-3 w-3" />
-                    ) : (
-                        <ChevronDown className="h-3 w-3" />
-                    )}
-                </button>
-                {expanded && (
-                    <div className="mt-1.5 space-y-0.5">
-                        {work.episodes.map((ep) => (
-                            <div key={ep.number} className="text-xs text-muted-foreground">
-                                {ep.number}. {ep.title} — {ep.duration} {t("common.minutes")}
-                            </div>
-                        ))}
-                        <div className="text-xs font-medium mt-1">
-                            Total: {totalMin} {t("common.minutes")}
-                        </div>
-                    </div>
-                )}
-            </div>
+            <span className="tabular-nums text-sm text-muted-foreground">
+                {work.episodes.length} {t("works.episodes")}
+            </span>
         )
     }
 
@@ -189,6 +166,7 @@ export default function MineVaerkerPage() {
     const [exploitationWork, setExploitationWork] = useState<string | null>(null)
     const [meldDialog, setMeldDialog] = useState<EfterlysningItem | null>(null)
     const [meldNote, setMeldNote] = useState("")
+    const [meldFileName, setMeldFileName] = useState("")
     const [meldSent, setMeldSent] = useState<Set<string>>(new Set())
 
     const pendingOrRejectedKrav = MOCK_MINE_KRAV.filter(k => k.status !== "approved")
@@ -281,6 +259,19 @@ export default function MineVaerkerPage() {
                                                 </Badge>
                                             )}
                                         </div>
+                                        {work.episodes && work.editedEpisodes && work.editedEpisodes.length > 0 && (
+                                            <div className="mt-1 space-y-0.5">
+                                                {work.episodes
+                                                    .filter(ep => work.editedEpisodes!.includes(ep.number))
+                                                    .map(ep => (
+                                                        <div key={ep.number} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                            <span className="font-mono text-muted-foreground/60">↳</span>
+                                                            <span className="font-mono font-medium">E{String(ep.number).padStart(2, "0")}</span>
+                                                            <span>{ep.title}</span>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        )}
                                     </TableCell>
                                     <TableCell>{work.creditedRoles.join(", ")}</TableCell>
                                     <TableCell>
@@ -312,7 +303,13 @@ export default function MineVaerkerPage() {
                                         <RightsBadges rights={work.rights} />
                                     </TableCell>
                                     <TableCell>
-                                        <DurationDisplay work={work} />
+                                        {work.episodes && work.episodes.length > 0 ? (
+                                            <span className="text-sm tabular-nums text-muted-foreground">
+                                                {work.episodes.length} {t("works.episodes")}
+                                            </span>
+                                        ) : (
+                                            <span className="tabular-nums">{work.duration} {t("common.minutes")}</span>
+                                        )}
                                     </TableCell>
                                     <TableCell>
                                         {!isAftalelicens ? (
@@ -443,7 +440,7 @@ export default function MineVaerkerPage() {
                                     size="sm"
                                     variant="outline"
                                     className="shrink-0 text-xs gap-1.5"
-                                    onClick={() => { setMeldDialog(item); setMeldNote("") }}
+                                    onClick={() => { setMeldDialog(item); setMeldNote(""); setMeldFileName("") }}
                                 >
                                     <Users className="h-3.5 w-3.5" />
                                     Jeg klippede dette
@@ -455,35 +452,92 @@ export default function MineVaerkerPage() {
             </section>
 
             {/* Meld-dialog */}
-            <Dialog open={!!meldDialog} onOpenChange={() => setMeldDialog(null)}>
-                <DialogContent className="max-w-md">
+            <Dialog open={!!meldDialog} onOpenChange={() => { setMeldDialog(null); setMeldFileName("") }}>
+                <DialogContent className="max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Meld dig som klipper</DialogTitle>
                         <DialogDescription>
-                            {meldDialog?.title} ({meldDialog?.premiereYear}) · {meldDialog?.type}
+                            Du markerer at du har klippet dette værk. DFKS vil validere dit krav.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3">
-                        <p className="text-sm text-muted-foreground">
-                            Tilføj evt. en kort note om din rolle — DFKS kontakter dig for at verificere og tilknytte dig til værket.
-                        </p>
-                        <Textarea
-                            value={meldNote}
-                            onChange={e => setMeldNote(e.target.value)}
-                            placeholder="Fx: Klippede afsnit 2–5, sæson 1. Kontrakt via Zentropa..."
-                            rows={3}
-                        />
+
+                    {/* Werk details */}
+                    <div className="rounded-lg bg-muted/50 border p-3 text-xs space-y-1">
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Titel</span>
+                            <span className="font-medium">{meldDialog?.title}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Type</span>
+                            <span>{meldDialog?.type}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">År</span>
+                            <span>{meldDialog?.premiereYear}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Prod.nr.</span>
+                            <span>#{meldDialog?.productionNumber}</span>
+                        </div>
                     </div>
+
+                    <div className="space-y-3">
+                        {/* Contract upload */}
+                        <div className="space-y-1.5">
+                            <Label>Kontrakt (anbefalet)</Label>
+                            <label className="cursor-pointer block">
+                                <div className="flex items-center gap-2 rounded-md border border-dashed px-4 py-3 text-sm text-muted-foreground hover:border-primary hover:text-foreground transition-colors">
+                                    <Upload className="h-4 w-4 shrink-0" />
+                                    {meldFileName
+                                        ? <span className="text-foreground font-medium truncate">{meldFileName}</span>
+                                        : "Vedhæft kontrakt eller klippeattest (.pdf, .docx)"}
+                                </div>
+                                <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx"
+                                    className="sr-only"
+                                    onChange={e => setMeldFileName(e.target.files?.[0]?.name ?? "")}
+                                />
+                            </label>
+                            {meldFileName && (
+                                <button
+                                    className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                                    onClick={() => setMeldFileName("")}
+                                >
+                                    <X className="h-3 w-3" /> Fjern fil
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Note */}
+                        <div className="space-y-1.5">
+                            <Label>Note (valgfrit)</Label>
+                            <Textarea
+                                value={meldNote}
+                                onChange={e => setMeldNote(e.target.value)}
+                                placeholder="Fx: Klippede afsnit 2–5, sæson 1. Kontrakt via Zentropa..."
+                                rows={3}
+                            />
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex items-start gap-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-300">
+                            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <p>Din markering sendes til DFKS for validering. Du vil blive kontaktet når dit krav er behandlet.</p>
+                        </div>
+                    </div>
+
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setMeldDialog(null)}>Annuller</Button>
+                        <Button variant="outline" onClick={() => { setMeldDialog(null); setMeldFileName("") }}>Annuller</Button>
                         <Button onClick={() => {
                             if (meldDialog) {
                                 setMeldSent(prev => new Set([...prev, meldDialog.id]))
                                 setMeldDialog(null)
+                                setMeldFileName("")
                             }
                         }}>
                             <Send className="mr-2 h-3.5 w-3.5" />
-                            Send til DFKS
+                            Send markering
                         </Button>
                     </DialogFooter>
                 </DialogContent>

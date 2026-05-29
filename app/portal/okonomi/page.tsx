@@ -1,10 +1,11 @@
 "use client"
 
-import { useState } from "react"
-import { CheckCircle2, Clock, Lock, AlertCircle, ChevronDown, ChevronUp, FileUp, Film, Tv } from "lucide-react"
+import { useState, useEffect } from "react"
+import { CheckCircle2, Clock, Lock, AlertCircle, ChevronDown, ChevronUp, FileUp, Film, Tv, Database, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
+import { Input } from "@/components/ui/input"
 import { UploadContractDialog } from "@/components/streaming/upload-contract-dialog"
 import { useContracts } from "@/lib/hooks"
 import type { DistributionKeyStatus, PayoutStatus, ProductionType } from "@/lib/streaming-types"
@@ -36,6 +37,18 @@ interface MyPayout {
     paidAt?: string
 }
 
+interface EpisodeEditor {
+    name: string
+    userId: string
+    isMe: boolean
+    sharePercent?: number   // known/locked share
+}
+
+interface MyEpisode {
+    episodeLabel: string
+    editors: EpisodeEditor[]
+}
+
 interface MyProduction {
     id: string
     productionNumber: string
@@ -44,6 +57,7 @@ interface MyProduction {
     premiereYear: number
     hasContract: boolean        // Om kontrakt er i arkivet
     distributionKey?: MyDistributionKey
+    episodes?: MyEpisode[]
     payouts: MyPayout[]
     totalReceived: number
 }
@@ -69,6 +83,14 @@ const myProductions: MyProduction[] = [
                 { name: "Tómas Gislason", sharePercent: 12.5 },
             ],
         },
+        episodes: [
+            { episodeLabel: "S1E1", editors: [{ name: "Anna Heide", userId: "u1", isMe: true, sharePercent: 100 }] },
+            { episodeLabel: "S1E2", editors: [{ name: "Anna Heide", userId: "u1", isMe: true }, { name: "Benjamin Binderup", userId: "u3", isMe: false }] },
+            { episodeLabel: "S1E3", editors: [{ name: "Benjamin Binderup", userId: "u3", isMe: false, sharePercent: 100 }] },
+            { episodeLabel: "S1E4", editors: [{ name: "Anna Heide", userId: "u1", isMe: true, sharePercent: 100 }] },
+            { episodeLabel: "S1E5", editors: [{ name: "Anna Heide", userId: "u1", isMe: true }, { name: "Tómas Gislason", userId: "u4", isMe: false }] },
+            { episodeLabel: "S1E6", editors: [{ name: "Elin Pröjts", userId: "u2", isMe: false, sharePercent: 100 }] },
+        ],
         payouts: [
             { id: "p1", payoutYear: 2023, type: "succesbetaling", myAmount: 5201.38, status: "paid", paidAt: "2024-03-01" },
             { id: "p2", payoutYear: 2024, type: "succesbetaling", myAmount: 8886.92, status: "pending" },
@@ -211,16 +233,86 @@ function DistributionKeyCard({ production, onAccept }: {
 
 // ── Page ─────────────────────────────────────────────────────
 
+// ── Aftalelicens types ────────────────────────────────────────
+interface AlKlipper { name: string; userId?: string; sharePercent: number; amount: number }
+interface AlEpisode { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; amount: number; klippere?: AlKlipper[] }
+interface AlVaerk { workId?: string; workTitle: string; vaerkType: string; totalAmount: number; klippere?: AlKlipper[]; episodes?: AlEpisode[]; status?: "pending" | "paid" }
+interface AlEntry { id: string; batchLabel: string; lockedAt: string; vaerker: AlVaerk[] }
+
+// Logged-in klipper (mock)
+const MY_USER_ID = "u1"
+const MY_NAME = "Anna Heide"
+
 export default function PortalOkonomiPage() {
     const { addContract } = useContracts()
     const [expanded, setExpanded] = useState<string | null>("008")
     const [accepted, setAccepted] = useState<Set<string>>(new Set())
     const [uploadFor, setUploadFor] = useState<MyProduction | null>(null)
+    const [alData, setAlData] = useState<{ entry: AlEntry; vaerk: AlVaerk; myAmount: number }[]>([])
+    const [expandedAl, setExpandedAl] = useState<string | null>(null)
+    // Episode distribution: key = `${productionId}_${episodeLabel}`, value = { percent: string, weeks: string }
+    const [episodeInputs, setEpisodeInputs] = useState<Record<string, { percent: string; weeks: string }>>({})
+    // Input mode per production: "percent" | "weeks"
+    const [epInputMode, setEpInputMode] = useState<Record<string, "percent" | "weeks">>({})
+
+    function setEpInput(productionId: string, episodeLabel: string, field: "percent" | "weeks", value: string) {
+        const key = `${productionId}_${episodeLabel}`
+        setEpisodeInputs(prev => ({ ...prev, [key]: { ...prev[key], [field]: value } }))
+    }
+
+    function getEpInput(productionId: string, episodeLabel: string) {
+        return episodeInputs[`${productionId}_${episodeLabel}`] ?? { percent: "", weeks: "" }
+    }
+
+    useEffect(() => {
+        const stored: AlEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
+        // Seed demo entry for Anna Heide if none exists
+        if (!stored.some(e => e.vaerker.some(v =>
+            v.klippere?.some(k => k.userId === MY_USER_ID) ||
+            v.episodes?.some(ep => ep.klippere?.some(k => k.userId === MY_USER_ID))
+        ))) {
+            const demo: AlEntry = {
+                id: "al_demo_anna",
+                batchLabel: "Copydan Verdens TV 2023",
+                lockedAt: new Date().toISOString(),
+                vaerker: [{
+                    workId: "008",
+                    workTitle: "Sygeplejersken",
+                    vaerkType: "tv_serie_lang",
+                    totalAmount: 112000,
+                    episodes: [
+                        { episodeLabel: "S1E3", broadcastDate: "2023-10-05", isGenudsendelse: false, amount: 38000, klippere: [{ name: MY_NAME, userId: MY_USER_ID, sharePercent: 100, amount: 38000 }] },
+                        { episodeLabel: "S1E5", broadcastDate: "2023-10-19", isGenudsendelse: false, amount: 38000, klippere: [{ name: MY_NAME, userId: MY_USER_ID, sharePercent: 100, amount: 38000 }] },
+                        { episodeLabel: "S1E5", broadcastDate: "2023-11-02", isGenudsendelse: true, amount: 19000, klippere: [{ name: MY_NAME, userId: MY_USER_ID, sharePercent: 100, amount: 19000 }] },
+                    ],
+                }],
+            }
+            stored.push(demo)
+            localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(stored))
+        }
+        // Filter for this klipper
+        const result: { entry: AlEntry; vaerk: AlVaerk; myAmount: number }[] = []
+        for (const entry of stored) {
+            for (const vaerk of entry.vaerker) {
+                const myEpisodes = vaerk.episodes?.filter(ep => ep.klippere?.some(k => k.userId === MY_USER_ID || k.name === MY_NAME))
+                const myFilmKlipper = vaerk.klippere?.find(k => k.userId === MY_USER_ID || k.name === MY_NAME)
+                if (myEpisodes?.length || myFilmKlipper) {
+                    const myAmount = myEpisodes
+                        ? myEpisodes.reduce((s, ep) => s + (ep.klippere?.find(k => k.userId === MY_USER_ID || k.name === MY_NAME)?.amount ?? 0), 0)
+                        : (myFilmKlipper?.amount ?? 0)
+                    result.push({ entry, vaerk: { ...vaerk, episodes: myEpisodes ?? vaerk.episodes }, myAmount })
+                }
+            }
+        }
+        setAlData(result)
+    }, [])
 
     const totalPaid = myProductions.reduce((s, p) =>
         s + p.payouts.filter(pay => pay.status === "paid").reduce((a, pay) => a + pay.myAmount, 0), 0)
+        + alData.filter(d => d.vaerk.status === "paid").reduce((s, d) => s + d.myAmount, 0)
     const totalPending = myProductions.reduce((s, p) =>
         s + p.payouts.filter(pay => pay.status !== "paid").reduce((a, pay) => a + pay.myAmount, 0), 0)
+        + alData.filter(d => d.vaerk.status !== "paid").reduce((s, d) => s + d.myAmount, 0)
     const needsAction = myProductions.filter(p =>
         p.distributionKey?.myShare.myAcceptStatus === "pending" && !accepted.has(p.id)
     ).length
@@ -335,6 +427,127 @@ export default function PortalOkonomiPage() {
                                         />
                                     )}
 
+                                    {/* Afsnit */}
+                                    {production.episodes && production.episodes.length > 0 && (() => {
+                                        const mode = epInputMode[production.id] ?? "percent"
+                                        const sharedEpisodes = production.episodes.filter(ep => ep.editors.length > 1 && ep.editors.some(e => e.isMe))
+                                        return (
+                                            <div className="rounded-lg border">
+                                                <div className="flex items-center justify-between px-4 py-3 border-b">
+                                                    <h3 className="text-sm font-medium">Afsnit</h3>
+                                                    {sharedEpisodes.length > 0 && (
+                                                        <div className="flex items-center gap-1 rounded-md border p-0.5 text-xs">
+                                                            <button
+                                                                onClick={() => setEpInputMode(prev => ({ ...prev, [production.id]: "percent" }))}
+                                                                className={`px-2 py-0.5 rounded transition-colors ${mode === "percent" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                                                            >%</button>
+                                                            <button
+                                                                onClick={() => setEpInputMode(prev => ({ ...prev, [production.id]: "weeks" }))}
+                                                                className={`px-2 py-0.5 rounded transition-colors ${mode === "weeks" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                                                            >uger</button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="divide-y">
+                                                    {production.episodes.map((ep, i) => {
+                                                        const isShared = ep.editors.length > 1
+                                                        const isMeInvolved = ep.editors.some(e => e.isMe)
+                                                        const myEditor = ep.editors.find(e => e.isMe)
+                                                        const inputs = getEpInput(production.id, ep.episodeLabel)
+
+                                                        // Calculate derived percent from weeks if mode=weeks
+                                                        const allWeeks = isShared && isMeInvolved
+                                                            ? ep.editors.map(e => {
+                                                                if (e.isMe) return parseFloat(inputs.weeks) || 0
+                                                                // other editors' weeks unknown until they enter — for now just show pending
+                                                                return null
+                                                            })
+                                                            : []
+                                                        const allWeeksEntered = allWeeks.every(w => w !== null && w > 0)
+
+                                                        let derivedPercent: number | null = null
+                                                        if (mode === "weeks" && isMeInvolved && isShared) {
+                                                            const myWeeks = parseFloat(inputs.weeks) || 0
+                                                            // Only show derived % if we know all weeks — simplification: single-side entry
+                                                            if (myWeeks > 0) {
+                                                                // We can't calculate without other editors' weeks in this mock
+                                                                // Show pending note instead
+                                                            }
+                                                        }
+                                                        if (mode === "percent" && isMeInvolved && isShared) {
+                                                            derivedPercent = parseFloat(inputs.percent) || null
+                                                        }
+
+                                                        return (
+                                                            <div key={i} className={`px-4 py-3 ${isShared && isMeInvolved ? "bg-muted/20" : ""}`}>
+                                                                <div className="flex items-start gap-3">
+                                                                    <span className="font-mono text-sm font-medium w-12 shrink-0">{ep.episodeLabel}</span>
+                                                                    <div className="flex-1 space-y-2">
+                                                                        <div className="flex flex-wrap gap-1.5">
+                                                                            {ep.editors.map((ed, j) => (
+                                                                                <span key={j} className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-md border ${ed.isMe ? "bg-primary/10 border-primary/30 font-medium" : "bg-muted border-border text-muted-foreground"}`}>
+                                                                                    {ed.sharePercent !== undefined && !isShared ? null : <Users className="h-3 w-3" />}
+                                                                                    {ed.name}
+                                                                                    {ed.sharePercent !== undefined && isShared && <span className="text-muted-foreground">{ed.sharePercent}%</span>}
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
+
+                                                                        {/* Distribution input for shared episodes where I'm involved and no locked share */}
+                                                                        {isShared && isMeInvolved && myEditor?.sharePercent === undefined && (
+                                                                            <div className="flex items-center gap-2 mt-1">
+                                                                                <span className="text-xs text-muted-foreground w-20 shrink-0">Min andel:</span>
+                                                                                {mode === "percent" ? (
+                                                                                    <div className="flex items-center gap-1">
+                                                                                        <Input
+                                                                                            type="number"
+                                                                                            min={0} max={100} step={0.5}
+                                                                                            placeholder="0"
+                                                                                            value={inputs.percent}
+                                                                                            onChange={e => setEpInput(production.id, ep.episodeLabel, "percent", e.target.value)}
+                                                                                            className="h-7 w-20 text-sm text-right"
+                                                                                        />
+                                                                                        <span className="text-sm text-muted-foreground">%</span>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <div className="flex items-center gap-1">
+                                                                                            <Input
+                                                                                                type="number"
+                                                                                                min={0} step={0.5}
+                                                                                                placeholder="0"
+                                                                                                value={inputs.weeks}
+                                                                                                onChange={e => setEpInput(production.id, ep.episodeLabel, "weeks", e.target.value)}
+                                                                                                className="h-7 w-20 text-sm text-right"
+                                                                                            />
+                                                                                            <span className="text-sm text-muted-foreground">uger</span>
+                                                                                        </div>
+                                                                                        <span className="text-xs text-muted-foreground italic">Procent beregnes når alle har indtastet</span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                                {sharedEpisodes.some(ep => {
+                                                    const inp = getEpInput(production.id, ep.episodeLabel)
+                                                    return mode === "percent" ? !!inp.percent : !!inp.weeks
+                                                }) && (
+                                                    <div className="px-4 py-3 border-t bg-muted/30 flex justify-end">
+                                                        <Button size="sm" className="gap-1.5">
+                                                            <CheckCircle2 className="h-3.5 w-3.5" />
+                                                            Send forslag til DFKS
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })()}
+
                                     {/* Udbetalinger */}
                                     <div className="rounded-lg border">
                                         <div className="px-4 py-3 border-b">
@@ -363,6 +576,91 @@ export default function PortalOkonomiPage() {
                     )
                 })}
             </div>
+
+            {/* Aftalelicens */}
+            {alData.length > 0 && (
+                <div className="space-y-3">
+                    <div>
+                        <h2 className="text-lg font-semibold">Aftalelicens</h2>
+                        <p className="mt-0.5 text-sm text-muted-foreground">Dine vederlag fra Copydan og TV2 Play</p>
+                    </div>
+                    <div className="space-y-3">
+                        {alData.map(({ entry, vaerk, myAmount }, i) => {
+                            const key = `${entry.id}_${i}`
+                            const isExpanded = expandedAl === key
+                            const status = vaerk.status ?? "pending"
+                            return (
+                                <div key={key} className="rounded-lg border overflow-hidden">
+                                    <button
+                                        className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted/30 transition-colors text-left"
+                                        onClick={() => setExpandedAl(isExpanded ? null : key)}
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <p className="font-medium truncate">{vaerk.workTitle}</p>
+                                                {status === "paid"
+                                                    ? <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 dark:bg-green-950 shrink-0">Udbetalt</Badge>
+                                                    : <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950 shrink-0">Afventer</Badge>
+                                                }
+                                            </div>
+                                            <p className="mt-0.5 text-xs text-muted-foreground flex items-center gap-1.5">
+                                                <Database className="h-3 w-3" />
+                                                {entry.batchLabel}
+                                            </p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                            <p className="text-sm font-medium tabular-nums">{fmt2(myAmount)}</p>
+                                            <p className="text-xs text-muted-foreground">mit beløb</p>
+                                        </div>
+                                        {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />}
+                                    </button>
+                                    {isExpanded && (
+                                        <div className="border-t bg-muted/10 p-4 space-y-3">
+                                            <p className="text-xs text-muted-foreground">Låst {new Date(entry.lockedAt).toLocaleDateString("da-DK")}</p>
+                                            {vaerk.episodes && vaerk.episodes.length > 0 && (
+                                                <div className="rounded-md border divide-y text-xs bg-card">
+                                                    {vaerk.episodes.map((ep, j) => {
+                                                        const myKlipper = ep.klippere?.find(k => k.userId === MY_USER_ID || k.name === MY_NAME)
+                                                        return (
+                                                            <div key={j} className="flex items-center gap-2 px-3 py-2.5">
+                                                                <span className="font-mono text-muted-foreground">↳</span>
+                                                                <span className="font-mono font-medium">{ep.episodeLabel}</span>
+                                                                {ep.broadcastDate && (
+                                                                    <span className="text-muted-foreground">
+                                                                        {new Date(ep.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                                                                    </span>
+                                                                )}
+                                                                {ep.isGenudsendelse && (
+                                                                    <span className="inline-flex items-center rounded px-1 py-0 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">½</span>
+                                                                )}
+                                                                {myKlipper && myKlipper.sharePercent < 100 && (
+                                                                    <span className="text-muted-foreground">{myKlipper.sharePercent}%</span>
+                                                                )}
+                                                                <span className="ml-auto tabular-nums font-medium">
+                                                                    {fmt2(myKlipper?.amount ?? 0)}
+                                                                </span>
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                            )}
+                                            {vaerk.klippere && !vaerk.episodes && (() => {
+                                                const myKlipper = vaerk.klippere.find(k => k.userId === MY_USER_ID || k.name === MY_NAME)
+                                                return myKlipper ? (
+                                                    <div className="rounded-md border text-xs bg-card px-3 py-2.5 flex justify-between">
+                                                        <span className="text-muted-foreground">{myKlipper.sharePercent}% andel</span>
+                                                        <span className="tabular-nums font-medium">{fmt2(myKlipper.amount)}</span>
+                                                    </div>
+                                                ) : null
+                                            })()}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
 
         <UploadContractDialog

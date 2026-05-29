@@ -8,7 +8,7 @@
  * Documents stored here are used as context for all AI contract screenings.
  */
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import {
     Upload,
     Trash2,
@@ -20,6 +20,11 @@ import {
     Archive,
     ChevronDown,
     ChevronUp,
+    Plus,
+    BookOpen,
+    Pencil,
+    Download,
+    Eye,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -55,9 +60,18 @@ import {
     setMemberList,
     getReferences,
     getMemberList,
+    getLegalNotes,
+    setLegalNotes,
+    getCaseLearnings,
+    setCaseLearnings,
     extractTextFromFile,
     type ReferenceDoc,
     type MemberList,
+    type LegalNote,
+    type LegalNotePriority,
+    type DocOwner,
+    type CaseLearning,
+    type CaseLearningKontrakttype,
 } from "@/lib/ai"
 
 // ── Types ────────────────────────────────────────────────────
@@ -102,6 +116,44 @@ const TYPE_COLORS: Record<DocType, string> = {
     "Reference": "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
 }
 
+const PRIORITY_CONFIG: Record<LegalNotePriority, { label: string; color: string; dot: string }> = {
+    "aktiv-indsats": {
+        label: "Aktiv indsats",
+        color: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
+        dot: "bg-orange-500",
+    },
+    "fast-regel": {
+        label: "Altid tjek",
+        color: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",
+        dot: "bg-indigo-500",
+    },
+    "orientering": {
+        label: "Orientering",
+        color: "bg-muted text-muted-foreground border-border",
+        dot: "bg-muted-foreground",
+    },
+}
+
+const PRIORITY_ORDER: LegalNotePriority[] = ["aktiv-indsats", "fast-regel", "orientering"]
+
+const KONTRAKTTYPE_CONFIG: Record<CaseLearningKontrakttype, { label: string; color: string }> = {
+    "a-loen":      { label: "A-lønskontrakt", color: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800" },
+    "leverandoer": { label: "Leverandørkontrakt", color: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800" },
+    "alle":        { label: "Alle typer", color: "bg-muted text-muted-foreground border-border" },
+}
+const KONTRAKTTYPE_ORDER: CaseLearningKontrakttype[] = ["a-loen", "leverandoer", "alle"]
+
+const OWNER_CONFIG: Record<DocOwner, { label: string; color: string }> = {
+    "de4": {
+        label: "De4 / DFKS",
+        color: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800",
+    },
+    "anden-fagforening": {
+        label: "Anden fagforening",
+        color: "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700",
+    },
+}
+
 function guessDocType(filename: string): DocType {
     const fn = filename.toLowerCase()
     const isLoen = fn.includes("loen") || fn.includes("løn") || fn.includes("wage")
@@ -134,8 +186,30 @@ export default function OverenskomsterPage() {
     const [docs, setDocs] = useState<ReferenceDoc[]>(() => getReferences())
     const [memberList, setMemberListState] = useState<MemberList>(() => getMemberList())
     const [archivedDocs, setArchivedDocs] = useState<ReferenceDoc[]>([])
+    const [legalNotes, setLegalNotesState] = useState<LegalNote[]>(() => getLegalNotes())
+    const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
+    const [caseLearnings, setCaseLearningsState] = useState<CaseLearning[]>(() => getCaseLearnings())
+    const [editingLearningId, setEditingLearningId] = useState<string | null>(null)
 
     const [uploading, setUploading] = useState(false)
+    const [viewingDoc, setViewingDoc] = useState<ReferenceDoc | null>(null)
+    const [viewHtml, setViewHtml] = useState<string | null>(null)
+
+    useEffect(() => {
+        if (!viewingDoc?.fileData) { setViewHtml(null); return }
+        const isDocx = viewingDoc.name.toLowerCase().endsWith(".docx") ||
+            viewingDoc.fileType?.includes("wordprocessingml")
+        if (!isDocx) { setViewHtml(null); return }
+        // Convert DOCX base64 → HTML via mammoth
+        import("mammoth").then(({ default: mammoth }) => {
+            const binary = atob(viewingDoc.fileData!)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+            mammoth.convertToHtml({ arrayBuffer: bytes.buffer })
+                .then(result => setViewHtml(result.value))
+                .catch(() => setViewHtml(null))
+        })
+    }, [viewingDoc])
     const [memberText, setMemberText] = useState(memberList.raw)
     const [memberTab, setMemberTab] = useState<"paste" | "upload">("paste")
     const [memberUploading, setMemberUploading] = useState(false)
@@ -151,12 +225,22 @@ export default function OverenskomsterPage() {
         const arr = Array.from(files)
         for (const f of arr) {
             try {
-                const text = await extractTextFromFile(f)
+                const [text, fileData] = await Promise.all([
+                    extractTextFromFile(f),
+                    new Promise<string>((res) => {
+                        const reader = new FileReader()
+                        reader.onload = (e) => res((e.target?.result as string).split(",")[1] ?? "")
+                        reader.readAsDataURL(f)
+                    }),
+                ])
                 const newDoc: ReferenceDoc = {
                     id: `doc_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                     name: f.name,
                     type: guessDocType(f.name),
+                    owner: "de4",
                     text,
+                    fileData,
+                    fileType: f.type || "application/octet-stream",
                     addedAt: new Date().toISOString(),
                 }
                 setDocs((prev) => {
@@ -171,6 +255,22 @@ export default function OverenskomsterPage() {
         }
         setUploading(false)
     }, [])
+
+    const downloadDoc = (doc: ReferenceDoc) => {
+        if (!doc.fileData) return
+        const link = document.createElement("a")
+        link.href = `data:${doc.fileType ?? "application/octet-stream"};base64,${doc.fileData}`
+        link.download = doc.name
+        link.click()
+    }
+
+    const updateDocOwner = (id: string, owner: DocOwner) => {
+        setDocs((prev) => {
+            const next = prev.map((d) => (d.id === id ? { ...d, owner } : d))
+            setReferences(next)
+            return next
+        })
+    }
 
     const updateDocType = (id: string, type: DocType) => {
         setDocs((prev) => {
@@ -308,18 +408,20 @@ export default function OverenskomsterPage() {
                                 <TableRow>
                                     <TableHead>Dokument</TableHead>
                                     <TableHead>Type</TableHead>
-                                    <TableHead className="hidden sm:table-cell">Størrelse</TableHead>
+                                    <TableHead>Ejer</TableHead>
                                     <TableHead className="hidden sm:table-cell">Tilføjet</TableHead>
-                                    <TableHead className="w-[100px]" />
+                                    <TableHead className="w-[130px]" />
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {docs.map((doc) => (
+                                {docs.map((doc) => {
+                                    const ownerCfg = OWNER_CONFIG[doc.owner ?? "de4"]
+                                    return (
                                     <TableRow key={doc.id}>
                                         <TableCell>
                                             <div className="flex items-center gap-2">
                                                 <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                                                <span className="text-sm font-medium truncate max-w-[200px]">
+                                                <span className="text-sm font-medium truncate max-w-[180px]">
                                                     {doc.name}
                                                 </span>
                                             </div>
@@ -329,7 +431,7 @@ export default function OverenskomsterPage() {
                                                 value={doc.type}
                                                 onValueChange={(v) => updateDocType(doc.id, v as DocType)}
                                             >
-                                                <SelectTrigger className="h-7 w-auto min-w-[180px] text-xs">
+                                                <SelectTrigger className="h-7 w-auto min-w-[160px] text-xs">
                                                     <SelectValue />
                                                 </SelectTrigger>
                                                 <SelectContent>
@@ -348,8 +450,15 @@ export default function OverenskomsterPage() {
                                                 </SelectContent>
                                             </Select>
                                         </TableCell>
-                                        <TableCell className="hidden sm:table-cell text-muted-foreground text-sm tabular-nums">
-                                            {(doc.text.length / 1000).toFixed(0)}k tegn
+                                        <TableCell>
+                                            <button
+                                                type="button"
+                                                title="Skift ejer"
+                                                onClick={() => updateDocOwner(doc.id, doc.owner === "de4" ? "anden-fagforening" : "de4")}
+                                                className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity ${ownerCfg.color}`}
+                                            >
+                                                {ownerCfg.label}
+                                            </button>
                                         </TableCell>
                                         <TableCell className="hidden sm:table-cell text-muted-foreground text-sm">
                                             {new Date(doc.addedAt).toLocaleDateString("da-DK")}
@@ -360,7 +469,27 @@ export default function OverenskomsterPage() {
                                                     variant="ghost"
                                                     size="icon"
                                                     className="h-7 w-7"
-                                                    title="Arkivér (bevar som historisk version)"
+                                                    title="Vis dokument"
+                                                    onClick={() => setViewingDoc(doc)}
+                                                >
+                                                    <Eye className="h-3.5 w-3.5" />
+                                                </Button>
+                                                {doc.fileData && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7"
+                                                        title="Download original"
+                                                        onClick={() => downloadDoc(doc)}
+                                                    >
+                                                        <Download className="h-3.5 w-3.5" />
+                                                    </Button>
+                                                )}
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-7 w-7"
+                                                    title="Arkivér"
                                                     onClick={() => archiveDoc(doc.id)}
                                                 >
                                                     <Archive className="h-3.5 w-3.5" />
@@ -377,7 +506,8 @@ export default function OverenskomsterPage() {
                                             </div>
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                    )
+                                })}
                             </TableBody>
                         </Table>
                     </div>
@@ -667,6 +797,349 @@ export default function OverenskomsterPage() {
                     </div>
                 )}
             </div>
+
+            <Separator />
+
+            {/* ── Section C: Legal notes ─────────────────────── */}
+            <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                    <div>
+                        <h2 className="text-base font-semibold">C — Juridiske noteringer</h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                            Faste DFKS-noteringer der altid indgår som baggrundsviden ved kontraktgennemgang.
+                            Kan redigeres hvis regelgrundlaget præciseres.
+                        </p>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                            const newNote: LegalNote = {
+                                id: `note_${Date.now()}`,
+                                title: "Ny notering",
+                                text: "",
+                                priority: "fast-regel",
+                                updatedAt: new Date().toISOString(),
+                            }
+                            const updated = [...legalNotes, newNote]
+                            setLegalNotesState(updated)
+                            setLegalNotes(updated)
+                            setEditingNoteId(newNote.id)
+                        }}
+                    >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        Tilføj notering
+                    </Button>
+                </div>
+
+                <div className="space-y-3">
+                    {[...legalNotes]
+                        .sort((a, b) => PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority))
+                        .map((note) => {
+                        const isEditing = editingNoteId === note.id
+                        const pc = PRIORITY_CONFIG[note.priority ?? "fast-regel"] ?? PRIORITY_CONFIG["fast-regel"]
+                        const updateNote = (patch: Partial<LegalNote>) => {
+                            const updated = legalNotes.map(n => n.id === note.id ? { ...n, ...patch } : n)
+                            setLegalNotesState(updated)
+                            setLegalNotes(updated)
+                        }
+                        return (
+                            <div key={note.id} className="rounded-lg border">
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                        {isEditing ? (
+                                            <input
+                                                className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
+                                                value={note.title}
+                                                onChange={(e) => updateNote({ title: e.target.value })}
+                                            />
+                                        ) : (
+                                            <span className="text-sm font-medium truncate">{note.title}</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {/* Priority selector — cycles through on click */}
+                                        <button
+                                            type="button"
+                                            title="Skift prioritet"
+                                            onClick={() => {
+                                                const idx = PRIORITY_ORDER.indexOf(note.priority ?? "fast-regel")
+                                                const next = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
+                                                updateNote({ priority: next, updatedAt: new Date().toISOString() })
+                                            }}
+                                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${pc.color}`}
+                                        >
+                                            <span className={`h-1.5 w-1.5 rounded-full ${pc.dot}`} />
+                                            {pc.label}
+                                        </button>
+                                        <span className="text-xs text-muted-foreground hidden sm:block">
+                                            {new Date(note.updatedAt).toLocaleDateString("da-DK")}
+                                        </span>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            title={isEditing ? "Gem" : "Rediger"}
+                                            onClick={() => {
+                                                if (isEditing) {
+                                                    updateNote({ updatedAt: new Date().toISOString() })
+                                                    setEditingNoteId(null)
+                                                    toast.success("Notering gemt")
+                                                } else {
+                                                    setEditingNoteId(note.id)
+                                                }
+                                            }}
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7 text-destructive hover:text-destructive"
+                                            title="Slet notering"
+                                            onClick={() => {
+                                                const updated = legalNotes.filter(n => n.id !== note.id)
+                                                setLegalNotesState(updated)
+                                                setLegalNotes(updated)
+                                                if (editingNoteId === note.id) setEditingNoteId(null)
+                                                toast.success("Notering slettet")
+                                            }}
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="px-4 py-3 space-y-3">
+                                    {isEditing ? (
+                                        <Textarea
+                                            value={note.text}
+                                            onChange={(e) => updateNote({ text: e.target.value })}
+                                            rows={6}
+                                            className="text-sm font-mono"
+                                        />
+                                    ) : (
+                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{note.text}</p>
+                                    )}
+                                    <label className="flex items-center gap-2 cursor-pointer w-fit">
+                                        <input
+                                            type="checkbox"
+                                            checked={note.excludeForOverenskomst ?? false}
+                                            onChange={(e) => updateNote({ excludeForOverenskomst: e.target.checked })}
+                                            className="h-3.5 w-3.5 rounded border-border accent-foreground"
+                                        />
+                                        <span className="text-xs text-muted-foreground">
+                                            Gælder ikke for overenskomstkontrakter (A-løn)
+                                        </span>
+                                    </label>
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+
+                {legalNotes.length === 0 && (
+                    <div className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center">
+                        <p className="text-sm text-muted-foreground w-full">
+                            Ingen faste noteringer. Klik "Tilføj notering" for at oprette en.
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            <Separator />
+
+            {/* ── Section D: Case learnings ──────────────────── */}
+            <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                    <div>
+                        <h2 className="text-base font-semibold">D — Lærte mønstre</h2>
+                        <p className="text-sm text-muted-foreground mt-0.5">
+                            Konkrete regler lært fra sagsbehandling. Tilføj hvad AI'en fejlede og formulér
+                            den korrekte regel — den injiceres automatisk i alle fremtidige kontraktgennemgange.
+                        </p>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                            const newLearning: CaseLearning = {
+                                id: `learning_${Date.now()}`,
+                                kontrakttype: "alle",
+                                titel: "Ny sagserfaring",
+                                regel: "",
+                                addedAt: new Date().toISOString(),
+                            }
+                            const updated = [...caseLearnings, newLearning]
+                            setCaseLearningsState(updated)
+                            setCaseLearnings(updated)
+                            setEditingLearningId(newLearning.id)
+                        }}
+                    >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />
+                        Tilføj sagserfaring
+                    </Button>
+                </div>
+
+                <div className="space-y-3">
+                    {caseLearnings.map((learning) => {
+                        const isEditing = editingLearningId === learning.id
+                        const kt = KONTRAKTTYPE_CONFIG[learning.kontrakttype ?? "alle"]
+                        const updateLearning = (patch: Partial<CaseLearning>) => {
+                            const updated = caseLearnings.map(l => l.id === learning.id ? { ...l, ...patch } : l)
+                            setCaseLearningsState(updated)
+                            setCaseLearnings(updated)
+                        }
+                        return (
+                            <div key={learning.id} className="rounded-lg border">
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                        {isEditing ? (
+                                            <input
+                                                className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
+                                                value={learning.titel}
+                                                onChange={(e) => updateLearning({ titel: e.target.value })}
+                                            />
+                                        ) : (
+                                            <span className="text-sm font-medium truncate">{learning.titel}</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            title="Skift kontrakttype"
+                                            onClick={() => {
+                                                const idx = KONTRAKTTYPE_ORDER.indexOf(learning.kontrakttype ?? "alle")
+                                                const next = KONTRAKTTYPE_ORDER[(idx + 1) % KONTRAKTTYPE_ORDER.length]
+                                                updateLearning({ kontrakttype: next })
+                                            }}
+                                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${kt.color}`}
+                                        >
+                                            {kt.label}
+                                        </button>
+                                        <span className="text-xs text-muted-foreground hidden sm:block">
+                                            {new Date(learning.addedAt).toLocaleDateString("da-DK")}
+                                        </span>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            title={isEditing ? "Gem" : "Rediger"}
+                                            onClick={() => {
+                                                if (isEditing) {
+                                                    setEditingLearningId(null)
+                                                    toast.success("Sagserfaring gemt")
+                                                } else {
+                                                    setEditingLearningId(learning.id)
+                                                }
+                                            }}
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="h-7 w-7 text-destructive hover:text-destructive"
+                                            title="Slet sagserfaring"
+                                            onClick={() => {
+                                                const updated = caseLearnings.filter(l => l.id !== learning.id)
+                                                setCaseLearningsState(updated)
+                                                setCaseLearnings(updated)
+                                                if (editingLearningId === learning.id) setEditingLearningId(null)
+                                                toast.success("Sagserfaring slettet")
+                                            }}
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="px-4 py-3">
+                                    {isEditing ? (
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">Konkret regel (injiceres i AI-prompten)</Label>
+                                            <Textarea
+                                                value={learning.regel}
+                                                onChange={(e) => updateLearning({ regel: e.target.value })}
+                                                rows={4}
+                                                className="text-sm font-mono"
+                                                placeholder="Fx: En kontrakt med CVR-nummer og momsopkrævning er ALTID en leverandørkontrakt — sæt aldrig collectiveAgreement til true for sådanne kontrakter."
+                                            />
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{learning.regel || <span className="italic">Ingen regel skrevet endnu</span>}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+
+                {caseLearnings.length === 0 && (
+                    <div className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center">
+                        <p className="text-sm text-muted-foreground w-full">
+                            Ingen lærte mønstre endnu. Klik "Tilføj sagserfaring" eller brug "Gem som sagserfaring" i kontraktgennemgang.
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            {/* ── Document viewer overlay ────────────────────── */}
+            {viewingDoc && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+                    onClick={() => setViewingDoc(null)}
+                >
+                    <div
+                        className="bg-background rounded-lg border shadow-xl w-full max-w-4xl h-[85vh] flex flex-col"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+                            <div className="flex items-center gap-2">
+                                <FileText className="h-4 w-4 text-muted-foreground" />
+                                <span className="text-sm font-medium">{viewingDoc.name}</span>
+                                <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${OWNER_CONFIG[viewingDoc.owner ?? "de4"].color}`}>
+                                    {OWNER_CONFIG[viewingDoc.owner ?? "de4"].label}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {viewingDoc.fileData && (
+                                    <Button size="sm" variant="outline" onClick={() => downloadDoc(viewingDoc)}>
+                                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                                        Download
+                                    </Button>
+                                )}
+                                <Button size="sm" variant="ghost" onClick={() => setViewingDoc(null)}>
+                                    Luk
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-hidden">
+                            {viewingDoc.fileData && viewingDoc.fileType === "application/pdf" ? (
+                                // PDF: render nativt i iframe
+                                <iframe
+                                    src={`data:application/pdf;base64,${viewingDoc.fileData}`}
+                                    className="w-full h-full border-0"
+                                    title={viewingDoc.name}
+                                />
+                            ) : viewHtml ? (
+                                // DOCX: konverteret til HTML
+                                <div
+                                    className="overflow-auto h-full p-6 prose prose-sm max-w-none dark:prose-invert"
+                                    dangerouslySetInnerHTML={{ __html: viewHtml }}
+                                />
+                            ) : (
+                                // Fallback: plain text
+                                <div className="overflow-auto h-full p-5">
+                                    <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
+                                        {viewingDoc.text}
+                                    </pre>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

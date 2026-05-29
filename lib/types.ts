@@ -124,6 +124,7 @@ export interface Work {
     sharedWith?: string[] // names of other credited users
     duration: number
     episodes?: Episode[]
+    editedEpisodes?: number[] // episode numbers this user has edited
     contractId: string
     category: Category
     premiereYear: number

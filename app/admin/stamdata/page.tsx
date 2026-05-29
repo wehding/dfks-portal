@@ -1129,6 +1129,81 @@ function AiModelSettings() {
     )
 }
 
+// ── Eksportkolonner ───────────────────────────────────────────
+
+interface ExportColumn {
+    id: string
+    label: string
+    required?: boolean
+    enabled: boolean
+}
+
+const DEFAULT_EXPORT_COLUMNS: ExportColumn[] = [
+    { id: "navn",           label: "Navn",            required: true, enabled: true },
+    { id: "cpr",            label: "CPR-nummer",       enabled: true },
+    { id: "beloeb",         label: "Beløb",            required: true, enabled: true },
+    { id: "vaerkstitel",    label: "Værkstitel",       enabled: true },
+    { id: "episode",        label: "Episode",          enabled: false },
+    { id: "udsendelsesdato",label: "Udsendelsesdato",  enabled: false },
+    { id: "kilde",          label: "Kilde",            enabled: true },
+    { id: "betalingstype",  label: "Betalingstype",    enabled: true },
+    { id: "batch",          label: "Batch",            enabled: false },
+]
+
+const EXPORT_COL_KEY = "dfks_export_columns"
+
+function ExportKolonnerTab() {
+    const [cols, setCols] = useState<ExportColumn[]>(() => {
+        if (typeof window === "undefined") return DEFAULT_EXPORT_COLUMNS
+        try {
+            const stored = JSON.parse(localStorage.getItem(EXPORT_COL_KEY) ?? "null")
+            if (Array.isArray(stored)) return stored
+        } catch {}
+        return DEFAULT_EXPORT_COLUMNS
+    })
+    const [saved, setSaved] = useState(false)
+
+    function toggle(id: string) {
+        setCols(prev => prev.map(c => c.id === id && !c.required ? { ...c, enabled: !c.enabled } : c))
+        setSaved(false)
+    }
+
+    function handleSave() {
+        localStorage.setItem(EXPORT_COL_KEY, JSON.stringify(cols))
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2000)
+    }
+
+    return (
+        <div className="max-w-lg space-y-4">
+            <p className="text-sm text-muted-foreground">
+                Vælg hvilke kolonner der medtages i CSV- og Excel-eksport af udbetalingsbatches.
+                Påkrævede kolonner kan ikke deaktiveres.
+            </p>
+            <div className="rounded-md border divide-y">
+                {cols.map(col => (
+                    <div key={col.id} className="flex items-center justify-between px-4 py-3">
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{col.label}</span>
+                            {col.required && (
+                                <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">Påkrævet</span>
+                            )}
+                        </div>
+                        <Switch
+                            checked={col.enabled}
+                            disabled={col.required}
+                            onCheckedChange={() => toggle(col.id)}
+                        />
+                    </div>
+                ))}
+            </div>
+            <Button size="sm" onClick={handleSave}>
+                {saved ? <><Check className="h-3 w-3 mr-1.5" /> Gemt</> : <><Save className="h-3 w-3 mr-1.5" /> Gem kolonner</>}
+            </Button>
+        </div>
+    )
+}
+
 export default function AdminStamdataPage() {
     const { t } = useI18n()
 
@@ -1149,6 +1224,7 @@ export default function AdminStamdataPage() {
                     <TabsTrigger value="settings">AI indstillinger</TabsTrigger>
                     <TabsTrigger value="filtreringsregler">Filtreringsregler</TabsTrigger>
                     <TabsTrigger value="vaegt">Vægte og hensættelser</TabsTrigger>
+                    <TabsTrigger value="eksport">Eksportkolonner</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="roles" className="mt-4">
@@ -1193,6 +1269,10 @@ export default function AdminStamdataPage() {
 
                 <TabsContent value="vaegt" className="mt-4">
                     <VaegteTab />
+                </TabsContent>
+
+                <TabsContent value="eksport" className="mt-4">
+                    <ExportKolonnerTab />
                 </TabsContent>
             </Tabs>
         </div>

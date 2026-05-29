@@ -202,6 +202,7 @@ export const mockWorks: Work[] = [
             { number: 2, title: "Vendepunktet", duration: 38 },
             { number: 3, title: "Lys i mørket", duration: 35 },
         ],
+        editedEpisodes: [1, 3],
         contractId: "c3",
         category: "tvSeries",
         premiereYear: 2026,

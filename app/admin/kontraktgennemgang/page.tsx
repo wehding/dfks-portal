@@ -16,7 +16,7 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
-    MessageSquare, Archive, X, Send,
+    MessageSquare, Archive, X, Send, Pencil, Eye, BookMarked,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -29,6 +29,10 @@ import { Separator } from "@/components/ui/separator"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
+import {
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog"
+import { getLegalNotes, getCaseLearnings, setCaseLearnings, type CaseLearning, type CaseLearningKontrakttype } from "@/lib/ai"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -44,11 +48,7 @@ interface FeedbackPoint {
 
 interface FeedbackMail {
     emne: string
-    hilsen: string
-    indledning: string
-    punkter: string[]
-    afslutning: string
-    underskrift: string
+    tekst: string
 }
 
 interface ReviewResult {
@@ -58,11 +58,14 @@ interface ReviewResult {
         periode: string
         kontrakttype: string
         overenskomst: string | null
+        erLeverandoerkontrakt?: boolean
+        honorarUge?: number | null
     }
     feedbackpunkter: FeedbackPoint[]
     feedbackmail: FeedbackMail
     samlet_vurdering: "godkendt" | "forbehold" | "kritisk"
     prioriterede_forhandlingspunkter: string[]
+    prioriterede_mail_sektioner?: (number | null)[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -110,16 +113,46 @@ function highlightText(text: string, quotes: string[], activeQuote: string | nul
 }
 
 function buildMailText(mail: FeedbackMail): string {
-    return [
-        mail.hilsen,
-        "",
-        mail.indledning,
-        "",
-        ...mail.punkter.flatMap((p) => [p, ""]),
-        mail.afslutning,
-        "",
-        mail.underskrift,
-    ].join("\n")
+    return mail.tekst ?? ""
+}
+
+// Render mail text with [GUL]...[/GUL] as yellow highlighted spans
+function renderMailWithHighlights(text: string): React.ReactNode[] {
+    const parts = text.split(/(\[GUL\][\s\S]*?\[\/GUL\])/g)
+    return parts.map((part, i) => {
+        if (part.startsWith("[GUL]") && part.endsWith("[/GUL]")) {
+            const inner = part.slice(5, -6)
+            return (
+                <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">
+                    {inner}
+                </mark>
+            )
+        }
+        return <span key={i}>{part}</span>
+    })
+}
+
+// Fjerner et specifikt nummereret afsnit fra mailteksten (fx afsnit 2 = "2. Betaling\n...")
+// Afsnittet slutter ved næste nummererede overskrift — footeren bevares altid
+function removeMailSection(text: string, sectionNum: number): string {
+    const lines = text.split("\n")
+    const headerRe = /^(\d+)[.)]\s+\S/
+    const headers: { lineIdx: number; num: number }[] = []
+    lines.forEach((line, i) => {
+        const m = line.match(headerRe)
+        if (m) headers.push({ lineIdx: i, num: parseInt(m[1]) })
+    })
+    const target = headers.find(h => h.num === sectionNum)
+    if (!target) return text
+    const tIdx = headers.indexOf(target)
+    const endLine = tIdx + 1 < headers.length ? headers[tIdx + 1].lineIdx : lines.length
+    return [...lines.slice(0, target.lineIdx), ...lines.slice(endLine)]
+        .join("\n").replace(/\n{3,}/g, "\n\n").trim()
+}
+
+function extractGulText(text: string): string {
+    const matches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)]
+    return matches.map(m => m[1].trim()).join("\n\n")
 }
 
 // ── Main Page ─────────────────────────────────────────────────
@@ -137,14 +170,35 @@ export default function KontraktGennemgangPage() {
     const [mailSubject, setMailSubject] = useState("")
     const [archived, setArchived] = useState<{ date: string; subject: string; body: string; member: string }[]>([])
     const [showArchive, setShowArchive] = useState(false)
+    const [mailEditMode, setMailEditMode] = useState(false)
+    const [showSaveLearning, setShowSaveLearning] = useState(false)
+    const [learningDraft, setLearningDraft] = useState<{ titel: string; kontrakttype: CaseLearningKontrakttype; regel: string }>({ titel: "", kontrakttype: "alle", regel: "" })
+    const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+    const [dismissedPoints, setDismissedPoints] = useState<Set<number>>(new Set())
     const fileRef = useRef<HTMLInputElement>(null)
     const docRef = useRef<HTMLDivElement>(null)
+    const originalMailRef = useRef<string>("")  // original AI-mail — bruges til at genberegne ved fravalg
 
-    // Sync mail text when result arrives
+    // Create object URL for PDF files so the viewer can display them
+    useEffect(() => {
+        if (file && (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"))) {
+            const url = URL.createObjectURL(file)
+            setPdfUrl(url)
+            return () => URL.revokeObjectURL(url)
+        } else {
+            setPdfUrl(null)
+        }
+    }, [file])
+
+    // Sync mail text when result arrives — gem original og åbn i redigeringsvisning
     useEffect(() => {
         if (result?.feedbackmail) {
-            setMailText(buildMailText(result.feedbackmail))
+            const text = buildMailText(result.feedbackmail)
+            originalMailRef.current = text
+            setMailText(text)
             setMailSubject(result.feedbackmail.emne)
+            setDismissedPoints(new Set())
+            setMailEditMode(false)  // vis GUL-highlight i preview som standard
         }
     }, [result])
 
@@ -174,6 +228,10 @@ export default function KontraktGennemgangPage() {
             const payload = new FormData()
             payload.append("file", file)
             if (memberName) payload.append("memberName", memberName)
+            const notes = getLegalNotes()
+            if (notes.length > 0) payload.append("legalNotes", JSON.stringify(notes.map(n => ({ title: n.title, text: n.text, priority: n.priority, excludeForOverenskomst: n.excludeForOverenskomst ?? false }))))
+            const learnings = getCaseLearnings()
+            if (learnings.length > 0) payload.append("caseLearnings", JSON.stringify(learnings))
 
             const resp = await fetch("/api/gennemgang", { method: "POST", body: payload })
             if (!resp.ok) {
@@ -190,6 +248,52 @@ export default function KontraktGennemgangPage() {
             toast.error(`Gennemgang fejlede: ${e.message}`)
         }
         setAnalyzing(false)
+    }
+
+    const handleDismissNegotiationPoint = (i: number) => {
+        const newDismissed = new Set(dismissedPoints)
+        if (newDismissed.has(i)) newDismissed.delete(i); else newDismissed.add(i)
+        setDismissedPoints(newDismissed)
+
+        // Genberegn mailtekst fra original AI-output med alle fravalgte punkter fjernet
+        if (!result?.prioriterede_forhandlingspunkter || !originalMailRef.current) return
+        let text = originalMailRef.current
+
+        result.prioriterede_forhandlingspunkter.forEach((point, idx) => {
+            if (!newDismissed.has(idx)) return
+
+            // Strategi 1: brug AI-angivet afsnitsnummer (mest præcist)
+            const sectionNum = result.prioriterede_mail_sektioner?.[idx]
+            if (sectionNum) {
+                text = removeMailSection(text, sectionNum)
+                return
+            }
+
+            // Strategi 2: keyword-match på \n\n-blokke
+            const keyword = point.slice(0, 35).toLowerCase().trim()
+            const blocks = text.split(/\n\n+/)
+            const filtered = blocks.filter(block => {
+                const clean = block.replace(/\[GUL\]|\[\/GUL\]/gi, "")
+                return !(keyword.length > 5 && clean.toLowerCase().includes(keyword))
+            })
+            if (filtered.length < blocks.length) { text = filtered.join("\n\n"); return }
+
+            // Strategi 3: linje-for-linje med heading-detektion
+            const sectionHeaderRe = /^\s*\d+[.)]\s+/
+            let inSection = false
+            const kept: string[] = []
+            for (const line of text.split("\n")) {
+                const clean = line.replace(/\[GUL\]|\[\/GUL\]/gi, "")
+                const isHeading = sectionHeaderRe.test(clean)
+                if (isHeading && keyword.length > 5 && clean.toLowerCase().includes(keyword)) { inSection = true; continue }
+                if (inSection && isHeading) inSection = false
+                if (!inSection) kept.push(line)
+            }
+            text = kept.join("\n")
+        })
+
+        text = text.replace(/\n{3,}/g, "\n\n").trim()
+        setMailText(text)
     }
 
     const handleFpClick = (fp: FeedbackPoint) => {
@@ -218,6 +322,13 @@ export default function KontraktGennemgangPage() {
     const handleCopyMail = () => {
         navigator.clipboard.writeText(mailText)
         toast.success("Mail kopieret til udklipsholder")
+    }
+
+    const handleCopyGul = () => {
+        const gul = extractGulText(mailText)
+        if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
+        navigator.clipboard.writeText(gul)
+        toast.success("Producent-tekst kopieret (kun gule afsnit)")
     }
 
     const reset = () => {
@@ -345,7 +456,7 @@ export default function KontraktGennemgangPage() {
     const verdictCfg = VERDICT_CONFIG[result.samlet_vurdering]
 
     return (
-        <div className="flex flex-col h-[calc(100vh-80px)]">
+        <div className="flex flex-col">
             {/* Top bar */}
             <div className="flex items-center gap-3 px-1 pb-4 shrink-0 flex-wrap">
                 <Button variant="ghost" size="sm" className="gap-1.5" onClick={reset}>
@@ -358,28 +469,29 @@ export default function KontraktGennemgangPage() {
                 <div className={`ml-auto inline-flex items-center rounded-md border px-2.5 py-1 text-xs font-medium ${verdictCfg.class}`}>
                     {verdictCfg.label}
                 </div>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs h-7"
+                    title="Gem en regel AI'en skal lære af denne sag"
+                    onClick={() => {
+                        const kontrakttype: CaseLearningKontrakttype = result.overblik.erLeverandoerkontrakt ? "leverandoer" : "a-loen"
+                        setLearningDraft({ titel: "", kontrakttype, regel: "" })
+                        setShowSaveLearning(true)
+                    }}
+                >
+                    <BookMarked className="h-3.5 w-3.5" />
+                    Gem som sagserfaring
+                </Button>
                 <span className="text-[10px] text-muted-foreground border rounded px-2 py-1">
                     Følsomme data maskeret · Fil ikke gemt
                 </span>
             </div>
 
-            {/* Three-panel layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
+            {/* Two-panel layout: AI analyse + feedback mail */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-110px)]">
 
-                {/* Panel 1: Document with highlights */}
-                <div className="rounded-lg border flex flex-col min-h-0">
-                    <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
-                        <span className="text-xs font-medium">Kontrakt</span>
-                        <span className="text-xs text-muted-foreground ml-auto">{file?.name}</span>
-                    </div>
-                    <div
-                        ref={docRef}
-                        className="flex-1 overflow-y-auto p-4 text-xs leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap"
-                        dangerouslySetInnerHTML={{ __html: highlightedHtml || "<span class='text-muted-foreground'>Dokumenttekst ikke tilgængelig</span>" }}
-                    />
-                </div>
-
-                {/* Panel 2: Feedback points */}
+                {/* Panel 1: Feedback points */}
                 <div className="rounded-lg border flex flex-col min-h-0">
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
@@ -389,6 +501,53 @@ export default function KontraktGennemgangPage() {
                         </Badge>
                     </div>
                     <div className="flex-1 overflow-y-auto divide-y">
+                        {result.overblik.erLeverandoerkontrakt && result.overblik.honorarUge && result.overblik.honorarUge > 0 && (() => {
+                            const w = result.overblik.honorarUge!
+                            const grundloen = w / 1.125
+                            const feriepenge = w - grundloen
+                            const DE4_NORMALLON = 14637 // kr/uge, Løngruppe 2 (Klipper), 2022
+                            const pension = DE4_NORMALLON * 0.095
+                            const helligdag = DE4_NORMALLON * 0.01
+                            const beta = DE4_NORMALLON * 0.005
+                            const netto = grundloen - pension - helligdag - beta
+                            const fmt = (n: number) => Math.round(n).toLocaleString("da-DK")
+                            return (
+                                <div className="px-4 py-3 bg-amber-50/60 dark:bg-amber-950/20 border-b border-amber-200 dark:border-amber-800 space-y-2">
+                                    <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-300">Reel løn — leverandørkontrakt</p>
+                                    <div className="space-y-1 text-xs">
+                                        <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Honorar/uge (alt-inkl.)</span>
+                                            <span className="font-mono tabular-nums">{fmt(w)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between text-red-700 dark:text-red-400">
+                                            <span>− Feriepenge (12,5% inkl.)</span>
+                                            <span className="font-mono tabular-nums">−{fmt(feriepenge)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between border-t border-border/50 pt-1">
+                                            <span className="text-muted-foreground">= Grundløn</span>
+                                            <span className="font-mono tabular-nums">{fmt(grundloen)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between text-red-700 dark:text-red-400">
+                                            <span>− Pension (9,5% af grundlønnen)</span>
+                                            <span className="font-mono tabular-nums">−{fmt(pension)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between text-red-700 dark:text-red-400">
+                                            <span>− Helligdage (1% — betales ikke af prod.)</span>
+                                            <span className="font-mono tabular-nums">−{fmt(helligdag)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between text-red-700 dark:text-red-400">
+                                            <span>− BETA-fond (0,5% — betales ikke af prod.)</span>
+                                            <span className="font-mono tabular-nums">−{fmt(beta)} kr</span>
+                                        </div>
+                                        <div className="flex justify-between border-t border-border/50 pt-1 font-semibold">
+                                            <span>= Reel nettoløn/uge</span>
+                                            <span className="font-mono tabular-nums">{fmt(netto)} kr</span>
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] text-muted-foreground">De4-normalløn 2022: 14.637 kr/uge — producenten betaler pension, helligdage og BETA oveni.</p>
+                                </div>
+                            )
+                        })()}
                         {result.feedbackpunkter.map((fp) => {
                             const cfg = TYPE_CONFIG[fp.type] || TYPE_CONFIG.info
                             const Icon = cfg.icon
@@ -437,16 +596,32 @@ export default function KontraktGennemgangPage() {
                         })}
 
                         {result.prioriterede_forhandlingspunkter.length > 0 && (
-                            <div className="px-4 py-3 space-y-2">
-                                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-                                    Prioriterede forhandlingspunkter
-                                </p>
-                                {result.prioriterede_forhandlingspunkter.map((p, i) => (
-                                    <div key={i} className="flex gap-2">
-                                        <span className="text-muted-foreground text-[11px] shrink-0">{i + 1}.</span>
-                                        <p className="text-[11px]">{p}</p>
-                                    </div>
-                                ))}
+                            <div className="px-4 py-3 space-y-1.5">
+                                <div className="flex items-center gap-1.5 mb-2">
+                                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide flex-1">
+                                        Prioriterede forhandlingspunkter
+                                    </p>
+                                    <p className="text-[9px] text-muted-foreground">Klik for at fravælge</p>
+                                </div>
+                                {result.prioriterede_forhandlingspunkter.map((p, i) => {
+                                    const dismissed = dismissedPoints.has(i)
+                                    return (
+                                        <button
+                                            key={i}
+                                            onClick={() => handleDismissNegotiationPoint(i)}
+                                            className={`w-full text-left flex gap-2 rounded px-1.5 py-1 transition-colors hover:bg-muted/50 ${dismissed ? "opacity-40" : ""}`}
+                                            title={dismissed ? "Klik for at genaktivere" : "Klik for at fravælge fra mailen"}
+                                        >
+                                            <span className={`text-muted-foreground text-[11px] shrink-0 ${dismissed ? "line-through" : ""}`}>{i + 1}.</span>
+                                            <p className={`text-[11px] text-left ${dismissed ? "line-through" : ""}`}>{p}</p>
+                                        </button>
+                                    )
+                                })}
+                                {dismissedPoints.size > 0 && (
+                                    <p className="text-[9px] text-muted-foreground pt-1 border-t">
+                                        {dismissedPoints.size} punkt{dismissedPoints.size > 1 ? "er" : ""} fravalgt — klik igen for at gendanne
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
@@ -457,8 +632,16 @@ export default function KontraktGennemgangPage() {
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Mail className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-xs font-medium">Feedback-mail</span>
-                        <div className="ml-auto flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér" onClick={handleCopyMail}>
+                        <div className="ml-auto flex items-center gap-1">
+                            {/* Edit/Preview toggle */}
+                            <button
+                                onClick={() => setMailEditMode(m => !m)}
+                                className={`flex items-center gap-1 rounded px-2 py-0.5 text-[10px] border transition-colors ${mailEditMode ? "bg-muted border-border" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+                                title={mailEditMode ? "Vis preview" : "Rediger"}
+                            >
+                                {mailEditMode ? <><Eye className="h-3 w-3" /> Vis</> : <><Pencil className="h-3 w-3" /> Rediger</>}
+                            </button>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={handleCopyMail}>
                                 <Copy className="h-3 w-3" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Arkivér" onClick={handleArchiveMail}>
@@ -491,22 +674,126 @@ export default function KontraktGennemgangPage() {
                         </div>
                     </div>
 
-                    {/* Editable mail body */}
-                    <Textarea
-                        value={mailText}
-                        onChange={(e) => setMailText(e.target.value)}
-                        className="flex-1 resize-none rounded-none border-0 text-xs font-mono focus-visible:ring-0 min-h-0"
-                        placeholder="Feedback-mail udkast..."
-                    />
+                    {/* Mail body — rendered or editable */}
+                    {mailEditMode ? (
+                        <Textarea
+                            value={mailText}
+                            onChange={(e) => setMailText(e.target.value)}
+                            className="flex-1 resize-none rounded-none border-0 text-xs font-mono focus-visible:ring-0 min-h-0"
+                            placeholder="Feedback-mail udkast..."
+                        />
+                    ) : (
+                        <div className="flex-1 overflow-y-auto px-4 py-3 text-xs leading-relaxed whitespace-pre-wrap">
+                            {mailText
+                                ? renderMailWithHighlights(mailText)
+                                : <span className="text-muted-foreground">Feedback-mail udkast...</span>
+                            }
+                        </div>
+                    )}
 
-                    <div className="border-t px-4 py-2.5 shrink-0">
-                        <Button size="sm" className="w-full gap-2 text-xs" onClick={handleOpenMail}>
+                    <div className="border-t px-4 py-2.5 shrink-0 flex gap-2">
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs flex-1" onClick={handleCopyGul}>
+                            <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-300 shrink-0" />
+                            Kopiér til producent
+                        </Button>
+                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={handleOpenMail}>
                             <Send className="h-3.5 w-3.5" />
                             Åbn i mailprogram
                         </Button>
                     </div>
                 </div>
             </div>
+
+            {/* Document viewer — below the two panels, reachable by scrolling */}
+            <div className="rounded-lg border flex flex-col mt-4 mb-8" style={{ height: "75vh" }}>
+                <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0">
+                    <span className="text-xs font-medium">Kontrakt</span>
+                    <span className="text-xs text-muted-foreground ml-auto">{file?.name}</span>
+                </div>
+                {pdfUrl ? (
+                    <iframe
+                        src={pdfUrl}
+                        className="flex-1 w-full border-0 min-h-0"
+                        title={file?.name}
+                    />
+                ) : (
+                    <div
+                        ref={docRef}
+                        className="flex-1 overflow-y-auto p-4 text-xs leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap min-h-0"
+                        dangerouslySetInnerHTML={{ __html: highlightedHtml || "<span class='text-muted-foreground'>Dokumenttekst ikke tilgængelig for PDF-filer — brug DOCX eller TXT for highlight</span>" }}
+                    />
+                )}
+            </div>
+
+            {/* ── Gem som sagserfaring dialog ─────────────────── */}
+            <Dialog open={showSaveLearning} onOpenChange={setShowSaveLearning}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Gem som sagserfaring</DialogTitle>
+                        <DialogDescription>
+                            Formulér hvad AI'en fejlede og den korrekte regel — den tilføjes til AI-prompten ved alle fremtidige gennemgange.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Hvad gik AI'en galt? (kort titel)</Label>
+                            <Input
+                                value={learningDraft.titel}
+                                onChange={(e) => setLearningDraft(d => ({ ...d, titel: e.target.value }))}
+                                placeholder="Fx: AI klassificerede leverandørkontrakt som overenskomstkontrakt"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Gælder for</Label>
+                            <Select
+                                value={learningDraft.kontrakttype}
+                                onValueChange={(v) => setLearningDraft(d => ({ ...d, kontrakttype: v as CaseLearningKontrakttype }))}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="alle">Alle kontrakttyper</SelectItem>
+                                    <SelectItem value="a-loen">Kun A-lønskontrakter</SelectItem>
+                                    <SelectItem value="leverandoer">Kun leverandørkontrakter</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Korrekt regel (injiceres direkte i AI-prompten)</Label>
+                            <Textarea
+                                value={learningDraft.regel}
+                                onChange={(e) => setLearningDraft(d => ({ ...d, regel: e.target.value }))}
+                                rows={5}
+                                className="text-sm font-mono"
+                                placeholder="Fx: En kontrakt med CVR-nummer og momsopkrævning er ALTID en leverandørkontrakt — sæt aldrig erLeverandoerkontrakt til false for sådanne kontrakter."
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowSaveLearning(false)}>Annuller</Button>
+                        <Button
+                            disabled={!learningDraft.titel.trim() || !learningDraft.regel.trim()}
+                            onClick={() => {
+                                const newLearning: CaseLearning = {
+                                    id: `learning_${Date.now()}`,
+                                    kontrakttype: learningDraft.kontrakttype,
+                                    titel: learningDraft.titel.trim(),
+                                    regel: learningDraft.regel.trim(),
+                                    addedAt: new Date().toISOString(),
+                                }
+                                const updated = [...getCaseLearnings(), newLearning]
+                                setCaseLearnings(updated)
+                                setShowSaveLearning(false)
+                                toast.success("Sagserfaring gemt — bruges ved næste gennemgang")
+                            }}
+                        >
+                            <BookMarked className="mr-1.5 h-3.5 w-3.5" />
+                            Gem sagserfaring
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }
