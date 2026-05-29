@@ -2,7 +2,8 @@
 
 import Link from "next/link"
 import Image from "next/image"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
+import { createClient } from "@/lib/supabase/client"
 import {
     FileText,
     CheckCircle,
@@ -46,6 +47,14 @@ export default function AdminLayout({
 }) {
     const { t } = useI18n()
     const pathname = usePathname()
+    const router = useRouter()
+
+    const handleLogout = async () => {
+        const supabase = createClient()
+        await supabase.auth.signOut()
+        router.push("/")
+        router.refresh()
+    }
 
     const navItems = [
         {
@@ -162,11 +171,9 @@ export default function AdminLayout({
                 <SidebarFooter>
                     <SidebarMenu>
                         <SidebarMenuItem>
-                            <SidebarMenuButton asChild>
-                                <Link href="/">
-                                    <LogOut className="h-4 w-4" />
-                                    <span>{t("nav.logout")}</span>
-                                </Link>
+                            <SidebarMenuButton onClick={handleLogout}>
+                                <LogOut className="h-4 w-4" />
+                                <span>{t("nav.logout")}</span>
                             </SidebarMenuButton>
                         </SidebarMenuItem>
                     </SidebarMenu>
