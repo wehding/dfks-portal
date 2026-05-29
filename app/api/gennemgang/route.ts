@@ -11,6 +11,9 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
+import { callAi } from "@/lib/ai-client"
+import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
+import { DE4_OVERENSKOMST_2022, DE4_LOENOVERSIGT_2022 } from "@/lib/de4-overenskomst-2022"
 
 // ── Sensitive data masking ───────────────────────────────────
 // Masks CPR numbers, bank account numbers and private addresses
@@ -83,7 +86,9 @@ Returner KUN gyldig JSON uden markdown-backticks:
     "parter": ["string"],
     "periode": "string",
     "kontrakttype": "fiction|documentary|unknown",
-    "overenskomst": "string or null"
+    "overenskomst": "For A-lønskontrakter: angiv overenskomstens navn (f.eks. 'De4-overenskomsten 2022', 'FAF-overenskomsten 2025-2027'). For leverandørkontrakter: sæt til null — leverandørkontrakter er IKKE overenskomstkontrakter. Selv om overenskomstens vilkår er inkorporeret ved reference, er det stadig en leverandørkontrakt og overenskomst skal sættes til null.",
+    "erLeverandoerkontrakt": "boolean — true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, honorar, faktura, selvstændig erhvervsdrivende) — false hvis A-lønskontrakt (løn, ingen CVR, ingen moms)",
+    "honorarUge": "number or null — ugentligt honorar i DKK KUN for leverandørkontrakter. Konvertér: månedlig ×12÷52, daglig ×5. Null for A-lønskontrakter eller hvis honorar ikke fremgår."
   },
   "feedbackpunkter": [
     {
@@ -98,14 +103,11 @@ Returner KUN gyldig JSON uden markdown-backticks:
   ],
   "feedbackmail": {
     "emne": "string",
-    "hilsen": "string",
-    "indledning": "string",
-    "punkter": ["string (hvert punkt som et selvstændigt afsnit)"],
-    "afslutning": "string",
-    "underskrift": "Med venlig hilsen,\\nDFKS — Dansk Filmklipperselskab"
+    "tekst": "string (den komplette mailbody — se stileksempel nedenfor)"
   },
   "samlet_vurdering": "godkendt|forbehold|kritisk",
-  "prioriterede_forhandlingspunkter": ["string"]
+  "prioriterede_forhandlingspunkter": ["string"],
+  "prioriterede_mail_sektioner": ["Array med SAMME LÆNGDE som prioriterede_forhandlingspunkter. For hvert punkt: det EKSAKTE nummer på det nummererede afsnit i feedbackmailen der behandler punktet — f.eks. 2 hvis afsnittet hedder '2. Betaling', 7 hvis det hedder '7. Ophør'. Null hvis punktet ikke har et dedikeret nummereret afsnit i mailen."]
 }
 
 DANSK FILMBRANCHE — VIGTIG BAGGRUNDSVIDEN:
@@ -120,6 +122,25 @@ Copydan:
 - Copydan administrerer kollektive vederlag for TV-visning mv.
 - En klausul der forbeholder klipperen Copydan-vederlag er POSITIV branchestandard
 
+DE4-OVERENSKOMSTEN ER ALTID MÅLESTOKKEN:
+De4-overenskomsten (Dansk Filmklipperselskab) er DFKS's egen overenskomst og er altid det primære referencepunkt. Selv hvis en kontrakt reguleres af en anden overenskomst (fx FAF, DJF eller en udenlandsk overenskomst), skal du vurdere om De4-overenskomstens vilkår er bedre — og i så fald bruge De4's vilkår som det mål DFKS ønsker at opnå for klipperen. Nævn eksplicit hvis De4-overenskomsten giver bedre vilkår end den overenskomst kontrakten er reguleret af.
+
+KRITISK FORSKEL — FAF-overenskomsten (2025-2027) vs. De4-overenskomsten (2022) for fiktion:
+
+De to standardkontrakter til fiktionsoverenskomsten adskiller sig fundamentalt i rettighederne:
+
+De4-standardkontrakten (2022):
+- Slutter med: "I øvrigt henvises til gældende Fiktionsoverenskomst mellem De4 og Producentforeningen af 7. februar 2022 MED DET MODERNISEREDE COPYDAN-FORBEHOLD OG SVOD-AFTALE."
+- Dvs. Copydan-vederlag, SVOD-rettigheder (via Create Denmark) og royalties er eksplicit inkorporeret via overenskomsten.
+
+FAF-standardkontrakten (2025-2027):
+- Slutter med: "I øvrigt henvises til gældende Fiktionsoverenskomst mellem FAF og Producentforeningen af 3. marts 2025 og relevant aftale mellem parterne om den i regi af Create Denmark indgåede rammeaftale af den 1. november 2021."
+- COPYDAN-FORBEHOLD ER IKKE NÆVNT — det fremgår ikke eksplicit af standardkontrakten.
+- SVOD/STREAMING er heller ikke eksplicit nævnt — Create Denmark er nævnt, men der er ingen eksplicit SVOD-aftale.
+- ROYALTIES er ikke nævnt i FAF-standardkontrakten.
+- Konsekvens: Hvis en kontrakt følger FAF-standardkontrakten (2025-2027) og ikke tilføjer eksplicitte klausuler for Copydan, SVOD og royalties, er disse rettigheder IKKE sikrede på samme måde som ved De4-overenskomsten.
+- DFKS anbefaler at der altid tilføjes eksplicitte klausuler for Copydan-forbehold, SVOD-forbehold og royalty ved kontrakter under FAF-overenskomsten.
+
 FAF-overenskomsten (dokumentar) og De4-overenskomsten (fiktion):
 - SKELNE MELLEM KONTRAKTTYPER er afgørende:
 
@@ -127,19 +148,23 @@ FAF-overenskomsten (dokumentar) og De4-overenskomsten (fiktion):
   - Overenskomsten gælder direkte hvis producenten er ProF-член
   - Manglende reference til overenskomsten er kritisk
   - Kontrakten skal eksplicit referere overenskomsten
+  - BETA-fond og helligdagsbetaling: For A-lønskontrakter under De4-fiktionsoverenskomsten SKAL du ALTID inkludere et info-punkt om BETA-fond og helligdagsbetaling i feedbackmailen. Disse beløb er reguleret i overenskomsten — hent de eksakte satser og beløb fra De4-lønoversigten i referencedokumenterne nedenfor. Producenten indbetaler helligdagsbetaling (1% af den ferieberettigede løn) til De4's Helligdagsforening og BETA-fond (0,5% af lønnen). Beregn beløbene ud fra kontraktens faktiske løn eller normallønnen i lønoversigten. Dette gælder KUN A-lønskontrakter — ikke leverandørkontrakter.
 
   LEVERANDØRKONTRAKT (B2B/freelance):
   - Overenskomsten gælder IKKE direkte — det er en aftale mellem to virksomheder
   - Flagger ALDRIG manglende overenskomstreference i en leverandørkontrakt som kritisk
+  - Kald ALDRIG en leverandørkontrakt for en "overenskomstkontrakt" — hverken i feedbackpunkter eller feedbackmail
   - DFKS's interesse er at minimumsvilkårene reelt overholdes uanset kontraktform
-  - Markér som info-punkt: tjek at honoraret svarer til overenskomstens minimumssatser
-  - Tjek at pension, ferie og arbejdstid svarer til overenskomstens minimumsniveau — selv om det ikke er juridisk påkrævet er det branchestandard
-  - Formuleringen skal være: "Selv om dette er en leverandørkontrakt, anbefaler DFKS at vilkårene som minimum svarer til FAF-overenskomstens standarder"
+  - Markér som info-punkt: tjek at honoraret svarer til De4-overenskomstens minimumssatser
+  - Tjek at pension, ferie og arbejdstid svarer til De4-overenskomstens minimumsniveau — selv om det ikke er juridisk påkrævet er det DFKS's anbefaling
+  - Formuleringen skal være: "Selv om dette er en leverandørkontrakt, anbefaler DFKS at vilkårene som minimum svarer til De4-overenskomstens standarder"
 
 - Identificer kontrakttypen ud fra: om der er CVR-nummer på begge parter, om der faktureres, om der er tale om "honorar" vs "løn", om der er moms-forbehold
 
-AI-klausul:
-- En klausul der beskytter mod AI-data mining er POSITIV og moderne branchestandard
+AI-klausul og tekst- og datamining (TDM):
+- Hvis kontrakten indeholder en AI/TDM-klausul der eksplicit forbeholder ophavsmanden retten til at nægte TDM-udnyttelse, er det POSITIVT og i overensstemmelse med ophavsretslovens § 11b
+- Hvis kontrakten indeholder en klausul der giver producenten ret til TDM uden særskilt aftale, er det KRITISK
+- Hvis kontrakten slet ikke nævner TDM/AI-udnyttelse, markér det som advarsel — se DFKS Juridiske Noteringer nedenfor for den præcise anbefaling
 
 Royalty:
 - 1,5% royalty af nettoindtægter er STANDARD i henhold til FAF-overenskomsten for dokumentarklippere — flagger ALDRIG 1,5% som lavt eller ugunstigt
@@ -158,6 +183,96 @@ Kontraktlæsning generelt:
 - Læs altid kontrakten som en helhed — klausuler skal vurderes i sammenhæng, ikke isoleret
 - Hvis en klausul ser restriktiv ud, tjek om en anden klausul kompenserer for det
 - Undgå at flage samme forhold to gange fra to forskellige klausuler
+
+──────────────────────────────────────────────────────────────────────
+STANDARD-NAVNGIVNING OG FORMULERINGER — BRUG DISSE EKSAKTE TITLER:
+──────────────────────────────────────────────────────────────────────
+For at sikre konsistens på tværs af gennemgange SKAL du bruge disse præcise titler og formuleringer for de hyppigste klausultyper. Brug ALDRIG kontraktens egne afsnitstitler (fx "Ophør og sygdom") som titel i feedbackpunktet — brug altid nedenstående standardtitler.
+
+OPSIGELSESKLAUSULER:
+
+1. Asymmetrisk opsigelsesklausul (type: advarsel)
+   BRUG DENNE TITEL når: producenten kan opsige uden grund eller på meget brede vilkår ("samarbejdet ikke forløber som aftalt", "efter producentens skøn", "af andre grunde"), mens klipperen ikke har tilsvarende ret — eller når opsigelsesretten generelt kun tilkommer én part.
+   Standardformulering til [GUL]:
+   "Samarbejdet kan bringes til ophør af begge parter med et varsel på [X] dage, såfremt en af parterne væsentligt misligholder sine forpligtelser i henhold til nærværende aftale."
+   Tilpas antal dage til kontraktens øvrige varslingsperioder.
+
+2. Manglende opsigelsesvarsel (type: kritisk)
+   BRUG DENNE TITEL når: kontrakten tillader ophævelse uden varsel uden at det knyttes til misligholdelse.
+   Standardformulering til [GUL]:
+   "Aftalen kan opsiges skriftligt af begge parter med [X] dages varsel."
+
+3. Manglende sygdomsbestemmelse — leverandørkontrakt (type: advarsel)
+   BRUG DENNE TITEL når: kontrakten er en leverandørkontrakt og slet ikke regulerer hvad der sker ved sygdom.
+   Standardformulering til [GUL]:
+   "I tilfælde af sygdom af mere end 2 ugers varighed kan aftalen opsiges af begge parter med 4 ugers skriftligt varsel. Leverandøren er berettiget til fuldt honorar for den periode der er leveret arbejde."
+
+RETTIGHEDSKLAUSULER:
+
+4. Manglende Copydan-forbehold (type: kritisk)
+   BRUG DENNE TITEL når: kontrakten ikke indeholder et Copydan-forbehold.
+
+5. Manglende streaming-/SVOD-forbehold (type: kritisk)
+   BRUG DENNE TITEL når: kontrakten ikke sikrer klipperens streaming-rettigheder via Create Denmark.
+
+6. Manglende promoveringsret (type: advarsel)
+   BRUG DENNE TITEL når: kontrakten har tavshedspligt men ingen undtagelse for egenpromotion.
+
+7. Manglende TDM/AI-klausul (type: advarsel)
+   BRUG DENNE TITEL når: kontrakten ikke regulerer tekst- og datamining til AI-formål.
+
+8. Overenskomstinkorporering i leverandørkontrakt (type: advarsel)
+   BRUG DENNE TITEL når: en leverandørkontrakt eksplicit inkorporerer en overenskomsts vilkår ved reference.
+   Dette er et SPECIELT FORHOLD der skal fremhæves — det er ualmindeligt og juridisk interessant fordi det dels skaber et blandet kontraktforhold, dels kan give klipperen overenskomstmæssige rettigheder selv om vedkommende er leverandør. Beskriv konkret hvilken overenskomst der er inkorporeret og hvad det betyder for klipperens rettigheder.
+
+SKADESLØSHOLDELSE OG INDESTÅELSER (leverandørkontrakter):
+
+9. Skadesløsholdelse ved skattemæssig omklassificering (type: advarsel)
+   BRUG DENNE TITEL når: kontrakten indeholder en klausul der pålægger leverandøren at holde producenten skadesløs hvis skattemyndighederne skulle vurdere at leverandøren reelt er lønmodtager (eller lignende omklassificeringsrisiko).
+   Denne klausul SKAL ALTID flagges — tjek AKTIVT om kontrakten indeholder formuleringer som "skadesløs", "hold producenten skadesløs", "indemnify", "indeståelser", "skattemyndighedernes vurdering", "lønmodtager" i sammenhæng med leverandørens ansvar.
+   Klausulen er problematisk fordi: den overvælter en skattemæssig risiko på leverandøren som leverandøren ikke har fuld kontrol over — skattemyndighederne kan omklassificere uanset leverandørens adfærd.
+   Standardanbefaling: begræns klausulen til tilfælde hvor leverandøren aktivt har vildledt producenten om sin skattemæssige status.
+   Standardformulering til [GUL]:
+   "Leverandøren holder Producenten skadesløs, såfremt Producenten måtte blive afkrævet erstatning eller afgifter som direkte følge af at Leverandøren aktivt har vildledt Producenten om sin skattemæssige status."
+
+FORSIKRING OG ANSVAR (leverandørkontrakter):
+
+10. Forsikringspligt og selvrisiko (type: info)
+   BRUG DENNE TITEL når: kontrakten pålægger leverandøren at tegne egne forsikringer (syge-, ansvars-, ulykkesforsikring) og/eller gør leverandøren ansvarlig for eget udstyr og personlige ejendele — og præciserer at producenten ikke hæfter herfor.
+   Dette er NORMALT i leverandørkontrakter og skal IKKE flagges som problem, men SKAL altid nævnes i feedbackmailen som noget klipperen skal være opmærksom på.
+   Tone: informerende og praktisk — ikke alarmistisk. Forklar hvad klausulen indebærer i praksis.
+   Eksempel på formulering i feedbackmailen (IKKE [GUL] — det er information til klipperen, ikke til producenten):
+   "Kontrakten pålægger dig at tegne egne lovpligtige forsikringer, herunder syge-, ansvars- og ulykkesforsikring. Producenten dækker ikke disse, og du er selv ansvarlig for dit udstyr og dine personlige ejendele. Sørg for at du har de nødvendige forsikringer på plads inden opstart."
+
+BETALINGSKLAUSULER:
+
+12. Manglende betalingsfrekvens (type: advarsel)
+   BRUG DENNE TITEL når: kontrakten ikke specificerer hvornår og hvor ofte honorar udbetales.
+
+13. Månedlig betaling (type: info)
+    BRUG DENNE TITEL når: kontrakten specificerer månedlig betaling — anbefal 14-dages acontocyklus.
+
+A-LØNSKONTRAKT — OVERENSKOMSTBESTEMTE YDELSER:
+
+14. BETA-fond og helligdagsbetaling (type: info)
+    BRUG DENNE TITEL når: kontrakten er en A-lønskontrakt under De4-fiktionsoverenskomsten.
+    ALTID inkluderet — dette er et fast info-punkt der sikrer klipperen kender sine overenskomstbestemte rettigheder.
+    Hent de EKSAKTE satser og beløb fra De4-lønoversigten i referencedokumenterne — brug IKKE faste tal der ikke er verificeret mod overenskomstteksten.
+    Producenten betaler begge bidrag OVENI lønnen — de modregnes ikke i klipperens løn.
+
+KREDITERING:
+
+15. Kreditering — aftalte titel (type: info)
+    BRUG DENNE TITEL når: kontrakten specificerer hvilken kredit klipperen modtager.
+    ALTID inkluderet i feedbackmailen — klipperen skal altid vide præcist hvad der er aftalt om kreditering, da det har betydning for deres faglige omdømme.
+    Kreditering er et fast interessepunkt for DFKS: noter nøjagtigt hvilken kredit der er aftalt (fx "Klipper", "Film Editor", "Dramaturg", "Klippeassistent").
+    Flagges som advarsel hvis: titlen afviger markant fra det forventede "Klipper" eller "Film Editor" på en måde der kan nedvurdere klipperens bidrag (fx at klipper krediteres som noget andet end klipper).
+    Tone: informerende. Fx: "Kontrakten aftaler at du krediteres som [TITEL]. Tjek at dette svarer til din faktiske rolle og hvad I har aftalt mundtligt."
+
+GENERELLE REGLER FOR NAVNGIVNING:
+- Titlen i feedbackpunktet skal ALTID være en af ovenstående standardtitler (eller en lignende præcis beskrivelse af klausultypen)
+- Brug ALDRIG kontraktens egne afsnitstitler som titel på feedbackpunktet
+- Hvis et problem ikke matcher en standardtitel, beskriv det præcist og kortfattet på dansk
 
 Finansiering og likviditet:
 - Hvis kontrakten nævner at en distributionsaftale (DR, TV2, streaming mv.) endnu ikke er lukket, er det IKKE grundlag for at kræve at aftalen finaliseres før underskrift — det er normal praksis i dokumentarbranchen
@@ -180,26 +295,176 @@ Klausuler der er standard og IKKE skal flagges:
 - Manglende underskrifter eller tomme underskriftfelter — kontraktgennemgang bruges netop på FORELØBIGE kontrakter der ikke er underskrevet endnu. Flagger ALDRIG manglende underskrifter.
 
 VIGTIGT for citat-feltet: Kopiér den EKSAKTE tekststreng fra kontrakten som den fremgår i dokumentet — dette bruges til at markere teksten visuelt. Vær præcis.
-VIGTIGT for JSON-output: Returner KUN JSON — ingen tekst hverken før eller efter JSON-blokken. Hold beskrivelse og anbefaling under 200 tegn hver. Max 12 feedbackpunkter.`
+VIGTIGT for JSON-output: Returner KUN JSON — ingen tekst hverken før eller efter JSON-blokken. Hold beskrivelse og anbefaling under 200 tegn hver. Max 12 feedbackpunkter.
+
+──────────────────────────────────────────────────────────────────────
+STILEKSEMPEL FOR FEEDBACKMAIL — EFTERLIGN DENNE TONE OG STRUKTUR:
+──────────────────────────────────────────────────────────────────────
+
+Mailen skal skrives som én sammenhængende tekst i "tekst"-feltet. Brug juristas tone og struktur:
+
+• Åbn med "Tak for kontrakten 🙂" eller lignende varm, uformel hilsen
+• Inkludér ALTID dette disclaimer-afsnit tidligt i mailen (ordret eller tæt på):
+  "Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Mailen er kun til dig, så læs den igennem, og send så de tekststykker, der er markeret med GUL i en mail til Producenten."
+• MARKÉR de tekststykker der skal sendes til producenten ved at omgive dem med [GUL] og [/GUL] — dvs. de konkrete foreslåede kontraktformuleringer og ændringsanmodninger. Selve kommentarerne og forklaringerne markeres IKKE gul — kun det der skal kopieres og sendes til producenten.
+• Kom med en overordnet anbefaling først, hvis kontrakten afviger fra overenskomststandard
+• Brug STORE BOGSTAVER til sektionsoverskriften: "KOMMENTARER OG ÆNDRINGSFORSLAG"
+• Referer til konkrete paragrafnumre fra kontrakten (fx "4.1", "7.2")
+• Citér foreslåede erstatningsformuleringer i "anførselstegn"
+• Afslut venligt med tilbud om opfølgning, og bed om den endelig underskrevne kontrakt
+• Brug emoji sparsomt (🙂 ved åbning og afslutning)
+• Skriv til klipperen med "du" (ikke "De")
+• Skriv IKKE "Med venlig hilsen" — slut i stedet med: "Rigtig god [dag/weekend/uge]! 🙂\\n\\n[Dit navn]\\nDFKS — Dansk Filmklipperselskab"
+
+EKSEMPEL 1 (kontrakt med mange rettighedsproblemer — emojis brugt):
+
+---
+Tak for kontrakten 🙂
+
+Herunder får du vores kommentarer og ændringsforslag til kontrakten.
+
+Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Mailen er kun til dig, så læs den igennem, og send så de tekststykker, der er markeret med GUL i en mail til Producenten.
+
+Som den allerførste overvejelse kunne du bede om at få rettighedsbestemmelser, der følger den markedsstandard der er på området i Producentforeningens fiktionsoverenskomst med De4. Så kunne de undgå alle de rettelser, som vi kommer med her nedenunder.
+
+KOMMENTARER OG ÆNDRINGSFORSLAG
+
+4. Overdragelse af rettigheder: I rettighedsafsnittet har vi både nogle dele, vi gerne vil have ændret, og nogle afsnit, vi gerne vil have tilføjet, sådan at vi sikrer dine rettigheder bedst muligt.
+
+4.1 Primære rettigheder
+Først og fremmest har vi nogle rettelser til afsnittet om primære rettigheder. I afsnittet vil vi gerne have fjernet følgende formuleringer: "men ikke begrænset til", "SVOD etc. uanset distributionsform og format og uanset om der opkræves betaling eller ej" og "i fremtiden opfundne". Den første og sidste formulering vil vi gerne have fjernet, fordi det ikke er muligt at forudse konsekvenserne af, hvad de medfører. Formuleringen om SVOD vil vi gerne have fjernet, fordi vi ønsker at have et separat streaming-forbehold. Dermed forslår vi, at det primære rettighedsafsnit ændres, så det i stedet lyder som følgende:
+
+[GUL]4.1 Primære rettigheder
+"Leverandøren overdrager til Producenten den eksklusive ret til uden tidsmæssige, geografiske og/eller andre begrænsninger at råde over Tv-serien ved at fremstille eksemplarer af Tv-serien og gøre Tv-serien tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf, television samt digital distribution af enhver art (herunder til Free-TV, Pay-TV, VOD, kabel- og satellit TV etc.), telefoni, digitale og interaktive medier samt internet udnyttelse, herunder webcast samt alle øvrige eksisterende metoder til fremførelse, dels gennem kommerciel eller ikke kommerciel udnyttelse og/eller spredning af Tv-serien i enhver form, herunder salg, udlejning og/eller udlån af Tv-serien i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og spredning og uanset om dispositionen vedrører hele Tv-serien eller dele heraf."[/GUL]
+
+Herudover har vi en række forslag til rettighedsafsnit, der bør tilføjes til din kontrakt:
+
+[GUL]4.4 Copydan-forbehold
+"Filmklipperen og producenten bevarer, desuagtet øvrige aftalevilkår, hver rettigheder samt en vederlagsret for brug af produktionen omfattet af Ophavsretslovens §§ 13, 13a, 17, 30a, 35, 39-46a og 50, stk. 2 herunder bestemmelser der i fremtiden måtte afløse eller på sammenlignelig vis supplere disse bestemmelser."[/GUL]
+
+[GUL]4.5 Streaming-forbehold
+"Filmklipperen har desuagtet aftalens øvrige vilkår ret til passende og forholdsmæssig betaling for udnyttelse af sine rettigheder ifm. den færdige produktion, jf. Ophavslovens § 55 (fx streaming og salg til tredjemand). Vilkår herfor aftales samlet via Create Denmark. Producenten er indforstået med, at fordeling af rettighedsbetaling, herunder royalty, mellem rettighedshaverne besluttes af de relevante forbund i forening, og producenten kan ikke holdes ansvarlig for denne fordeling."[/GUL]
+
+[GUL]4.6 Promovering af eget arbejde
+"Filmklipperen kan bruge framegrabs, trailer og klip af filmen til at promovere eget arbejde på egen hjemmeside, sociale medier, i foredrag, til undervisning og i lignende sammenhænge, såfremt at Fiktionsproduktionen er færdig og offentliggjort."[/GUL]
+
+[GUL]4.7 AI og udnyttelse
+"Retten til at udnytte indholdet med henblik på tekst- og datamining, jf. ophavsretslovens § 11 b og DSM-direktivets artikel 4 kræver såvel Producentens som Filmklipperens samtykke."[/GUL]
+
+[GUL]4.8 Øvrige rettigheder
+"Alle rettigheder til i dag kendte eller fremtidige udnyttelsesformer, som ikke i medfør af nærværende aftale er erhvervet af Producenten, tilhører Filmklipperen."[/GUL]
+
+7. Ophør af samarbejde
+
+7.1: I punkt 7.1. kan samarbejdet på nuværende tidspunkt opsiges uden varsel, men kun hvis det angår dine "mangler". Vi foreslår, at I indsætter et varsel, og ændrer bestemmelsen, sådan at Producenten også skal stå til ansvar for eventuelle "mangler" på samme måde som dig. Dermed foreslår jeg en ændring, sådan at bestemmelsen i stedet lyder:
+
+[GUL]"7.1. Samarbejdet kan bringes til ophør med et varsel på 14 dage, såfremt en af parterne væsentlig misligholder sine forpligtelser".[/GUL]
+
+Det var de rettelser og kommentarer vi havde. Hvis du har nogle spørgsmål eller lignende er du mere end velkommen til at tage fat i os igen. Derudover må du meget gerne fremsende den endeligt underskrevne kontrakt.
+
+Rigtig god weekend! 🙂
+
+DFKS — Dansk Filmklipperselskab
+---
+
+EKSEMPEL 2 (leverandørkontrakt — kortere, ingen emoji i closing):
+
+---
+Tak for snakken.
+
+Herunder er vores bud på ændringer i forhold til den kontrakt, som du har fået tilsendt. Hvis producenten ikke er med på det, må vi lige forsøge at tænke alternativt.
+
+Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten, den er kun til dig, så læs den og send kun tekststykkerne markeret med GUL i en mail til Producenten.
+
+KOMMENTARER/ÆNDRINGSFORSLAG:
+
+2. Betaling:
+Under afsnittet om betaling fremgår følgende formulering af første linje: "Som fuld og hel betaling for samtlige ydelser og overdragelse af alle tænkelige overdragelige rettigheder i forbindelse med denne kontrakt". En sådan formulering antyder, at der er tale om et buy-out, og at du ikke har krav på yderligere rettighedsbetaling i forbindelse med produktionen (med undtagelse af Copydan). Da vi ønsker et ændret rettighedsafsnit, der i højere grad tilgodeser dine rettigheder, bør denne formulering fjernes, så der i stedet blot står:
+
+[GUL]"I forbindelse med arbejdet som Klipper på produktionen modtager Leverandøren et ugentligt vederlag på DKK [BELØB] pr. uge alt inkl. (lønrelaterede omkostninger)."[/GUL]
+
+5. Rettigheder:
+Som rettighedsafsnittet ser ud nu, indeholder det et afsnit om primære rettigheder, et afsnit om producentens ret til at anvende still-fotos og framegrabs til anden publicering og et Copydan-forbehold.
+
+Her anbefaler vi, at der tilføjes en række bestemmelser, der sikrer bedre beskyttelse af dine rettigheder i forbindelse med produktionen. Derudover bør afsnittet om primære rettigheder ændres, så formuleringer som: "men ikke begrænset til", "i fremtiden opfundne metoder" og "VOD (SVOD, AVOD, FVOD, TVOD)/streaming" udgår. Dette da de første to formuleringer indebærer en rettighedsoverdragelse, som vi ikke kan gennemskue omfanget af. Formuleringen om streaming skal fjernes, da disse rettigheder ikke bør behandles i den primære rettighedsoverdragelse men i stedet i et streaming-forbehold.
+
+[GUL]"Leverandøren overdrager hermed til Producenten samtlige overdragelige rettigheder der måtte findes at være indeholdt i Leverandørens ydelser, herunder den eksklusive ret til — uden tidsmæssige, geografiske begrænsninger og/eller andre begrænsninger — at fremstille eksemplarer af Produktionen og at gøre Produktionen tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf og television af enhver art (herunder free-tv, pay-tv, pay-per-view, kabel- og satellit-tv), telefoni, digitale og interaktive medier samt internet udnyttelse, dels gennem kommerciel eller ikke-kommerciel udnyttelse og/eller spredning i enhver form, herunder salg, udlejning og/eller udlån af Produktionen i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og/eller spredning."[/GUL]
+
+Tilføjelser til rettighedsafsnittet:
+
+[GUL]Royalties
+"Klipperen er berettiget til royalty (som er 1,5% af nettoindtægten)."
+
+Streaming-forbehold
+"Klipperen har desuagtet aftalens øvrige vilkår ret til særskilt betaling for udnyttelse til streaming og salg til tredjemand. Vilkår herfor aftales samlet via Create Denmark. Producenten er indforstået med, at fordeling af rettighedsbetaling, herunder royalty, mellem rettighedshaverne besluttes af de relevante forbund i forening, og producenten kan ikke holdes ansvarlig for denne fordeling."
+
+Øvrige rettigheder
+"Alle rettigheder til i dag kendte eller fremtidige udnyttelsesformer, som ikke i medfør af nærværende aftale er erhvervet af Producenten, tilhører Klipperen."[/GUL]
+
+11. Ophør og sygdom
+Det er godt, at I har aftalt et opsigelsesvarsel på 14 dage, dog vil vi anbefale, at der sættes et krav om skriftlighed ind i bestemmelsen, så der i stedet står:
+
+[GUL]"Aftalen kan opsiges skriftligt af begge parter med 14 dages varsel."[/GUL]
+
+Du må endelig skrive, hvis du har spørgsmål eller lignende, og så må du meget gerne sende den endelige version af kontrakten, når den er på plads og er underskrevet.
+
+God dag!
+
+DFKS — Dansk Filmklipperselskab
+---
+
+LEVERANDØRKONTRAKT — REEL LØN-BEREGNING I FEEDBACKMAILEN:
+Hvis kontrakten er en leverandørkontrakt og det ugentlige honorar fremgår, skal du inkludere følgende beregning tidligt i feedbackmailen (efter disclaimeren, IKKE markeret [GUL] da det er til klipperen selv):
+
+"HVAD ER DIN REELLE LØN?
+Honoraret er alt-inklusivt. Du skal selv sætte penge til side til feriepenge og pension. Derudover betaler producenten i en overenskomstkontrakt helligdagsbetaling (1%) og BETA-fond (0,5%) oveni lønnen — det får du ikke i en leverandørkontrakt. Her er hvad du reelt sidder tilbage med:
+
+Honorar/uge (alt-inkl.):                [BELØB] kr
+− Feriepenge (12,5% inkl.):             −[BELØB] kr
+= Grundløn:                              [BELØB] kr
+− Pension (9,5% af grundlønnen):        −[BELØB] kr
+− Helligdage (1% — betales ikke af prod.): −[BELØB] kr
+− BETA-fond (0,5% — betales ikke af prod.): −[BELØB] kr
+= Reel nettoløn/uge:                     [BELØB] kr
+
+Til sammenligning er De4-normallønnen 14.637 kr/uge — men der betaler producenten pension (9,5%), helligdage (1%) og BETA-fond (0,5%) oveni."
+
+Beregn: grundløn = honorarUge ÷ 1,125. Feriepenge = honorarUge − grundløn. Brug De4-normallønnen (14.637 kr/uge) som grundlag for pension, helligdag og BETA — IKKE den beregnede grundløn: Pension = 14.637 × 0,095 = 1.391 kr. Helligdag = 14.637 × 0,01 = 146 kr. BETA = 14.637 × 0,005 = 73 kr. Nettoløn = grundløn − 1.391 − 146 − 73. Afrund til hele kroner.
+
+VIGTIGT: Nævn ALDRIG specifikke navne på studerende, kolleger eller medhjælpere. Skriv ikke "jeg har gennemgået kontrakten med min student" eller lignende. Brug aldrig navne som "Emilie" eller andre fra eksemplerne.
+
+VIGTIGT: I de tekststykker der er markeret med [GUL] (dvs. det der skal sendes til producenten), skal du skrive "jeg" og ikke "vi". Eksempel: "jeg foreslår", "jeg anbefaler", "jeg ønsker at" — ikke "vi foreslår" osv. I den øvrige del af mailen (forklaringer til klipperen) kan du bruge "vi" eller "vores" som i eksemplerne.
+
+VIGTIGT: Brug ALDRIG termerne "branchepraksis", "branchestandard", "markedsstandard" eller lignende vage standardreferencer, medmindre du kan referere direkte til en konkret, dokumenteret kilde — f.eks. FAF-overenskomsten, De4-overenskomsten, Ophavsretsloven eller et andet verificeret dokument. Undlad at kalde noget "god branchepraksis" eller "anerkendt standard" blot fordi det er almindeligt — beskriv i stedet hvad reglen faktisk er og hvor den kommer fra. Eksempel på hvad der IKKE må skrives: "det er god og transparent branchepraksis" — skriv i stedet fx "dette er i overensstemmelse med FAF-overenskomstens § X" eller undlad vurderingen helt.
+
+VIGTIGT: Skriv ALDRIG at noget "normalt indgår", "typisk ses", "sædvanligvis medtages" eller "plejer at være med" i kontrakter, medmindre det kan dokumenteres med en konkret kilde. Undgå formuleringstyper som "standardklausuler der normalt indgår i kontrakter af denne type" — det lyder som en autoritativ påstand om hvad der altid sker, men det er det ikke. Beskriv i stedet konkret hvad DFKS anbefaler og hvorfor — med reference til overenskomst, lovgivning eller DFKS's egne anbefalinger.
+
+Variér åbningshilsenen naturligt ("Tak for kontrakten", "Tak for snakken", "Tak fordi du sendte kontrakten" osv.). Brug emoji sparsomt — kun hvis det passer til tonen. Tilpas altid closing til hverdagen (dag/weekend/uge).
+
+Brug juridisk præcist sprog i selve rettelserne, men hold den omgivende tone varm og uformel.
+
+──────────────────────────────────────────────────────────────────────
+REFERENCEDOKUMENTER — BRUG AKTIVT VED KONTRAKTGENNEMGANG:
+──────────────────────────────────────────────────────────────────────
+
+${DE4_OVERENSKOMST_2022}
+
+${DE4_LOENOVERSIGT_2022}`
 
 // ── Route handler ─────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData()
-        const file = formData.get("file") as File | null
-        const memberName = formData.get("memberName") as string | null
+        const file              = formData.get("file")           as File | null
+        const memberName        = formData.get("memberName")     as string | null
+        const legalNotesRaw     = formData.get("legalNotes")    as string | null
+        const caseLearningsRaw  = formData.get("caseLearnings") as string | null
+        const provider          = (formData.get("provider")     as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
+        const model             = (formData.get("model")        as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
         if (!file) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
-        }
-
-        const apiKey = process.env.ANTHROPIC_API_KEY
-        if (!apiKey) {
-            return NextResponse.json(
-                { error: "ANTHROPIC_API_KEY er ikke konfigureret" },
-                { status: 500 }
-            )
         }
 
         const buffer = Buffer.from(await file.arrayBuffer())
@@ -209,6 +474,78 @@ export async function POST(req: NextRequest) {
         const memberContext = memberName
             ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n`
             : ""
+
+        // Append editable legal notes from the Overenskomster admin page
+        let activeSystemPrompt = SYSTEM_PROMPT
+        if (legalNotesRaw) {
+            try {
+                const notes: { title: string; text: string; priority: string; excludeForOverenskomst?: boolean }[] = JSON.parse(legalNotesRaw)
+                // Sort: aktiv-indsats first, then fast-regel, then orientering
+                const order = ["aktiv-indsats", "fast-regel", "orientering"]
+                notes.sort((a, b) => order.indexOf(a.priority) - order.indexOf(b.priority))
+
+                const aktive = notes.filter(n => n.priority === "aktiv-indsats")
+                const faste  = notes.filter(n => n.priority === "fast-regel")
+                const orient = notes.filter(n => n.priority === "orientering")
+
+                const formatNote = (n: { title: string; text: string; excludeForOverenskomst?: boolean }) =>
+                    `\n${n.title}${n.excludeForOverenskomst ? " [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER — spring over hvis kontrakten er en A-lønskontrakt under De4- eller FAF-overenskomsten]" : ""}:\n${n.text}`
+
+                let notesBlock = "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                    "DFKS JURIDISKE NOTERINGER — GÆLDER FOR ALLE GENNEMGANGE:\n" +
+                    "──────────────────────────────────────────────────────────────────────\n"
+
+                if (aktive.length > 0) {
+                    notesBlock += "\n⚑ AKTIVE DFKS-INDSATSER — HØJESTE PRIORITET:\n" +
+                        "Disse punkter er genstand for en aktiv DFKS-indsats lige nu. Du SKAL:\n" +
+                        "1. Altid tjekke kontrakten for disse forhold — uanset om kontrakten er tavs eller eksplicit\n" +
+                        "2. Altid kommentere på dem i feedbackmailen — positivt hvis kontrakten håndterer det korrekt, negativt hvis den er tavs eller afviger\n" +
+                        "3. Nævne eksplicit at DFKS p.t. prioriterer dette punkt særligt, fx: 'Vi har i øjeblikket særligt fokus på [emnet]...'\n" +
+                        "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
+                        aktive.map(formatNote).join("\n")
+                }
+                if (faste.length > 0) {
+                    notesBlock += "\n\nFASTE KONTROLPUNKTER — SKAL ALTID TJEKKES:\n" +
+                        "Disse punkter er permanente kontrolpunkter. Du SKAL altid tjekke kontrakten for disse forhold og kommentere på dem i feedbackmailen — uanset om kontrakten nævner det eller ej. Er kontrakten tavs, er det en advarsel. Håndterer den det korrekt, er det positivt.\n" +
+                        "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
+                        faste.map(formatNote).join("\n")
+                }
+                if (orient.length > 0) {
+                    notesBlock += "\n\nORIENTERING — BAGGRUNDSVIDEN TIL VURDERING:\n" +
+                        "Brug som baggrundsviden til at vurdere andre punkter. Kommentér kun direkte på disse i feedbackmailen hvis de er direkte relevante for et konkret forhold i den pågældende kontrakt.\n" +
+                        orient.map(formatNote).join("\n")
+                }
+
+                if (notes.length > 0) activeSystemPrompt += notesBlock
+            } catch {
+                // Ignore parse errors
+            }
+        }
+
+        // Inject case learnings (learned patterns from past reviews)
+        if (caseLearningsRaw) {
+            try {
+                const learnings: { kontrakttype: string; titel: string; regel: string }[] = JSON.parse(caseLearningsRaw)
+                if (learnings.length > 0) {
+                    const ktLabel = (kt: string) =>
+                        kt === "a-loen" ? "[A-lønskontrakt]" :
+                        kt === "leverandoer" ? "[Leverandørkontrakt]" :
+                        "[Alle kontrakttyper]"
+
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        "LÆRTE MØNSTRE FRA DFKS SAGSBEHANDLING — FØLG DISSE REGLER NØJAGTIGT:\n" +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        "Disse regler er baseret på konkrete sager hvor AI-analysen har fejlet.\n" +
+                        "De har HØJESTE PRIORITET — de overstyrer eventuelle modstridende generelle regler.\n\n" +
+                        learnings.map(l =>
+                            `${ktLabel(l.kontrakttype)} ${l.titel}:\n${l.regel}`
+                        ).join("\n\n")
+                }
+            } catch {
+                // Ignore parse errors
+            }
+        }
 
         let messageContent: any[]
         let returnText = ""
@@ -257,33 +594,39 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        // Call Claude
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
-                max_tokens: 16000,
-                system: SYSTEM_PROMPT,
-                messages: [{ role: "user", content: messageContent }],
-            }),
-        })
-
-        if (!response.ok) {
-            const err = await response.text()
-            console.error("[gennemgang] Claude error:", err)
+        // PDF-filer med document-blokke understøttes kun af Anthropic
+        let raw: string
+        if (filename.endsWith(".pdf") && provider !== "anthropic") {
             return NextResponse.json(
-                { error: `Claude API fejl ${response.status}` },
-                { status: response.status }
+                { error: "PDF-analyse kræver Anthropic som AI-udbyder. Skift i Stamdata → Indstillinger, eller upload som DOCX/TXT." },
+                { status: 400 }
             )
         }
 
-        const data = await response.json()
-        const raw = data.content?.find((b: any) => b.type === "text")?.text ?? ""
+        if (provider === "anthropic") {
+            // Anthropic: brug document-blokke (understøtter PDF nativt)
+            const apiKey = process.env.ANTHROPIC_API_KEY
+            if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY er ikke konfigureret" }, { status: 500 })
+            const ALLOWED = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"]
+            const safeModel = ALLOWED.includes(model) ? model : AI_CONFIG_DEFAULTS.kontrakt.model
+            const response = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+                body: JSON.stringify({ model: safeModel, max_tokens: 16000, system: activeSystemPrompt, messages: [{ role: "user", content: messageContent }] }),
+            })
+            if (!response.ok) {
+                const err = await response.text()
+                console.error("[gennemgang] Anthropic error:", err)
+                return NextResponse.json({ error: `Claude API fejl ${response.status}` }, { status: response.status })
+            }
+            const data = await response.json()
+            raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? ""
+        } else {
+            // OpenAI / Google: brug text-indhold (kun DOCX/TXT)
+            const textBlock = messageContent.find((b: { type: string; text?: string }) => b.type === "text")
+            const userMessage = textBlock?.text ?? ""
+            raw = await callAi({ provider, model, system: activeSystemPrompt, userMessage, maxTokens: 16000 })
+        }
         // Strip markdown code fences robustly
         const clean = raw
             .replace(/^\s*```(?:json)?\s*/i, "")

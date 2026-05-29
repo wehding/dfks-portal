@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Film, Download, Users, Eye, ChevronDown, ChevronUp, Upload, BarChart3 } from "lucide-react"
+import { Film, Download, Users, Eye, Upload, BarChart3, Clock, CheckCircle2, X, Layers, SearchCheck, Send, Info } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
@@ -21,15 +21,82 @@ import {
 import {
     Dialog,
     DialogContent,
+    DialogDescription,
+    DialogFooter,
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
 import {
     Tooltip,
     TooltipContent,
     TooltipTrigger,
 } from "@/components/ui/tooltip"
+import Link from "next/link"
 import type { Work } from "@/lib/types"
+
+// ── Aftalelicens-krav (spejler data fra /portal/aftalelicens) ─
+
+interface AftalelicensKravItem {
+    id: string
+    rawTitle: string
+    batchLabel: string
+    channel?: string
+    broadcastDate?: string
+    vaerkTypeLabel?: string
+    note?: string
+    submittedAt: string
+    status: "pending" | "approved" | "rejected"
+}
+
+// I real app: hentes fra DB baseret på logged-in bruger
+const MOCK_MINE_KRAV: AftalelicensKravItem[] = [
+    {
+        id: "krav_p1",
+        rawTitle: "Broen IV",
+        batchLabel: "Copydan Verdens TV 2023",
+        channel: "DR1",
+        broadcastDate: "2023-09-25",
+        vaerkTypeLabel: "TV-serie lang",
+        submittedAt: "2024-03-20T08:00:00",
+        status: "approved",
+    },
+    {
+        id: "krav_p2",
+        rawTitle: "Nattens løver",
+        batchLabel: "Copydan Verdens TV 2023",
+        channel: "DR1",
+        broadcastDate: "2023-12-07",
+        vaerkTypeLabel: "TV-serie lang",
+        note: "Klippet afsnit 3–6",
+        submittedAt: "2024-03-22T11:30:00",
+        status: "pending",
+    },
+]
+
+// ── Efterlysning — værker uden klipper ────────────────────────
+
+interface EfterlysningItem {
+    id: string
+    title: string
+    type: string
+    premiereYear: number
+    productionNumber: string
+}
+
+const MOCK_EFTERLYSNINGER: EfterlysningItem[] = [
+    { id: "e1", title: "Skruk Sæson 1", type: "TV-serie", premiereYear: 2022, productionNumber: "005" },
+    { id: "e2", title: "Frihavn", type: "TV-serie", premiereYear: 2023, productionNumber: "013" },
+    { id: "e3", title: "Den store dag", type: "Dokumentarfilm", premiereYear: 2023, productionNumber: "014" },
+    { id: "e4", title: "Landet bag ved", type: "Spillefilm", premiereYear: 2024, productionNumber: "015" },
+]
+
+const KRAV_STATUS_CFG = {
+    pending:  { label: "Afventer afgørelse", variant: "secondary"   as const, icon: Clock },
+    approved: { label: "Godkendt",           variant: "default"     as const, icon: CheckCircle2 },
+    rejected: { label: "Afvist",             variant: "destructive" as const, icon: X },
+}
 
 function RightsBadges({ rights }: { rights: Work["rights"] }) {
     return (
@@ -58,36 +125,12 @@ function RightsBadges({ rights }: { rights: Work["rights"] }) {
 
 function DurationDisplay({ work }: { work: Work }) {
     const { t } = useI18n()
-    const [expanded, setExpanded] = useState(false)
 
     if (work.episodes && work.episodes.length > 0) {
-        const totalMin = work.episodes.reduce((s, e) => s + e.duration, 0)
         return (
-            <div>
-                <button
-                    onClick={() => setExpanded(!expanded)}
-                    className="inline-flex items-center gap-1 text-sm tabular-nums hover:text-foreground transition-colors"
-                >
-                    {work.episodes.length} {t("works.episodes")}
-                    {expanded ? (
-                        <ChevronUp className="h-3 w-3" />
-                    ) : (
-                        <ChevronDown className="h-3 w-3" />
-                    )}
-                </button>
-                {expanded && (
-                    <div className="mt-1.5 space-y-0.5">
-                        {work.episodes.map((ep) => (
-                            <div key={ep.number} className="text-xs text-muted-foreground">
-                                {ep.number}. {ep.title} — {ep.duration} {t("common.minutes")}
-                            </div>
-                        ))}
-                        <div className="text-xs font-medium mt-1">
-                            Total: {totalMin} {t("common.minutes")}
-                        </div>
-                    </div>
-                )}
-            </div>
+            <span className="tabular-nums text-sm text-muted-foreground">
+                {work.episodes.length} {t("works.episodes")}
+            </span>
         )
     }
 
@@ -98,11 +141,36 @@ function DurationDisplay({ work }: { work: Work }) {
     )
 }
 
+// Godkendte aftalelicens-krav som Work-rækker
+const approvedKravAsWorks: (Work & { fromAftalelicens: true; batchLabel: string })[] =
+    MOCK_MINE_KRAV
+        .filter(k => k.status === "approved")
+        .map(k => ({
+            id: k.id,
+            title: k.rawTitle,
+            creditedRoles: ["Klipper"],
+            sharedCredit: false,
+            duration: 0,
+            contractId: "",
+            category: "film" as Work["category"],
+            premiereYear: k.broadcastDate ? new Date(k.broadcastDate).getFullYear() : 0,
+            rights: { svod: false, copydan: true, royalty: false },
+            fromAftalelicens: true,
+            batchLabel: k.batchLabel,
+        }))
+
 export default function MineVaerkerPage() {
     const { t } = useI18n()
     const [previewPdf, setPreviewPdf] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
     const [exploitationWork, setExploitationWork] = useState<string | null>(null)
+    const [meldDialog, setMeldDialog] = useState<EfterlysningItem | null>(null)
+    const [meldNote, setMeldNote] = useState("")
+    const [meldFileName, setMeldFileName] = useState("")
+    const [meldSent, setMeldSent] = useState<Set<string>>(new Set())
+
+    const pendingOrRejectedKrav = MOCK_MINE_KRAV.filter(k => k.status !== "approved")
+    const allWorks = [...mockWorks, ...approvedKravAsWorks]
 
     // Mock exploitation data per work
     const mockExploitation: Record<string, { platforms: { name: string; views: number; revenue: number }[]; totalRevenue: number; coverage: number }> = {
@@ -151,7 +219,7 @@ export default function MineVaerkerPage() {
         <div className="space-y-6">
             <PageHeader title={t("works.title")} subtitle={t("works.subtitle")} />
 
-            {mockWorks.length === 0 ? (
+            {allWorks.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 text-center">
                     <Film className="h-10 w-10 text-muted-foreground/40" />
                     <h3 className="mt-4 text-sm font-medium">{t("works.noWorks")}</h3>
@@ -174,15 +242,36 @@ export default function MineVaerkerPage() {
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {mockWorks.map((work) => (
+                            {allWorks.map((work) => {
+                                const isAftalelicens = "fromAftalelicens" in work
+                                return (
                                 <TableRow key={work.id}>
                                     <TableCell>
-                                        <div>
+                                        <div className="flex items-center gap-2 flex-wrap">
                                             <span className="font-medium">{work.title}</span>
-                                            <span className="ml-2 text-xs text-muted-foreground">
-                                                ({work.premiereYear})
+                                            <span className="text-xs text-muted-foreground">
+                                                ({work.premiereYear || "—"})
                                             </span>
+                                            {isAftalelicens && (
+                                                <Badge variant="outline" className="text-[10px] py-0 gap-0.5 font-normal">
+                                                    <Layers className="h-2.5 w-2.5" />
+                                                    {(work as typeof approvedKravAsWorks[0]).batchLabel}
+                                                </Badge>
+                                            )}
                                         </div>
+                                        {work.episodes && work.editedEpisodes && work.editedEpisodes.length > 0 && (
+                                            <div className="mt-1 space-y-0.5">
+                                                {work.episodes
+                                                    .filter(ep => work.editedEpisodes!.includes(ep.number))
+                                                    .map(ep => (
+                                                        <div key={ep.number} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                            <span className="font-mono text-muted-foreground/60">↳</span>
+                                                            <span className="font-mono font-medium">E{String(ep.number).padStart(2, "0")}</span>
+                                                            <span>{ep.title}</span>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        )}
                                     </TableCell>
                                     <TableCell>{work.creditedRoles.join(", ")}</TableCell>
                                     <TableCell>
@@ -214,40 +303,245 @@ export default function MineVaerkerPage() {
                                         <RightsBadges rights={work.rights} />
                                     </TableCell>
                                     <TableCell>
-                                        <DurationDisplay work={work} />
+                                        {work.episodes && work.episodes.length > 0 ? (
+                                            <span className="text-sm tabular-nums text-muted-foreground">
+                                                {work.episodes.length} {t("works.episodes")}
+                                            </span>
+                                        ) : (
+                                            <span className="tabular-nums">{work.duration} {t("common.minutes")}</span>
+                                        )}
                                     </TableCell>
                                     <TableCell>
-                                        <div className="flex gap-1">
+                                        {!isAftalelicens ? (
+                                            <div className="flex gap-1">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8"
+                                                    onClick={() => setPreviewPdf(work.contractId)}
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                </Button>
+                                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                    <Download className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell>
+                                        {!isAftalelicens ? (
                                             <Button
-                                                variant="ghost"
-                                                size="icon"
-                                                className="h-8 w-8"
-                                                onClick={() => setPreviewPdf(work.contractId)}
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-1.5 text-xs h-7"
+                                                onClick={() => setExploitationWork(work.id)}
                                             >
-                                                <Eye className="h-4 w-4" />
+                                                <BarChart3 className="h-3 w-3" />
+                                                {t("works.seeExploitation")}
                                             </Button>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                <Download className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="gap-1.5 text-xs h-7"
-                                            onClick={() => setExploitationWork(work.id)}
-                                        >
-                                            <BarChart3 className="h-3 w-3" />
-                                            {t("works.seeExploitation")}
-                                        </Button>
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">—</span>
+                                        )}
                                     </TableCell>
                                 </TableRow>
-                            ))}
+                                )
+                            })}
                         </TableBody>
                     </Table>
                 </div>
             )}
+
+            {/* Aftalelicens-krav — kun afventende og afviste */}
+            {pendingOrRejectedKrav.length > 0 && (
+                <section className="rounded-lg border">
+                    <div className="flex items-center justify-between px-5 py-4 border-b">
+                        <div className="flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-muted-foreground" />
+                            <h2 className="font-medium text-sm">Aftalelicens-krav</h2>
+                            {pendingOrRejectedKrav.some(k => k.status === "pending") && (
+                                <Badge variant="secondary" className="text-xs">
+                                    {pendingOrRejectedKrav.filter(k => k.status === "pending").length} afventer afgørelse
+                                </Badge>
+                            )}
+                        </div>
+                        <Button asChild variant="ghost" size="sm" className="text-xs gap-1">
+                            <Link href="/portal/aftalelicens">
+                                Søg flere titler
+                            </Link>
+                        </Button>
+                    </div>
+                    <div className="divide-y">
+                        {pendingOrRejectedKrav.map(krav => {
+                            const cfg = KRAV_STATUS_CFG[krav.status]
+                            return (
+                                <div key={krav.id} className="px-5 py-4 flex items-start justify-between gap-4">
+                                    <div className="space-y-0.5 min-w-0">
+                                        <p className="text-sm font-medium">{krav.rawTitle}</p>
+                                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                                            <span>{krav.batchLabel}</span>
+                                            {krav.channel && <span>· {krav.channel}</span>}
+                                            {krav.broadcastDate && (
+                                                <span>· {new Date(krav.broadcastDate).toLocaleDateString("da-DK")}</span>
+                                            )}
+                                            {krav.vaerkTypeLabel && (
+                                                <Badge variant="outline" className="text-[10px] py-0 font-normal">
+                                                    {krav.vaerkTypeLabel}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        {krav.note && (
+                                            <p className="text-xs text-muted-foreground italic mt-0.5">&ldquo;{krav.note}&rdquo;</p>
+                                        )}
+                                    </div>
+                                    <div className="shrink-0 flex flex-col items-end gap-1">
+                                        <Badge variant={cfg.variant} className="gap-1 text-xs whitespace-nowrap">
+                                            <cfg.icon className="h-3 w-3" />
+                                            {cfg.label}
+                                        </Badge>
+                                        <span className="text-[10px] text-muted-foreground">
+                                            Indsendt {new Date(krav.submittedAt).toLocaleDateString("da-DK")}
+                                        </span>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </section>
+            )}
+
+            {/* Efterlysning — værker uden klipper */}
+            <section className="rounded-lg border">
+                <div className="flex items-center gap-2 px-5 py-4 border-b">
+                    <SearchCheck className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <h2 className="font-medium text-sm">Efterlysning — kender du disse værker?</h2>
+                    <Badge variant="outline" className="text-xs border-amber-300 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30">
+                        {MOCK_EFTERLYSNINGER.filter(e => !meldSent.has(e.id)).length} uden klipper
+                    </Badge>
+                </div>
+                <p className="px-5 pt-3 pb-1 text-sm text-muted-foreground">
+                    DFKS har registreret følgende værker uden tilknyttet klipper. Har du klippet et af disse, så meld dig nedenfor.
+                </p>
+                <div className="divide-y">
+                    {MOCK_EFTERLYSNINGER.map(item => (
+                        <div key={item.id} className="px-5 py-3 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium">{item.title}</p>
+                                <p className="text-xs text-muted-foreground">{item.type} · {item.premiereYear} · #{item.productionNumber}</p>
+                            </div>
+                            {meldSent.has(item.id) ? (
+                                <Badge variant="outline" className="gap-1 text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950 shrink-0">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Meldt til DFKS
+                                </Badge>
+                            ) : (
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="shrink-0 text-xs gap-1.5"
+                                    onClick={() => { setMeldDialog(item); setMeldNote(""); setMeldFileName("") }}
+                                >
+                                    <Users className="h-3.5 w-3.5" />
+                                    Jeg klippede dette
+                                </Button>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </section>
+
+            {/* Meld-dialog */}
+            <Dialog open={!!meldDialog} onOpenChange={() => { setMeldDialog(null); setMeldFileName("") }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Meld dig som klipper</DialogTitle>
+                        <DialogDescription>
+                            Du markerer at du har klippet dette værk. DFKS vil validere dit krav.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {/* Werk details */}
+                    <div className="rounded-lg bg-muted/50 border p-3 text-xs space-y-1">
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Titel</span>
+                            <span className="font-medium">{meldDialog?.title}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Type</span>
+                            <span>{meldDialog?.type}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">År</span>
+                            <span>{meldDialog?.premiereYear}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-muted-foreground">Prod.nr.</span>
+                            <span>#{meldDialog?.productionNumber}</span>
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {/* Contract upload */}
+                        <div className="space-y-1.5">
+                            <Label>Kontrakt (anbefalet)</Label>
+                            <label className="cursor-pointer block">
+                                <div className="flex items-center gap-2 rounded-md border border-dashed px-4 py-3 text-sm text-muted-foreground hover:border-primary hover:text-foreground transition-colors">
+                                    <Upload className="h-4 w-4 shrink-0" />
+                                    {meldFileName
+                                        ? <span className="text-foreground font-medium truncate">{meldFileName}</span>
+                                        : "Vedhæft kontrakt eller klippeattest (.pdf, .docx)"}
+                                </div>
+                                <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx"
+                                    className="sr-only"
+                                    onChange={e => setMeldFileName(e.target.files?.[0]?.name ?? "")}
+                                />
+                            </label>
+                            {meldFileName && (
+                                <button
+                                    className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                                    onClick={() => setMeldFileName("")}
+                                >
+                                    <X className="h-3 w-3" /> Fjern fil
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Note */}
+                        <div className="space-y-1.5">
+                            <Label>Note (valgfrit)</Label>
+                            <Textarea
+                                value={meldNote}
+                                onChange={e => setMeldNote(e.target.value)}
+                                placeholder="Fx: Klippede afsnit 2–5, sæson 1. Kontrakt via Zentropa..."
+                                rows={3}
+                            />
+                        </div>
+
+                        {/* Info */}
+                        <div className="flex items-start gap-2 rounded-lg border border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-950/30 px-3 py-2.5 text-xs text-blue-700 dark:text-blue-300">
+                            <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <p>Din markering sendes til DFKS for validering. Du vil blive kontaktet når dit krav er behandlet.</p>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => { setMeldDialog(null); setMeldFileName("") }}>Annuller</Button>
+                        <Button onClick={() => {
+                            if (meldDialog) {
+                                setMeldSent(prev => new Set([...prev, meldDialog.id]))
+                                setMeldDialog(null)
+                                setMeldFileName("")
+                            }
+                        }}>
+                            <Send className="mr-2 h-3.5 w-3.5" />
+                            Send markering
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {/* Contract Preview Dialog */}
             <Dialog open={!!previewPdf} onOpenChange={() => { setPreviewPdf(null); setLocalPdfUrl(null) }}>

@@ -62,6 +62,8 @@ export interface ScreeningResult {
 // ── Reference store (module-level singleton) ─────────────────
 // Populated via setReferences() from the overenskomster admin page.
 
+export type DocOwner = "de4" | "anden-fagforening"
+
 export interface ReferenceDoc {
     id: string
     name: string
@@ -75,7 +77,10 @@ export interface ReferenceDoc {
         | "Standardkontrakt — dokumentar (A-løn)"
         | "Standardkontrakt — dokumentar (leverandør)"
         | "Reference"
+    owner: DocOwner
     text: string
+    fileData?: string   // base64-encoded original file
+    fileType?: string   // MIME type
     addedAt: string
 }
 
@@ -85,8 +90,48 @@ export interface MemberList {
     updatedAt: string | null
 }
 
+export type LegalNotePriority = "aktiv-indsats" | "fast-regel" | "orientering"
+
+export interface LegalNote {
+    id: string
+    title: string
+    text: string
+    priority: LegalNotePriority
+    excludeForOverenskomst?: boolean
+    updatedAt: string
+}
+
+export type CaseLearningKontrakttype = "a-loen" | "leverandoer" | "alle"
+
+export interface CaseLearning {
+    id: string
+    kontrakttype: CaseLearningKontrakttype
+    titel: string   // Kort beskrivelse af hvad AI'en fejlede / hvad der lærtes
+    regel: string   // Den konkrete regel der injiceres i systemprompten
+    addedAt: string
+}
+
+const DEFAULT_LEGAL_NOTES: LegalNote[] = [
+    {
+        id: "tdm-ophavsret-11b",
+        title: "Tekst- og datamining (TDM) — ophavsretslovens § 11b",
+        text: `Producentens ret til at udnytte det færdige værk omfatter ikke tekst- og datamining (TDM) som defineret i ophavsretslovens § 11b. Eventuel tilladelse til sådan udnyttelse kræver særskilt skriftlig aftale med ophavsmændene og udløser et særskilt vederlag, der aftales i hvert enkelt tilfælde / fastsættes efter overenskomstens bestemmelser.`,
+        priority: "aktiv-indsats",
+        updatedAt: "2026-05-21T00:00:00.000Z",
+    },
+    {
+        id: "faf-fiktion-daekker-ikke-klippere",
+        title: "FAF's fiktionsoverenskomst dækker ikke klippere",
+        text: `FAF's fiktionsoverenskomst er formelt kun gyldig for andre faggrupper på fiktionsholdet — ikke for klippere. Klippere er dækket af De4-overenskomsten (Dansk Filmklipperselskab), ikke FAF's. Hvis en kontrakt med en klipper refererer til FAF's fiktionsoverenskomst som det regulerende grundlag, er det en fejl. Kontrakten bør i stedet referere til De4-overenskomsten. Flag dette som kritisk og anbefal at kontrakten korrigeres til at referere til De4-overenskomsten mellem Dansk Filmklipperselskab og Producentforeningen.`,
+        priority: "fast-regel",
+        updatedAt: "2026-05-21T00:00:00.000Z",
+    },
+]
+
 let _references: ReferenceDoc[] = []
 let _memberList: MemberList = { raw: "", parsed: [], updatedAt: null }
+let _legalNotes: LegalNote[] = [...DEFAULT_LEGAL_NOTES]
+let _caseLearnings: CaseLearning[] = []
 
 export function setReferences(refs: ReferenceDoc[]) {
     _references = refs
@@ -102,6 +147,22 @@ export function getReferences(): ReferenceDoc[] {
 
 export function getMemberList(): MemberList {
     return _memberList
+}
+
+export function getLegalNotes(): LegalNote[] {
+    return _legalNotes
+}
+
+export function setLegalNotes(notes: LegalNote[]) {
+    _legalNotes = notes
+}
+
+export function getCaseLearnings(): CaseLearning[] {
+    return _caseLearnings
+}
+
+export function setCaseLearnings(learnings: CaseLearning[]) {
+    _caseLearnings = learnings
 }
 
 // ── PDF text extraction ──────────────────────────────────────
@@ -260,14 +321,14 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
     "royaltyPercent": null,
     "aiDataMiningClause": false,
     "distribution": [],
-    "collectiveAgreement": "true KUN hvis kontrakten er indgået direkte under overenskomsten som en A-lønskontrakt. Sæt false hvis det er en leverandørkontrakt (CVR-nummer, moms, selvstændig) — selv hvis overenskomstens vilkår er inkorporeret ved reference. Inkorporering ved reference er IKKE det samme som at kontrakten er en overenskomstkontrakt.",
+    "collectiveAgreement": "STRENG REGEL: true KUN hvis kontrakten er en ren A-LØNSKONTRAKT (lønmodtager uden CVR, uden moms, med løn og ikke honorar). Hvis kontrakten indeholder CVR-nummer, moms, honorar, faktura eller selvstændig erhvervsdrivende: sæt collectiveAgreement til false — UANSET om overenskomstens vilkår er inkorporeret ved reference. collectiveAgreementByReference håndterer det tilfælde separat. En leverandørkontrakt er ALDRIG en 'overenskomstkontrakt'.",
     "collectiveAgreementName": null,
-    "isFreelanceContract": "true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, selvstændig erhvervsdrivende) — false hvis det er en lønmodtagerkontrakt",
-    "collectiveAgreementByReference": "true hvis overenskomstens vilkår er inkorporeret ved reference selv om kontrakten ikke er en overenskomstkontrakt — f.eks. 'the terms set forth therein shall supplement' — ellers false",
+    "isFreelanceContract": "true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, honorar, faktura, selvstændig erhvervsdrivende) — false hvis det er en lønmodtagerkontrakt (A-løn)",
+    "collectiveAgreementByReference": "true hvis overenskomstens vilkår er inkorporeret ved reference i en leverandørkontrakt — f.eks. 'the terms set forth therein shall supplement', 'I øvrigt gælder overenskomstens bestemmelser', 'In all other respects the terms of the collective agreement apply' — ellers false",
     "gender": null,
-    "holidayPayRate": null,
-    "betaRate": null,
-    "specialNotes": null
+    "holidayPayRate": "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 1 (1% — fastsat i overenskomsten). (B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. (C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null.",
+    "betaRate": "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 0.5 (0,5% — fastsat i § 21 af overenskomsten). (B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. (C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null.",
+    "specialNotes": "KUN vilkår der er USÆDVANLIGE og konkret afviger fra det normale FOR DEN PÅGÆLDENDE KONTRAKTTYPE. Skriv max 2-3 sætninger. FORBUDT at skrive: at det er en leverandørkontrakt, at honoraret er alt-inklusivt (100% standard for leverandørkontrakter), lønoplysninger der allerede fremgår af salary-feltet, en generel opsummering af kontrakten, parternes navne eller CVR. SKAL MED: Overenskomstinkorporering i en leverandørkontrakt — dvs. at overenskomstens vilkår gælder som supplement i en B2B-aftale — er et særligt og usædvanligt vilkår som ALTID skal nævnes i specialNotes (f.eks. 'Overenskomstvilkår inkorporeret ved reference: De4-overenskomstens vilkår supplerer denne leverandørkontrakt i medfør af § X'). Andre eksempler der KAN med: ensidigt forlængelsesret hos producenten, produktion i udlandet, unormalt kort opsigelsesvarsel (under 1 uge), særlig konkurrenceklausul. Null hvis ingen reelt usædvanlige vilkår."
   },
 
   "flags": [
@@ -287,13 +348,16 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 Vigtige regler:
 - Marker KUN som critical/warning hvis kontrakten AFVIGER fra overenskomsten — ikke hvis overenskomsten allerede dækker forholdet
 - Hvis kontrakten henviser til "overenskomsten" uden at specificere, antag at den gældende overenskomst dækker
+- De4-overenskomsten er ALTID målestokken — selv hvis kontrakten reguleres af en anden overenskomst, skal De4's vilkår bruges som referencepunkt. Flag eksplicit hvis De4-overenskomsten giver bedre vilkår end den gældende.
+- KRITISK — FAF-standardkontrakten (2025-2027) vs. De4-standardkontrakten (2022): De4's standardkontrakt inkorporerer eksplicit "det moderniserede Copydan-forbehold og SVOD-aftale". FAF's standardkontrakt (2025-2027) nævner kun Create Denmark — uden eksplicit Copydan-forbehold, SVOD-aftale eller royalties. Kontrakter under FAF-overenskomsten skal vurderes kritisk: flag det som advarsel hvis Copydan, SVOD og royalties ikke er eksplicit tilføjet.
 - VIGTIGT — Inkorporering ved reference: Hvis en kontrakt (også leverandørkontrakter og engelsksprogede kontrakter) eksplicit inkorporerer overenskomsten ved reference — selv med formuleringer som "does not apply directly, but the terms shall supplement" eller "selv om overenskomsten ikke gælder direkte, finder dens vilkår anvendelse som supplement" — så behandles overenskomstens rettigheder som gældende. Det betyder at svod, copydan og øvrige overenskomstrettigheder sættes til true, og collectiveAgreement sættes til true. Sæt et info-flag der forklarer at overenskomsten er inkorporeret ved reference. VIGTIGT: En leverandørkontrakt med CVR-nummer er stadig en leverandørkontrakt selv om overenskomstens vilkår finder anvendelse som supplement — sæt i så fald specialNotes til at angive at det er en leverandørkontrakt hvor overenskomstens vilkår er inkorporeret ved reference. Forveksl ikke "overenskomstens vilkår gælder som supplement" med "kontrakten er en overenskomstkontrakt".
-- VIGTIGT — Alt-inklusivt honorar: Hvis kontrakten angiver at honoraret inkluderer pension, feriepenge eller sociale omkostninger ("the fee includes any and all social costs", "honoraret er inklusiv pension og feriepenge" eller lignende), skal dette flages som warning — ikke critical. Rettighedsmæssigt er kontrakten stadig OK hvis overenskomsten er inkorporeret. Men det skal bemærkes at producenten ikke indbetaler pension og feriepenge separat oveni honoraret, hvilket afviger fra overenskomstens normale struktur. Angiv i flaget at klipperen selv skal håndtere pension og feriepenge af honoraret, og at den effektive løn dermed er lavere end honoraret umiddelbart antyder. Sæt pensionPercent og holidayPayRate til null da de er inkluderet i honoraret. Denne situation alene bør ikke føre til overallVerdict = critical.
+- VIGTIGT — Alt-inklusivt honorar: For leverandørkontrakter er det NORMALT og FORVENTET at honoraret er alt-inklusivt og dækker pension, feriepenge og sociale udgifter — flag IKKE dette som usædvanligt eller problematisk. Det er standardvilkåret for B2B-kontrakter. Sæt pensionPercent, holidayPayRate og betaRate til null da disse er inkluderet i honoraret og ikke udgør separate poster. Flag kun hvis en A-lønskontrakt angiver at honoraret er alt-inklusivt — det er usædvanligt i den kontrakttype. For leverandørkontrakter: ingen warning for alt-inklusivt honorar.
 - Privatkopiering og Copydan: Hvis kontrakten eksplicit nævner at medarbejderen/klipperen bevarer retten til vederlag for privatkopiering (f.eks. "retains the right to compensation for private copying", "bevarer ret til privatkopiering", reference til ophavsretslovens §39-46a eller tilsvarende) — noter dette i specialNotes og sæt copydan til true. Det er en lovhjemlet ret der bekræfter at Copydan-vederlag er i behold, og det bør fremhæves som en positiv bemærkning til klipperen.
 - salary skal være et rent tal (ingen valutasymboler)
 - Datoer på formatet YYYY-MM-DD
 - aiDataMiningClause = true hvis kontrakten indeholder AI/data mining-forbehold
-- productionType skal ALTID udfyldes — gæt ud fra kontekst hvis det ikke er eksplicit nævnt. En kontrakt med en stor dansk produktionsselskab og ingen seriestruktur er sandsynligvis feature. Nævnes afsnit/episoder er det tvSeries eller docSeries.`
+- productionType skal ALTID udfyldes — gæt ud fra kontekst hvis det ikke er eksplicit nævnt. En kontrakt med en stor dansk produktionsselskab og ingen seriestruktur er sandsynligvis feature. Nævnes afsnit/episoder er det tvSeries eller docSeries.
+- SÆRLIG KREDITERING — Dramaturg: Hvis kontrakten nævner "Dramaturg" som kreditering (f.eks. "Der er aftalt følgende vedrørende kreditering: Dramaturg" eller lignende), er dette en særlig og usædvanlig kreditering som DFKS er specifikt interesseret i. En dramaturgkreditering markerer at klipperen har haft en kreativ og dramaturgisk funktion ud over ren klipning — det er vigtigt for faglig anerkendelse og præcedensvirkning. Gør ALTID følgende: (1) Beskriv det i specialNotes med den eksakte kreditformulering fra kontrakten. (2) Opret et info-flag med category "Kreditering", title "Dramaturgkreditering aftalt" og description der forklarer hvad der er aftalt og at DFKS noterer dette særskilt.`
 
 export function buildSystemPrompt(): string {
     let prompt = BASE_SYSTEM

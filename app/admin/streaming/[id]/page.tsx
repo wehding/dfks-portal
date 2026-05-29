@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
     ArrowLeft, Plus, Lock, CheckCircle2, Clock, AlertCircle,
     ExternalLink, ChevronDown, ChevronUp, Download, Users, Pencil,
-    Film, Tv, Copy,
+    Film, Tv, Copy, Database,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -161,6 +161,9 @@ const mockData: Record<string, MockProductionDetail> = {
                 { id: "ev2", type: "accepted", actorName: "Niels Ostenfeld", createdAt: "2022-05-03" },
                 { id: "ev3", type: "accepted", actorName: "Anders Hoffmann", createdAt: "2022-05-05" },
                 { id: "ev4", type: "locked", actorName: "Admin", createdAt: "2022-05-05" },
+                { id: "ev5", type: "proposed", actorName: "Anders Hoffmann", createdAt: "2024-01-10", comment: "Foreslår justering til 65/35" },
+                { id: "ev6", type: "rejected", actorName: "Niels Ostenfeld", createdAt: "2024-01-12" },
+                { id: "ev7", type: "locked", actorName: "Admin", createdAt: "2024-01-15", comment: "Fastholdt original fordeling" },
             ],
         },
         exploitations: [{
@@ -205,7 +208,7 @@ const mockData: Record<string, MockProductionDetail> = {
     },
     "005": {
         id: "005", productionNumber: "005", title: "Skruk Sæson 1",
-        type: "tv_series_original", premiereYear: 2022,
+        type: "tv_series_original", premiereYear: 2022, season: 1,
         licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10,
         createdAt: "2022-01-01", updatedAt: "2022-01-01", createdBy: "admin",
         editors: [
@@ -484,8 +487,119 @@ export default function StreamingDetailPage() {
     const [activeExploitationId, setActiveExploitationId] = useState<string | undefined>(undefined)
     const [showAddEditor, setShowAddEditor] = useState(false)
     const [showCreateKey, setShowCreateKey] = useState(false)
+    const [editingKey, setEditingKey] = useState(false)
+    const [editShares, setEditShares] = useState<{ id: string; name: string; sharePercent: number }[]>([])
+    const [distKeyOverride, setDistKeyOverride] = useState<MockDistributionKey | undefined>(undefined)
+
+    // ── Aftalelicens-betalinger fra localStorage ───────────────
+    interface AlKlipper { name: string; userId?: string; sharePercent: number; amount: number }
+    interface AlEpisode { episodeLabel: string; broadcastDate?: string; isGenudsendelse: boolean; points: number; amount: number; klippere?: AlKlipper[] }
+    interface AlVaerk { workId?: string; workTitle: string; vaerkType: string; totalPoints?: number; totalAmount: number; adminFeeAmount?: number; klippere?: AlKlipper[]; episodes?: AlEpisode[]; status?: "pending" | "paid" }
+    interface AlEntry { id: string; batchLabel: string; lockedAt: string; totalAmount: number; vaerker: AlVaerk[] }
+
+    const [alBetalinger, setAlBetalinger] = useState<{ entry: AlEntry; vaerk: AlVaerk }[]>([])
+    const [expandedAl, setExpandedAl] = useState<string | null>(null)
+
+    const markAlPaid = (entryId: string, workId: string | undefined) => {
+        const stored: AlEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
+        const updated = stored.map(e => {
+            if (e.id !== entryId) return e
+            return { ...e, vaerker: e.vaerker.map(v => v.workId === workId ? { ...v, status: "paid" as const } : v) }
+        })
+        localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(updated))
+        setAlBetalinger(prev => prev.map(({ entry, vaerk }) =>
+            entry.id === entryId && vaerk.workId === workId
+                ? { entry, vaerk: { ...vaerk, status: "paid" as const } }
+                : { entry, vaerk }
+        ))
+    }
+
+    useEffect(() => {
+        // Persist all distribution keys so aftalelicens can look them up by workId
+        const distKeys: Record<string, { shares: { name: string; userId?: string; sharePercent: number }[] }> = {}
+        for (const [id, prod] of Object.entries(mockData)) {
+            if (prod.distributionKey?.status === "locked") {
+                distKeys[id] = {
+                    shares: prod.distributionKey.shares.map(s => ({
+                        name: s.name,
+                        userId: s.acceptedByUserId,
+                        sharePercent: s.sharePercent,
+                    })),
+                }
+            }
+        }
+        localStorage.setItem("dfks_distribution_keys", JSON.stringify(distKeys))
+
+        const stored: AlEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
+        // Seed demo data for work "002" (Nisser — TV-serie); re-seed if klippere userId is stale (u1 → u3 fix)
+        const nissserEntry = stored.find(e => e.id === "al_demo_002")
+        const needsReseed = !nissserEntry || nissserEntry.vaerker[0]?.episodes?.[0]?.klippere?.[0]?.userId === "u1"
+        if (needsReseed) {
+            const withoutNisser = stored.filter(e => e.id !== "al_demo_002")
+            const demo: AlEntry = {
+                id: "al_demo_002",
+                batchLabel: "Copydan Verdens TV 2023",
+                lockedAt: new Date().toISOString(),
+                totalAmount: 765000,
+                vaerker: [
+                    {
+                        workId: "002",
+                        workTitle: "Nisser",
+                        vaerkType: "tv_serie_lang",
+                        totalPoints: 12000,
+                        totalAmount: 98816,
+                        adminFeeAmount: 17438,
+                        episodes: [
+                            { episodeLabel: "S1E1", broadcastDate: "2023-09-21", isGenudsendelse: false, points: 4800, amount: 39526, klippere: [{ name: "Michael Bauer", userId: "u3", sharePercent: 100, amount: 39526 }] },
+                            { episodeLabel: "S1E2", broadcastDate: "2023-09-28", isGenudsendelse: false, points: 4800, amount: 39526, klippere: [{ name: "Ida Bregninge", userId: "u2", sharePercent: 100, amount: 39526 }] },
+                            { episodeLabel: "S1E2", broadcastDate: "2023-09-30", isGenudsendelse: true, points: 2400, amount: 19764, klippere: [{ name: "Ida Bregninge", userId: "u2", sharePercent: 100, amount: 19764 }] },
+                        ],
+                    },
+                ],
+            }
+            const updated = [...withoutNisser, demo]
+            localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(updated))
+            stored.length = 0
+            stored.push(...updated)
+        }
+
+        // Seed demo for "003" (Toscana — enkeltstående film)
+        if (!stored.some(e => e.vaerker.some(v => v.workId === "003"))) {
+            const toscana: AlEntry = {
+                id: "al_demo_003",
+                batchLabel: "TV2 Play 2023",
+                lockedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString(),
+                totalAmount: 45000,
+                vaerker: [
+                    {
+                        workId: "003",
+                        workTitle: "Toscana",
+                        vaerkType: "film_licensed",
+                        totalPoints: 8500,
+                        totalAmount: 45000,
+                        adminFeeAmount: 4500,
+                        klippere: [
+                            { name: "Anders Hoffmann", userId: "u1", sharePercent: 60, amount: 27000 },
+                            { name: "Niels Ostenfeld", userId: "u2", sharePercent: 40, amount: 18000 },
+                        ],
+                    },
+                ],
+            }
+            const updated2 = [...stored, toscana]
+            localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(updated2))
+            stored.push(toscana)
+        }
+        const result: { entry: AlEntry; vaerk: AlVaerk }[] = []
+        for (const entry of stored) {
+            for (const vaerk of entry.vaerker) {
+                if (vaerk.workId === id) result.push({ entry, vaerk })
+            }
+        }
+        setAlBetalinger(result)
+    }, [id])
 
     const production = mockData[id]
+    const distKey = distKeyOverride ?? production?.distributionKey
 
     if (!production) {
         return (
@@ -507,11 +621,31 @@ export default function StreamingDetailPage() {
     const totalReceived = allPayouts.reduce((s, p) => s + p.grossAmount, 0)
     const totalNet = allPayouts.reduce((s, p) => s + p.netAmount, 0)
     const totalAdmin = allPayouts.reduce((s, p) => s + p.adminFeeAmount, 0)
+    const alTotal = alBetalinger.reduce((s, { vaerk }) => s + vaerk.totalAmount, 0)
+    const alAdminFee = alBetalinger.reduce((s, { vaerk }) => s + (vaerk.adminFeeAmount ?? 0), 0)
     const pendingPayouts = allPayouts.filter(p => p.status === "pending" || p.status === "distributing")
-    const canExport = production.distributionKey?.status === "locked" && pendingPayouts.length > 0
+    const canExport = distKey?.status === "locked" && pendingPayouts.length > 0
 
-    const acceptedCount = production.distributionKey?.shares.filter(s => s.acceptedAt).length ?? 0
-    const totalShares = production.distributionKey?.shares.length ?? 0
+    const acceptedCount = distKey?.shares.filter(s => s.acceptedAt).length ?? 0
+    const totalShares = distKey?.shares.length ?? 0
+
+    // Total udbetalt per klipper (streaming + AL)
+    const totalByEditor: Record<string, number> = {}
+    for (const payout of allPayouts) {
+        for (const dist of payout.distributions) {
+            totalByEditor[dist.name] = (totalByEditor[dist.name] ?? 0) + dist.amount
+        }
+    }
+    for (const { vaerk } of alBetalinger) {
+        for (const k of vaerk.klippere ?? []) {
+            totalByEditor[k.name] = (totalByEditor[k.name] ?? 0) + k.amount
+        }
+        for (const ep of vaerk.episodes ?? []) {
+            for (const k of ep.klippere ?? []) {
+                totalByEditor[k.name] = (totalByEditor[k.name] ?? 0) + k.amount
+            }
+        }
+    }
 
     const exploitationOptions = production.exploitations.map(e => ({
         id: e.id, platform: e.platform, type: e.type, payer: e.payer,
@@ -544,16 +678,13 @@ export default function StreamingDetailPage() {
                         <span>·</span>
                         {production.type.startsWith("film") ? <Film className="h-3.5 w-3.5" /> : <Tv className="h-3.5 w-3.5" />}
                         <span>{typeLabel(production.type)}</span>
-                        {production.season && <><span>·</span><span>Sæson {production.season}</span></>}
                         <span>·</span>
                         <span>{production.premiereYear}</span>
                     </div>
                     <h1 className="text-2xl font-semibold tracking-tight">{production.title}</h1>
-                    <div className="mt-1.5 flex items-center gap-2 text-sm text-muted-foreground">
-                        <span>Licens: {production.licenseDurationYears} år fra {production.licenseStartYear}</span>
-                        <span>·</span>
-                        <span className={licenseYearsRemaining < 5 ? "text-amber-600" : ""}>{licenseYearsRemaining} år tilbage</span>
-                    </div>
+                    {production.season && (
+                        <p className="mt-0.5 text-sm text-muted-foreground">Sæson {production.season}</p>
+                    )}
                 </div>
                 <Button variant="outline" size="sm" className="gap-1.5">
                     <Pencil className="h-3.5 w-3.5" />
@@ -565,15 +696,18 @@ export default function StreamingDetailPage() {
             <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Modtaget i alt</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived + alTotal)}</p>
+                    {alTotal > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alTotal)} aftalelicens</p>}
                 </div>
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Udbetalt til klippere</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalNet)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalNet + alTotal)}</p>
+                    {alTotal > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alTotal)} aftalelicens</p>}
                 </div>
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Adm. gebyr i alt</p>
-                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalAdmin)}</p>
+                    <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalAdmin + alAdminFee)}</p>
+                    {alAdminFee > 0 && <p className="text-xs text-muted-foreground mt-0.5">inkl. {fmt(alAdminFee)} aftalelicens</p>}
                 </div>
             </div>
 
@@ -600,6 +734,12 @@ export default function StreamingDetailPage() {
                                     {editor.episodes && <span>Episoder: {editor.episodes}</span>}
                                 </p>
                             </div>
+                            {totalByEditor[editor.name] !== undefined && (
+                                <div className="text-right">
+                                    <p className="text-sm tabular-nums font-medium">{fmt(totalByEditor[editor.name])}</p>
+                                    <p className="text-xs text-muted-foreground">udbetalt</p>
+                                </div>
+                            )}
                             {editor.contractId && (() => {
                                 const contract = mockContracts.find(c => c.id === editor.contractId)
                                 const d = contract?.extractedData
@@ -637,14 +777,29 @@ export default function StreamingDetailPage() {
                 <div className="flex items-center justify-between px-4 py-3 border-b">
                     <h2 className="font-medium">Fordelingsnøgle</h2>
                     <div className="flex items-center gap-2">
-                        <KeyStatusBadge status={production.distributionKey?.status} />
-                        {(!production.distributionKey || production.distributionKey.status === "draft") && (
+                        {distKey?.status === "locked" && !editingKey ? (
+                            <div className="relative group/lock inline-block">
+                                <KeyStatusBadge status="locked" />
+                                <div className="absolute right-0 top-full pt-1 z-20 opacity-0 pointer-events-none group-hover/lock:opacity-100 group-hover/lock:pointer-events-auto transition-opacity">
+                                    <Button variant="outline" size="sm" className="gap-1.5 whitespace-nowrap shadow-md bg-background" onClick={() => {
+                                        setEditShares(distKey.shares.map(s => ({ id: s.id, name: s.name, sharePercent: s.sharePercent })))
+                                        setEditingKey(true)
+                                    }}>
+                                        <Pencil className="h-3.5 w-3.5" />
+                                        Oplås og rediger
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <KeyStatusBadge status={distKey?.status} />
+                        )}
+                        {(!distKey || distKey.status === "draft") && (
                             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setShowCreateKey(true)}>
                                 <Plus className="h-3.5 w-3.5" />
                                 Opret nøgle
                             </Button>
                         )}
-                        {production.distributionKey?.status === "accepted" && (
+                        {distKey?.status === "accepted" && (
                             <Button size="sm" className="gap-1.5">
                                 <Lock className="h-3.5 w-3.5" />
                                 Lås nøgle
@@ -653,57 +808,130 @@ export default function StreamingDetailPage() {
                     </div>
                 </div>
 
-                {production.distributionKey ? (
+                {distKey ? (
                     <div>
                         <div className="divide-y">
-                            {production.distributionKey.shares.map(share => (
-                                <div key={share.id} className="flex items-center gap-4 px-4 py-3">
-                                    <div className="flex-1">
-                                        <p className="text-sm font-medium">{share.name}</p>
+                            {editingKey ? (
+                                editShares.map((share, idx) => {
+                                    const sum = editShares.reduce((s, r) => s + (Number(r.sharePercent) || 0), 0)
+                                    return (
+                                        <div key={share.id} className="flex items-center gap-4 px-4 py-3">
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium">{share.name}</p>
+                                            </div>
+                                            <div className="flex items-center gap-1.5">
+                                                <input
+                                                    type="number"
+                                                    min={0}
+                                                    max={100}
+                                                    step={0.01}
+                                                    value={share.sharePercent}
+                                                    onChange={e => setEditShares(prev => prev.map((s, i) => i === idx ? { ...s, sharePercent: Number(e.target.value) } : s))}
+                                                    className="w-20 text-sm text-right tabular-nums border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-ring"
+                                                />
+                                                <span className="text-sm">%</span>
+                                            </div>
+                                            {idx === editShares.length - 1 && (
+                                                <div className={`text-xs w-28 text-right ${sum === 100 ? "text-green-600" : "text-red-500"}`}>
+                                                    Sum: {sum.toFixed(2)}%
+                                                </div>
+                                            )}
+                                            {idx !== editShares.length - 1 && <div className="w-28" />}
+                                        </div>
+                                    )
+                                })
+                            ) : (
+                                distKey.shares.map(share => (
+                                    <div key={share.id} className="flex items-center gap-4 px-4 py-3">
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium">{share.name}</p>
+                                        </div>
+                                        <div className="text-sm tabular-nums font-medium w-16 text-right">
+                                            {share.sharePercent}%
+                                        </div>
+                                        <div className="w-28 flex justify-end">
+                                            {share.acceptedAt ? (
+                                                <span className="flex items-center gap-1 text-xs text-green-600">
+                                                    <CheckCircle2 className="h-3 w-3" />
+                                                    Accepteret
+                                                </span>
+                                            ) : (
+                                                <span className="flex items-center gap-1 text-xs text-amber-600">
+                                                    <Clock className="h-3 w-3" />
+                                                    Afventer
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="text-sm tabular-nums font-medium w-16 text-right">
-                                        {share.sharePercent}%
-                                    </div>
-                                    <div className="w-28 flex justify-end">
-                                        {share.acceptedAt ? (
-                                            <span className="flex items-center gap-1 text-xs text-green-600">
-                                                <CheckCircle2 className="h-3 w-3" />
-                                                Accepteret
-                                            </span>
-                                        ) : (
-                                            <span className="flex items-center gap-1 text-xs text-amber-600">
-                                                <Clock className="h-3 w-3" />
-                                                Afventer
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
+                                ))
+                            )}
                         </div>
 
-                        {production.distributionKey.status !== "locked" && (
+                        {editingKey && (() => {
+                            const sum = editShares.reduce((s, r) => s + (Number(r.sharePercent) || 0), 0)
+                            const valid = Math.abs(sum - 100) < 0.01
+                            return (
+                                <div className="px-4 py-3 border-t bg-muted/30 flex items-center justify-end gap-2">
+                                    <Button variant="ghost" size="sm" onClick={() => setEditingKey(false)}>
+                                        Annuller
+                                    </Button>
+                                    <Button size="sm" className="gap-1.5" disabled={!valid} onClick={() => {
+                                        const today = new Date().toISOString().slice(0, 10)
+                                        const updated: MockDistributionKey = {
+                                            ...distKey,
+                                            shares: distKey.shares.map(s => {
+                                                const edited = editShares.find(e => e.id === s.id)
+                                                return edited ? { ...s, sharePercent: edited.sharePercent, acceptedAt: today, acceptedByUserId: "admin" } : s
+                                            }),
+                                            events: [
+                                                ...distKey.events,
+                                                { id: `ev-edit-${Date.now()}`, type: "locked", actorName: "Admin", createdAt: today, comment: "Nøgle redigeret og låst af admin" },
+                                            ],
+                                            lockedAt: today,
+                                            status: "locked",
+                                        }
+                                        setDistKeyOverride(updated)
+                                        // Persist to dfks_distribution_keys
+                                        const stored = JSON.parse(localStorage.getItem("dfks_distribution_keys") ?? "{}")
+                                        stored[id] = { shares: updated.shares.map(s => ({ name: s.name, userId: (s as { userId?: string }).userId, sharePercent: s.sharePercent })) }
+                                        localStorage.setItem("dfks_distribution_keys", JSON.stringify(stored))
+                                        setEditingKey(false)
+                                    }}>
+                                        <Lock className="h-3.5 w-3.5" />
+                                        Gem og lås
+                                    </Button>
+                                </div>
+                            )
+                        })()}
+
+                        {!editingKey && distKey.status !== "locked" && (
                             <div className="px-4 py-3 border-t bg-muted/30 text-sm text-muted-foreground">
                                 {acceptedCount} af {totalShares} klippere har accepteret
                             </div>
                         )}
 
-                        {production.distributionKey.events.length > 0 && (
+                        {distKey.events.length > 0 && (
                             <div className="px-4 py-3 border-t">
                                 <p className="text-xs font-medium text-muted-foreground mb-2">Historik</p>
-                                <div className="space-y-1.5">
-                                    {production.distributionKey.events.map(ev => (
-                                        <div key={ev.id} className="flex items-start gap-2 text-xs text-muted-foreground">
-                                            <span className="shrink-0 tabular-nums">{ev.createdAt}</span>
-                                            <span className="font-medium text-foreground">{ev.actorName}</span>
-                                            <span>
-                                                {ev.type === "proposed" && "foreslog nøgle"}
-                                                {ev.type === "accepted" && "accepterede"}
-                                                {ev.type === "rejected" && "afviste"}
-                                                {ev.type === "locked" && "låste nøglen"}
-                                            </span>
-                                            {ev.comment && <span className="italic">"{ev.comment}"</span>}
-                                        </div>
-                                    ))}
+                                <div className="relative">
+                                    <div className="space-y-1.5 max-h-[112px] overflow-y-auto pr-1 pb-10">
+                                        {distKey.events.map(ev => (
+                                            <div key={ev.id} className="flex items-start gap-2 text-xs text-muted-foreground">
+                                                <span className="shrink-0 tabular-nums">{ev.createdAt}</span>
+                                                <span className="font-medium text-foreground">{ev.actorName}</span>
+                                                <span>
+                                                    {ev.type === "proposed" && "foreslog nøgle"}
+                                                    {ev.type === "accepted" && "accepterede"}
+                                                    {ev.type === "rejected" && "afviste"}
+                                                    {ev.type === "locked" && "låste nøglen"}
+                                                </span>
+                                                {ev.comment && <span className="italic">"{ev.comment}"</span>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {distKey.events.length > 4 && (
+                                        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-14 bg-gradient-to-t from-background to-transparent" />
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -718,11 +946,13 @@ export default function StreamingDetailPage() {
             {/* Udbetalinger — grupperet per udnyttelse */}
             <div className="rounded-lg border">
                 <div className="flex items-center justify-between px-4 py-3 border-b">
-                    <h2 className="font-medium">Udbetalinger</h2>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setActiveExploitationId(undefined); setShowRegister(true) }}>
-                        <Plus className="h-3.5 w-3.5" />
-                        Registrér betaling
-                    </Button>
+                    <div>
+                        <h2 className="font-medium">Udbetalinger</h2>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Licens: {production.licenseDurationYears} år fra {production.licenseStartYear}
+                            <span className={`ml-1.5 ${licenseYearsRemaining < 5 ? "text-amber-600" : ""}`}>· {licenseYearsRemaining} år tilbage</span>
+                        </p>
+                    </div>
                 </div>
 
                 {production.exploitations.length === 0 ? (
@@ -731,111 +961,147 @@ export default function StreamingDetailPage() {
                     </div>
                 ) : (
                     <div className="divide-y">
-                        {production.exploitations.map(exploitation => (
-                            <div key={exploitation.id} className="p-4 space-y-3">
-                                {/* Exploitation header */}
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-medium text-sm">{exploitation.platform}</span>
-                                        <Badge variant="outline" className="text-xs">
-                                            {EXPLOITATION_TYPE_LABELS[exploitation.type]}
-                                        </Badge>
-                                        {exploitation.payer && (
-                                            <span className="text-xs text-muted-foreground">via {exploitation.payer}</span>
-                                        )}
-                                    </div>
-                                    <Button
-                                        variant="ghost" size="sm" className="gap-1.5 text-muted-foreground"
-                                        onClick={() => { setActiveExploitationId(exploitation.id); setShowRegister(true) }}
+                        {production.exploitations.flatMap(exploitation =>
+                            exploitation.payouts.map(payout => (
+                                <div key={payout.id}>
+                                    <button
+                                        className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                        onClick={() => setExpandedPayout(expandedPayout === payout.id ? null : payout.id)}
                                     >
-                                        <Plus className="h-3.5 w-3.5" />
-                                        Registrér betaling
-                                    </Button>
+                                        <div className="flex-1">
+                                            <p className="text-sm font-medium">
+                                                {payout.payoutYear} — {PAYOUT_TYPE_LABELS[payout.type]}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-0.5">
+                                                {exploitation.platform} · {EXPLOITATION_TYPE_LABELS[exploitation.type]}{exploitation.payer ? ` · ${exploitation.payer}` : ""} · Modtaget {payout.receivedAt}
+                                            </p>
+                                        </div>
+                                        <p className="text-sm font-medium tabular-nums">{fmt2(payout.grossAmount)}</p>
+                                        <PayoutStatusBadge status={payout.status} />
+                                        {expandedPayout === payout.id
+                                            ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                                            : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                        }
+                                    </button>
+
+                                    {expandedPayout === payout.id && (
+                                        <div className="px-4 pb-4 pt-1 border-t bg-muted/20 space-y-3">
+                                            <div className="rounded-md border bg-card p-3 text-sm space-y-1.5">
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Modtaget</span>
+                                                    <span className="tabular-nums font-medium">{fmt2(payout.grossAmount)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-muted-foreground">Adm. gebyr ({payout.adminFeePercent}%)</span>
+                                                    <span className="tabular-nums text-muted-foreground">− {fmt2(payout.adminFeeAmount)}</span>
+                                                </div>
+                                                <Separator />
+                                                <div className="flex justify-between font-medium">
+                                                    <span>Til fordeling</span>
+                                                    <span className="tabular-nums">{fmt2(payout.netAmount)}</span>
+                                                </div>
+                                            </div>
+
+                                            <div className="rounded-md border bg-card divide-y text-sm">
+                                                {payout.distributions.map((d, i) => (
+                                                    <div key={i} className="flex items-center gap-3 px-3 py-2">
+                                                        <span className="flex-1">{d.name}</span>
+                                                        <span className="text-muted-foreground tabular-nums w-10 text-right">{d.sharePercent}%</span>
+                                                        <span className="tabular-nums font-medium w-24 text-right">{fmt2(d.amount)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            {payout.status === "pending" && distKey?.status === "locked" && (
+                                                <Button size="sm" className="gap-1.5">
+                                                    <Download className="h-3.5 w-3.5" />
+                                                    Markér som eksporteret
+                                                </Button>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
-
-                                {/* Payouts */}
-                                {exploitation.payouts.length === 0 ? (
-                                    <p className="text-xs text-muted-foreground pl-1">Ingen betalinger registreret endnu</p>
-                                ) : (
-                                    <div className="rounded-md border divide-y">
-                                        {exploitation.payouts.map(payout => (
-                                            <div key={payout.id}>
-                                                <button
-                                                    className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
-                                                    onClick={() => setExpandedPayout(expandedPayout === payout.id ? null : payout.id)}
-                                                >
-                                                    <div className="flex-1">
-                                                        <p className="text-sm font-medium">
-                                                            {payout.payoutYear} — {PAYOUT_TYPE_LABELS[payout.type]}
-                                                        </p>
-                                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                                            Modtaget {payout.receivedAt}
-                                                        </p>
+                            ))
+                        )}
+                    </div>
+                )}
+                {alBetalinger.length > 0 && (
+                    <>
+                        <div className="divide-y border-t">
+                            {alBetalinger.map(({ entry, vaerk }, i) => {
+                                const key = `${entry.id}_${i}`
+                                const isExpanded = expandedAl === key
+                                const status = vaerk.status ?? "pending"
+                                return (
+                                    <div key={key}>
+                                        <button
+                                            className="w-full flex items-center gap-4 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                                            onClick={() => setExpandedAl(isExpanded ? null : key)}
+                                        >
+                                            <div className="flex-1">
+                                                <p className="text-sm font-medium">{entry.batchLabel}</p>
+                                                <p className="text-xs text-muted-foreground mt-0.5">
+                                                    Låst {new Date(entry.lockedAt).toLocaleDateString("da-DK")}
+                                                </p>
+                                            </div>
+                                            <p className="text-sm font-medium tabular-nums">
+                                                {vaerk.totalAmount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                            </p>
+                                            <PayoutStatusBadge status={status} />
+                                            {isExpanded
+                                                ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                                                : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                                            }
+                                        </button>
+                                        {isExpanded && (
+                                            <div className="px-4 pb-4 pt-1 border-t bg-muted/20 space-y-3">
+                                                {vaerk.klippere && vaerk.klippere.length > 0 && !vaerk.episodes && (
+                                                    <div className="rounded-md border divide-y text-xs bg-card">
+                                                        {vaerk.klippere.map((k, j) => (
+                                                            <div key={j} className="flex items-center gap-2 px-3 py-2">
+                                                                <span className="font-medium">{k.name}</span>
+                                                                <span className="text-muted-foreground">{k.sharePercent}%</span>
+                                                                <span className="ml-auto tabular-nums font-medium">
+                                                                    {k.amount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                                </span>
+                                                            </div>
+                                                        ))}
                                                     </div>
-                                                    <div className="text-right">
-                                                        <p className="text-sm font-medium tabular-nums">{fmt2(payout.grossAmount)}</p>
-                                                    </div>
-                                                    <PayoutStatusBadge status={payout.status} />
-                                                    {expandedPayout === payout.id
-                                                        ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
-                                                        : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                                                    }
-                                                </button>
-
-                                                {expandedPayout === payout.id && (
-                                                    <div className="px-4 pb-4 pt-1 border-t bg-muted/20 space-y-3">
-                                                        <div className="rounded-md border bg-card p-3 text-sm space-y-1.5">
-                                                            <div className="flex justify-between">
-                                                                <span className="text-muted-foreground">Modtaget</span>
-                                                                <span className="tabular-nums font-medium">{fmt2(payout.grossAmount)}</span>
+                                                )}
+                                                {vaerk.episodes && vaerk.episodes.length > 0 && (
+                                                    <div className="rounded-md border divide-y text-xs bg-card">
+                                                        {vaerk.episodes.map((ep, j) => (
+                                                            <div key={j} className="flex items-center gap-2 px-3 py-2">
+                                                                <span className="font-mono text-muted-foreground">↳</span>
+                                                                <span className="font-mono">{ep.episodeLabel}</span>
+                                                                {ep.broadcastDate && (
+                                                                    <span className="text-muted-foreground">
+                                                                        {new Date(ep.broadcastDate).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "2-digit" })}
+                                                                    </span>
+                                                                )}
+                                                                {ep.isGenudsendelse && (
+                                                                    <span className="inline-flex items-center rounded px-1 py-0 text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">G</span>
+                                                                )}
+                                                                {ep.klippere && ep.klippere.length > 0 && (
+                                                                    <span className="text-muted-foreground">{ep.klippere.map(k => k.name).join(", ")}</span>
+                                                                )}
+                                                                <span className="ml-auto tabular-nums font-medium">
+                                                                    {ep.amount.toLocaleString("da-DK", { style: "currency", currency: "DKK", maximumFractionDigits: 0 })}
+                                                                </span>
                                                             </div>
-                                                            <div className="flex justify-between">
-                                                                <span className="text-muted-foreground">Adm. gebyr ({payout.adminFeePercent}%)</span>
-                                                                <span className="tabular-nums text-muted-foreground">− {fmt2(payout.adminFeeAmount)}</span>
-                                                            </div>
-                                                            <Separator />
-                                                            <div className="flex justify-between font-medium">
-                                                                <span>Til fordeling</span>
-                                                                <span className="tabular-nums">{fmt2(payout.netAmount)}</span>
-                                                            </div>
-                                                        </div>
-
-                                                        <div className="rounded-md border bg-card divide-y text-sm">
-                                                            {payout.distributions.map((d, i) => (
-                                                                <div key={i} className="flex items-center gap-3 px-3 py-2">
-                                                                    <span className="flex-1">{d.name}</span>
-                                                                    <span className="text-muted-foreground tabular-nums w-10 text-right">{d.sharePercent}%</span>
-                                                                    <span className="tabular-nums font-medium w-24 text-right">{fmt2(d.amount)}</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-
-                                                        <div className="flex gap-2">
-                                                            <Button
-                                                                variant="outline" size="sm" className="gap-1.5"
-                                                                onClick={() => copyPayoutText(exploitation, payout)}
-                                                            >
-                                                                <Copy className="h-3.5 w-3.5" />
-                                                                {copiedId === payout.id ? "Kopieret!" : "Kopiér til lønsystem"}
-                                                            </Button>
-                                                            {payout.status === "pending" && production.distributionKey?.status === "locked" && (
-                                                                <Button size="sm" className="gap-1.5">
-                                                                    <Download className="h-3.5 w-3.5" />
-                                                                    Markér som eksporteret
-                                                                </Button>
-                                                            )}
-                                                        </div>
+                                                        ))}
                                                     </div>
                                                 )}
                                             </div>
-                                        ))}
+                                        )}
                                     </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
+                                )
+                            })}
+                        </div>
+                    </>
                 )}
             </div>
+
 
             {/* Dialogs */}
             <RegisterPayoutDialog

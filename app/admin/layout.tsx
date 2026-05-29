@@ -18,6 +18,7 @@ import {
     BookOpen,
     Scale,
     Library,
+    Layers,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -81,6 +82,11 @@ export default function AdminLayout({
             label: t("nav.streaming"),
             href: "/admin/streaming",
             icon: Play,
+        },
+        {
+            label: t("nav.aftalelicens"),
+            href: "/admin/aftalelicens",
+            icon: Layers,
         },
         {
             label: t("nav.statistics"),

@@ -271,6 +271,148 @@ export interface StreamingSettings {
     updatedBy: string
 }
 
+// ── Aftalelicens ──────────────────────────────────────────────
+
+export type AftalelicensKilde = "copydan_verdenstv" | "copydan_arkiv" | "tv2play"
+
+export type VaerkType =
+    | "spillefilm"
+    | "tv_serie_lang"       // > 30 min per episode
+    | "tv_serie_kort"       // <= 30 min per episode
+    | "kortfilm"
+    | "dokumentarfilm"
+    | "dokumentarserie"
+    | "dokuDrama"
+    | "kort_dokumentar"
+    | "ikke_relevant"       // Ikke relevant for DFKS
+
+export type SortStatus = "pending" | "approved" | "rejected" | "flagged"
+
+// Filtreringsregel — konfigureres i stamdata
+export interface FilterRule {
+    id: string
+    name: string            // Beskrivende navn, f.eks. "Fjern sportsindhold"
+    type: "title_keyword" | "title_regex" | "channel"
+    value: string           // Nøgleord, regex eller kanalnavn
+    active: boolean
+    createdAt: string
+}
+
+// Vægt-konfiguration per værktype — point pr. værk
+export interface VaerkVaegt {
+    type: VaerkType
+    label: string
+    weight: number          // Point pr. værk (fast beløb, ikke faktor × minutter)
+}
+
+// Genudsendelse-faktor
+export interface GenudsendelseFaktor {
+    label: string           // "Premiere" / "Genudsendelse (inden for 1 måned)"
+    isGenudsendelse: boolean
+    factor: number          // F.eks. 1.0 for premiere, 0.5 for genudsendelse
+}
+
+// Ekstra konfiguration: dokumentarfilm-tiers og supplerende klip
+export interface AftalelicensVaegtExtra {
+    // Dokumentarfilm: tre niveauer baseret på varighed
+    dokLangPoints: number       // ≥ dokLangMin min → default 200
+    dokMellemPoints: number     // dokMellemMin–dokLangMin min → default 150
+    dokKortPoints: number       // < dokMellemMin min → default 100
+    dokLangMin: number          // Grænse for "lang" dokumentar: default 61 min
+    dokMellemMin: number        // Grænse for "mellemlang" dokumentar: default 21 min
+    // Dokumentarserie tier (afsnitsvarighed)
+    dokSerieLangMin: number     // Min. varighed for "tung seriedok.": default 38 min
+    dokSerieKortPoints: number  // < dokSerieLangMin → default 50
+    // Supplerende klip (B-klippere)
+    supplerendeKlipFaktor: number   // Faktor for B-klippere: default 0.3
+    // Genudsendelser
+    genudsendelseFaktor: number     // Point-faktor for genudsendelse: default 0.5 (halvt)
+    genudsendelseMaaneder: number   // Antal måneder hvori gentagelse tæller som genudsendelse: default 1
+}
+
+// En importeret batch af rådata
+export interface AftalelicensBatch {
+    id: string
+    kilde: AftalelicensKilde
+    year: number
+    uploadedAt: string
+    uploadedBy: string
+    totalRows: number
+    filteredRows: number    // Tilbage efter automatisk filtrering
+    status: "imported" | "sorting" | "weighted" | "completed"
+    notes?: string
+}
+
+// En enkelt titel/visning efter filtrering
+export interface AftalelicensVaerk {
+    id: string
+    batchId: string
+    rawTitle: string        // Original titel fra kildedata
+    normalizedTitle?: string // Normaliseret/renset titel
+    channel?: string
+    broadcastDate?: string
+    duration?: number       // Minutter
+    viewCount?: number      // TV2 Play: antal visninger
+    season?: number         // Sæsonnummer (fx 3)
+    episode?: number        // Afsnitsnummer (fx 7)
+    productionYear?: number // Produktionsår
+    isGenudsendelse?: boolean
+    vaerkType?: VaerkType
+    sortStatus: SortStatus
+    sortedBy?: string       // userId
+    sortedAt?: string
+    dfiMatched?: boolean    // Om DFI-opslag er foretaget
+    dfiData?: {
+        title: string
+        duration: number
+        year: number
+        category: string
+        directors?: string[]
+        editors?: string[]
+    }
+    notes?: string
+}
+
+// Tilknytning af rettighedshaver til et aftalelicens-værk
+export interface AftalelicensRettighed {
+    id: string
+    vaerkId: string
+    userId?: string
+    name: string
+    sharePercent: number
+    contractVerified: boolean
+}
+
+// Vægtning og beregning
+export interface AftalelicensVaegtet {
+    vaerkId: string
+    rawTitle: string
+    vaerkType: VaerkType
+    duration: number
+    viewCount?: number
+    isGenudsendelse: boolean
+    points: number          // Beregnet: vaegt × duration/factor × genudsendelse
+    shareOfTotal: number    // Denne titels andel af total points (0-1)
+    estimatedAmount?: number // Ved prøveberegning: beregnet beløb
+}
+
+// Prøveberegning
+export interface ProveBeregning {
+    batchId: string
+    klumpBeloeb: number     // Det beløb der skal fordeles
+    adminFeePercent: number
+    netBeloeb: number
+    vaerker: AftalelicensVaegtet[]
+    perKlipper: {
+        userId?: string
+        name: string
+        totalPoints: number
+        sharePercent: number
+        amount: number
+        vaerker: { title: string; points: number; amount: number }[]
+    }[]
+}
+
 /**
  * Samlet overblik over en produktion til admin-dashboardet.
  * Beregnet view — ikke gemt i DB.
