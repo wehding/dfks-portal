@@ -42,7 +42,7 @@ function InviteForm() {
         <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4">
             <div className="w-full max-w-sm space-y-8">
                 <div className="flex flex-col items-center gap-4">
-                    <Image src="/dfks-logo.png" alt="DFKS" width={120} height={60} className="dark:invert" />
+                    <Image src="/logo.png" alt="DFKS" width={120} height={60} className="dark:invert" />
                     <div className="text-center">
                         <h1 className="text-xl font-semibold">Testadgang</h1>
                         <p className="text-sm text-muted-foreground mt-1">
@@ -82,7 +82,11 @@ function InviteForm() {
 
 export default function InvitePage() {
     return (
-        <Suspense>
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center">
+                <p className="text-sm text-muted-foreground">Indlæser…</p>
+            </div>
+        }>
             <InviteForm />
         </Suspense>
     )
