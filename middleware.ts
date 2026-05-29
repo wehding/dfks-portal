@@ -1,29 +1,75 @@
 import { NextRequest, NextResponse } from "next/server"
-
-// Invite-kode gate — kun aktiv når INVITE_CODE env var er sat (dvs. i produktion/test).
-// Lokalt udvikling: springer over, ingen gate.
+import { createServerClient } from "@supabase/ssr"
 
 const INVITE_COOKIE = "dfks_invite"
-const PUBLIC_PATHS = ["/invite", "/api/auth/invite", "/_next", "/favicon", "/api/auth/"]
 
-export function middleware(req: NextRequest) {
+// Stier der altid er tilgængelige uden session
+const PUBLIC_PATHS = [
+    "/invite",
+    "/api/auth/invite",
+    "/api/auth/callback",
+    "/auth/confirm",
+    "/_next",
+    "/favicon",
+]
+
+export async function middleware(req: NextRequest) {
     const { pathname } = req.nextUrl
 
-    // Lokalt: INVITE_CODE er ikke sat → ingen gate
-    if (!process.env.INVITE_CODE) return NextResponse.next()
+    // Altid tilgængelige stier
+    if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+        return NextResponse.next()
+    }
 
-    // Offentlige stier der altid er tilgængelige
-    if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) return NextResponse.next()
+    // ── Invite-kode gate ──────────────────────────────────────
+    // Kun aktiv når INVITE_CODE env var er sat (produktion/test)
+    if (process.env.INVITE_CODE) {
+        const token = req.cookies.get(INVITE_COOKIE)?.value
+        if (token !== process.env.INVITE_CODE) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/invite"
+            url.searchParams.set("from", pathname)
+            return NextResponse.redirect(url)
+        }
+    }
 
-    // Tjek for gyldig invite-cookie
-    const token = req.cookies.get(INVITE_COOKIE)?.value
-    if (token === process.env.INVITE_CODE) return NextResponse.next()
+    // ── Supabase session refresh ──────────────────────────────
+    // Kun aktiv når Supabase env vars er sat (ikke lokalt uden .env.local)
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+        return NextResponse.next()
+    }
 
-    // Ingen gyldig invite → send til invite-siden
-    const url = req.nextUrl.clone()
-    url.pathname = "/invite"
-    url.searchParams.set("from", pathname)
-    return NextResponse.redirect(url)
+    let supabaseResponse = NextResponse.next({ request: req })
+
+    const supabase = createServerClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        {
+            cookies: {
+                getAll() { return req.cookies.getAll() },
+                setAll(cookiesToSet) {
+                    cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value))
+                    supabaseResponse = NextResponse.next({ request: req })
+                    cookiesToSet.forEach(({ name, value, options }) =>
+                        supabaseResponse.cookies.set(name, value, options)
+                    )
+                },
+            },
+        }
+    )
+
+    // Opdater session (vigtigt — må ikke fjernes)
+    const { data: { user } } = await supabase.auth.getUser()
+
+    // Beskyttede admin/portal-stier kræver login
+    const isProtected = pathname.startsWith("/admin") || pathname.startsWith("/portal")
+    if (isProtected && !user) {
+        const url = req.nextUrl.clone()
+        url.pathname = "/"
+        return NextResponse.redirect(url)
+    }
+
+    return supabaseResponse
 }
 
 export const config = {
