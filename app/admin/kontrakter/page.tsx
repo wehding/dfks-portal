@@ -498,8 +498,7 @@ function AdminKontrakterContent() {
 
     const handleExtract = async () => {
         if (uploadItems.length === 0) return
-        setUploadPhase("review")
-        setCurrentReviewIdx(0)
+        setUploadPhase("processing")
 
         const updated = [...uploadItems]
 
@@ -1129,7 +1128,7 @@ function AdminKontrakterContent() {
                                     <div key={i} className="flex items-center gap-2.5 rounded-md border p-3">
                                         {item.status === "pending"    && <FileText className="h-4 w-4 text-muted-foreground shrink-0" />}
                                         {item.status === "extracting" && <Loader2  className="h-4 w-4 animate-spin text-primary shrink-0" />}
-                                        {item.status === "saving"     && <Loader2  className="h-4 w-4 animate-spin text-primary shrink-0" />}
+                                        {item.status === "extracting"     && <Loader2  className="h-4 w-4 animate-spin text-primary shrink-0" />}
                                         {item.status === "done"       && <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
                                         {item.status === "error"      && <AlertCircle  className="h-4 w-4 text-destructive shrink-0" />}
                                         <div className="flex-1 min-w-0">

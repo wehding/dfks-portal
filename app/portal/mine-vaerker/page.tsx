@@ -617,7 +617,7 @@ export default function MineVaerkerPage() {
                         <DialogTitle>{t("common.preview")}</DialogTitle>
                     </DialogHeader>
                     {(() => {
-                        const data = null
+                        const data = null as any
                         const isApproved = false
 
                         return (

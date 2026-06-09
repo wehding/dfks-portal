@@ -1425,7 +1425,7 @@ export default function AdminStatistikPage() {
                                                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                                 <XAxis dataKey="year" className="text-xs" />
                                                 <YAxis className="text-xs" allowDecimals={false} />
-                                                <Tooltip style={tooltipStyle} wrapperStyle={tooltipWrapperStyle} />
+                                                <Tooltip contentStyle={tooltipStyle} wrapperStyle={tooltipWrapperStyle} />
                                                 <Legend />
                                                 <Bar dataKey="aLoen" name="A-løn" fill="hsl(210, 65%, 55%)" stackId="a" radius={[0,0,0,0]} />
                                                 <Bar dataKey="leverandoer" name="Leverandør" fill="hsl(30, 70%, 55%)" stackId="a" radius={[4,4,0,0]} />
@@ -1645,7 +1645,7 @@ export default function AdminStatistikPage() {
                                                                 </span>
                                                             </div>
                                                             <p className="text-[10px] text-muted-foreground pt-1">
-                                                                Over {e.avgWeeks} uger = {formatKr(Math.abs(netAekvivalent - de4Total) * e.avgWeeks)} {netAekvivalent >= de4Total ? "mere" : "mindre"} end De4-overenskomst
+                                                                Over {e.totalWeeks} uger = {formatKr(Math.abs(netAekvivalent - de4Total) * e.totalWeeks)} {netAekvivalent >= de4Total ? "mere" : "mindre"} end De4-overenskomst
                                                             </p>
                                                         </div>
                                                     </div>

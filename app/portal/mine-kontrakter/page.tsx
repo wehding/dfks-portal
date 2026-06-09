@@ -167,7 +167,7 @@ export default function MineKontrakterPage() {
 
     const titleMatches = useMemo(() => {
         // TODO: søg i works-tabel fra DB
-        return []
+        return [] as any[]
     }, [title])
 
     const handleFile = useCallback((f: File) => {
@@ -642,7 +642,7 @@ export default function MineKontrakterPage() {
                                                         </SelectTrigger>
                                                         <SelectContent>
                                                             {activeRoles.map((r) => (
-                                                                <SelectItem key={r.id} value={r.name}>
+                                                                <SelectItem key={r.name} value={r.name}>
                                                                     {r.name}
                                                                 </SelectItem>
                                                             ))}
@@ -834,7 +834,7 @@ export default function MineKontrakterPage() {
                 <DialogContent className="h-[90vh] flex flex-col" style={{ maxWidth: "92vw", width: "92vw" }}>
                     <DialogHeader>
                         <DialogTitle>
-                            {previewContract?.title}
+                            {previewContract?.working_title}
                             <Badge
                                 variant={statusVariant[previewContract?.status || "pending"]}
                                 className="ml-3 font-normal"
@@ -846,7 +846,7 @@ export default function MineKontrakterPage() {
                         </DialogTitle>
                     </DialogHeader>
                     {(() => {
-                        const data = previewContract?.extractedData
+                        const data = null as any
                         const isApproved = previewContract?.status === "approved"
 
                         return (

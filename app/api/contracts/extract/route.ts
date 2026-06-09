@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic"
 /**
  * app/api/contracts/extract/route.ts
  *
@@ -26,7 +27,6 @@ import {
 
 // pdf-parse v2 exports PDFParse class (not a function like v1)
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PDFParse } = require("pdf-parse")
 
 const SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
 Din opgave er at læse kontrakten og returnere et JSON-objekt med præcis de felter der er angivet.
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
 
             let text: string
             if (filename.endsWith(".pdf")) {
-                const parser = new PDFParse({ data: buffer })
+                const { PDFParse } = require("pdf-parse"); const parser = new PDFParse({ data: buffer })
                 const parsed = await parser.getText()
                 text = parsed.text
             } else if (filename.endsWith(".docx")) {

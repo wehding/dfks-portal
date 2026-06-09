@@ -356,7 +356,6 @@ export default function AdminValideringPage() {
                 svod: impliedBySvod,
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
-                royalty: ed.royalty ?? false,
                 royaltyPercent: ed.royaltyPercent ?? "",
                 aiDataMiningClause: ed.aiDataMiningClause ?? false,
                 distribution: Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
@@ -760,7 +759,6 @@ export default function AdminValideringPage() {
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
-                                pageNavigationReverse={activeSource === "__svod__" || activeSource === "__copydan__" || activeSource === "__royalty__"}
                             />
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">

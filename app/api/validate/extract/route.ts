@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic"
 /**
  * app/api/validate/extract/route.ts
  *
@@ -20,7 +21,7 @@ import {
 } from "@/lib/ai-fields"
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PDFParse } = require("pdf-parse")
+// pdf-parse loaded lazily in handler to avoid DOMMatrix build error
 
 const SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
 Returner KUN JSON — ingen forklaringstekst.`
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
 
         let text: string
         if (ext === "pdf") {
-            const parser = new PDFParse({ data: buffer })
+            const { PDFParse } = require("pdf-parse"); const parser = new PDFParse({ data: buffer })
             const parsed = await parser.getText()
             text = parsed.text
         } else if (ext === "docx") {
