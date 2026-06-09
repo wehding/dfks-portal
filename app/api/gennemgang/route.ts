@@ -13,7 +13,8 @@ import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
-import { DE4_OVERENSKOMST_2022, DE4_LOENOVERSIGT_2022 } from "@/lib/de4-overenskomst-2022"
+import { createClient } from "@/lib/supabase/server"
+import { hentRelevanteRegler } from "@/lib/retrieval"
 
 // ── Sensitive data masking ───────────────────────────────────
 // Masks CPR numbers, bank account numbers and private addresses
@@ -446,22 +447,17 @@ Brug juridisk præcist sprog i selve rettelserne, men hold den omgivende tone va
 ──────────────────────────────────────────────────────────────────────
 REFERENCEDOKUMENTER — BRUG AKTIVT VED KONTRAKTGENNEMGANG:
 ──────────────────────────────────────────────────────────────────────
-
-${DE4_OVERENSKOMST_2022}
-
-${DE4_LOENOVERSIGT_2022}`
+`
 
 // ── Route handler ─────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData()
-        const file              = formData.get("file")           as File | null
-        const memberName        = formData.get("memberName")     as string | null
-        const legalNotesRaw     = formData.get("legalNotes")    as string | null
-        const caseLearningsRaw  = formData.get("caseLearnings") as string | null
-        const provider          = (formData.get("provider")     as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
-        const model             = (formData.get("model")        as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
+        const file         = formData.get("file")       as File | null
+        const memberName   = formData.get("memberName") as string | null
+        const provider     = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
+        const model        = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
         if (!file) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
@@ -475,75 +471,115 @@ export async function POST(req: NextRequest) {
             ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n`
             : ""
 
-        // Append editable legal notes from the Overenskomster admin page
+        // ── Fetch reference docs + legal notes from DB ──────────────
+        const supabase = await createClient()
+        const [{ data: refDocs }, { data: legalNotesDb }] = await Promise.all([
+            supabase
+                .from("reference_docs")
+                .select("doc_subtype, file_name, title, content_text, owner")
+                .eq("archived", false)
+                .not("content_text", "is", null),
+            supabase
+                .from("legal_notes")
+                .select("title, body, priority, exclude_for_overenskomst")
+                .eq("active", true)
+                .order("sort_order"),
+        ])
+
+        // Append reference doc texts to system prompt
         let activeSystemPrompt = SYSTEM_PROMPT
-        if (legalNotesRaw) {
-            try {
-                const notes: { title: string; text: string; priority: string; excludeForOverenskomst?: boolean }[] = JSON.parse(legalNotesRaw)
-                // Sort: aktiv-indsats first, then fast-regel, then orientering
-                const order = ["aktiv-indsats", "fast-regel", "orientering"]
-                notes.sort((a, b) => order.indexOf(a.priority) - order.indexOf(b.priority))
-
-                const aktive = notes.filter(n => n.priority === "aktiv-indsats")
-                const faste  = notes.filter(n => n.priority === "fast-regel")
-                const orient = notes.filter(n => n.priority === "orientering")
-
-                const formatNote = (n: { title: string; text: string; excludeForOverenskomst?: boolean }) =>
-                    `\n${n.title}${n.excludeForOverenskomst ? " [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER — spring over hvis kontrakten er en A-lønskontrakt under De4- eller FAF-overenskomsten]" : ""}:\n${n.text}`
-
-                let notesBlock = "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                    "DFKS JURIDISKE NOTERINGER — GÆLDER FOR ALLE GENNEMGANGE:\n" +
-                    "──────────────────────────────────────────────────────────────────────\n"
-
-                if (aktive.length > 0) {
-                    notesBlock += "\n⚑ AKTIVE DFKS-INDSATSER — HØJESTE PRIORITET:\n" +
-                        "Disse punkter er genstand for en aktiv DFKS-indsats lige nu. Du SKAL:\n" +
-                        "1. Altid tjekke kontrakten for disse forhold — uanset om kontrakten er tavs eller eksplicit\n" +
-                        "2. Altid kommentere på dem i feedbackmailen — positivt hvis kontrakten håndterer det korrekt, negativt hvis den er tavs eller afviger\n" +
-                        "3. Nævne eksplicit at DFKS p.t. prioriterer dette punkt særligt, fx: 'Vi har i øjeblikket særligt fokus på [emnet]...'\n" +
-                        "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
-                        aktive.map(formatNote).join("\n")
-                }
-                if (faste.length > 0) {
-                    notesBlock += "\n\nFASTE KONTROLPUNKTER — SKAL ALTID TJEKKES:\n" +
-                        "Disse punkter er permanente kontrolpunkter. Du SKAL altid tjekke kontrakten for disse forhold og kommentere på dem i feedbackmailen — uanset om kontrakten nævner det eller ej. Er kontrakten tavs, er det en advarsel. Håndterer den det korrekt, er det positivt.\n" +
-                        "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
-                        faste.map(formatNote).join("\n")
-                }
-                if (orient.length > 0) {
-                    notesBlock += "\n\nORIENTERING — BAGGRUNDSVIDEN TIL VURDERING:\n" +
-                        "Brug som baggrundsviden til at vurdere andre punkter. Kommentér kun direkte på disse i feedbackmailen hvis de er direkte relevante for et konkret forhold i den pågældende kontrakt.\n" +
-                        orient.map(formatNote).join("\n")
-                }
-
-                if (notes.length > 0) activeSystemPrompt += notesBlock
-            } catch {
-                // Ignore parse errors
+        if (refDocs && refDocs.length > 0) {
+            for (const doc of refDocs) {
+                if (!doc.content_text) continue
+                const label = doc.doc_subtype ?? doc.file_name ?? doc.title
+                activeSystemPrompt += `\n\n${label}:\n${doc.content_text}`
             }
         }
 
-        // Inject case learnings (learned patterns from past reviews)
-        if (caseLearningsRaw) {
-            try {
-                const learnings: { kontrakttype: string; titel: string; regel: string }[] = JSON.parse(caseLearningsRaw)
-                if (learnings.length > 0) {
-                    const ktLabel = (kt: string) =>
-                        kt === "a-loen" ? "[A-lønskontrakt]" :
-                        kt === "leverandoer" ? "[Leverandørkontrakt]" :
-                        "[Alle kontrakttyper]"
+        // Append legal notes from DB
+        const notes = (legalNotesDb ?? []) as { title: string; body: string; priority: string; exclude_for_overenskomst: string[] }[]
+        if (notes.length > 0) {
+            const order = ["aktiv-indsats", "fast-regel", "orientering"]
+            notes.sort((a, b) => order.indexOf(a.priority) - order.indexOf(b.priority))
 
+            const aktive = notes.filter(n => n.priority === "aktiv-indsats")
+            const faste  = notes.filter(n => n.priority === "fast-regel")
+            const orient = notes.filter(n => n.priority === "orientering")
+
+            const formatNote = (n: { title: string; body: string; exclude_for_overenskomst: string[] }) =>
+                `\n${n.title}${n.exclude_for_overenskomst.length > 0 ? " [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER — spring over hvis kontrakten er en A-lønskontrakt under De4- eller FAF-overenskomsten]" : ""}:\n${n.body}`
+
+            let notesBlock = "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                "DFKS JURIDISKE NOTERINGER — GÆLDER FOR ALLE GENNEMGANGE:\n" +
+                "──────────────────────────────────────────────────────────────────────\n"
+
+            if (aktive.length > 0) {
+                notesBlock += "\n⚑ AKTIVE DFKS-INDSATSER — HØJESTE PRIORITET:\n" +
+                    "Disse punkter er genstand for en aktiv DFKS-indsats lige nu. Du SKAL:\n" +
+                    "1. Altid tjekke kontrakten for disse forhold — uanset om kontrakten er tavs eller eksplicit\n" +
+                    "2. Altid kommentere på dem i feedbackmailen — positivt hvis kontrakten håndterer det korrekt, negativt hvis den er tavs eller afviger\n" +
+                    "3. Nævne eksplicit at DFKS p.t. prioriterer dette punkt særligt, fx: 'Vi har i øjeblikket særligt fokus på [emnet]...'\n" +
+                    "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
+                    aktive.map(formatNote).join("\n")
+            }
+            if (faste.length > 0) {
+                notesBlock += "\n\nFASTE KONTROLPUNKTER — SKAL ALTID TJEKKES:\n" +
+                    "Disse punkter er permanente kontrolpunkter. Du SKAL altid tjekke kontrakten for disse forhold og kommentere på dem i feedbackmailen — uanset om kontrakten nævner det eller ej. Er kontrakten tavs, er det en advarsel. Håndterer den det korrekt, er det positivt.\n" +
+                    "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
+                    faste.map(formatNote).join("\n")
+            }
+            if (orient.length > 0) {
+                notesBlock += "\n\nORIENTERING — BAGGRUNDSVIDEN TIL VURDERING:\n" +
+                    "Brug som baggrundsviden til at vurdere andre punkter. Kommentér kun direkte på disse i feedbackmailen hvis de er direkte relevante for et konkret forhold i den pågældende kontrakt.\n" +
+                    orient.map(formatNote).join("\n")
+            }
+
+            activeSystemPrompt += notesBlock
+        }
+
+        // ── RAG: hent relevante sagserfaringer semantisk ─────────
+        // Bruger Google text-embedding-004 til at finde de mest
+        // relevante regler baseret på kontraktteksten.
+        // Kræver at knowledge_chunks-tabellen er populeret.
+        let ragText = ""
+
+        // Pre-extract text for RAG (PDF parses later for AI call)
+        if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
+            try {
+                const result = await mammoth.extractRawText({ buffer })
+                ragText = result.value.slice(0, 8000)
+            } catch { /* fallback: ingen RAG */ }
+        } else if (filename.endsWith(".txt")) {
+            ragText = buffer.toString("utf-8").slice(0, 8000)
+        } else if (filename.endsWith(".pdf")) {
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-require-imports
+                const { PDFParse } = require("pdf-parse")
+                const parser = new PDFParse({ data: buffer })
+                const parsed = await parser.getText()
+                ragText = parsed.text.slice(0, 8000)
+            } catch { /* fallback: ingen RAG */ }
+        }
+
+        if (ragText.trim()) {
+            try {
+                const { data: { user } } = await (await createClient()).auth.getUser()
+                const orgId: string | undefined = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+                const relevanteRegler = await hentRelevanteRegler(ragText, orgId)
+
+                if (relevanteRegler.length > 0) {
                     activeSystemPrompt +=
                         "\n\n──────────────────────────────────────────────────────────────────────\n" +
                         "LÆRTE MØNSTRE FRA DFKS SAGSBEHANDLING — FØLG DISSE REGLER NØJAGTIGT:\n" +
                         "──────────────────────────────────────────────────────────────────────\n" +
-                        "Disse regler er baseret på konkrete sager hvor AI-analysen har fejlet.\n" +
-                        "De har HØJESTE PRIORITET — de overstyrer eventuelle modstridende generelle regler.\n\n" +
-                        learnings.map(l =>
-                            `${ktLabel(l.kontrakttype)} ${l.titel}:\n${l.regel}`
+                        "Disse regler er baseret på konkrete sager hvor AI-analysen har fejlet eller lært noget nyt.\n" +
+                        "De er udvalgt semantisk baseret på denne konkrete kontrakt og har HØJESTE PRIORITET.\n\n" +
+                        relevanteRegler.map(r =>
+                            `${r.kilde_titel}:\n${r.tekst}`
                         ).join("\n\n")
                 }
-            } catch {
-                // Ignore parse errors
+            } catch (ragErr) {
+                console.warn("[gennemgang] RAG fejlede (fortsætter uden):", ragErr)
             }
         }
 

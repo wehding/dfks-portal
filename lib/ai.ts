@@ -5,6 +5,14 @@
  */
 
 import type { ExtractedContractData } from "./types"
+import { SOURCES_SCHEMA_PROMPT } from "./ai-sources"
+import {
+    COLLECTIVE_AGREEMENT_RULE,
+    COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE,
+    IS_FREELANCE_CONTRACT_RULE,
+    HOLIDAY_PAY_RATE_RULE,
+    BETA_RATE_RULE,
+} from "./ai-fields"
 
 // ── Anonymisation ─────────────────────────────────────────────
 // Removes personally identifiable data before sending to AI API.
@@ -84,9 +92,18 @@ export interface ReferenceDoc {
     addedAt: string
 }
 
+export interface MemberListRow {
+    name: string
+    contact_name?: string
+    phone?: string
+    email?: string
+    website?: string
+}
+
 export interface MemberList {
     raw: string
     parsed: string[]
+    structured?: MemberListRow[]
     updatedAt: string | null
 }
 
@@ -128,8 +145,40 @@ const DEFAULT_LEGAL_NOTES: LegalNote[] = [
     },
 ]
 
+export interface MemberListGroup {
+    id: string
+    name: string
+    memberList: MemberList
+    createdAt: string
+}
+
+const GROUPS_KEY = "dfks_member_list_groups"
+const LEGACY_KEY = "dfks_member_list"
+
+function loadGroupsFromStorage(): MemberListGroup[] {
+    if (typeof window === "undefined") return []
+    try {
+        const stored = localStorage.getItem(GROUPS_KEY)
+        if (stored) return JSON.parse(stored)
+        // Migrate legacy single list if present
+        const legacy = localStorage.getItem(LEGACY_KEY)
+        if (legacy) {
+            const parsed: MemberList = JSON.parse(legacy)
+            if (parsed.parsed?.length) {
+                return [{ id: "default", name: "ProF-medlemmer", memberList: parsed, createdAt: new Date().toISOString() }]
+            }
+        }
+    } catch { /* ignore */ }
+    return []
+}
+
+function saveGroupsToStorage(groups: MemberListGroup[]) {
+    if (typeof window === "undefined") return
+    try { localStorage.setItem(GROUPS_KEY, JSON.stringify(groups)) } catch { /* ignore */ }
+}
+
 let _references: ReferenceDoc[] = []
-let _memberList: MemberList = { raw: "", parsed: [], updatedAt: null }
+let _memberListGroups: MemberListGroup[] = []
 let _legalNotes: LegalNote[] = [...DEFAULT_LEGAL_NOTES]
 let _caseLearnings: CaseLearning[] = []
 
@@ -137,16 +186,34 @@ export function setReferences(refs: ReferenceDoc[]) {
     _references = refs
 }
 
+export function getMemberListGroups(): MemberListGroup[] {
+    if (_memberListGroups.length === 0) {
+        _memberListGroups = loadGroupsFromStorage()
+    }
+    return _memberListGroups
+}
+
+export function setMemberListGroups(groups: MemberListGroup[]) {
+    _memberListGroups = groups
+    saveGroupsToStorage(groups)
+}
+
+/** @deprecated Use getMemberListGroups instead */
+export function getMemberList(): MemberList {
+    const groups = getMemberListGroups()
+    if (groups.length === 0) return { raw: "", parsed: [], updatedAt: null }
+    // Combine all groups for backward compat
+    const allParsed = groups.flatMap(g => g.memberList.parsed)
+    return { raw: "", parsed: allParsed, updatedAt: null }
+}
+
+/** @deprecated Use setMemberListGroups instead */
 export function setMemberList(list: MemberList) {
-    _memberList = list
+    // no-op — kept for any remaining callers
 }
 
 export function getReferences(): ReferenceDoc[] {
     return _references
-}
-
-export function getMemberList(): MemberList {
-    return _memberList
 }
 
 export function getLegalNotes(): LegalNote[] {
@@ -294,17 +361,7 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
 
   "extractedData": {
     "producerName": "string or null",
-    "_sources": {
-      "salary": "EKSAKT tekststreng fra kontrakten der indeholder honoraret — kopiér sætningen der nævner beløbet, f.eks. 'grundløn på __14.637__ DKK pr. uge' eller 'honorar på 45.000 kr. pr. måned' — max 120 tegn eller null",
-      "pension": "EKSAKT og UNIK tekststreng der kun findes i pensionsafsnittet — brug f.eks. procentsatsen med ord der omgiver den: '9,5 % af grundlønnen' eller 'pensionsbidrag (9,5 %' — vælg den korteste streng der KUN forekommer i pensionsafsnittet og ingen andre steder (max 60 tegn) eller null",
-      "supplements": "EKSAKT tekststreng der indeholder afsnittet om personlige tillæg inkl. selve beløbet — kopiér fra 'personlige tillæg' og frem til beløbet, f.eks. 'personlige tillæg:___1.586' eller 'følgende personlige tillæg:' — max 60 tegn eller null",
-      "dates": "EKSAKT tekststreng der viser ansættelsesperioden — kopiér sætningen med start- og slutdato, f.eks. 'fra den 26. august til 24. november 2024' eller 'ansættelsesperioden er 01.01.2024 - 31.03.2024' — max 80 tegn eller null",
-      "workingWeeks": "EKSAKT og KORT tekststreng der viser det SAMLEDE antal uger — KUN selve ugetallet med umiddelbar kontekst, f.eks. 'engageret i 9 uger', '17,6 weeks', 'i alt 11,6 uger' — STOP før datoer og andre oplysninger. Max 30 tegn. Null hvis intet samlet ugetal findes.",
-      "collectiveAgreement": "EKSAKT tekststreng der nævner overenskomst — kopiér den FULDE sætning inkl. eventuelle Copydan-forbehold og SVOD-aftale hvis de er nævnt i samme sætning, f.eks. 'I øvrigt henvises til gældende Fiktionsoverenskomst mellem De4 og Producentforeningen af 7.februar 2022 med det moderniserede Copydan-forbehold og SVOD-aftale' — max 200 tegn eller null",
-      "copydan": "Kopiér den KOMPLETTE tekstpassage der omhandler Copydan-forbehold — START altid fra afsnittets allerførste ord eller overskrift (f.eks. 'Third party (Copy-dan) reservation' eller 'Copydan-forbehold'). Kopier hele afsnittet inkl. overskrift. Max 400 tegn. Null hvis Copydan ikke nævnes.",
-      "svod": "Kopiér den KOMPLETTE tekstpassage der omhandler SVOD/streaming eller Create Denmark — START altid fra afsnittets allerførste ord. Inkluder hele afsnittet. Max 400 tegn. Null hvis ikke nævnes.",
-      "royalty": "Kopiér den KOMPLETTE tekstpassage der omhandler et specifikt royalty-forbehold med en konkret aftale om royaltybetaling — KUN hvis der er et dedikeret royalty-afsnit adskilt fra SVOD/streaming. Royalties der blot nævnes i SVOD-afsnittet tæller IKKE. Max 400 tegn. Null hvis ikke relevant."
-    },
+${SOURCES_SCHEMA_PROMPT},
     "productionType": "Returner EN af disse værdier baseret på kontraktens indhold og kontekst: feature (spillefilm/biograffilm), tvSeries (tv-serie/dramaserie/sæson), documentary (dokumentarfilm/enkelt dokumentar), docSeries (dokumentarserie), short (kortfilm), tvEntertainment (tv-underholdning/show/program), reality (reality-tv), other (alt andet). Hvis kontrakten nævner ord som spillefilm, feature film, biograffilm → brug feature. Tv-serie, dramaserie, sæson → tvSeries. Dokumentar → documentary. Er du i tvivl, gæt ud fra genre, producent og distributionsplatform.",
     "salary": null,
     "salaryUnit": "monthly|weekly|daily|total",
@@ -321,13 +378,13 @@ Returner KUN gyldig JSON uden markdown-backticks eller forklaringer udenfor JSON
     "royaltyPercent": null,
     "aiDataMiningClause": false,
     "distribution": [],
-    "collectiveAgreement": "STRENG REGEL: true KUN hvis kontrakten er en ren A-LØNSKONTRAKT (lønmodtager uden CVR, uden moms, med løn og ikke honorar). Hvis kontrakten indeholder CVR-nummer, moms, honorar, faktura eller selvstændig erhvervsdrivende: sæt collectiveAgreement til false — UANSET om overenskomstens vilkår er inkorporeret ved reference. collectiveAgreementByReference håndterer det tilfælde separat. En leverandørkontrakt er ALDRIG en 'overenskomstkontrakt'.",
+    "collectiveAgreement": "${COLLECTIVE_AGREEMENT_RULE}",
     "collectiveAgreementName": null,
-    "isFreelanceContract": "true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, honorar, faktura, selvstændig erhvervsdrivende) — false hvis det er en lønmodtagerkontrakt (A-løn)",
-    "collectiveAgreementByReference": "true hvis overenskomstens vilkår er inkorporeret ved reference i en leverandørkontrakt — f.eks. 'the terms set forth therein shall supplement', 'I øvrigt gælder overenskomstens bestemmelser', 'In all other respects the terms of the collective agreement apply' — ellers false",
+    "isFreelanceContract": "${IS_FREELANCE_CONTRACT_RULE}",
+    "collectiveAgreementByReference": "${COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE}",
     "gender": null,
-    "holidayPayRate": "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 1 (1% — fastsat i overenskomsten). (B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. (C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null.",
-    "betaRate": "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 0.5 (0,5% — fastsat i § 21 af overenskomsten). (B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. (C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null.",
+    "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
+    "betaRate": "${BETA_RATE_RULE}",
     "specialNotes": "KUN vilkår der er USÆDVANLIGE og konkret afviger fra det normale FOR DEN PÅGÆLDENDE KONTRAKTTYPE. Skriv max 2-3 sætninger. FORBUDT at skrive: at det er en leverandørkontrakt, at honoraret er alt-inklusivt (100% standard for leverandørkontrakter), lønoplysninger der allerede fremgår af salary-feltet, en generel opsummering af kontrakten, parternes navne eller CVR. SKAL MED: Overenskomstinkorporering i en leverandørkontrakt — dvs. at overenskomstens vilkår gælder som supplement i en B2B-aftale — er et særligt og usædvanligt vilkår som ALTID skal nævnes i specialNotes (f.eks. 'Overenskomstvilkår inkorporeret ved reference: De4-overenskomstens vilkår supplerer denne leverandørkontrakt i medfør af § X'). Andre eksempler der KAN med: ensidigt forlængelsesret hos producenten, produktion i udlandet, unormalt kort opsigelsesvarsel (under 1 uge), særlig konkurrenceklausul. Null hvis ingen reelt usædvanlige vilkår."
   },
 
@@ -378,12 +435,22 @@ export function buildSystemPrompt(): string {
                 .join("\n\n")
     }
 
-    if (_memberList.parsed.length > 0) {
+    const groups = getMemberListGroups()
+    const allMembers = groups.flatMap(g => g.memberList.parsed)
+    if (allMembers.length > 0) {
+        const groupLines = groups
+            .filter(g => g.memberList.parsed.length > 0)
+            .map(g => `[${g.name}]: ${g.memberList.parsed.join(", ")}`)
+            .join("\n")
+        const groupNames = groups.filter(g => g.memberList.parsed.length > 0).map(g => g.name)
+        const groupNamesStr = groupNames.length > 1 ? groupNames.join(" / ") : (groupNames[0] ?? "ProF")
         prompt +=
-            "\n\n---\nPRODUCENTFORENINGENS (ProF) MEDLEMMER — kun disse er juridisk bundet af overenskomsten:\n" +
-            _memberList.parsed.join("\n") +
-            "\n\nIdentificer producenten i kontrakten. Sæt profMember til true/false/null baseret på listen. " +
-            "Hvis producenten IKKE er på listen: noter det i flags som info, og tilføj '(Producenten er ikke ProF-medlem og er ikke juridisk bundet af overenskomsten)' til relevante critical-flags."
+            "\n\n---\nPRODUCENTFORENINGENS MEDLEMSLISTER:\n" +
+            groupLines +
+            `\n\nIdentificer producenten i kontrakten og slå op i listerne ovenfor. ` +
+            `Sæt profMember til true hvis producenten er på én af listerne, ellers false/null. ` +
+            `Angiv ALTID i din feedback hvilken liste producenten tilhører (${groupNamesStr}), eller at producenten ikke er fundet på nogen liste. ` +
+            `Hvis producenten IKKE er på nogen liste: noter det i flags som info, og tilføj '(Producenten er ikke ProF-medlem og er ikke juridisk bundet af overenskomsten)' til relevante critical-flags.`
     }
 
     return prompt
@@ -478,11 +545,9 @@ export async function screenContract(
     const parsed: ScreeningResult = data.result
 
     // Client-side membership cross-check
-    if (_memberList.parsed.length > 0 && parsed.detectedProducer) {
-        const clientCheck = checkMembership(
-            parsed.detectedProducer,
-            _memberList.parsed
-        )
+    const allMembers = getMemberList().parsed
+    if (allMembers.length > 0 && parsed.detectedProducer) {
+        const clientCheck = checkMembership(parsed.detectedProducer, allMembers)
         if (parsed.profMember === null) {
             parsed.profMember = clientCheck
         }

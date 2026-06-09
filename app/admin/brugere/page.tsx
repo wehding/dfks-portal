@@ -1,531 +1,322 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import {
-    Users2,
-    UserPlus,
-    Mail,
-    Phone,
-    Shield,
-    Search,
-    MoreHorizontal,
-    FileText,
-    Pencil,
-    Trash2,
-} from "lucide-react"
+import { useEffect, useState } from "react"
+import { Shield, Mail, Plus, Pencil, Loader2, Clock } from "lucide-react"
 import { toast } from "sonner"
-import { useI18n } from "@/lib/i18n"
-import { mockUsers as initialUsers, mockContracts } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
+    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import {
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import type { User } from "@/lib/types"
+import { MoreHorizontal, KeyRound, Link } from "lucide-react"
+
+type StaffUser = {
+    id: string
+    email: string | null
+    full_name: string
+    role: string
+    last_sign_in: string | null
+    created_at: string
+}
+
+const ROLE_CONFIG: Record<string, { label: string; color: string }> = {
+    superadmin: { label: "Superadmin",  color: "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300" },
+    admin:      { label: "Admin",       color: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300"         },
+    "org-admin":{ label: "Org-admin",   color: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300"             },
+    jurist:     { label: "Jurist",      color: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"     },
+    viewer:     { label: "Læser",       color: "bg-muted text-muted-foreground"                                            },
+}
+
+const ROLES = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
 
 export default function AdminBrugerePage() {
-    const { t } = useI18n()
-    const [users, setUsers] = useState<User[]>(initialUsers)
-    const [searchQuery, setSearchQuery] = useState("")
-    const [statusFilter, setStatusFilter] = useState<string>("all")
-    const [roleFilter, setRoleFilter] = useState<string>("all")
+    const [users, setUsers] = useState<StaffUser[]>([])
+    const [loading, setLoading] = useState(true)
 
-    // Dialog state
-    const [showCreateDialog, setShowCreateDialog] = useState(false)
-    const [editingUser, setEditingUser] = useState<User | null>(null)
-    const [deleteId, setDeleteId] = useState<string | null>(null)
+    // Invite dialog
+    const [inviteOpen, setInviteOpen] = useState(false)
+    const [inviteEmail, setInviteEmail] = useState("")
+    const [inviteName, setInviteName] = useState("")
+    const [inviteRole, setInviteRole] = useState("admin")
+    const [inviteLoading, setInviteLoading] = useState(false)
+    const [inviteLink, setInviteLink] = useState<string | null>(null)
 
-    // Form state
-    const [formName, setFormName] = useState("")
-    const [formEmail, setFormEmail] = useState("")
-    const [formPhone, setFormPhone] = useState("")
-    const [formCpr, setFormCpr] = useState("")
-    const [formRole, setFormRole] = useState<"member" | "admin">("member")
+    // Edit role dialog
+    const [editUser, setEditUser] = useState<StaffUser | null>(null)
+    const [editRole, setEditRole] = useState("")
+    const [editLoading, setEditLoading] = useState(false)
 
-    // Summary stats (derived from local state)
-    const totalMembers = users.length
-    const activeMembers = users.filter((u) => u.status === "active").length
-    const newThisYear = users.filter(
-        (u) => new Date(u.memberSince).getFullYear() === new Date().getFullYear()
-    ).length
+    // Reset password
+    const [resetUser, setResetUser] = useState<StaffUser | null>(null)
+    const [resetLink, setResetLink] = useState<string | null>(null)
+    const [resetLoading, setResetLoading] = useState(false)
 
-    const contractCountByUser = useMemo(() => {
-        const map: Record<string, number> = {}
-        mockContracts.forEach((c) => {
-            map[c.userId] = (map[c.userId] || 0) + 1
-        })
-        return map
-    }, [])
+    useEffect(() => { loadUsers() }, [])
 
-    const filteredUsers = useMemo(() => {
-        let list = users
-        if (statusFilter !== "all") list = list.filter((u) => u.status === statusFilter)
-        if (roleFilter !== "all") list = list.filter((u) => u.role === roleFilter)
-        if (searchQuery) {
-            const q = searchQuery.toLowerCase()
-            list = list.filter(
-                (u) =>
-                    u.name.toLowerCase().includes(q) ||
-                    u.email.toLowerCase().includes(q) ||
-                    u.phone?.includes(q)
-            )
-        }
-        return list
-    }, [users, statusFilter, roleFilter, searchQuery])
-
-    // ── Handlers ──────────────────────────────────────────────
-
-    const resetForm = () => {
-        setFormName("")
-        setFormEmail("")
-        setFormPhone("")
-        setFormCpr("")
-        setFormRole("member")
+    async function loadUsers() {
+        setLoading(true)
+        const res = await fetch("/api/admin/users")
+        const json = await res.json()
+        if (res.ok) setUsers(json.users ?? [])
+        else toast.error(json.error ?? "Kunne ikke hente brugere")
+        setLoading(false)
     }
 
-    const openCreate = () => {
-        resetForm()
-        setEditingUser(null)
-        setShowCreateDialog(true)
-    }
-
-    const openEdit = (user: User) => {
-        setFormName(user.name)
-        setFormEmail(user.email)
-        setFormPhone(user.phone || "")
-        setFormCpr(user.cprNumber || "")
-        setFormRole(user.role)
-        setEditingUser(user)
-        setShowCreateDialog(true)
-    }
-
-    const handleSave = () => {
-        if (!formName.trim() || !formEmail.trim()) {
-            toast.error("Udfyld mindst navn og e-mail")
-            return
-        }
-
-        if (editingUser) {
-            // Update
-            setUsers((prev) =>
-                prev.map((u) =>
-                    u.id === editingUser.id
-                        ? {
-                            ...u,
-                            name: formName.trim(),
-                            email: formEmail.trim(),
-                            phone: formPhone.trim() || undefined,
-                            cprNumber: formCpr.trim() || undefined,
-                            role: formRole,
-                        }
-                        : u
-                )
-            )
-            toast.success(`${formName} er opdateret`)
-        } else {
-            // Create
-            const newUser: User = {
-                id: `u${Date.now()}`,
-                name: formName.trim(),
-                email: formEmail.trim(),
-                phone: formPhone.trim() || undefined,
-                cprNumber: formCpr.trim() || undefined,
-                role: formRole,
-                status: "active",
-                memberSince: new Date().toISOString().split("T")[0],
-            }
-            setUsers((prev) => [newUser, ...prev])
-            toast.success(`${formName} er oprettet`)
-        }
-
-        setShowCreateDialog(false)
-        resetForm()
-        setEditingUser(null)
-    }
-
-    const handleDelete = () => {
-        if (!deleteId) return
-        const user = users.find((u) => u.id === deleteId)
-        setUsers((prev) => prev.filter((u) => u.id !== deleteId))
-        setDeleteId(null)
-        if (user) toast.success(`${user.name} er slettet`)
-    }
-
-    const toggleStatus = (id: string) => {
-        setUsers((prev) =>
-            prev.map((u) => {
-                if (u.id !== id) return u
-                const next = u.status === "active" ? "inactive" : "active"
-                toast.info(`${u.name} er nu ${next === "active" ? "aktiv" : "inaktiv"}`)
-                return { ...u, status: next }
+    async function handleInvite() {
+        if (!inviteEmail.trim()) return
+        setInviteLoading(true)
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "invite",
+                    email: inviteEmail.trim(),
+                    name: inviteName.trim() || inviteEmail,
+                    rhId: "__staff__",  // Staff-brugere har ikke rettighedshaver-record
+                    role: inviteRole,
+                }),
             })
-        )
-    }
-
-    // ── Badge helpers ─────────────────────────────────────────
-
-    const statusBadge = (status: string) => {
-        switch (status) {
-            case "active":
-                return (
-                    <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/20 hover:bg-emerald-500/15">
-                        {t("admin.users.active")}
-                    </Badge>
-                )
-            case "inactive":
-                return (
-                    <Badge className="bg-red-500/10 text-red-600 border-red-500/20 hover:bg-red-500/15">
-                        {t("admin.users.inactive")}
-                    </Badge>
-                )
-            case "pending":
-                return (
-                    <Badge className="bg-amber-500/10 text-amber-600 border-amber-500/20 hover:bg-amber-500/15">
-                        {t("admin.users.pending")}
-                    </Badge>
-                )
-            default:
-                return <Badge variant="outline">{status}</Badge>
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            // Sæt rolle via PATCH
+            await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId: json.user_id, role: inviteRole }),
+            })
+            setInviteLink(json.invite_url)
+        } catch (e: any) {
+            toast.error(e.message ?? "Fejl ved invitation")
+        } finally {
+            setInviteLoading(false)
         }
     }
 
-    const roleBadge = (role: string) => {
-        switch (role) {
-            case "admin":
-                return (
-                    <Badge className="bg-violet-500/10 text-violet-600 border-violet-500/20 hover:bg-violet-500/15 gap-1">
-                        <Shield className="h-3 w-3" />
-                        {t("admin.users.admin")}
-                    </Badge>
-                )
-            case "member":
-                return (
-                    <Badge variant="secondary" className="font-normal">
-                        {t("admin.users.member")}
-                    </Badge>
-                )
-            default:
-                return <Badge variant="outline">{role}</Badge>
+    async function handleEditRole() {
+        if (!editUser) return
+        setEditLoading(true)
+        try {
+            const res = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userId: editUser.id, role: editRole }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            toast.success("Rolle opdateret")
+            setUsers(prev => prev.map(u => u.id === editUser.id ? { ...u, role: editRole } : u))
+            setEditUser(null)
+        } catch (e: any) {
+            toast.error(e.message ?? "Fejl")
+        } finally {
+            setEditLoading(false)
+        }
+    }
+
+    async function handleReset() {
+        if (!resetUser?.email) return
+        setResetLoading(true)
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "reset", userId: resetUser.id, email: resetUser.email }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            setResetLink(json.reset_url)
+        } catch (e: any) {
+            toast.error(e.message ?? "Fejl")
+        } finally {
+            setResetLoading(false)
         }
     }
 
     return (
         <div className="space-y-6">
             <PageHeader
-                title={t("admin.users.title")}
-                subtitle={t("admin.users.subtitle")}
+                title="Brugere"
+                subtitle="DFKS-stab med adgang til admin-portalen — admins, jurister og læsere"
                 actions={
-                    <Button size="sm" className="gap-1.5" onClick={openCreate}>
-                        <UserPlus className="h-4 w-4" />
-                        {t("admin.users.addUser")}
+                    <Button size="sm" onClick={() => { setInviteEmail(""); setInviteName(""); setInviteRole("admin"); setInviteLink(null); setInviteOpen(true) }}>
+                        <Plus className="h-4 w-4 mr-1" />Inviter ny bruger
                     </Button>
                 }
             />
 
-            {/* Summary Cards */}
-            <div className="grid gap-4 sm:grid-cols-3">
-                <Card>
-                    <CardContent className="pt-6">
-                        <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                                <Users2 className="h-5 w-5 text-primary" />
-                            </div>
-                            <div>
-                                <p className="text-xs text-muted-foreground">{t("admin.users.totalMembers")}</p>
-                                <p className="text-xl font-bold tabular-nums">{totalMembers}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardContent className="pt-6">
-                        <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
-                                <Users2 className="h-5 w-5 text-emerald-500" />
-                            </div>
-                            <div>
-                                <p className="text-xs text-muted-foreground">{t("admin.users.activeMembers")}</p>
-                                <p className="text-xl font-bold tabular-nums text-emerald-600">{activeMembers}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-                <Card>
-                    <CardContent className="pt-6">
-                        <div className="flex items-center gap-3">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10">
-                                <UserPlus className="h-5 w-5 text-blue-500" />
-                            </div>
-                            <div>
-                                <p className="text-xs text-muted-foreground">{t("admin.users.newThisYear")}</p>
-                                <p className="text-xl font-bold tabular-nums">{newThisYear}</p>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Filters */}
-            <div className="flex flex-wrap gap-3">
-                <div className="relative">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        placeholder={t("common.search")}
-                        className="w-[260px] pl-8"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-[150px]">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle status</SelectItem>
-                        <SelectItem value="active">{t("admin.users.active")}</SelectItem>
-                        <SelectItem value="inactive">{t("admin.users.inactive")}</SelectItem>
-                        <SelectItem value="pending">{t("admin.users.pending")}</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Select value={roleFilter} onValueChange={setRoleFilter}>
-                    <SelectTrigger className="w-[150px]">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle roller</SelectItem>
-                        <SelectItem value="member">{t("admin.users.member")}</SelectItem>
-                        <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
-
-            {/* Table */}
-            <div className="rounded-lg border">
+            <div className="rounded-md border">
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead>{t("admin.users.name")}</TableHead>
-                            <TableHead>{t("admin.users.email")}</TableHead>
-                            <TableHead>{t("admin.users.phone")}</TableHead>
-                            <TableHead>{t("admin.users.cpr")}</TableHead>
-                            <TableHead>{t("admin.users.role")}</TableHead>
-                            <TableHead>{t("admin.users.memberSince")}</TableHead>
-                            <TableHead className="text-right">{t("admin.users.contracts")}</TableHead>
-                            <TableHead>{t("admin.users.status")}</TableHead>
-                            <TableHead className="w-[50px]" />
+                            <TableHead>Navn</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Rolle</TableHead>
+                            <TableHead>Sidst logget ind</TableHead>
+                            <TableHead className="w-12" />
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {filteredUsers.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                                    {t("common.noResults")}
-                                </TableCell>
-                            </TableRow>
-                        ) : (
-                            filteredUsers.map((user) => (
-                                <TableRow key={user.id}>
+                        {loading ? (
+                            <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                                <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
+                            </TableCell></TableRow>
+                        ) : users.length === 0 ? (
+                            <TableRow><TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
+                                Ingen staff-brugere endnu
+                            </TableCell></TableRow>
+                        ) : users.map(u => {
+                            const rc = ROLE_CONFIG[u.role] ?? ROLE_CONFIG.viewer
+                            return (
+                                <TableRow key={u.id}>
+                                    <TableCell className="font-medium">{u.full_name}</TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">{u.email ?? "—"}</TableCell>
                                     <TableCell>
-                                        <div className="flex items-center gap-2.5">
-                                            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium text-primary">
-                                                {user.name.split(" ").map((n) => n[0]).join("")}
-                                            </div>
-                                            <span className="font-medium">{user.name}</span>
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="flex items-center gap-1.5 text-sm">
-                                            <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-                                            {user.email}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="flex items-center gap-1.5 text-sm tabular-nums">
-                                            <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-                                            {user.phone || "—"}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <span className="text-sm tabular-nums font-mono text-muted-foreground">
-                                            {user.cprNumber || "—"}
+                                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${rc.color}`}>
+                                            <Shield className="h-3 w-3" />{rc.label}
                                         </span>
                                     </TableCell>
-                                    <TableCell>{roleBadge(user.role)}</TableCell>
-                                    <TableCell className="tabular-nums text-sm">
-                                        {new Date(user.memberSince).toLocaleDateString("da-DK")}
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {u.last_sign_in
+                                            ? new Date(u.last_sign_in).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })
+                                            : <span className="flex items-center gap-1"><Clock className="h-3 w-3" />Aldrig</span>}
                                     </TableCell>
-                                    <TableCell className="text-right tabular-nums">
-                                        <div className="flex items-center justify-end gap-1.5">
-                                            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                            {contractCountByUser[user.id] || 0}
-                                        </div>
-                                    </TableCell>
-                                    <TableCell>{statusBadge(user.status)}</TableCell>
                                     <TableCell>
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                <Button variant="ghost" size="icon" className="h-7 w-7">
                                                     <MoreHorizontal className="h-4 w-4" />
                                                 </Button>
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent align="end">
-                                                <DropdownMenuItem
-                                                    className="gap-2"
-                                                    onClick={() => openEdit(user)}
-                                                >
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                    {t("common.edit")}
+                                                <DropdownMenuItem onClick={() => { setEditUser(u); setEditRole(u.role) }}>
+                                                    <Pencil className="h-3.5 w-3.5 mr-2" />Skift rolle
                                                 </DropdownMenuItem>
-                                                <DropdownMenuItem
-                                                    className="gap-2"
-                                                    onClick={() => toggleStatus(user.id)}
-                                                >
-                                                    <Shield className="h-3.5 w-3.5" />
-                                                    {user.status === "active" ? "Deaktiver" : "Aktiver"}
-                                                </DropdownMenuItem>
-                                                <DropdownMenuSeparator />
-                                                <DropdownMenuItem
-                                                    className="gap-2 text-destructive"
-                                                    onClick={() => setDeleteId(user.id)}
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                    {t("common.delete")}
-                                                </DropdownMenuItem>
+                                                {u.email && (
+                                                    <DropdownMenuItem onClick={() => { setResetUser(u); setResetLink(null) }}>
+                                                        <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
+                                                    </DropdownMenuItem>
+                                                )}
                                             </DropdownMenuContent>
                                         </DropdownMenu>
                                     </TableCell>
                                 </TableRow>
-                            ))
-                        )}
+                            )
+                        })}
                     </TableBody>
                 </Table>
             </div>
 
-            {/* Create / Edit Dialog */}
-            <Dialog
-                open={showCreateDialog}
-                onOpenChange={(o) => {
-                    if (!o) { setShowCreateDialog(false); setEditingUser(null); resetForm() }
-                }}
-            >
-                <DialogContent className="sm:max-w-[480px]">
+            {/* Invite dialog */}
+            <Dialog open={inviteOpen} onOpenChange={o => { if (!o) setInviteOpen(false) }}>
+                <DialogContent className="max-w-sm">
                     <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2">
-                            <UserPlus className="h-5 w-5" />
-                            {editingUser ? `Rediger — ${editingUser.name}` : t("admin.users.addUser")}
-                        </DialogTitle>
+                        <DialogTitle>Inviter ny bruger</DialogTitle>
+                        <DialogDescription>Opret en DFKS-stab bruger med portal-adgang.</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="user-name">{t("admin.users.name")} *</Label>
-                            <Input
-                                id="user-name"
-                                placeholder="Jens Jensen"
-                                value={formName}
-                                onChange={(e) => setFormName(e.target.value)}
-                            />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="user-email">{t("admin.users.email")} *</Label>
-                            <Input
-                                id="user-email"
-                                type="email"
-                                placeholder="jens@mail.dk"
-                                value={formEmail}
-                                onChange={(e) => setFormEmail(e.target.value)}
-                            />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="user-phone">{t("admin.users.phone")}</Label>
-                                <Input
-                                    id="user-phone"
-                                    type="tel"
-                                    placeholder="+45 12 34 56 78"
-                                    value={formPhone}
-                                    onChange={(e) => setFormPhone(e.target.value)}
-                                />
+                    {inviteLink ? (
+                        <div className="space-y-3 py-2">
+                            <p className="text-sm text-emerald-600 font-medium flex items-center gap-1.5"><Link className="h-4 w-4" />Invitationslink genereret</p>
+                            <div className="flex gap-2">
+                                <Input value={inviteLink} readOnly className="font-mono text-xs" />
+                                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(inviteLink); toast.success("Kopieret!") }}>Kopiér</Button>
                             </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="user-cpr">{t("admin.users.cpr")}</Label>
-                                <Input
-                                    id="user-cpr"
-                                    placeholder="DDMMYY-XXXX"
-                                    className="font-mono"
-                                    value={formCpr}
-                                    onChange={(e) => setFormCpr(e.target.value)}
-                                />
+                            <p className="text-xs text-muted-foreground">Linket er gyldigt i 24 timer.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-3 py-2">
+                            <div className="space-y-1"><Label>Navn</Label><Input value={inviteName} onChange={e => setInviteName(e.target.value)} placeholder="Fornavn Efternavn" /></div>
+                            <div className="space-y-1"><Label>Email *</Label><Input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="navn@dfks.dk" /></div>
+                            <div className="space-y-1">
+                                <Label>Rolle</Label>
+                                <Select value={inviteRole} onValueChange={setInviteRole}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        {ROLES.filter(r => r !== "superadmin").map(r => (
+                                            <SelectItem key={r} value={r}>{ROLE_CONFIG[r]?.label ?? r}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                             </div>
                         </div>
-                        <div className="space-y-2">
-                            <Label>{t("admin.users.role")}</Label>
-                            <Select value={formRole} onValueChange={(v) => setFormRole(v as "member" | "admin")}>
-                                <SelectTrigger>
-                                    <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="member">{t("admin.users.member")}</SelectItem>
-                                    <SelectItem value="admin">{t("admin.users.admin")}</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setInviteOpen(false)}>{inviteLink ? "Luk" : "Annuller"}</Button>
+                        {!inviteLink && (
+                            <Button onClick={handleInvite} disabled={inviteLoading || !inviteEmail.trim()}>
+                                {inviteLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                <Mail className="h-4 w-4 mr-2" />Generér invitationslink
+                            </Button>
+                        )}
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Edit role dialog */}
+            <Dialog open={!!editUser} onOpenChange={o => { if (!o) setEditUser(null) }}>
+                <DialogContent className="max-w-xs">
+                    <DialogHeader>
+                        <DialogTitle>Skift rolle</DialogTitle>
+                        <DialogDescription>{editUser?.full_name}</DialogDescription>
+                    </DialogHeader>
+                    <div className="py-2">
+                        <Select value={editRole} onValueChange={setEditRole}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                                {ROLES.map(r => (
+                                    <SelectItem key={r} value={r}>{ROLE_CONFIG[r]?.label ?? r}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
                     </div>
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => { setShowCreateDialog(false); resetForm(); setEditingUser(null) }}>
-                            {t("common.cancel")}
-                        </Button>
-                        <Button onClick={handleSave}>
-                            {editingUser ? t("common.save") : t("admin.users.addUser")}
+                        <Button variant="outline" onClick={() => setEditUser(null)}>Annuller</Button>
+                        <Button onClick={handleEditRole} disabled={editLoading}>
+                            {editLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Gem rolle
                         </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* Delete Confirmation Dialog */}
-            <Dialog open={!!deleteId} onOpenChange={(o) => { if (!o) setDeleteId(null) }}>
-                <DialogContent className="sm:max-w-[400px]">
+            {/* Reset password dialog */}
+            <Dialog open={!!resetUser} onOpenChange={o => { if (!o) { setResetUser(null); setResetLink(null) } }}>
+                <DialogContent className="max-w-sm">
                     <DialogHeader>
-                        <DialogTitle>{t("common.delete")}</DialogTitle>
-                        <DialogDescription>{t("common.deleteConfirm")}</DialogDescription>
+                        <DialogTitle>Nulstil password</DialogTitle>
+                        <DialogDescription>{resetUser?.full_name} ({resetUser?.email})</DialogDescription>
                     </DialogHeader>
+                    {resetLink ? (
+                        <div className="space-y-3 py-2">
+                            <p className="text-sm text-emerald-600 font-medium flex items-center gap-1.5"><Link className="h-4 w-4" />Reset-link genereret</p>
+                            <div className="flex gap-2">
+                                <Input value={resetLink} readOnly className="font-mono text-xs" />
+                                <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(resetLink); toast.success("Kopieret!") }}>Kopiér</Button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">Linket er gyldigt i 24 timer.</p>
+                        </div>
+                    ) : (
+                        <p className="text-sm text-muted-foreground py-2">Generér et reset-link som du kan sende til brugeren.</p>
+                    )}
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => setDeleteId(null)}>
-                            {t("common.cancel")}
-                        </Button>
-                        <Button variant="destructive" onClick={handleDelete}>
-                            {t("common.delete")}
-                        </Button>
+                        <Button variant="outline" onClick={() => { setResetUser(null); setResetLink(null) }}>{resetLink ? "Luk" : "Annuller"}</Button>
+                        {!resetLink && (
+                            <Button onClick={handleReset} disabled={resetLoading}>
+                                {resetLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                                <KeyRound className="h-4 w-4 mr-2" />Generér reset-link
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
