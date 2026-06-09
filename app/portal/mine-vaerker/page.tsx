@@ -1,9 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Film, Download, Users, Eye, Upload, BarChart3, Clock, CheckCircle2, X, Layers, SearchCheck, Send, Info } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
-import { mockWorks, mockContracts } from "@/lib/mock-data"
+import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { Button } from "@/components/ui/button"
@@ -50,7 +50,6 @@ interface AftalelicensKravItem {
     status: "pending" | "approved" | "rejected"
 }
 
-// I real app: hentes fra DB baseret på logged-in bruger
 const MOCK_MINE_KRAV: AftalelicensKravItem[] = [
     {
         id: "krav_p1",
@@ -91,6 +90,19 @@ const MOCK_EFTERLYSNINGER: EfterlysningItem[] = [
     { id: "e3", title: "Den store dag", type: "Dokumentarfilm", premiereYear: 2023, productionNumber: "014" },
     { id: "e4", title: "Landet bag ved", type: "Spillefilm", premiereYear: 2024, productionNumber: "015" },
 ]
+
+function mapWorkType(type: string): Work["category"] {
+    const map: Record<string, Work["category"]> = {
+        "feature": "feature", "spillefilm": "feature",
+        "tvSeries": "tvSeries", "tv-serie": "tvSeries",
+        "documentary": "documentary", "dokumentar": "documentary",
+        "docSeries": "docSeries",
+        "short": "short", "kortfilm": "short",
+        "tvEntertainment": "tvEntertainment",
+        "reality": "reality",
+    }
+    return map[type?.toLowerCase()] ?? "feature"
+}
 
 const KRAV_STATUS_CFG = {
     pending:  { label: "Afventer afgørelse", variant: "secondary"   as const, icon: Clock },
@@ -168,11 +180,66 @@ export default function MineVaerkerPage() {
     const [meldNote, setMeldNote] = useState("")
     const [meldFileName, setMeldFileName] = useState("")
     const [meldSent, setMeldSent] = useState<Set<string>>(new Set())
+    const [dbWorks, setDbWorks] = useState<Work[]>([])
+    const [worksLoading, setWorksLoading] = useState(true)
+
+    useEffect(() => {
+        const load = async () => {
+            const supabase = createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) { setWorksLoading(false); return }
+
+            // Find rettighedshaver
+            let rhId: string | null = null
+            const { data: byUid } = await supabase.from("rettighedshavere").select("id").eq("user_id", user.id).single()
+            rhId = byUid?.id ?? null
+            if (!rhId && user.email) {
+                const { data: byEmail } = await supabase.from("rettighedshavere").select("id").eq("email", user.email).single()
+                rhId = byEmail?.id ?? null
+            }
+            if (!rhId) { setWorksLoading(false); return }
+
+            // Hent kontrakter med tilknyttede værker og valideringer
+            const { data: contracts } = await supabase
+                .from("contracts")
+                .select(`
+                    id, type, overenskomst, status, contract_date,
+                    works(id, title, type, year),
+                    contract_validations(extracted_data)
+                `)
+                .eq("rights_holder_id", rhId)
+                .not("work_id", "is", null)
+
+            if (!contracts?.length) { setWorksLoading(false); return }
+
+            const works: Work[] = contracts
+                .filter((c: any) => c.works)
+                .map((c: any) => {
+                    const ed = c.contract_validations?.[0]?.extracted_data ?? {}
+                    return {
+                        id: c.works.id,
+                        title: c.works.title,
+                        category: mapWorkType(c.works.type),
+                        premiereYear: c.works.year ?? 0,
+                        rights: {
+                            svod: !!ed.svod,
+                            copydan: !!ed.copydan,
+                            royalty: !!ed.royalty,
+                        },
+                    } as Work
+                })
+                // Dedupliker (en klipper kan have flere kontrakter på samme værk)
+                .filter((w, idx, arr) => arr.findIndex(x => x.id === w.id) === idx)
+
+            setDbWorks(works)
+            setWorksLoading(false)
+        }
+        load()
+    }, [])
 
     const pendingOrRejectedKrav = MOCK_MINE_KRAV.filter(k => k.status !== "approved")
-    const allWorks = [...mockWorks, ...approvedKravAsWorks]
+    const allWorks = [...dbWorks, ...approvedKravAsWorks]
 
-    // Mock exploitation data per work
     const mockExploitation: Record<string, { platforms: { name: string; views: number; revenue: number }[]; totalRevenue: number; coverage: number }> = {
         w1: {
             platforms: [
@@ -208,7 +275,7 @@ export default function MineVaerkerPage() {
         coverage: 25,
     } : null
 
-    const currentWork = exploitationWork ? mockWorks.find(w => w.id === exploitationWork) : null
+    const currentWork = exploitationWork ? allWorks.find(w => w.id === exploitationWork) : null
 
     const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -550,9 +617,8 @@ export default function MineVaerkerPage() {
                         <DialogTitle>{t("common.preview")}</DialogTitle>
                     </DialogHeader>
                     {(() => {
-                        const contract = mockContracts.find(c => c.id === previewPdf)
-                        const data = contract?.extractedData
-                        const isApproved = contract?.status === "approved"
+                        const data = null
+                        const isApproved = false
 
                         return (
                             <div className={`flex-1 grid gap-4 overflow-hidden ${isApproved && data ? "lg:grid-cols-2" : ""}`}>

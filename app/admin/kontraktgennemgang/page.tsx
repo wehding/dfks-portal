@@ -17,7 +17,9 @@ import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
     MessageSquare, Archive, X, Send, Pencil, Eye, BookMarked,
+    ThumbsUp, ThumbsDown,
 } from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -32,7 +34,9 @@ import {
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog"
-import { getLegalNotes, getCaseLearnings, setCaseLearnings, type CaseLearning, type CaseLearningKontrakttype } from "@/lib/ai"
+import { type CaseLearning, type CaseLearningKontrakttype } from "@/lib/ai"
+import { saveReview } from "@/lib/db/gennemgang"
+import { getMyOrgRole } from "@/lib/db/organisations"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -175,6 +179,14 @@ export default function KontraktGennemgangPage() {
     const [learningDraft, setLearningDraft] = useState<{ titel: string; kontrakttype: CaseLearningKontrakttype; regel: string }>({ titel: "", kontrakttype: "alle", regel: "" })
     const [pdfUrl, setPdfUrl] = useState<string | null>(null)
     const [dismissedPoints, setDismissedPoints] = useState<Set<number>>(new Set())
+    const [orgId, setOrgId] = useState<string | null>(null)
+    const [analyseId] = useState(() => crypto.randomUUID())
+    const [fundFeedback, setFundFeedback] = useState<Record<string, "good" | "bad">>({})
+    const [fundKorrektioner, setFundKorrektioner] = useState<Record<string, string>>({})
+
+    useEffect(() => {
+        getMyOrgRole().then(r => setOrgId(r?.org_id ?? null))
+    }, [])
     const fileRef = useRef<HTMLInputElement>(null)
     const docRef = useRef<HTMLDivElement>(null)
     const originalMailRef = useRef<string>("")  // original AI-mail — bruges til at genberegne ved fravalg
@@ -228,11 +240,7 @@ export default function KontraktGennemgangPage() {
             const payload = new FormData()
             payload.append("file", file)
             if (memberName) payload.append("memberName", memberName)
-            const notes = getLegalNotes()
-            if (notes.length > 0) payload.append("legalNotes", JSON.stringify(notes.map(n => ({ title: n.title, text: n.text, priority: n.priority, excludeForOverenskomst: n.excludeForOverenskomst ?? false }))))
-            const learnings = getCaseLearnings()
-            if (learnings.length > 0) payload.append("caseLearnings", JSON.stringify(learnings))
-
+            // Sagserfaringer hentes nu via RAG i /api/gennemgang — ingen FormData nødvendig
             const resp = await fetch("/api/gennemgang", { method: "POST", body: payload })
             if (!resp.ok) {
                 const e = await resp.json().catch(() => ({}))
@@ -244,6 +252,16 @@ export default function KontraktGennemgangPage() {
             setResult(data.result)
             setContractText(data.contractText || "")
             toast.success("Gennemgang fuldført")
+
+            // Gem resultat til Supabase
+            if (orgId) {
+                saveReview({
+                    org_id: orgId,
+                    member_name: memberName || null,
+                    member_email: memberEmail || null,
+                    ai_result: data.result,
+                })
+            }
         } catch (e: any) {
             toast.error(`Gennemgang fejlede: ${e.message}`)
         }
@@ -488,10 +506,31 @@ export default function KontraktGennemgangPage() {
                 </span>
             </div>
 
-            {/* Two-panel layout: AI analyse + feedback mail */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-110px)]">
+            {/* Three-panel layout: kontrakt | AI analyse | feedback mail */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-110px)]">
 
-                {/* Panel 1: Feedback points */}
+                {/* Panel 1: Kontrakt */}
+                <div className="rounded-lg border flex flex-col min-h-0">
+                    <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
+                        <span className="text-xs font-medium">Kontrakt</span>
+                        <span className="text-xs text-muted-foreground ml-auto truncate max-w-[140px]">{file?.name}</span>
+                    </div>
+                    {pdfUrl ? (
+                        <iframe
+                            src={pdfUrl}
+                            className="flex-1 w-full border-0 min-h-0"
+                            title={file?.name}
+                        />
+                    ) : (
+                        <div
+                            ref={docRef}
+                            className="flex-1 overflow-y-auto p-4 text-xs leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap min-h-0"
+                            dangerouslySetInnerHTML={{ __html: highlightedHtml || "<span class='text-muted-foreground'>Dokumenttekst ikke tilgængelig for PDF-filer — brug DOCX eller TXT for highlight</span>" }}
+                        />
+                    )}
+                </div>
+
+                {/* Panel 2: Feedback points */}
                 <div className="rounded-lg border flex flex-col min-h-0">
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
@@ -553,10 +592,13 @@ export default function KontraktGennemgangPage() {
                             const Icon = cfg.icon
                             const isActive = activeFpId === fp.id
                             return (
-                                <button
+                                <div
                                     key={fp.id}
+                                    role="button"
+                                    tabIndex={0}
                                     onClick={() => handleFpClick(fp)}
-                                    className={`w-full text-left px-4 py-3 space-y-1.5 transition-colors hover:bg-muted/50 ${isActive ? "bg-muted/50" : ""}`}
+                                    onKeyDown={e => e.key === "Enter" && handleFpClick(fp)}
+                                    className={`w-full text-left px-4 py-3 space-y-1.5 transition-colors hover:bg-muted/50 cursor-pointer ${isActive ? "bg-muted/50" : ""}`}
                                 >
                                     <div className="flex items-start gap-2">
                                         <Icon className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${cfg.color}`} />
@@ -586,12 +628,129 @@ export default function KontraktGennemgangPage() {
                                                             "{fp.citat}"
                                                         </p>
                                                     )}
+                                                    {/* ── Feedback ── */}
+                                                    <div className="pt-1 border-t border-border/50" onClick={e => e.stopPropagation()}>
+                                                        <p className="text-[10px] text-muted-foreground mb-1.5">Var dette fund korrekt?</p>
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                onClick={async () => {
+                                                                    setFundFeedback(prev => ({ ...prev, [fp.id]: "good" }))
+                                                                    setFundKorrektioner(prev => { const n = { ...prev }; delete n[fp.id]; return n })
+                                                                    const supabase = createClient()
+                                                                    await supabase.from("analysis_feedback").upsert({
+                                                                        analyse_id: analyseId,
+                                                                        fund_id: fp.id,
+                                                                        fund_titel: fp.titel,
+                                                                        fund_svaerhedsgrad: fp.type,
+                                                                        fund_beskrivelse: fp.beskrivelse,
+                                                                        godkendt: true,
+                                                                        org_id: orgId,
+                                                                    }, { onConflict: "analyse_id,fund_id" })
+                                                                    toast.success("Tak for feedback")
+                                                                }}
+                                                                className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${fundFeedback[fp.id] === "good" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40" : "hover:bg-muted text-muted-foreground"}`}
+                                                            >
+                                                                <ThumbsUp className="h-3 w-3" /> Korrekt
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setFundFeedback(prev => ({ ...prev, [fp.id]: "bad" }))
+                                                                }}
+                                                                className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors ${fundFeedback[fp.id] === "bad" ? "bg-red-100 text-red-700 dark:bg-red-900/40" : "hover:bg-muted text-muted-foreground"}`}
+                                                            >
+                                                                <ThumbsDown className="h-3 w-3" /> Forkert
+                                                            </button>
+                                                        </div>
+                                                        {fundFeedback[fp.id] === "bad" && (
+                                                            <div className="mt-2 space-y-1.5">
+                                                                <p className="text-[10px] text-muted-foreground">Hvad er det korrekte? (valgfrit)</p>
+                                                                <textarea
+                                                                    className="w-full text-[11px] rounded border border-border bg-background px-2 py-1.5 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                                                                    rows={2}
+                                                                    placeholder="Beskriv hvad AI'en misforstod..."
+                                                                    value={fundKorrektioner[fp.id] ?? ""}
+                                                                    onChange={e => setFundKorrektioner(prev => ({ ...prev, [fp.id]: e.target.value }))}
+                                                                />
+                                                                <div className="flex items-center gap-3">
+                                                                    <button
+                                                                        className="text-[11px] text-muted-foreground underline underline-offset-2"
+                                                                        onClick={async () => {
+                                                                            const supabase = createClient()
+                                                                            await supabase.from("analysis_feedback").upsert({
+                                                                                analyse_id: analyseId,
+                                                                                fund_id: fp.id,
+                                                                                fund_titel: fp.titel,
+                                                                                fund_svaerhedsgrad: fp.type,
+                                                                                fund_beskrivelse: fp.beskrivelse,
+                                                                                godkendt: false,
+                                                                                korrektion_beskrivelse: fundKorrektioner[fp.id] ?? null,
+                                                                                org_id: orgId,
+                                                                            }, { onConflict: "analyse_id,fund_id" })
+                                                                            toast.success("Feedback gemt")
+                                                                        }}
+                                                                    >
+                                                                        Gem feedback
+                                                                    </button>
+                                                                    {fundKorrektioner[fp.id]?.trim() && (
+                                                                        <button
+                                                                            className="text-[11px] text-primary font-medium underline underline-offset-2"
+                                                                            onClick={async () => {
+                                                                                const korrektion = fundKorrektioner[fp.id]
+                                                                                const supabase = createClient()
+                                                                                // Gem feedback
+                                                                                await supabase.from("analysis_feedback").upsert({
+                                                                                    analyse_id: analyseId,
+                                                                                    fund_id: fp.id,
+                                                                                    fund_titel: fp.titel,
+                                                                                    fund_svaerhedsgrad: fp.type,
+                                                                                    fund_beskrivelse: fp.beskrivelse,
+                                                                                    godkendt: false,
+                                                                                    korrektion_beskrivelse: korrektion,
+                                                                                    org_id: orgId,
+                                                                                }, { onConflict: "analyse_id,fund_id" })
+                                                                                // Gem som sagserfaring i DB
+                                                                                const { data: saved } = await supabase
+                                                                                    .from("case_learnings")
+                                                                                    .insert({
+                                                                                        org_id: orgId,
+                                                                                        kontrakttype: "alle",
+                                                                                        titel: fp.titel,
+                                                                                        regel: korrektion,
+                                                                                        added_at: new Date().toISOString(),
+                                                                                    })
+                                                                                    .select()
+                                                                                    .single()
+                                                                                // Embed i RAG-videnbase
+                                                                                if (saved) {
+                                                                                    fetch("/api/knowledge/upsert", {
+                                                                                        method: "POST",
+                                                                                        headers: { "Content-Type": "application/json" },
+                                                                                        body: JSON.stringify({
+                                                                                            kilde_id: saved.id,
+                                                                                            kilde_type: "sagserfaring",
+                                                                                            kilde_titel: fp.titel,
+                                                                                            tekst: `${fp.titel}: ${korrektion}`,
+                                                                                            org_id: orgId,
+                                                                                            metadata: { kilde: "feedback", fund_id: fp.id },
+                                                                                        }),
+                                                                                    }).catch(() => {})
+                                                                                }
+                                                                                toast.success("Gemt som sagserfaring — bruges ved næste gennemgang")
+                                                                            }}
+                                                                        >
+                                                                            + Gem som sagserfaring
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
                                         <ChevronRight className={`h-3 w-3 text-muted-foreground shrink-0 transition-transform ${isActive ? "rotate-90" : ""}`} />
                                     </div>
-                                </button>
+                                </div>
                             )
                         })}
 
@@ -704,26 +863,6 @@ export default function KontraktGennemgangPage() {
                 </div>
             </div>
 
-            {/* Document viewer — below the two panels, reachable by scrolling */}
-            <div className="rounded-lg border flex flex-col mt-4 mb-8" style={{ height: "75vh" }}>
-                <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0">
-                    <span className="text-xs font-medium">Kontrakt</span>
-                    <span className="text-xs text-muted-foreground ml-auto">{file?.name}</span>
-                </div>
-                {pdfUrl ? (
-                    <iframe
-                        src={pdfUrl}
-                        className="flex-1 w-full border-0 min-h-0"
-                        title={file?.name}
-                    />
-                ) : (
-                    <div
-                        ref={docRef}
-                        className="flex-1 overflow-y-auto p-4 text-xs leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap min-h-0"
-                        dangerouslySetInnerHTML={{ __html: highlightedHtml || "<span class='text-muted-foreground'>Dokumenttekst ikke tilgængelig for PDF-filer — brug DOCX eller TXT for highlight</span>" }}
-                    />
-                )}
-            </div>
 
             {/* ── Gem som sagserfaring dialog ─────────────────── */}
             <Dialog open={showSaveLearning} onOpenChange={setShowSaveLearning}>
@@ -774,18 +913,39 @@ export default function KontraktGennemgangPage() {
                         <Button variant="outline" onClick={() => setShowSaveLearning(false)}>Annuller</Button>
                         <Button
                             disabled={!learningDraft.titel.trim() || !learningDraft.regel.trim()}
-                            onClick={() => {
-                                const newLearning: CaseLearning = {
-                                    id: `learning_${Date.now()}`,
-                                    kontrakttype: learningDraft.kontrakttype,
-                                    titel: learningDraft.titel.trim(),
-                                    regel: learningDraft.regel.trim(),
-                                    addedAt: new Date().toISOString(),
-                                }
-                                const updated = [...getCaseLearnings(), newLearning]
-                                setCaseLearnings(updated)
+                            onClick={async () => {
+                                const supabase = createClient()
+                                // Gem i DB
+                                const { data: saved } = await supabase
+                                    .from("case_learnings")
+                                    .insert({
+                                        org_id: orgId,
+                                        kontrakttype: learningDraft.kontrakttype,
+                                        titel: learningDraft.titel.trim(),
+                                        regel: learningDraft.regel.trim(),
+                                        added_at: new Date().toISOString(),
+                                    })
+                                    .select()
+                                    .single()
+
+                                if (!saved) { toast.error("Kunne ikke gemme sagserfaring"); return }
+
+                                // Embed i RAG
+                                fetch("/api/knowledge/upsert", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        kilde_id: saved.id,
+                                        kilde_type: "sagserfaring",
+                                        kilde_titel: saved.titel,
+                                        tekst: `${saved.titel}: ${saved.regel}`,
+                                        org_id: orgId,
+                                        metadata: { kontrakttype: saved.kontrakttype },
+                                    }),
+                                }).catch(() => {})
+
                                 setShowSaveLearning(false)
-                                toast.success("Sagserfaring gemt — bruges ved næste gennemgang")
+                                toast.success("Sagserfaring gemt og indekseret — bruges ved næste gennemgang")
                             }}
                         >
                             <BookMarked className="mr-1.5 h-3.5 w-3.5" />

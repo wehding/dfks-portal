@@ -13,6 +13,7 @@ const translations = {
         "nav.myContracts": "Mine Kontrakter",
         "nav.economy": "Økonomi",
         "nav.contracts": "Kontrakter",
+        "nav.rightsHolders": "Rettighedshavere",
         "nav.validation": "Validering",
         "nav.payouts": "Udbetalinger",
         "nav.statistics": "Statistik",
@@ -300,8 +301,10 @@ const translations = {
 
         // Admin - Producer Payments (Indbetalinger)
         "nav.producerPayments": "Indbetalinger",
+        "nav.producers": "Producenter",
         "nav.agreements": "Overenskomster",
         "nav.contractReview": "Kontraktgennemgang",
+        "nav.quality": "AI-kvalitet",
         "nav.streaming": "Rettighedsbetaling",
         "nav.works": "Værker",
         "nav.aftalelicens": "Aftalelicens",
@@ -395,6 +398,7 @@ const translations = {
         "nav.myContracts": "My Contracts",
         "nav.economy": "Economy",
         "nav.contracts": "Contracts",
+        "nav.rightsHolders": "Rights Holders",
         "nav.validation": "Validation",
         "nav.payouts": "Payouts",
         "nav.statistics": "Statistics",
@@ -660,8 +664,10 @@ const translations = {
 
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
+        "nav.producers": "Producers",
         "nav.agreements": "Agreements",
         "nav.contractReview": "Contract Review",
+        "nav.quality": "AI Quality",
         "nav.streaming": "Rights Payments",
         "nav.works": "Works",
         "nav.aftalelicens": "Blanket Licence",

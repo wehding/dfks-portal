@@ -17,8 +17,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
-import { mockRoles, mockRegisteredWorks } from "@/lib/mock-data"
-import { useContracts } from "@/lib/hooks"
+import { createClient } from "@/lib/supabase/client"
 import type { PortalScreeningResult } from "@/lib/ai"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
@@ -75,12 +74,71 @@ const statusLabels: Record<string, string> = {
     approved: "admin.contracts.approved",
 }
 
+type DbContract = {
+    id: string
+    working_title: string | null
+    type: string
+    overenskomst: string | null
+    status: string
+    contract_date: string | null
+    created_at: string
+    employer_name: string | null
+    work_title: string | null
+}
+
+const STATUS_MAP: Record<string, { label: string; variant: "default" | "secondary" | "outline" }> = {
+    kladde:    { label: "Til gennemgang", variant: "outline"   },
+    valideret: { label: "Godkendt",       variant: "default"   },
+    arkiveret: { label: "Arkiveret",      variant: "secondary" },
+}
+
 export default function MineKontrakterPage() {
     const { t } = useI18n()
-    const { contracts, addContract } = useContracts()
+    const [myContracts, setMyContracts] = useState<DbContract[]>([])
+    const [loadingContracts, setLoadingContracts] = useState(true)
+    const [rhId, setRhId] = useState<string | null>(null)
 
-    // Member's contracts (filtered by userId in real app)
-    const myContracts = contracts.filter((c) => c.userId === "u1")
+    useEffect(() => {
+        const loadContracts = async () => {
+            const supabase = createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) { setLoadingContracts(false); return }
+
+            // Find rettighedshaver
+            let rh: { id: string } | null = null
+            const { data: byUserId } = await supabase
+                .from("rettighedshavere").select("id").eq("user_id", user.id).single()
+            rh = byUserId
+            if (!rh && user.email) {
+                const { data: byEmail } = await supabase
+                    .from("rettighedshavere").select("id").eq("email", user.email).single()
+                rh = byEmail
+            }
+            if (!rh) { setLoadingContracts(false); return }
+            setRhId(rh.id)
+
+            // Hent kontrakter
+            const { data } = await supabase
+                .from("contracts")
+                .select("id, working_title, type, overenskomst, status, contract_date, created_at, employers(name), works(title)")
+                .eq("rights_holder_id", rh.id)
+                .order("created_at", { ascending: false })
+
+            setMyContracts((data ?? []).map((c: any) => ({
+                id: c.id,
+                working_title: c.working_title,
+                type: c.type,
+                overenskomst: c.overenskomst,
+                status: c.status,
+                contract_date: c.contract_date,
+                created_at: c.created_at,
+                employer_name: c.employers?.name ?? null,
+                work_title: c.works?.title ?? null,
+            })))
+            setLoadingContracts(false)
+        }
+        loadContracts()
+    }, [])
 
     // Upload section state
     const [showUpload, setShowUpload] = useState(false)
@@ -108,9 +166,8 @@ export default function MineKontrakterPage() {
     const isSeries = seriesCategories.includes(category as Category)
 
     const titleMatches = useMemo(() => {
-        if (!title.trim()) return []
-        const lower = title.toLowerCase().trim()
-        return mockRegisteredWorks.filter((w) => w.title.toLowerCase() === lower)
+        // TODO: søg i works-tabel fra DB
+        return []
     }, [title])
 
     const handleFile = useCallback((f: File) => {
@@ -148,7 +205,11 @@ export default function MineKontrakterPage() {
     const removeEpisode = (idx: number) =>
         setEpisodes((prev) => prev.filter((_, i) => i !== idx))
 
-    const activeRoles = mockRoles.filter((r) => r.active)
+    // Standard klipperroller — kan udbygges med DB-opslag
+    const activeRoles = [
+        { name: "Klipper" }, { name: "Film Editor" }, { name: "Klippeassistent" },
+        { name: "Dramaturg" }, { name: "Klipper/Instruktør" },
+    ]
 
     // Auto-screen contract when file is selected
     useEffect(() => {
@@ -219,7 +280,11 @@ export default function MineKontrakterPage() {
             />
 
             {/* ── My Contracts Overview ──────────────────────────── */}
-            {myContracts.length === 0 ? (
+            {loadingContracts ? (
+                <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+            ) : myContracts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-center">
                     <FileText className="h-10 w-10 text-muted-foreground/40" />
                     <p className="mt-4 text-sm font-medium">Ingen kontrakter endnu</p>
@@ -232,36 +297,32 @@ export default function MineKontrakterPage() {
                     <Table>
                         <TableHeader>
                             <TableRow>
-                                <TableHead>{t("works.workTitle")}</TableHead>
-                                <TableHead>{t("upload.category")}</TableHead>
-                                <TableHead>{t("upload.creditedRole")}</TableHead>
-                                <TableHead>{t("admin.contracts.uploaded")}</TableHead>
-                                <TableHead>{t("admin.contracts.status")}</TableHead>
-                                <TableHead className="w-[60px]" />
+                                <TableHead>Produktion</TableHead>
+                                <TableHead>Producent</TableHead>
+                                <TableHead>Type</TableHead>
+                                <TableHead>Dato</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead className="w-[50px]" />
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {myContracts.map((c) => {
-                                const Icon = statusIcon[c.status] || Clock
+                                const s = STATUS_MAP[c.status] ?? STATUS_MAP.kladde
+                                const displayTitle = c.work_title ?? c.working_title ?? "—"
+                                const displayDate = c.contract_date ?? c.created_at
                                 return (
                                     <TableRow key={c.id}>
-                                        <TableCell className="font-medium">{c.title}</TableCell>
-                                        <TableCell className="text-sm">
-                                            {t(`cat.${c.category}` as any)}
+                                        <TableCell className="font-medium">{displayTitle}</TableCell>
+                                        <TableCell className="text-sm text-muted-foreground">{c.employer_name ?? "—"}</TableCell>
+                                        <TableCell className="text-sm text-muted-foreground">
+                                            {c.type === "a-løn" ? "A-løn" : "Leverandør"}
                                         </TableCell>
-                                        <TableCell className="text-muted-foreground">
-                                            {c.creditedRoles.join(", ")}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground tabular-nums">
-                                            {c.uploadedAt}
+                                        <TableCell className="text-sm text-muted-foreground tabular-nums">
+                                            {new Date(displayDate).toLocaleDateString("da-DK")}
                                         </TableCell>
                                         <TableCell>
-                                            <Badge
-                                                variant={statusVariant[c.status]}
-                                                className="gap-1 font-normal"
-                                            >
-                                                <Icon className="h-3 w-3" />
-                                                {t(statusLabels[c.status] as any)}
+                                            <Badge variant={s.variant} className="font-normal text-xs">
+                                                {s.label}
                                             </Badge>
                                         </TableCell>
                                         <TableCell>
@@ -498,7 +559,7 @@ export default function MineKontrakterPage() {
                                                             </SelectTrigger>
                                                             <SelectContent>
                                                                 {activeRoles.map((r) => (
-                                                                    <SelectItem key={r.id} value={r.name}>
+                                                                    <SelectItem key={r.name} value={r.name}>
                                                                         {r.name}
                                                                     </SelectItem>
                                                                 ))}
@@ -656,43 +717,76 @@ export default function MineKontrakterPage() {
                                 <Button
                                     className="w-full"
                                     disabled={!file || !title || screening || (isSeries ? episodeCredits.every(e => !e.role) : creditedRoles.every(r => !r))}
-                                    onClick={() => {
-                                        if (!file || !title) return
-                                        const today = new Date()
-                                        const dateStr = today.toISOString().slice(0, 10)
-                                        const filledEpisodeCredits = episodeCredits.filter(e => e.role)
-                                        addContract({
-                                            id: `portal_${Date.now()}`,
-                                            userId: "u1",
-                                            userName: "Anna Heide",
-                                            title: title.trim(),
-                                            category: (category || "feature") as any,
-                                            creditedRoles: isSeries
+                                    onClick={async () => {
+                                        if (!file || !title || !rhId) return
+                                        try {
+                                            const supabase = createClient()
+                                            const orgRow = await supabase.from("org_affiliations").select("org_id").eq("rights_holder_id", rhId).single()
+                                            const orgId = orgRow.data?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+
+                                            // Upload PDF
+                                            const filePath = `${orgId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`
+                                            await supabase.storage.from("kontrakter").upload(filePath, file, { contentType: file.type })
+
+                                            // Saml alle felter brugeren har tastet/AI har fundet
+                                            const filledEpisodeCredits = episodeCredits.filter(e => e.role)
+                                            const roles = isSeries
                                                 ? [...new Set(filledEpisodeCredits.map(e => e.role))]
-                                                : creditedRoles.filter(Boolean).length > 0 ? creditedRoles.filter(Boolean) : ["Klipper"],
-                                            duration: Number(duration) || 0,
-                                            episodes: isSeries
-                                                ? filledEpisodeCredits.map(e => ({ number: e.number, title: "", duration: 0 }))
-                                                : undefined,
-                                            premiereDate: premiereDate || dateStr,
-                                            premiereYear: premiereDate
-                                                ? new Date(premiereDate).getFullYear()
-                                                : today.getFullYear(),
-                                            fileUrl: "",
-                                            status: "pending",
-                                            uploadedAt: dateStr,
-                                        })
-                                        setFile(null)
-                                        setPdfUrl(null)
-                                        setTitle("")
-                                        setCategory("")
-                                        setCreditedRoles([""])
-                                        setDuration("")
-                                        setPremiereDate("")
-                                        setEpisodes([])
-                                        setEpisodeCredits([{ number: 1, role: "" }])
-                                        setAiFields(new Set())
-                                        setShowUpload(false)
+                                                : creditedRoles.filter(Boolean)
+
+                                            const extractedData = {
+                                                workTitle: title.trim(),
+                                                productionType: category || undefined,
+                                                creditedRoles: roles,
+                                                duration: duration ? Number(duration) : undefined,
+                                                premiereDate: premiereDate || undefined,
+                                                episodes: isSeries
+                                                    ? filledEpisodeCredits.map(e => ({ number: e.number, role: e.role }))
+                                                    : undefined,
+                                                submittedByMember: true,
+                                            }
+
+                                            // Gem kontrakt
+                                            const { data: saved } = await supabase.from("contracts").insert({
+                                                org_id: orgId,
+                                                rights_holder_id: rhId,
+                                                type: "a-løn",
+                                                status: "kladde",
+                                                pdf_url: filePath,
+                                                working_title: title.trim(),
+                                                contract_date: null,  // premieredato er ikke kontraktdato
+                                            }).select().single()
+
+                                            if (saved) {
+                                                // Gem de udfyldte data i contract_validations
+                                                await supabase.from("contract_validations").insert({
+                                                    contract_id: saved.id,
+                                                    org_id: orgId,
+                                                    extracted_data: extractedData,
+                                                })
+
+                                                setMyContracts(prev => [{
+                                                    id: saved.id,
+                                                    working_title: saved.working_title,
+                                                    type: saved.type,
+                                                    overenskomst: null,
+                                                    status: saved.status,
+                                                    contract_date: saved.contract_date,
+                                                    created_at: saved.created_at,
+                                                    employer_name: null,
+                                                    work_title: null,
+                                                }, ...prev])
+                                            }
+
+                                            toast.success("Kontrakt indsendt til DFKS")
+                                        } catch (e: any) {
+                                            toast.error(e.message ?? "Fejl ved upload")
+                                            return
+                                        }
+                                        setFile(null); setPdfUrl(null); setTitle(""); setCategory("")
+                                        setCreditedRoles([""]); setDuration(""); setPremiereDate("")
+                                        setEpisodes([]); setEpisodeCredits([{ number: 1, role: "" }])
+                                        setAiFields(new Set()); setShowUpload(false)
                                     }}
                                 >
                                     <Upload className="mr-2 h-4 w-4" />
