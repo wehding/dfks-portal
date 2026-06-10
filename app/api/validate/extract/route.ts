@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdmin } from "@supabase/supabase-js"
 import mammoth from "mammoth"
+import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { getApiKey } from "@/lib/ai-key-store"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
@@ -28,22 +29,21 @@ Returner KUN JSON — ingen forklaringstekst.`
 
 const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som JSON:
 {
-  "employerName": "producent/arbejdsgiver (string|null)",
-  "rightsHolderName": "klipperens fulde navn (string|null)",
+  "employerName": "producentens/arbejdsgiverens FIRMANAVN — det juridiske selskab der er kontraktpart. Find selskabsnavnet øverst i kontrakten i partsafsnittet, typisk efterfulgt af adresse og CVR-nummer. Selskabet kan være defineret som 'Virksomheden', 'Producenten', 'Arbejdsgiveren' eller lignende i kontrakten — brug det faktiske navn, ikke den interne betegnelse. VIGTIGT: Formuleringer som 'refererer til producent [navn]', 'kontaktperson: [navn]', 'projektleder: [navn]' angiver en PERSON hos producenten — brug aldrig dette personnavn som employerName. Tag i stedet det selskabsnavn der optræder som kontraktpart med CVR-nummer. Enkeltmandsvirksomheder uden ApS/A/S er gyldige firmanavne. ALDRIG et rent personnavn. (string|null)",
+  "rightsHolderName": "klipperens/medarbejderens/leverandørens fulde PERSONNAVN — den fysiske person der udfører klippearbejdet. Søg efter den part der er markeret som 'Klipper', 'Medarbejder', 'Leverandør' eller lignende. ALDRIG et firmanavn. (string|null)",
   "workTitle": "produktionens titel (string|null)",
   "contractType": "${CONTRACT_TYPE_RULE}",
   "overenskomst": "de4-fiktion|faf|faf-dokumentar|ingen (string|null)",
   "contractDate": "ISO 8601 (string|null)",
   "startDate": "ISO 8601 (string|null)",
   "endDate": "ISO 8601 (string|null)",
-  "producerName": "producent (string|null)",
   "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. Hvis kontrakten nævner afsnit, episoder, sæson eller episodenumre → tvSeries eller docSeries. (string|null)",
   "salary": "bruttoløn som tal (number|null)",
   "salaryUnit": "monthly|weekly|daily|total (string|null)",
   "pensionPercent": "tal (number|null)",
   "pensionSupplement": "tal i kr (number|null)",
-  "personalSupplement": "tal i kr (number|null)",
-  "otherSupplements": "fritekst (string|null)",
+  "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number|null)",
+  "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string|null)",
   "workingWeeks": "tal (number|null)",
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
   "betaRate": "${BETA_RATE_RULE}",
@@ -94,9 +94,7 @@ export async function POST(req: NextRequest) {
 
         let text: string
         if (ext === "pdf") {
-            const { PDFParse } = require("pdf-parse"); const parser = new PDFParse({ data: buffer })
-            const parsed = await parser.getText()
-            text = parsed.text
+            text = await extractPdfText(buffer)
         } else if (ext === "docx") {
             const result = await mammoth.extractRawText({ buffer })
             text = result.value

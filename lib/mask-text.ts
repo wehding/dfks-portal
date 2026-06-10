@@ -7,7 +7,7 @@
 
 export function maskPersonalData(text: string): string {
     return text
-        .replace(/\b\d{6}[-–]\d{4}\b/g, "[CPR-NUMMER]")
+        .replace(/\b\d{6}\s*[-–]\s*\d{4}\b/g, "[CPR-NUMMER]")
         .replace(/\b\d{4}[\s-]\d{6,10}\b/g, "[KONTONUMMER]")
         .replace(/\b[A-Z]{2}\d{2}[\s]?(?:\d{4}[\s]?){3,6}\d{1,4}\b/g, "[IBAN]")
         .replace(/(?:\+45[\s-]?)?\b(?:\d{2}[\s-]){3}\d{2}\b/g, "[TELEFON]")

@@ -11,10 +11,11 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
+import { extractPdfText } from "@/lib/pdf-parse"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { createClient } from "@/lib/supabase/server"
-import { hentRelevanteRegler } from "@/lib/retrieval"
+import { hentKontekst } from "@/lib/retrieval"
 
 // ── Sensitive data masking ───────────────────────────────────
 // Masks CPR numbers, bank account numbers and private addresses
@@ -471,39 +472,18 @@ export async function POST(req: NextRequest) {
             ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n`
             : ""
 
-        // ── Hent alle datakilder parallelt ───────────────────────
+        // ── Hent reference docs ───────────────────────────────────
         const supabase = await createClient()
-        const sbAdmin = (await import("@supabase/supabase-js")).createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-        )
-
-        const [
-            { data: refDocs },
-            { data: altidNoteringer },
-            { data: baggrundNoteringer },
-        ] = await Promise.all([
-            supabase
-                .from("reference_docs")
-                .select("doc_subtype, file_name, title, content_text, owner")
-                .eq("archived", false)
-                .not("content_text", "is", null),
-            sbAdmin
-                .from("legal_notes")
-                .select("title, body")
-                .eq("priority", "altid")
-                .eq("active", true),
-            sbAdmin
-                .from("legal_notes")
-                .select("title, body")
-                .eq("priority", "baggrund")
-                .eq("active", true),
-        ])
+        const { data: refDocs } = await supabase
+            .from("reference_docs")
+            .select("doc_subtype, file_name, title, content_text, owner")
+            .eq("archived", false)
+            .not("content_text", "is", null)
 
         // Byg system prompt
         let activeSystemPrompt = SYSTEM_PROMPT
 
-        // Referencedokumenter
+        // Referencedokumenter (standardkontrakter, lønskemaer)
         if (refDocs?.length) {
             for (const doc of refDocs) {
                 if (!doc.content_text) continue
@@ -511,29 +491,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Altid-noteringer — injiceres direkte og eksplicit
-        if (altidNoteringer?.length) {
-            activeSystemPrompt +=
-                "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                "DFKS AKTIVE NOTERINGER — KOMMENTER ALTID PÅ DISSE I FEEDBACKMAILEN:\n" +
-                "──────────────────────────────────────────────────────────────────────\n" +
-                altidNoteringer.map((n: { title: string; body: string }) =>
-                    `ALTID KOMMENTER: ${n.title} — ${n.body}`
-                ).join("\n\n")
-        }
-
-        // Baggrundsnoteringer — kontekst
-        if (baggrundNoteringer?.length) {
-            activeSystemPrompt +=
-                "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                "DFKS BAGGRUNDSVIDEN — BRUG SOM KONTEKST VED VURDERING:\n" +
-                "──────────────────────────────────────────────────────────────────────\n" +
-                baggrundNoteringer.map((n: { title: string; body: string }) =>
-                    `${n.title}: ${n.body}`
-                ).join("\n\n")
-        }
-
-        // ── RAG + lærte mønstre ───────────────────────────────────
+        // ── Udtræk kontrakttekst til RAG ─────────────────────────
         let ragText = ""
 
         if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
@@ -541,55 +499,80 @@ export async function POST(req: NextRequest) {
         } else if (filename.endsWith(".txt")) {
             ragText = buffer.toString("utf-8").slice(0, 8000)
         } else if (filename.endsWith(".pdf")) {
-            try {
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                const { PDFParse } = require("pdf-parse")
-                const parser = new PDFParse({ data: buffer })
-                const parsed = await parser.getText()
-                ragText = parsed.text.slice(0, 8000)
-            } catch { /* ingen RAG */ }
+            try { ragText = (await extractPdfText(buffer)).slice(0, 8000) } catch { /* ingen RAG */ }
         }
 
+        // ── hentKontekst() — to-lags matching ────────────────────
         if (ragText.trim()) {
             try {
                 const { data: { user } } = await (await createClient()).auth.getUser()
                 const orgId: string | undefined = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+                const kontekst = await hentKontekst(ragText, orgId)
 
-                // 1. Videnbase: lovtekster + DFKS-fortolkninger
-                const relevanteRegler = await hentRelevanteRegler(ragText, 6, orgId)
-
-                // 2. Lærte mønstre: godkendte regler fra feedback-loop
-                const { getEmbedding } = await import("@/lib/embedding-provider")
-                const ragEmbedding = await getEmbedding(ragText, false)
-                const { data: lærteRegler } = await sbAdmin.rpc("match_learned_patterns", {
-                    query_embedding: ragEmbedding,
-                    match_threshold: 0.65,
-                    match_count: 3,
-                })
-
-                if (relevanteRegler.length > 0 || (lærteRegler?.length ?? 0) > 0) {
+                // Altid-noteringer — øverst og eksplicit
+                if (kontekst.altid.length > 0) {
                     activeSystemPrompt +=
                         "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                        "LÆRTE REGLER FRA DFKS SAGSBEHANDLING — HØJESTE PRIORITET:\n" +
+                        "DFKS AKTIVE NOTERINGER — KOMMENTER ALTID PÅ DISSE I FEEDBACKMAILEN:\n" +
                         "──────────────────────────────────────────────────────────────────────\n" +
-                        "Disse regler er semantisk matchet til denne konkrete kontrakt og skal følges nøjagtigt.\n\n"
+                        kontekst.altid.map(n => `ALTID KOMMENTER: ${n.title} — ${n.body}`).join("\n\n")
+                }
 
-                    if (relevanteRegler.length > 0) {
-                        activeSystemPrompt += relevanteRegler.map(r => {
+                // Overenskomst-satser — kategori-match (højest prioritet)
+                if (kontekst.kategorier.length > 0) {
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        `OVERENSKOMST-SATSER (${kontekst.detekteredeOverenskomster.join(", ").toUpperCase()}):\n` +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        "Disse satser og vilkår gælder direkte for denne kontrakt. Brug dem som målestok.\n\n" +
+                        kontekst.kategorier.map(c => {
+                            const sats = (c.metadata as any)?.sats
+                            return `${c.kilde_titel}${sats ? ` (${sats})` : ""}:\n${c.tekst}`
+                        }).join("\n\n")
+                }
+
+                // Semantisk overenskomst-kontekst (max 3 chunks)
+                if (kontekst.overenskomstSemantisk.length > 0) {
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        "OVERENSKOMST-KONTEKST:\n" +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        kontekst.overenskomstSemantisk.map(c => c.tekst).join("\n\n")
+                }
+
+                // Lovgrundlag — semantisk RAG
+                if (kontekst.videnbase.length > 0) {
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        "LOVGRUNDLAG:\n" +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        kontekst.videnbase.map(r => {
                             const meta = r.metadata as { dfks_fortolkning?: string } | null
                             const fortolkning = meta?.dfks_fortolkning
                             return `${r.kilde_titel}:\n${r.tekst}${fortolkning ? `\nDFKS fortolkning: ${fortolkning}` : ""}`
                         }).join("\n\n")
-                    }
-
-                    if (lærteRegler?.length) {
-                        activeSystemPrompt += "\n\n" + (lærteRegler as { titel: string; regel: string }[]).map(r =>
-                            `${r.titel}:\n${r.regel}`
-                        ).join("\n\n")
-                    }
                 }
+
+                // Lærte regler
+                if (kontekst.mønstre.length > 0) {
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        "LÆRTE REGLER FRA DFKS SAGSBEHANDLING — FØLG DISSE NØJAGTIGT:\n" +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        kontekst.mønstre.map(r => `${r.titel}:\n${r.regel}`).join("\n\n")
+                }
+
+                // Baggrundsviden
+                if (kontekst.baggrund.length > 0) {
+                    activeSystemPrompt +=
+                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                        "DFKS BAGGRUNDSVIDEN:\n" +
+                        "──────────────────────────────────────────────────────────────────────\n" +
+                        kontekst.baggrund.map(n => `${n.title}: ${n.body}`).join("\n\n")
+                }
+
             } catch (ragErr) {
-                console.warn("[gennemgang] RAG/mønstre fejlede (fortsætter uden):", ragErr)
+                console.warn("[gennemgang] hentKontekst fejlede (fortsætter uden):", ragErr)
             }
         }
 

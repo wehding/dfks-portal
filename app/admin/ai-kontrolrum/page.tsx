@@ -16,9 +16,12 @@ import {
     Tabs, TabsContent, TabsList, TabsTrigger,
 } from "@/components/ui/tabs"
 import {
+    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select"
+import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
-    Info, TrendingUp, TrendingDown, Minus,
+    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -727,6 +730,543 @@ function KvalitetTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Overenskomst version-række med bilag-funktion
+// ─────────────────────────────────────────────────────────────
+
+function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }: {
+    ok: string
+    ver: { kategorier: string[]; bilag: string[]; antal: number; aktiv: boolean; gyldig_fra: string }
+    onToggleArkiv: () => void
+    onSlet: () => void
+    onErstat: () => void
+}) {
+    const [bekræftSlet, setBekræftSlet] = useState(false)
+    const [visbilag, setVisbilag] = useState(false)
+    const [bilagFil, setBilagFil] = useState<File | null>(null)
+    const [bilagType, setBilagType] = useState("")
+    const [indekserer, setIndekserer] = useState(false)
+    const [indekseredeBilag, setIndekseredeBilag] = useState<{ type: string; antal: number; satser?: any }[]>([])
+
+    useEffect(() => {
+        fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+            .then(r => r.json())
+            .then(d => setIndekseredeBilag(d.bilag ?? []))
+            .catch(() => {})
+    }, [ok, ver.gyldig_fra])
+
+    const indekser = async () => {
+        if (!bilagFil || !bilagType) return
+        setIndekserer(true)
+        try {
+            // Konvertér til base64 og tekst
+            const buf = await bilagFil.arrayBuffer()
+            const bytes = new Uint8Array(buf)
+            let binary = ""
+            for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+            const pdfBase64 = btoa(binary)
+
+            // Udtræk tekst client-side er ikke muligt for PDF uden server — send base64 og lad server udtræk tekst
+            const res = await fetch("/api/admin/overenskomst/bilag", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    pdfBase64,
+                    pdfTekst: `${BILAG_TYPER.find(b => b.id === bilagType)?.label} for ${ok} overenskomst ${ver.gyldig_fra}`,
+                    overenskomst: ok,
+                    gyldigFra: ver.gyldig_fra,
+                    bilagType,
+                    filnavn: bilagFil.name,
+                }),
+            })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const data = await res.json()
+            toast.success(`${bilagFil.name}: ${data.indekseret} chunks indekseret`)
+            setBilagFil(null); setBilagType("")
+            // Refresh bilag-liste
+            const refresh = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+            const refreshData = await refresh.json()
+            setIndekseredeBilag(refreshData.bilag ?? [])
+        } catch (e: any) { toast.error(e.message) }
+        finally { setIndekserer(false) }
+    }
+
+    return (
+        <div className={!ver.aktiv ? "opacity-50" : ""}>
+            <div className="flex items-center justify-between px-4 py-3 gap-3">
+                <div className="min-w-0">
+                    <p className="text-xs font-medium">Gyldig fra {ver.gyldig_fra}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                        {ver.antal} sektioner · {ver.kategorier.join(" · ")}
+                    </p>
+                    {(ver.bilag ?? []).length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                            Bilag: {(ver.bilag ?? []).map(b => BILAG_TYPER.find(t => t.id === b)?.label ?? b).join(" · ")}
+                        </p>
+                    )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
+                        onClick={() => setVisbilag(v => !v)}>
+                        <Plus className="h-3 w-3" />Bilag
+                    </Button>
+                    <Badge variant={ver.aktiv ? "default" : "outline"} className="font-normal text-xs">
+                        {ver.aktiv ? "● Aktiv" : "Arkiveret"}
+                    </Badge>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onToggleArkiv}>
+                        {ver.aktiv ? "Arkivér" : "Genaktivér"}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onErstat}>
+                        Erstat
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive"
+                        onClick={() => setBekræftSlet(true)}>
+                        Slet
+                    </Button>
+                </div>
+            </div>
+
+            {/* Bekræftelsesdialog */}
+            <Dialog open={bekræftSlet} onOpenChange={setBekræftSlet}>
+                <DialogContent className="sm:max-w-[400px]">
+                    <DialogHeader>
+                        <DialogTitle>Slet overenskomst</DialogTitle>
+                    </DialogHeader>
+                    <p className="text-sm text-muted-foreground">
+                        Er du sikker? Dette fjerner alle <strong>{ver.antal} chunks</strong> for{" "}
+                        <strong>{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</strong> (gyldig fra {ver.gyldig_fra}).
+                        Handlingen kan ikke fortrydes.
+                    </p>
+                    <div className="flex gap-2 justify-end pt-2">
+                        <Button variant="outline" onClick={() => setBekræftSlet(false)}>Annuller</Button>
+                        <Button variant="destructive" onClick={() => { setBekræftSlet(false); onSlet() }}>Slet</Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {visbilag && (
+                <div className="px-4 pb-4 space-y-3 border-t bg-muted/20">
+                    <p className="text-xs font-medium pt-3">Tilføj bilag</p>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div
+                            className="rounded border-2 border-dashed p-3 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors col-span-2"
+                            onClick={() => document.getElementById(`bilag-input-${ok}-${ver.gyldig_fra}`)?.click()}
+                        >
+                            <input id={`bilag-input-${ok}-${ver.gyldig_fra}`} type="file" accept=".pdf,.docx,.doc" className="hidden"
+                                onChange={e => setBilagFil(e.target.files?.[0] ?? null)} />
+                            {bilagFil
+                                ? <p className="text-xs font-medium">{bilagFil.name}</p>
+                                : <p className="text-xs text-muted-foreground">Klik for at vælge fil (PDF, DOCX, DOC)</p>}
+                        </div>
+                        <Select value={bilagType} onValueChange={setBilagType}>
+                            <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Bilagstype..." /></SelectTrigger>
+                            <SelectContent>
+                                {BILAG_TYPER.map(b => <SelectItem key={b.id} value={b.id}>{b.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <Button size="sm" className="h-7 text-xs gap-1" onClick={indekser}
+                            disabled={!bilagFil || !bilagType || indekserer}>
+                            {indekserer ? <><Loader2 className="h-3 w-3 animate-spin" />Indekserer...</> : "Indeksér bilag"}
+                        </Button>
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fane 5 — Overenskomster
+// ─────────────────────────────────────────────────────────────
+
+const BILAG_TYPER = [
+    { id: "lønskema", label: "Lønskema" },
+    { id: "standardkontrakt-aloen", label: "Standardkontrakt (A-løn)" },
+    { id: "standardkontrakt-leverandoer", label: "Standardkontrakt (leverandør)" },
+    { id: "bilag", label: "Andet bilag" },
+]
+
+const OVERENSKOMST_TYPER = [
+    { id: "de4", label: "De4 (fiktion)" },
+    { id: "faf", label: "FAF (fiktion)" },
+    { id: "faf-dokumentar", label: "FAF (dokumentar)" },
+]
+
+const KATEGORIER = [
+    { id: "helligdagsbetaling", label: "Helligdagsbetaling" },
+    { id: "beta-fond", label: "BETA-fond" },
+    { id: "copydan-forbehold", label: "Copydan-forbehold" },
+    { id: "streaming-forbehold", label: "Streaming-forbehold" },
+    { id: "royalty", label: "Royalty" },
+    { id: "pension", label: "Pension" },
+    { id: "opsigelse", label: "Opsigelse" },
+    { id: "andet", label: "Andet" },
+]
+
+type Sektion = {
+    titel: string
+    tekst: string
+    kategori: string
+    tillid: "høj" | "lav"
+    sats?: string
+    godkendt?: boolean
+}
+
+type KøItem = {
+    id: string
+    fil: File
+    overenskomst: string
+    gyldigFra: string
+    status: "afventer" | "analyserer" | "klar" | "indekserer" | "done" | "fejl"
+    sektioner: Sektion[]
+    pdfTekst?: string
+    fejlbesked?: string
+    resultat?: { kategoriserede: number; fuldeChunks: number; total: number }
+}
+
+async function filTilBase64(fil: File): Promise<string> {
+    const buf = await fil.arrayBuffer()
+    const bytes = new Uint8Array(buf)
+    let binary = ""
+    const chunkSize = 8192
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+    }
+    return btoa(binary)
+}
+
+function OverenskomsterTab() {
+    const [kø, setKø] = useState<KøItem[]>([])
+    const [aktivItem, setAktivItem] = useState<string | null>(null) // ID for item i bekræftelsesfasen
+    type OkVersion = { kategorier: string[]; bilag: string[]; antal: number; aktiv: boolean; gyldig_fra: string }
+    const [versioner, setVersioner] = useState<Record<string, OkVersion[]>>({})
+
+    // Ny fil-tilføjelse state
+    const [nyFil, setNyFil] = useState<File | null>(null)
+    const [nyOverenskomst, setNyOverenskomst] = useState("")
+    const [nyGyldigFra, setNyGyldigFra] = useState("")
+
+    const refreshAktive = () => {
+        fetch("/api/admin/overenskomst")
+            .then(r => r.json())
+            .then(d => setVersioner(d.versioner ?? {}))
+            .catch(() => {})
+    }
+
+    useEffect(() => { refreshAktive() }, [])
+
+    const toggleArkiv = async (overenskomst: string, gyldigFra: string, aktiv: boolean) => {
+        await fetch("/api/admin/overenskomst", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ overenskomst, gyldigFra, aktiv }),
+        })
+        refreshAktive()
+        toast.success(aktiv ? "Overenskomst genaktiveret" : "Overenskomst arkiveret")
+    }
+
+    const sletVersion = async (overenskomst: string, gyldigFra: string) => {
+        const res = await fetch("/api/admin/overenskomst", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ overenskomst, gyldigFra }),
+        })
+        if (res.ok) { refreshAktive(); toast.success("Overenskomst slettet") }
+        else toast.error((await res.json()).error)
+    }
+
+    const erstatVersion = (overenskomst: string) => {
+        // Præ-udfyld upload-formularen med den aktuelle overenskomst-type
+        setNyOverenskomst(overenskomst)
+        setNyGyldigFra("")
+        setNyFil(null)
+        // Scroll til toppen
+        window.scrollTo({ top: 0, behavior: "smooth" })
+        toast("Upload ny version i formularen øverst")
+    }
+
+    const tilføjTilKø = () => {
+        if (!nyFil || !nyOverenskomst || !nyGyldigFra) return
+        setKø(prev => [...prev, {
+            id: crypto.randomUUID(),
+            fil: nyFil,
+            overenskomst: nyOverenskomst,
+            gyldigFra: nyGyldigFra,
+            status: "afventer",
+            sektioner: [],
+        }])
+        setNyFil(null)
+        setNyOverenskomst("")
+        setNyGyldigFra("")
+        // Reset file input
+        const input = document.getElementById("ok-fil-input") as HTMLInputElement
+        if (input) input.value = ""
+    }
+
+    const analyserItem = async (id: string) => {
+        const item = kø.find(i => i.id === id)
+        if (!item) return
+        oppdaterKø(id, { status: "analyserer" })
+        try {
+            const b64 = await filTilBase64(item.fil)
+            const res = await fetch("/api/admin/overenskomst", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pdfBase64: b64, overenskomst: item.overenskomst, gyldigFra: item.gyldigFra }),
+            })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const data = await res.json()
+            oppdaterKø(id, {
+                status: "klar",
+                sektioner: (data.sektioner ?? []).map((s: Sektion) => ({ ...s, godkendt: s.tillid === "høj" })),
+                pdfTekst: data.pdfTekst ?? "",
+            })
+            setAktivItem(id)
+        } catch (e: any) {
+            oppdaterKø(id, { status: "fejl", fejlbesked: e.message })
+            toast.error(`${item.fil.name}: ${e.message}`)
+        }
+    }
+
+    const analyserAlle = async () => {
+        const afventende = kø.filter(i => i.status === "afventer")
+        for (const item of afventende) {
+            await analyserItem(item.id)
+        }
+    }
+
+    const indekserItem = async (id: string) => {
+        const item = kø.find(i => i.id === id)
+        if (!item) return
+        const godkendte = item.sektioner.filter(s => s.godkendt)
+        if (!godkendte.length) return
+        oppdaterKø(id, { status: "indekserer" })
+        try {
+            const pdfTekst = item.pdfTekst ?? godkendte.map(s => `${s.titel}\n${s.tekst}`).join("\n\n")
+            const res = await fetch("/api/admin/overenskomst", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sektioner: godkendte, overenskomst: item.overenskomst, gyldigFra: item.gyldigFra, pdfTekst, filnavn: item.fil.name }),
+            })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const data = await res.json()
+            oppdaterKø(id, { status: "done", resultat: data })
+            if (aktivItem === id) setAktivItem(null)
+            refreshAktive()
+            toast.success(`${item.fil.name}: ${data.total} chunks indekseret`)
+        } catch (e: any) {
+            oppdaterKø(id, { status: "fejl", fejlbesked: e.message })
+            toast.error(e.message)
+        }
+    }
+
+    const oppdaterKø = (id: string, patch: Partial<KøItem>) => {
+        setKø(prev => prev.map(i => i.id === id ? { ...i, ...patch } : i))
+    }
+
+    const opdaterSektion = (itemId: string, idx: number, patch: Partial<Sektion>) => {
+        setKø(prev => prev.map(i => i.id === itemId
+            ? { ...i, sektioner: i.sektioner.map((s, j) => j === idx ? { ...s, ...patch } : s) }
+            : i))
+    }
+
+    const afventende = kø.filter(i => i.status === "afventer").length
+    const klarTilIndeksering = kø.filter(i => i.status === "klar")
+
+    return (
+        <div className="space-y-6">
+            {/* Sektion A — Tilføj til kø */}
+            <div className="rounded-lg border p-4 space-y-4">
+                <p className="text-sm font-medium">Tilføj overenskomst</p>
+                <div className="space-y-3">
+                    <div
+                        className="rounded-lg border-2 border-dashed p-4 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
+                        onClick={() => document.getElementById("ok-fil-input")?.click()}
+                    >
+                        <input id="ok-fil-input" type="file" accept=".pdf" className="hidden"
+                            onChange={e => setNyFil(e.target.files?.[0] ?? null)} />
+                        {nyFil ? (
+                            <p className="text-sm font-medium">{nyFil.name}</p>
+                        ) : (
+                            <>
+                                <FileUp className="mx-auto h-5 w-5 text-muted-foreground/50 mb-1" />
+                                <p className="text-xs text-muted-foreground">Klik for at vælge PDF</p>
+                            </>
+                        )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                            <Label className="text-xs">Overenskomst</Label>
+                            <Select value={nyOverenskomst} onValueChange={setNyOverenskomst}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
+                                <SelectContent>
+                                    {OVERENSKOMST_TYPER.map(o => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-1">
+                            <Label className="text-xs">Gyldig fra</Label>
+                            <Input type="date" className="h-8 text-xs" value={nyGyldigFra} onChange={e => setNyGyldigFra(e.target.value)} />
+                        </div>
+                    </div>
+                    <Button className="w-full gap-1.5" onClick={tilføjTilKø}
+                        disabled={!nyFil || !nyOverenskomst || !nyGyldigFra}>
+                        <Plus className="h-3.5 w-3.5" />Tilføj til kø
+                    </Button>
+                </div>
+            </div>
+
+            {/* Kø */}
+            {kø.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">{kø.length} overenskomst{kø.length !== 1 ? "er" : ""} i kø</p>
+                        {afventende > 0 && (
+                            <Button size="sm" variant="outline" className="gap-1.5 text-xs"
+                                onClick={analyserAlle}>
+                                <Brain className="h-3.5 w-3.5" />Analysér alle ({afventende})
+                            </Button>
+                        )}
+                    </div>
+                    <div className="space-y-2">
+                        {kø.map(item => (
+                            <div key={item.id} className="rounded-lg border">
+                                {/* Header */}
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-medium truncate">{item.fil.name}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {OVERENSKOMST_TYPER.find(t => t.id === item.overenskomst)?.label} · {item.gyldigFra}
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        {item.status === "afventer" && (
+                                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                                                onClick={() => analyserItem(item.id)}>
+                                                Analysér →
+                                            </Button>
+                                        )}
+                                        {item.status === "analyserer" && (
+                                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                <Loader2 className="h-3 w-3 animate-spin" />Analyserer...
+                                            </span>
+                                        )}
+                                        {item.status === "klar" && (
+                                            <Button size="sm" className="h-7 text-xs gap-1"
+                                                onClick={() => setAktivItem(aktivItem === item.id ? null : item.id)}>
+                                                {aktivItem === item.id ? "Skjul" : `Bekræft (${item.sektioner.filter(s => s.godkendt).length})`}
+                                            </Button>
+                                        )}
+                                        {item.status === "indekserer" && (
+                                            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                <Loader2 className="h-3 w-3 animate-spin" />Indekserer...
+                                            </span>
+                                        )}
+                                        {item.status === "done" && (
+                                            <Badge variant="default" className="text-[10px]">
+                                                ✓ {item.resultat?.total} chunks
+                                            </Badge>
+                                        )}
+                                        {item.status === "fejl" && (
+                                            <Badge variant="destructive" className="text-[10px]">Fejl</Badge>
+                                        )}
+                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground"
+                                            onClick={() => { setKø(prev => prev.filter(i => i.id !== item.id)); if (aktivItem === item.id) setAktivItem(null) }}>
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* Bekræftelsespanel */}
+                                {aktivItem === item.id && item.sektioner.length > 0 && (
+                                    <div className="p-4 space-y-3">
+                                        <p className="text-xs text-muted-foreground">
+                                            AI fandt {item.sektioner.length} sektioner — {item.sektioner.filter(s => s.godkendt).length} godkendt
+                                        </p>
+                                        <div className="space-y-2">
+                                            {item.sektioner.map((s, i) => (
+                                                <div key={i} className={`rounded border p-3 space-y-2 ${!s.godkendt ? "opacity-50" : ""}`}>
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <Badge variant={s.tillid === "høj" ? "default" : "outline"} className="text-[10px] font-normal px-1.5">
+                                                                {s.tillid === "høj" ? "✓" : "?"} {s.tillid === "høj" ? "Høj" : "Lav"} tillid
+                                                            </Badge>
+                                                            <span className="text-xs font-medium">{s.titel}</span>
+                                                            {s.sats && <span className="text-xs text-muted-foreground">({s.sats})</span>}
+                                                        </div>
+                                                        <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0"
+                                                            onClick={() => opdaterSektion(item.id, i, { godkendt: !s.godkendt })}>
+                                                            <X className="h-2.5 w-2.5" />
+                                                        </Button>
+                                                    </div>
+                                                    <p className="text-xs text-muted-foreground line-clamp-2">{s.tekst}</p>
+                                                    <div className="flex items-center gap-2">
+                                                        <Label className="text-xs shrink-0">Kategori:</Label>
+                                                        <Select value={s.kategori} onValueChange={v => opdaterSektion(item.id, i, { kategori: v })}>
+                                                            <SelectTrigger className="h-6 text-xs flex-1"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                {KATEGORIER.map(k => <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>)}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <Button className="w-full gap-1.5" onClick={() => indekserItem(item.id)}
+                                            disabled={item.sektioner.filter(s => s.godkendt).length === 0}>
+                                            Indeksér {item.sektioner.filter(s => s.godkendt).length} sektioner
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Indeksér alle klare */}
+                    {klarTilIndeksering.length > 1 && (
+                        <Button variant="outline" className="w-full gap-1.5"
+                            onClick={() => klarTilIndeksering.forEach(i => indekserItem(i.id))}>
+                            Indeksér alle klare ({klarTilIndeksering.length})
+                        </Button>
+                    )}
+                </div>
+            )}
+
+            {/* Sektion C — Indekserede overenskomster */}
+            {Object.keys(versioner).length > 0 && (
+                <div className="space-y-3">
+                    <Separator />
+                    <p className="text-sm font-medium">Indekserede overenskomster</p>
+                    <div className="space-y-2">
+                        {Object.entries(versioner).map(([ok, vers]) => (
+                            <div key={ok} className="rounded-lg border">
+                                <div className="px-4 py-2.5 border-b bg-muted/30">
+                                    <p className="text-sm font-medium">{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</p>
+                                </div>
+                                <div className="divide-y">
+                                    {vers.map(ver => (
+                                        <OverenskomstVersionRække
+                                            key={ver.gyldig_fra}
+                                            ok={ok}
+                                            ver={ver}
+                                            onToggleArkiv={() => toggleArkiv(ok, ver.gyldig_fra, !ver.aktiv)}
+                                            onSlet={() => sletVersion(ok, ver.gyldig_fra)}
+                                            onErstat={() => erstatVersion(ok)}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Arkiverede overenskomster bruges automatisk ved analyse af ældre kontrakter baseret på kontraktdatoen.
+                    </p>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
 // Hovedside
 // ─────────────────────────────────────────────────────────────
 
@@ -737,21 +1277,25 @@ export default function AiKontrolrumPage() {
                 title="AI Videns-kontrolrum"
                 subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
             />
-            <Tabs defaultValue="videnbase">
-                <TabsList className="grid grid-cols-4 w-full">
-                    <TabsTrigger value="videnbase" className="gap-1.5 text-xs">
+            <Tabs defaultValue="overenskomster">
+                <TabsList className="grid grid-cols-5 w-full">
+                    <TabsTrigger value="overenskomster" className="gap-1 text-xs">
+                        <ScrollText className="h-3.5 w-3.5" />Overenskomster
+                    </TabsTrigger>
+                    <TabsTrigger value="videnbase" className="gap-1 text-xs">
                         <BookOpen className="h-3.5 w-3.5" />Videnbase
                     </TabsTrigger>
-                    <TabsTrigger value="noteringer" className="gap-1.5 text-xs">
+                    <TabsTrigger value="noteringer" className="gap-1 text-xs">
                         <ListChecks className="h-3.5 w-3.5" />Noteringer
                     </TabsTrigger>
-                    <TabsTrigger value="moenstre" className="gap-1.5 text-xs">
+                    <TabsTrigger value="moenstre" className="gap-1 text-xs">
                         <Brain className="h-3.5 w-3.5" />Mønstre
                     </TabsTrigger>
-                    <TabsTrigger value="kvalitet" className="gap-1.5 text-xs">
+                    <TabsTrigger value="kvalitet" className="gap-1 text-xs">
                         <FlaskConical className="h-3.5 w-3.5" />Kvalitet
                     </TabsTrigger>
                 </TabsList>
+                <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>

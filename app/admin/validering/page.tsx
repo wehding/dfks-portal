@@ -4,7 +4,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     Check, X, FileText, Upload, ArrowLeft, Building2, AlertTriangle,
-    Trash2, Clock, CheckCircle2, Eye, Sparkles, Loader2,
+    Trash2, Clock, CheckCircle2, Eye, Sparkles, Loader2, Lock,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -70,6 +70,7 @@ type ValidatingContract = {
         notes: string | null
         extracted_data: Record<string, unknown> | null
         validated_at: string | null
+        bruger_redigerede_felter: string[] | null
     } | null
     displayTitle: string
     displayEmployer: string | null
@@ -96,9 +97,11 @@ export default function AdminValideringPage() {
     const [screening, setScreening] = useState(false)
     const [textLoading, setTextLoading] = useState(false)
     const [formData, setFormData] = useState<Record<string, any>>({})
+    const [brugerRedigerede, setBrugerRedigerede] = useState<Set<string>>(new Set())
     const [contractText, setContractText] = useState("")
     const [sources, setSources] = useState<Record<string, string | null>>({})
-    const [activeSource, setActiveSource] = useState<string | null>(null)
+    const [activeSource, setActiveSource] = useState<string | null>(null)   // quote til PDF-highlight
+    const [activeField, setActiveField] = useState<string | null>(null)     // felt-ID til knap-highlight
     const [storedDocxText, setStoredDocxText] = useState<string | null>(null)
     const [storedDocxLoading, setStoredDocxLoading] = useState(false)
     const [showMaskingConfirm, setShowMaskingConfirm] = useState(false)
@@ -173,14 +176,17 @@ export default function AdminValideringPage() {
             .not("doc_subtype", "is", null)
             .then(({ data }) => {
                 if (data?.length) {
+                    const seen = new Set<string>()
                     const fromDb = data
                         .filter(d => d.doc_subtype)
                         .map(d => ({ value: d.doc_subtype!, label: d.title }))
+                        .filter(o => seen.has(o.value) ? false : (seen.add(o.value), true))
                     // Merge med defaults — DB-versioner overskriver
                     setOverenskomster(prev => {
                         const dbValues = new Set(fromDb.map(o => o.value))
                         const merged = [...fromDb, ...prev.filter(p => !dbValues.has(p.value))]
-                        return merged
+                        const deduped = merged.filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i)
+                        return deduped
                     })
                 }
             })
@@ -321,6 +327,9 @@ export default function AdminValideringPage() {
         if (!reviewingId) return
         const c = contracts.find(x => x.id === reviewingId)
         if (!c) return
+        // Indlæs hvilke felter admin tidligere har redigeret manuelt
+        const redigerede = c.validation?.bruger_redigerede_felter ?? []
+        setBrugerRedigerede(new Set(redigerede))
         const ed = c.validation?.extracted_data as any
         if (ed) {
             // Post-process: De4-fiktion inkluderer SVOD/Copydan/Royalty implicit via overenskomsten
@@ -335,6 +344,7 @@ export default function AdminValideringPage() {
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
+                rightsHolderName: ed.rightsHolderName ?? "",
                 workTitle: ed.workTitle ?? "",
                 creditedRoles: Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
                 productionType: ed.productionType ?? "",
@@ -398,8 +408,9 @@ export default function AdminValideringPage() {
     const leaveReview = () => {
         setReviewingId(null); setLocalPdfUrl(null); setLocalPdfFile(null)
         setStoredDocxText(null)
-        setFormData({}); setContractText(""); setSources({}); setActiveSource(null)
+        setFormData({}); setContractText(""); setSources({}); setActiveSource(null); setActiveField(null)
         setTextLoading(false); setMaskedText(""); setScreening(false)
+        setBrugerRedigerede(new Set())
     }
 
     const handleApprove = async (id: string) => {
@@ -411,6 +422,7 @@ export default function AdminValideringPage() {
 
             const extractedData = {
                 producerName: formData.producerName || undefined,
+                rightsHolderName: formData.rightsHolderName || undefined,
                 workTitle: formData.workTitle || undefined,
                 creditedRoles: formData.creditedRoles || undefined,
                 productionType: formData.productionType || undefined,
@@ -450,6 +462,7 @@ export default function AdminValideringPage() {
                 extracted_data: extractedData,
                 validated_by: user?.id ?? null,
                 validated_at: new Date().toISOString(),
+                bruger_redigerede_felter: Array.from(brugerRedigerede),
             }, { onConflict: "contract_id" })
 
             if (valError) throw new Error(valError.message)
@@ -506,43 +519,81 @@ export default function AdminValideringPage() {
     }
 
     // Smart merge: AI-værdier må kun fylde tomme felter — bevar brugerens input
+    const buildFormFromAi = (ed: Record<string, any>) => {
+        const overenskomst = ed.overenskomst ?? "ingen"
+        const isLeverandoer = ed.contractType === "leverandør" || ed.isFreelanceContract
+        const isALoen = !isLeverandoer
+
+        // Afledte værdier baseret på overenskomst — ikke AI-udtrækt, men deterministisk
+        // De4-fiktionsoverenskomst: helligdagsbetaling 1%, BETA 0,5%, SVOD og Copydan inkluderet
+        const impliedDe4 = isALoen && overenskomst === "de4-fiktion"
+        // Ingen overenskomst (kun funktionærloven): ingen helligdag/BETA
+        const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
+
+        return {
+            producerName:                  ed.employerName ?? "",
+            rightsHolderName:              ed.rightsHolderName ?? "",
+            workTitle:                     ed.workTitle ?? "",
+            creditedRoles:                 Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
+            productionType:                ed.productionType ?? "",
+            contractType:                  ed.collectiveAgreementByReference
+                                               ? "leverandør-ref"
+                                               : isLeverandoer ? "leverandør" : "a-løn",
+            overenskomst,
+            salary:                        ed.salary ?? "",
+            salaryUnit:                    ed.salaryUnit ?? "monthly",
+            startDate:                     ed.startDate ?? "",
+            endDate:                       ed.endDate ?? "",
+            pensionPercent:                ed.pensionPercent ?? (impliedDe4 ? 9.5 : ""),
+            pensionSupplement:             ed.pensionSupplement ?? "",
+            personalSupplement:            ed.personalSupplement ?? "",
+            otherSupplements:              ed.otherSupplements ?? "",
+            workingWeeks:                  ed.workingWeeks ?? "",
+            // SVOD og Copydan er inkluderet i De4-overenskomsten
+            svod:                          impliedDe4 ? true : !!ed.svod,
+            copydan:                       impliedDe4 ? true : !!ed.copydan,
+            royalty:                       !!ed.royalty,
+            royaltyPercent:                ed.royaltyPercent ?? "",
+            aiDataMiningClause:            !!ed.aiDataMiningClause,
+            distribution:                  Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? ""),
+            collectiveAgreementName:       ed.collectiveAgreementName ?? "",
+            gender:                        ed.gender ?? "",
+            // Helligdagsbetaling og BETA: kun ved De4, null ved ingen overenskomst
+            holidayPayRate:                impliedDe4 ? 1 : ingenOverenskomst ? "" : (ed.holidayPayRate ?? ""),
+            betaRate:                      impliedDe4 ? 0.5 : ingenOverenskomst ? "" : (ed.betaRate ?? ""),
+            specialNotes:                  ed.specialNotes ?? "",
+            collectiveAgreement:           !!ed.collectiveAgreement,
+            isFreelanceContract:           !!ed.isFreelanceContract,
+            collectiveAgreementByReference:!!ed.collectiveAgreementByReference,
+        }
+    }
+
+    // Udfyld kun felter brugeren ikke selv har redigeret
     const mergeWithAi = (ed: Record<string, any>) => {
-        const isEmpty = (v: any) => v === "" || v === null || v === undefined
-        setFormData(prev => ({
-            producerName:                  isEmpty(prev.producerName)               ? (ed.producerName ?? "")               : prev.producerName,
-            workTitle:                     isEmpty(prev.workTitle)                  ? (ed.workTitle ?? "")                  : prev.workTitle,
-            creditedRoles:                 isEmpty(prev.creditedRoles)              ? (ed.creditedRoles ?? "")              : prev.creditedRoles,
-            productionType:                isEmpty(prev.productionType)             ? (ed.productionType ?? "")             : prev.productionType,
-            contractType:                  isEmpty(prev.contractType)
-                ? (ed.collectiveAgreementByReference
-                    ? "leverandør-ref"
-                    : (ed.contractType === "leverandør" || ed.isFreelanceContract) ? "leverandør" : "a-løn")
-                : prev.contractType,
-            overenskomst:                  isEmpty(prev.overenskomst)               ? (ed.overenskomst ?? "ingen")           : prev.overenskomst,
-            salary:                        isEmpty(prev.salary)                     ? (ed.salary ?? "")                     : prev.salary,
-            salaryUnit:                    isEmpty(prev.salaryUnit)                 ? (ed.salaryUnit ?? "monthly")          : prev.salaryUnit,
-            startDate:                     isEmpty(prev.startDate)                  ? (ed.startDate ?? "")                  : prev.startDate,
-            endDate:                       isEmpty(prev.endDate)                    ? (ed.endDate ?? "")                    : prev.endDate,
-            pensionPercent:                isEmpty(prev.pensionPercent)             ? (ed.pensionPercent ?? "")             : prev.pensionPercent,
-            pensionSupplement:             isEmpty(prev.pensionSupplement)          ? (ed.pensionSupplement ?? "")          : prev.pensionSupplement,
-            personalSupplement:            isEmpty(prev.personalSupplement)         ? (ed.personalSupplement ?? "")         : prev.personalSupplement,
-            otherSupplements:              isEmpty(prev.otherSupplements)           ? (ed.otherSupplements ?? "")           : prev.otherSupplements,
-            workingWeeks:                  isEmpty(prev.workingWeeks)               ? (ed.workingWeeks ?? "")               : prev.workingWeeks,
-            svod:                          prev.svod || !!ed.svod,
-            copydan:                       prev.copydan || !!ed.copydan,
-            royalty:                       prev.royalty || !!ed.royalty,
-            royaltyPercent:                isEmpty(prev.royaltyPercent)             ? (ed.royaltyPercent ?? "")             : prev.royaltyPercent,
-            aiDataMiningClause:            prev.aiDataMiningClause || !!ed.aiDataMiningClause,
-            distribution:                  isEmpty(prev.distribution)              ? (Array.isArray(ed.distribution) ? ed.distribution.join(", ") : (ed.distribution ?? "")) : prev.distribution,
-            collectiveAgreementName:       isEmpty(prev.collectiveAgreementName)    ? (ed.collectiveAgreementName ?? "")    : prev.collectiveAgreementName,
-            gender:                        isEmpty(prev.gender)                     ? (ed.gender ?? "")                     : prev.gender,
-            holidayPayRate:                isEmpty(prev.holidayPayRate)             ? (ed.holidayPayRate ?? "")             : prev.holidayPayRate,
-            betaRate:                      isEmpty(prev.betaRate)                   ? (ed.betaRate ?? "")                   : prev.betaRate,
-            specialNotes:                  isEmpty(prev.specialNotes)               ? (ed.specialNotes ?? "")               : prev.specialNotes,
-            collectiveAgreement:           prev.collectiveAgreement || !!ed.collectiveAgreement,
-            isFreelanceContract:           prev.isFreelanceContract || !!ed.isFreelanceContract,
-            collectiveAgreementByReference:prev.collectiveAgreementByReference || !!ed.collectiveAgreementByReference,
-        }))
+        const ai = buildFormFromAi(ed)
+        setFormData(prev => {
+            const next: typeof prev = { ...prev }
+            for (const key of Object.keys(ai) as (keyof typeof ai)[]) {
+                if (!brugerRedigerede.has(key)) {
+                    (next as any)[key] = ai[key]
+                }
+            }
+            return next
+        })
+    }
+
+    // Overskriv AI-felter — respektér stadig manuelt redigerede felter
+    const overwriteWithAi = (ed: Record<string, any>) => {
+        const ai = buildFormFromAi(ed)
+        setFormData(prev => {
+            const next: typeof prev = { ...prev }
+            for (const key of Object.keys(ai) as (keyof typeof ai)[]) {
+                if (!brugerRedigerede.has(key)) {
+                    (next as any)[key] = ai[key]
+                }
+            }
+            return next
+        })
     }
 
     const handleExtractClick = async () => {
@@ -564,9 +615,9 @@ export default function AdminValideringPage() {
                 })
                 const json = await resp.json()
                 if (!resp.ok) throw new Error(json.error)
-                if (json._sources) setSources(normaliseSources(json._sources))
-                mergeWithAi(json.data)
-                toast.success("Felter udfyldt — brugerens eksisterende input er bevaret")
+                if (json.data?._sources) setSources(normaliseSources(json.data._sources))
+                overwriteWithAi(json.data)
+                toast.success("Felter opdateret fra AI-udtræk")
             } catch (e: any) {
                 toast.error(`Udtræk fejlede: ${e.message}`)
             } finally {
@@ -629,8 +680,8 @@ export default function AdminValideringPage() {
             if (!ed) throw new Error("AI returnerede ingen data")
             try { setContractText(originalText) } catch { /* ok */ }
             if (ed._sources) setSources(normaliseSources(ed._sources))
-            mergeWithAi(ed)
-            toast.success("Felter udfyldt — brugerens eksisterende input er bevaret")
+            overwriteWithAi(ed)
+            toast.success("Felter opdateret fra AI-udtræk")
         } catch (e: any) { toast.error(`Udtræk fejlede: ${e.message}`) }
         setScreening(false)
     }
@@ -645,7 +696,20 @@ export default function AdminValideringPage() {
         await loadContracts()
     }
 
-    const setField = (key: string, value: unknown) => setFormData(prev => ({ ...prev, [key]: value }))
+    const isLocked = (key: string) => brugerRedigerede.has(key)
+
+    // Aktiver source-link: fieldId identificerer knappen, quote navigerer i PDF
+    const activateSource = (fieldId: string, quote: string | null | undefined) => {
+        setActiveField(fieldId)
+        setActiveSource(quote ?? null)
+    }
+
+    const setField = (key: string, value: unknown, fromAi = false) => {
+        setFormData(prev => ({ ...prev, [key]: value }))
+        if (!fromAi) {
+            setBrugerRedigerede(prev => { const next = new Set(prev); next.add(key); return next })
+        }
+    }
 
     const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -923,8 +987,17 @@ export default function AdminValideringPage() {
                                     </div>
                                 )}
                             </F>
+                            {formData.rightsHolderName && (
+                                <F label="Medarbejder / Klipper (fra AI-udtræk)" locked={isLocked("rightsHolderName")}>
+                                    <Input
+                                        value={String(formData.rightsHolderName ?? "")}
+                                        onChange={(e) => setField("rightsHolderName", e.target.value)}
+                                        placeholder="Klipperens fulde navn..."
+                                    />
+                                </F>
+                            )}
                             <Separator />
-                            <F label="Produktionstype">
+                            <F label="Produktionstype" locked={isLocked("productionType")}>
                                 <Select value={formData.productionType ?? ""} onValueChange={(v) => setField("productionType", v)}>
                                     <SelectTrigger><SelectValue placeholder="Vælg type..." /></SelectTrigger>
                                     <SelectContent>
@@ -940,7 +1013,7 @@ export default function AdminValideringPage() {
                                 </Select>
                             </F>
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label="Kontrakttype">
+                                <F label="Kontrakttype" locked={isLocked("contractType")}>
                                     <Select
                                         value={formData.contractType ?? "a-løn"}
                                         onValueChange={(v) => {
@@ -958,7 +1031,7 @@ export default function AdminValideringPage() {
                                         </SelectContent>
                                     </Select>
                                 </F>
-                                <F label={<>{t("admin.validation.agreement")}<SourceBtn quote={ca ?? undefined} active={activeSource === "__collectiveAgreement__"} onClick={() => setActiveSource("__collectiveAgreement__")} /></>}>
+                                <F label={<>{t("admin.validation.agreement")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                     <Select
                                         value={formData.overenskomst ?? "ingen"}
                                         onValueChange={(v) => setField("overenskomst", v)}
@@ -975,10 +1048,10 @@ export default function AdminValideringPage() {
                             </div>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.salary")}<SourceBtn quote={salaryHl} active={activeSource === salaryHl} onClick={() => setActiveSource(salaryHl ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.salary")}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
                                     <Input type="number" value={String(formData.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
                                 </F>
-                                <F label={t("admin.validation.salaryUnit")}>
+                                <F label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
                                     <Select value={formData.salaryUnit ?? "monthly"} onValueChange={(v) => setField("salaryUnit", v)}>
                                         <SelectTrigger><SelectValue /></SelectTrigger>
                                         <SelectContent>
@@ -992,48 +1065,48 @@ export default function AdminValideringPage() {
                             </div>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.startDate")}<SourceBtn quote={datesHl} active={activeSource === datesHl} onClick={() => setActiveSource(datesHl ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.startDate")}<SourceBtn quote={datesHl} active={activeField === "dates"} onClick={() => activateSource("dates", datesHl)} /></>} locked={isLocked("startDate")}>
                                     <Input type="date" value={String(formData.startDate ?? "")} onChange={(e) => setField("startDate", e.target.value)} />
                                 </F>
-                                <F label={t("admin.validation.endDate")}>
+                                <F label={t("admin.validation.endDate")} locked={isLocked("endDate")}>
                                     <Input type="date" value={String(formData.endDate ?? "")} onChange={(e) => setField("endDate", e.target.value)} />
                                 </F>
                             </div>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeSource === sources.pension} onClick={() => setActiveSource(sources.pension ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
                                     <div className="flex items-center gap-2">
                                         <Input type="number" step="0.1" value={String(formData.pensionPercent ?? "")} onChange={(e) => setField("pensionPercent", e.target.value)} placeholder="0" />
                                         <span className="text-sm text-muted-foreground">%</span>
                                     </div>
                                 </F>
-                                <F label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeSource === sources.pension} onClick={() => setActiveSource(sources.pension ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
                                     <Input type="number" value={String(formData.pensionSupplement ?? "")} onChange={(e) => setField("pensionSupplement", e.target.value)} placeholder="0" />
                                 </F>
                             </div>
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeSource === supplementsHl} onClick={() => setActiveSource(supplementsHl ?? null)} /></>}>
+                                <F label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
                                     <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
                                 </F>
-                                <F label={t("admin.validation.other")}>
+                                <F label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
                                     <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
                                 </F>
                             </div>
                             <Separator />
-                            <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeSource === weeksHl} onClick={() => setActiveSource(weeksHl ?? null)} /></>}>
+                            <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                 <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                             </F>
                             <Separator />
                             <div>
                                 <Label className="text-xs mb-3 block">{t("admin.validation.producerContributions")}</Label>
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.holidayPay")}<SourceBtn quote={ca ?? undefined} active={activeSource === "__collectiveAgreement__"} onClick={() => setActiveSource("__collectiveAgreement__")} /></>}>
+                                    <F label={<>{t("admin.validation.holidayPay")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.1" value={String(formData.holidayPayRate ?? "")} onChange={(e) => setField("holidayPayRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
                                             {formData.holidayPayRate && <span className="text-sm text-muted-foreground">%</span>}
                                         </div>
                                     </F>
-                                    <F label={<>{t("admin.validation.beta")}<SourceBtn quote={ca ?? undefined} active={activeSource === "__collectiveAgreement__"} onClick={() => setActiveSource("__collectiveAgreement__")} /></>}>
+                                    <F label={<>{t("admin.validation.beta")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.01" value={String(formData.betaRate ?? "")} onChange={(e) => setField("betaRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
                                             {formData.betaRate && <span className="text-sm text-muted-foreground">%</span>}
@@ -1047,21 +1120,21 @@ export default function AdminValideringPage() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__svod__"} onClick={() => setActiveSource("__svod__")} /></span>
+                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
                                             <p className="text-[10px] text-muted-foreground">Streaming on-demand rettighed</p>
                                         </div>
                                         <Switch checked={formData.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                     </div>
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__copydan__"} onClick={() => setActiveSource("__copydan__")} /></span>
+                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
                                             <p className="text-[10px] text-muted-foreground">Copydan-vederlag inkluderet</p>
                                         </div>
                                         <Switch checked={formData.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1">
-                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeSource === "__royalty__"} onClick={() => setActiveSource("__royalty__")} /></span>
+                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
                                             <p className="text-[10px] text-muted-foreground">Løbende royaltybetaling</p>
                                         </div>
                                         <Input type="number" step="0.1" value={String(formData.royaltyPercent ?? "")} onChange={(e) => setField("royaltyPercent", e.target.value)} placeholder="%" className="w-20" />
@@ -1387,11 +1460,16 @@ export default function AdminValideringPage() {
 
 // ── Small helpers ─────────────────────────────────────────────
 
-function F({ label, action, children }: { label: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
+function F({ label, action, locked, children }: { label: React.ReactNode; action?: React.ReactNode; locked?: boolean; children: React.ReactNode }) {
     return (
         <div className="space-y-1.5">
             <div className="flex items-center gap-2">
                 <Label className="text-xs">{label}</Label>
+                {locked && (
+                    <span title="Manuelt redigeret — beskyttes mod AI-overskrivning" className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                        <Lock className="h-2.5 w-2.5" />
+                    </span>
+                )}
                 {action}
             </div>
             {children}

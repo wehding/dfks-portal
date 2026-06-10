@@ -13,6 +13,7 @@ export const dynamic = "force-dynamic"
 import { NextRequest, NextResponse } from "next/server"
 import mammoth from "mammoth"
 import { getApiKey } from "@/lib/ai-key-store"
+import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { createClient } from "@supabase/supabase-js"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
@@ -37,9 +38,9 @@ const EXTRACTION_PROMPT = `Udtræk følgende data fra denne kontrakt og returner
 Returner KUN JSON — ingen forklaringstekst.
 
 {
-  "employerName": "producentens/arbejdsgiverens firmanavn (string | null)",
-  "parentCompanyName": "moderselskabets firmanavn som fremgår af header, footer, brevhoved eller kontraktens første side — typisk et holding- eller produktionsselskab der er overordnet arbejdsgiveren. Sæt null hvis ikke identificerbart adskilt fra employerName (string | null)",
-  "rightsHolderName": "klipperens/medarbejderens fulde navn (string | null)",
+  "employerName": "producentens/arbejdsgiverens FIRMANAVN — det juridiske selskab der er kontraktpart. Find selskabsnavnet øverst i kontrakten i partsafsnittet, typisk efterfulgt af adresse og CVR-nummer. Selskabet kan være defineret som 'Virksomheden', 'Producenten', 'Arbejdsgiveren' eller lignende i kontrakten — brug det faktiske navn, ikke den interne betegnelse. VIGTIGT: Formuleringer som 'refererer til producent [navn]', 'kontaktperson: [navn]', 'projektleder: [navn]' angiver en PERSON hos producenten — brug aldrig dette personnavn som employerName. Tag i stedet det selskabsnavn der optræder som kontraktpart med CVR-nummer. Enkeltmandsvirksomheder uden ApS/A/S er gyldige firmanaVNE. ALDRIG et rent personnavn. (string | null)",
+  "parentCompanyName": "moderselskabets firmanavn som fremgår af header, footer, brevhoved eller kontraktens første side — typisk et holding- eller produktionsselskab der er overordnet arbejdsgiveren. Kun firmanavne — aldrig personnavne. Sæt null hvis ikke identificerbart adskilt fra employerName. (string | null)",
+  "rightsHolderName": "klipperens/medarbejderens/leverandørens fulde PERSONNAVN — den fysiske person der udfører klippearbejdet. Søg efter den part der er markeret som 'Klipper', 'Medarbejder', 'Leverandør' eller lignende. ALDRIG et firmanavn. (string | null)",
   "workTitle": "produktionens/filmens titel (string | null)",
   "contractType": "${CONTRACT_TYPE_RULE}",
   "overenskomst": "én af: de4-fiktion, faf, faf-dokumentar, ingen (string | null)",
@@ -47,14 +48,13 @@ Returner KUN JSON — ingen forklaringstekst.
   "startDate": "ansættelsens startdato ISO 8601 (string | null)",
   "endDate": "ansættelsens slutdato ISO 8601 (string | null)",
 
-  "producerName": "producentens navn (string | null)",
   "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. VIGTIGE REGLER: Hvis kontrakten nævner 'afsnit', 'episode', 'sæson', episodenumre (fx 'afsnit 5+6', 'episode 3-7', 'sæson 2') eller et antal afsnit → brug tvSeries (fiktion) eller docSeries (dokumentar). Spillefilm/feature er altid ét samlet værk uden episoder. Dokumentarfilm med afsnit → docSeries. Returner præcis én af de nævnte værdier eller null.",
   "salary": "bruttoløn som tal uden valuta (number | null)",
   "salaryUnit": "monthly, weekly eller daily (string | null)",
   "pensionPercent": "pensionsprocent som tal (number | null)",
   "pensionSupplement": "pensionssupplement i kr. som tal (number | null)",
-  "personalSupplement": "personligt tillæg i kr. som tal (number | null)",
-  "otherSupplements": "andre tillæg som fritekst (string | null)",
+  "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number | null)",
+  "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string | null)",
   "workingWeeks": "antal arbejdsuger som tal (number | null)",
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
   "betaRate": "${BETA_RATE_RULE}",
@@ -106,9 +106,7 @@ export async function POST(req: NextRequest) {
 
             let text: string
             if (filename.endsWith(".pdf")) {
-                const { PDFParse } = require("pdf-parse"); const parser = new PDFParse({ data: buffer })
-                const parsed = await parser.getText()
-                text = parsed.text
+                text = await extractPdfText(buffer)
             } else if (filename.endsWith(".docx")) {
                 const result = await mammoth.extractRawText({ buffer })
                 text = result.value

@@ -13,8 +13,9 @@ export const CONTRACT_TYPE_RULE =
     "REGLER — brug første matchende regel: " +
     "(1) Indeholder kontrakten et CVR-nummer på medarbejderen/klipperen → 'leverandør'. " +
     "(2) Ordet 'leverandør', 'freelance', 'honorar', 'agreement for services' eller 'serviceaftale' forekommer eksplicit → 'leverandør'. " +
-    "(3) Ordene 'a-løn', 'ansættelse', 'lønmodtager' forekommer eksplicit → 'a-løn'. " +
-    "(4) Ingen klare signaler → 'a-løn' som default. " +
+    "(3) Feriepenge/feriegodtgørelse nævnes som en separat ydelse der betales OVENI lønnen (fx 'feriepenge på 12,5 %' eller 'feriegodtgørelse indbetales til Feriekonto') → 'a-løn'. I leverandørkontrakter er feriepenge altid inkluderet i honoraret, ikke en separat post. " +
+    "(4) Ordene 'a-løn', 'ansættelse', 'lønmodtager', 'medarbejder' forekommer eksplicit → 'a-løn'. " +
+    "(5) Ingen klare signaler → 'a-løn' som default. " +
     "En leverandørkontrakt der inkorporerer overenskomsten ved reference er stadig 'leverandør'. (string | null)"
 
 export const COLLECTIVE_AGREEMENT_RULE =
@@ -26,17 +27,11 @@ export const COLLECTIVE_AGREEMENT_RULE =
     "En leverandørkontrakt er ALDRIG en 'overenskomstkontrakt'. (boolean)"
 
 export const COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE =
-    "true hvis overenskomstens vilkår er inkorporeret ved reference i en leverandørkontrakt. " +
-    "Sæt true ved formuleringer som: " +
-    "'the terms set forth therein shall supplement', " +
-    "'I øvrigt gælder overenskomstens bestemmelser', " +
-    "'In all other respects the terms of the collective agreement apply', " +
-    "'overenskomstens vilkår finder tilsvarende anvendelse', " +
-    "'the collective agreement shall apply by analogy', " +
-    "'rights shall be transferred in accordance with the collective agreement', " +
-    "'rettigheder overdrages i overensstemmelse med overenskomsten', " +
-    "'the transfer of rights ... shall be in accordance with the collective agreement'. " +
-    "Sæt false hvis overenskomsten slet ikke nævnes. (boolean)"
+    "true KUN hvis kontrakten er en LEVERANDØRKONTRAKT (CVR, honorar, moms) OG overenskomstens vilkår eksplicit er inkorporeret ved reference. " +
+    "ALDRIG true for A-lønskontrakter — en A-lønskontrakt der nævner overenskomsten er bare en normal A-lønskontrakt, ikke en leverandørkontrakt med reference. " +
+    "Eksempel på true: leverandørkontrakt med formulering som 'the terms of the collective agreement shall apply by analogy' eller 'rettigheder overdrages i overensstemmelse med overenskomsten'. " +
+    "Eksempel på FALSE: en A-lønskontrakt der slutter med 'I øvrigt henvises til gældende Fiktionsoverenskomst' — dette er IKKE inkorporering ved reference, det er bare en normal overenskomstreference i en A-lønskontrakt. " +
+    "Sæt false hvis contractType er 'a-løn'. (boolean)"
 
 export const IS_FREELANCE_CONTRACT_RULE =
     "true hvis kontrakten er en leverandørkontrakt (CVR-nummer, moms, honorar, faktura, selvstændig erhvervsdrivende) " +
@@ -44,12 +39,10 @@ export const IS_FREELANCE_CONTRACT_RULE =
 
 export const HOLIDAY_PAY_RATE_RULE =
     "Helligdagsbetaling i % som tal (number | null). " +
-    "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 1 (1% — fastsat i overenskomsten). " +
-    "(B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. " +
-    "(C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null."
+    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten. " +
+    "Helligdagsbetaling og BETA-fond er reguleret i overenskomsten og fremgår sjældent af kontrakten — sæt null medmindre procentsatsen er skrevet direkte ind i kontrakten."
 
 export const BETA_RATE_RULE =
     "BETA-fondsbidrag i % som tal (number | null). " +
-    "REGEL: (A) For A-lønskontrakter der refererer til De4-fiktionsoverenskomsten: sæt til 0.5 (0,5% — fastsat i § 21 af overenskomsten). " +
-    "(B) For leverandørkontrakter: sæt altid til null — uanset om overenskomstens vilkår er inkorporeret ved reference. " +
-    "(C) For andre kontrakttyper: sæt KUN hvis satsen er eksplicit nævnt i kontraktteksten, ellers null."
+    "Sæt KUN hvis satsen er eksplicit nævnt i selve kontraktteksten. " +
+    "BETA-fond er reguleret i overenskomsten og fremgår sjældent af kontrakten — sæt null medmindre procentsatsen er skrevet direkte ind i kontrakten."
