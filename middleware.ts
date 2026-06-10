@@ -61,8 +61,12 @@ export async function middleware(req: NextRequest) {
     // Opdater session (vigtigt — må ikke fjernes)
     const { data: { user } } = await supabase.auth.getUser()
 
-    // Beskyttede admin/portal-stier kræver login
-    const isProtected = pathname.startsWith("/admin") || pathname.startsWith("/portal")
+    // Beskyttede stier kræver login
+    const isProtected =
+        pathname.startsWith("/admin") ||
+        pathname.startsWith("/portal") ||
+        pathname.startsWith("/onboarding") ||
+        pathname.startsWith("/vaerker")
     if (isProtected && !user) {
         const url = req.nextUrl.clone()
         url.pathname = "/"

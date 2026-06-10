@@ -40,7 +40,13 @@ export default function LoginPage() {
         if (role === "admin" || role === "org-admin" || role === "superadmin") {
             router.push("/admin/kontraktgennemgang")
         } else {
-            router.push("/portal/mine-vaerker")
+            // Tjek om onboarding er gennemført
+            const { data: rh } = await supabase
+                .from("rettighedshavere")
+                .select("onboarding_completed")
+                .eq("user_id", user!.id)
+                .single()
+            router.push(rh?.onboarding_completed ? "/portal/mine-vaerker" : "/onboarding")
         }
         router.refresh()
     }

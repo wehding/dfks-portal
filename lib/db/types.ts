@@ -26,6 +26,10 @@ export interface DbRettighedshaver {
     phone: string | null
     address: string | null
     cpr_no: string | null
+    bank_account: string | null
+    onboarding_completed: boolean
+    dfi_person_id: number | null
+    opt_out_statistics: boolean
     created_at: string
 }
 
@@ -190,6 +194,10 @@ export interface DbWork {
     episode_count: number | null
     genre: string | null
     status: string
+    dfi_id: string | null
+    tmdb_id: number | null
+    description: string | null
+    poster_url: string | null
     created_at: string
 }
 
