@@ -471,84 +471,73 @@ export async function POST(req: NextRequest) {
             ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n`
             : ""
 
-        // ── Fetch reference docs + legal notes from DB ──────────────
+        // ── Hent alle datakilder parallelt ───────────────────────
         const supabase = await createClient()
-        const [{ data: refDocs }, { data: legalNotesDb }] = await Promise.all([
+        const sbAdmin = (await import("@supabase/supabase-js")).createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+
+        const [
+            { data: refDocs },
+            { data: altidNoteringer },
+            { data: baggrundNoteringer },
+        ] = await Promise.all([
             supabase
                 .from("reference_docs")
                 .select("doc_subtype, file_name, title, content_text, owner")
                 .eq("archived", false)
                 .not("content_text", "is", null),
-            supabase
+            sbAdmin
                 .from("legal_notes")
-                .select("title, body, priority, exclude_for_overenskomst")
-                .eq("active", true)
-                .order("sort_order"),
+                .select("title, body")
+                .eq("priority", "altid")
+                .eq("active", true),
+            sbAdmin
+                .from("legal_notes")
+                .select("title, body")
+                .eq("priority", "baggrund")
+                .eq("active", true),
         ])
 
-        // Append reference doc texts to system prompt
+        // Byg system prompt
         let activeSystemPrompt = SYSTEM_PROMPT
-        if (refDocs && refDocs.length > 0) {
+
+        // Referencedokumenter
+        if (refDocs?.length) {
             for (const doc of refDocs) {
                 if (!doc.content_text) continue
-                const label = doc.doc_subtype ?? doc.file_name ?? doc.title
-                activeSystemPrompt += `\n\n${label}:\n${doc.content_text}`
+                activeSystemPrompt += `\n\n${doc.doc_subtype ?? doc.file_name ?? doc.title}:\n${doc.content_text}`
             }
         }
 
-        // Append legal notes from DB
-        const notes = (legalNotesDb ?? []) as { title: string; body: string; priority: string; exclude_for_overenskomst: string[] }[]
-        if (notes.length > 0) {
-            const order = ["aktiv-indsats", "fast-regel", "orientering"]
-            notes.sort((a, b) => order.indexOf(a.priority) - order.indexOf(b.priority))
-
-            const aktive = notes.filter(n => n.priority === "aktiv-indsats")
-            const faste  = notes.filter(n => n.priority === "fast-regel")
-            const orient = notes.filter(n => n.priority === "orientering")
-
-            const formatNote = (n: { title: string; body: string; exclude_for_overenskomst: string[] }) =>
-                `\n${n.title}${n.exclude_for_overenskomst.length > 0 ? " [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER — spring over hvis kontrakten er en A-lønskontrakt under De4- eller FAF-overenskomsten]" : ""}:\n${n.body}`
-
-            let notesBlock = "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                "DFKS JURIDISKE NOTERINGER — GÆLDER FOR ALLE GENNEMGANGE:\n" +
-                "──────────────────────────────────────────────────────────────────────\n"
-
-            if (aktive.length > 0) {
-                notesBlock += "\n⚑ AKTIVE DFKS-INDSATSER — HØJESTE PRIORITET:\n" +
-                    "Disse punkter er genstand for en aktiv DFKS-indsats lige nu. Du SKAL:\n" +
-                    "1. Altid tjekke kontrakten for disse forhold — uanset om kontrakten er tavs eller eksplicit\n" +
-                    "2. Altid kommentere på dem i feedbackmailen — positivt hvis kontrakten håndterer det korrekt, negativt hvis den er tavs eller afviger\n" +
-                    "3. Nævne eksplicit at DFKS p.t. prioriterer dette punkt særligt, fx: 'Vi har i øjeblikket særligt fokus på [emnet]...'\n" +
-                    "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
-                    aktive.map(formatNote).join("\n")
-            }
-            if (faste.length > 0) {
-                notesBlock += "\n\nFASTE KONTROLPUNKTER — SKAL ALTID TJEKKES:\n" +
-                    "Disse punkter er permanente kontrolpunkter. Du SKAL altid tjekke kontrakten for disse forhold og kommentere på dem i feedbackmailen — uanset om kontrakten nævner det eller ej. Er kontrakten tavs, er det en advarsel. Håndterer den det korrekt, er det positivt.\n" +
-                    "(Bemærk: noter markeret med [GÆLDER IKKE FOR OVERENSKOMSTKONTRAKTER] springes over for A-lønskontrakter)\n" +
-                    faste.map(formatNote).join("\n")
-            }
-            if (orient.length > 0) {
-                notesBlock += "\n\nORIENTERING — BAGGRUNDSVIDEN TIL VURDERING:\n" +
-                    "Brug som baggrundsviden til at vurdere andre punkter. Kommentér kun direkte på disse i feedbackmailen hvis de er direkte relevante for et konkret forhold i den pågældende kontrakt.\n" +
-                    orient.map(formatNote).join("\n")
-            }
-
-            activeSystemPrompt += notesBlock
+        // Altid-noteringer — injiceres direkte og eksplicit
+        if (altidNoteringer?.length) {
+            activeSystemPrompt +=
+                "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                "DFKS AKTIVE NOTERINGER — KOMMENTER ALTID PÅ DISSE I FEEDBACKMAILEN:\n" +
+                "──────────────────────────────────────────────────────────────────────\n" +
+                altidNoteringer.map((n: { title: string; body: string }) =>
+                    `ALTID KOMMENTER: ${n.title} — ${n.body}`
+                ).join("\n\n")
         }
 
-        // ── RAG: hent relevante sagserfaringer semantisk ─────────
-        // Bruger Google text-embedding-004 til at finde de mest
-        // relevante regler baseret på kontraktteksten.
-        // Kræver at knowledge_chunks-tabellen er populeret.
+        // Baggrundsnoteringer — kontekst
+        if (baggrundNoteringer?.length) {
+            activeSystemPrompt +=
+                "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                "DFKS BAGGRUNDSVIDEN — BRUG SOM KONTEKST VED VURDERING:\n" +
+                "──────────────────────────────────────────────────────────────────────\n" +
+                baggrundNoteringer.map((n: { title: string; body: string }) =>
+                    `${n.title}: ${n.body}`
+                ).join("\n\n")
+        }
+
+        // ── RAG + lærte mønstre ───────────────────────────────────
         let ragText = ""
 
-        // Pre-extract text for RAG (PDF parses later for AI call)
         if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
-            try {
-                const result = await mammoth.extractRawText({ buffer })
-                ragText = result.value.slice(0, 8000)
-            } catch { /* fallback: ingen RAG */ }
+            try { const result = await mammoth.extractRawText({ buffer }); ragText = result.value.slice(0, 8000) } catch { /* ingen RAG */ }
         } else if (filename.endsWith(".txt")) {
             ragText = buffer.toString("utf-8").slice(0, 8000)
         } else if (filename.endsWith(".pdf")) {
@@ -558,28 +547,49 @@ export async function POST(req: NextRequest) {
                 const parser = new PDFParse({ data: buffer })
                 const parsed = await parser.getText()
                 ragText = parsed.text.slice(0, 8000)
-            } catch { /* fallback: ingen RAG */ }
+            } catch { /* ingen RAG */ }
         }
 
         if (ragText.trim()) {
             try {
                 const { data: { user } } = await (await createClient()).auth.getUser()
                 const orgId: string | undefined = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-                const relevanteRegler = await hentRelevanteRegler(ragText, orgId)
 
-                if (relevanteRegler.length > 0) {
+                // 1. Videnbase: lovtekster + DFKS-fortolkninger
+                const relevanteRegler = await hentRelevanteRegler(ragText, 6, orgId)
+
+                // 2. Lærte mønstre: godkendte regler fra feedback-loop
+                const { getEmbedding } = await import("@/lib/embedding-provider")
+                const ragEmbedding = await getEmbedding(ragText, false)
+                const { data: lærteRegler } = await sbAdmin.rpc("match_learned_patterns", {
+                    query_embedding: ragEmbedding,
+                    match_threshold: 0.65,
+                    match_count: 3,
+                })
+
+                if (relevanteRegler.length > 0 || (lærteRegler?.length ?? 0) > 0) {
                     activeSystemPrompt +=
                         "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                        "LÆRTE MØNSTRE FRA DFKS SAGSBEHANDLING — FØLG DISSE REGLER NØJAGTIGT:\n" +
+                        "LÆRTE REGLER FRA DFKS SAGSBEHANDLING — HØJESTE PRIORITET:\n" +
                         "──────────────────────────────────────────────────────────────────────\n" +
-                        "Disse regler er baseret på konkrete sager hvor AI-analysen har fejlet eller lært noget nyt.\n" +
-                        "De er udvalgt semantisk baseret på denne konkrete kontrakt og har HØJESTE PRIORITET.\n\n" +
-                        relevanteRegler.map(r =>
-                            `${r.kilde_titel}:\n${r.tekst}`
+                        "Disse regler er semantisk matchet til denne konkrete kontrakt og skal følges nøjagtigt.\n\n"
+
+                    if (relevanteRegler.length > 0) {
+                        activeSystemPrompt += relevanteRegler.map(r => {
+                            const meta = r.metadata as { dfks_fortolkning?: string } | null
+                            const fortolkning = meta?.dfks_fortolkning
+                            return `${r.kilde_titel}:\n${r.tekst}${fortolkning ? `\nDFKS fortolkning: ${fortolkning}` : ""}`
+                        }).join("\n\n")
+                    }
+
+                    if (lærteRegler?.length) {
+                        activeSystemPrompt += "\n\n" + (lærteRegler as { titel: string; regel: string }[]).map(r =>
+                            `${r.titel}:\n${r.regel}`
                         ).join("\n\n")
+                    }
                 }
             } catch (ragErr) {
-                console.warn("[gennemgang] RAG fejlede (fortsætter uden):", ragErr)
+                console.warn("[gennemgang] RAG/mønstre fejlede (fortsætter uden):", ragErr)
             }
         }
 

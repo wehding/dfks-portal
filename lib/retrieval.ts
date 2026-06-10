@@ -1,15 +1,8 @@
-/**
- * lib/retrieval.ts
- *
- * RAG-baseret retrieval med Google text-embedding-004.
- * Bruges til at finde relevante sagserfaringer og juridiske noter
- * baseret på semantisk lighed med kontraktteksten.
- */
-
 import { createClient } from "@supabase/supabase-js"
+import { getEmbedding, getEmbeddingWithFallback } from "./embedding-provider"
 
 const MATCH_THRESHOLD = 0.65
-const MATCH_COUNT = 8
+const MATCH_COUNT = 6
 
 function getSupabaseAdmin() {
     return createClient(
@@ -18,52 +11,31 @@ function getSupabaseAdmin() {
     )
 }
 
-/**
- * Laver et Google text-embedding-004 embedding via direkte REST-kald til v1 API.
- * SDK'et (v0.24) bruger v1beta som ikke understøtter text-embedding-004.
- */
-export async function embedText(text: string): Promise<number[]> {
-    const key = process.env.GOOGLE_API_KEY
-    if (!key) throw new Error("GOOGLE_API_KEY mangler i miljøvariable")
-
-    const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=${key}`,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                model: "models/gemini-embedding-001",
-                content: { parts: [{ text: text.slice(0, 8000) }] },
-                outputDimensionality: 768,   // Matryoshka: 768 dim < pgvector 2000-grænse
-            }),
-        }
-    )
-    if (!res.ok) {
-        const err = await res.text()
-        throw new Error(`Google Embedding API fejl ${res.status}: ${err}`)
-    }
-    const data = await res.json()
-    return data.embedding.values
-}
-
-/**
- * Henter de mest relevante knowledge chunks for en given kontrakttekst.
- * Bruges i gennemgangs-ruten til at injicere kun relevante regler.
- */
-export async function hentRelevanteRegler(kontraktTekst: string, orgId?: string): Promise<{
+export interface KnowledgeChunk {
     kilde_id: string
     kilde_titel: string
     tekst: string
-    metadata: Record<string, unknown>
+    metadata: {
+        roede_flag?: string[]
+        dfks_fortolkning?: string
+        standard_formulering?: string
+        [key: string]: unknown
+    }
     similaritet: number
-}[]> {
-    const embedding = await embedText(kontraktTekst)
+}
+
+export async function hentRelevanteRegler(
+    kontraktTekst: string,
+    maxResultater = MATCH_COUNT,
+    orgId?: string
+): Promise<KnowledgeChunk[]> {
+    const embedding = await getEmbeddingWithFallback(kontraktTekst)
     const supabase = getSupabaseAdmin()
 
     const { data, error } = await supabase.rpc("match_knowledge_chunks", {
         query_embedding: embedding,
         match_threshold: MATCH_THRESHOLD,
-        match_count: MATCH_COUNT,
+        match_count: maxResultater,
         p_org_id: orgId ?? null,
     })
 
@@ -72,22 +44,18 @@ export async function hentRelevanteRegler(kontraktTekst: string, orgId?: string)
         return []
     }
 
-    return data ?? []
+    return (data ?? []) as KnowledgeChunk[]
 }
 
-/**
- * Gemmer eller opdaterer et knowledge chunk med embedding.
- * Kaldes når en sagserfaring eller juridisk note gemmes/opdateres.
- */
 export async function upsertKnowledgeChunk(params: {
-    kilde_id: string        // fx sagserfaring UUID
-    kilde_type: string      // "sagserfaring" | "juridisk-note"
+    kilde_id: string
+    kilde_type: string
     kilde_titel: string
-    tekst: string           // den tekst der embeddes
+    tekst: string
     org_id: string | null
     metadata?: Record<string, unknown>
 }): Promise<void> {
-    const embedding = await embedText(params.tekst)
+    const embedding = await getEmbedding(params.tekst, true)
     const supabase = getSupabaseAdmin()
 
     const { error } = await supabase.from("knowledge_chunks").upsert({
@@ -103,9 +71,6 @@ export async function upsertKnowledgeChunk(params: {
     if (error) console.error("[retrieval] upsertKnowledgeChunk fejl:", error)
 }
 
-/**
- * Sletter et knowledge chunk når kilden slettes.
- */
 export async function deleteKnowledgeChunk(kildeId: string): Promise<void> {
     const supabase = getSupabaseAdmin()
     await supabase.from("knowledge_chunks").delete().eq("kilde_id", kildeId)

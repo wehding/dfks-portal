@@ -5,10 +5,54 @@ import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import {
     FileText, CheckCircle, AlertCircle, Users2,
-    ArrowRight, Clock, Scale, UserCheck,
+    ArrowRight, Clock, Scale, UserCheck, Cpu,
 } from "lucide-react"
+
+type EmbeddingHealth = {
+    google: { ok: boolean; ms: number }
+    syv: { ok: boolean; ms: number }
+    aktiv: string
+}
+
+function EmbeddingStatus() {
+    const [health, setHealth] = useState<EmbeddingHealth | null>(null)
+
+    useEffect(() => {
+        fetch("/api/health/embeddings")
+            .then(r => r.json())
+            .then(setHealth)
+            .catch(() => {})
+    }, [])
+
+    if (!health) return null
+
+    return (
+        <div className="rounded-lg border px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+                <Cpu className="h-3.5 w-3.5" />
+                <span className="font-medium text-foreground">Embedding</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+                <span className="flex items-center gap-1.5">
+                    <Badge variant={health.google.ok ? "default" : "destructive"} className="font-normal text-[11px] px-1.5 py-0">
+                        Google {health.google.ok ? `✓ ${health.google.ms}ms` : "✗"}
+                    </Badge>
+                </span>
+                <span className="flex items-center gap-1.5">
+                    <Badge variant={health.syv.ok ? "default" : "outline"} className="font-normal text-[11px] px-1.5 py-0">
+                        syv.ai {health.syv.ok ? `✓ ${health.syv.ms}ms` : "✗ nede"}
+                    </Badge>
+                </span>
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">
+                Aktiv: <span className="font-medium text-foreground">{health.aktiv}</span>
+            </span>
+        </div>
+    )
+}
 
 type Stats = {
     pending: number       // kontrakter afventer validering
@@ -91,6 +135,8 @@ export default function AdminDashboardPage() {
                 title={`${greeting()} 👋`}
                 subtitle="Her er et overblik over hvad der venter i dag"
             />
+
+            <EmbeddingStatus />
 
             {loading ? (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

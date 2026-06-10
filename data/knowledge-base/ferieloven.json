@@ -1,0 +1,29 @@
+[
+  {
+    "id": "ferl-§16",
+    "kilde_titel": "Ferieloven § 16 — Feriegodtgørelse ved fratræden og leverandørkontrakter",
+    "semantisk_beskrivelse": "Lønmodtagere optjener 12,5% feriegodtgørelse af al løn. Ved fratræden udbetales optjent men ikke afviklet ferie som feriegodtgørelse. For leverandørkontrakter er ferie ikke lovpligtigt inkluderet — honoraret er typisk alt-inklusivt medmindre andet er aftalt.",
+    "raa_tekst": "Lønmodtagere optjener ret til ferie med feriegodtgørelse på 12,5 pct. af den ferieberettigede løn. Feriegodtgørelsen udbetales ved ferien eller ved ansættelsesforholdets ophør for ikke afholdt ferie.",
+    "dfks_fortolkning": "I A-lønskontrakter skal producenten indbetale 12,5% feriegodtgørelse til Feriekonto. I leverandørkontrakter er honoraret typisk alt-inklusivt — dvs. feriepenge er ikke en ekstra ydelse. DFKS anbefaler at leverandørkontrakter eksplicit angiver om honoraret er inkl. eller ekskl. feriepenge. Klipperen bør sætte 12,5% til side ved alt-inklusivt honorar.",
+    "roede_flag": ["ingen ferie i leverandørkontrakt", "ferie kan ikke holdes", "ingen feriegodtgørelse ved fratræden i A-lønskontrakt"],
+    "standard_formulering": "Honoraret er alt-inklusivt, herunder feriepenge (12,5%). Klipperen opfordres til at reservere den beregnede andel til ferieformål."
+  },
+  {
+    "id": "ferl-§17",
+    "kilde_titel": "Ferieloven § 17 — Beregning af feriegodtgørelse",
+    "semantisk_beskrivelse": "Feriegodtgørelsen beregnes som 12,5% af den ferieberettigede løn i optjeningsåret. For freelancere med variabel indkomst beregnes den af den faktisk optjente løn. Pension indgår ikke i beregningsgrundlaget.",
+    "raa_tekst": "Feriegodtgørelsen udgør 12,5 pct. af lønnen i optjeningsåret. I lønnen indgår ikke bidrag til pensionsordning, feriegodtgørelse eller særlige tillæg der ydes som godtgørelse for udgifter.",
+    "dfks_fortolkning": "12,5% af grundlønnen — ikke af pension eller andre tillæg. For A-lønskontrakter under De4-overenskomsten indbetaler producenten feriegodtgørelsen til ATP Feriepenge. Kontrakten bør specificere at dette sker.",
+    "roede_flag": [],
+    "standard_formulering": null
+  },
+  {
+    "id": "ferl-§24",
+    "kilde_titel": "Ferieloven § 24 — Ferie under sygdom",
+    "semantisk_beskrivelse": "En lønmodtager der er syg ved feriens start har ret til at udskyde ferien til efter raskmelding. Producenten kan ikke kræve at klipperen holder ferie under sygdom. Disse regler gælder kun A-lønskontrakter, ikke leverandørkontrakter.",
+    "raa_tekst": "En lønmodtager, der er uarbejdsdygtig på grund af sygdom ved feriens begyndelse, har ret til erstatningsferie. Lønmodtageren skal melde sig syg senest på feriens første dag og kræve erstatningsferie senest ved ferieperiodens udløb.",
+    "dfks_fortolkning": "Kun relevant for A-lønskontrakter. Klippere under De4-overenskomsten har ret til erstatningsferie ved sygdom. En kontrakt der begrænser denne ret er ugyldig. Producenten kan kræve lægeerklæring fra første sygedag.",
+    "roede_flag": ["ingen erstatningsferie ved sygdom", "ferie afholdes uanset sygdom"],
+    "standard_formulering": null
+  }
+]

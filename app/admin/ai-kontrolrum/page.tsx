@@ -1,0 +1,762 @@
+"use client"
+
+import { useEffect, useState, useMemo } from "react"
+import { createClient } from "@/lib/supabase/client"
+import { PageHeader } from "@/components/page-header"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
+import {
+    Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog"
+import {
+    Tabs, TabsContent, TabsList, TabsTrigger,
+} from "@/components/ui/tabs"
+import {
+    CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
+    Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
+    Info, TrendingUp, TrendingDown, Minus,
+} from "lucide-react"
+import { toast } from "sonner"
+
+// ── Shared types ───────────────────────────────────────────────
+
+type Chunk = {
+    kilde_id: string
+    kilde_titel: string
+    tekst: string
+    kilde_type: string
+    metadata: { dfks_fortolkning?: string | null; raa_tekst?: string | null; roede_flag?: string[] } | null
+}
+
+type LegalNote = {
+    id: string
+    title: string
+    body: string
+    priority: "baggrund" | "altid"
+    active: boolean
+    gyldig_fra: string | null
+    gyldig_til: string | null
+    created_at: string
+}
+
+type LearnedPattern = {
+    id: string
+    titel: string
+    regel: string
+    semantisk_beskrivelse: string
+    aktiv: boolean
+    godkendt_af: string | null
+    created_at: string
+}
+
+type PendingFeedback = {
+    id: string
+    fund_titel: string
+    fund_svaerhedsgrad: string
+    korrektion_beskrivelse: string | null
+    jurist_korrektion: string | null
+    created_at: string
+}
+
+type FeedbackRow = {
+    id: string
+    fund_titel: string
+    fund_svaerhedsgrad: string
+    godkendt: boolean
+    korrektion_beskrivelse: string | null
+    created_at: string
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fane 1 — Videnbase
+// ─────────────────────────────────────────────────────────────
+
+function VidenbaseTab() {
+    const [chunks, setChunks] = useState<Chunk[]>([])
+    const [loading, setLoading] = useState(true)
+    const [editingId, setEditingId] = useState<string | null>(null)
+    const [editValue, setEditValue] = useState("")
+    const [saving, setSaving] = useState(false)
+    const [showAdd, setShowAdd] = useState(false)
+    const [reindexing, setReindexing] = useState(false)
+    const [reindexResult, setReindexResult] = useState<{ opdateret: number; uændret: number; fejl: number } | null>(null)
+    const [sidstOpdateret, setSidstOpdateret] = useState<string | null>(null)
+
+    useEffect(() => {
+        fetch("/api/videnbase")
+            .then(r => r.json())
+            .then((data: (Chunk & { sidst_opdateret?: string })[]) => {
+                const filtered = (data ?? []).filter(c => !c.kilde_id.startsWith("note-"))
+                setChunks(filtered)
+                // Nyeste sidst_opdateret på tværs af alle chunks
+                const dates = filtered.map(c => (c as any).sidst_opdateret).filter(Boolean)
+                if (dates.length) setSidstOpdateret(dates.sort().at(-1))
+                setLoading(false)
+            })
+            .catch(() => setLoading(false))
+    }, [])
+
+    const saveEdit = async (kilde_id: string) => {
+        setSaving(true)
+        try {
+            const res = await fetch("/api/videnbase", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kilde_id, dfks_fortolkning: editValue }),
+            })
+            if (!res.ok) throw new Error((await res.json()).error)
+            setChunks(prev => prev.map(c =>
+                c.kilde_id === kilde_id ? { ...c, metadata: { ...c.metadata, dfks_fortolkning: editValue || null } } : c
+            ))
+            setEditingId(null)
+            toast.success("Fortolkning gemt og genindekseret")
+        } catch (e: any) { toast.error(e.message) }
+        finally { setSaving(false) }
+    }
+
+    const filled = chunks.filter(c => c.metadata?.dfks_fortolkning).length
+
+    const handleReindex = async () => {
+        setReindexing(true)
+        setReindexResult(null)
+        try {
+            const res = await fetch("/api/admin/reindex", { method: "POST" })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const result = await res.json()
+            setReindexResult(result)
+            setSidstOpdateret(new Date().toISOString())
+        } catch (e: any) { toast.error(e.message) }
+        finally { setReindexing(false) }
+    }
+
+    if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-center justify-between gap-3">
+                <div>
+                    <p className="text-sm text-muted-foreground">{chunks.length} chunks · {filled} med DFKS-fortolkning</p>
+                    {sidstOpdateret && (
+                        <p className="text-xs text-muted-foreground/60 mt-0.5">
+                            Sidst opdateret: {new Date(sidstOpdateret).toLocaleDateString("da-DK", { day: "numeric", month: "long", year: "numeric" })}
+                        </p>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                    {reindexResult && (
+                        <span className="text-xs text-muted-foreground">
+                            {reindexResult.opdateret} opdateret{reindexResult.fejl > 0 ? `, ${reindexResult.fejl} fejl` : ""}
+                        </span>
+                    )}
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={handleReindex} disabled={reindexing}>
+                        {reindexing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>↻</span>}
+                        {reindexing ? "Genindekserer..." : "Genindeksér"}
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAdd(true)}>
+                        <Plus className="h-3.5 w-3.5" />Tilføj chunk
+                    </Button>
+                </div>
+            </div>
+            <div className="space-y-2">
+                {chunks.map(chunk => {
+                    const fortolkning = chunk.metadata?.dfks_fortolkning
+                    const isEditing = editingId === chunk.kilde_id
+                    return (
+                        <div key={chunk.kilde_id} className={`rounded-lg border p-4 space-y-2 ${!fortolkning ? "border-dashed opacity-75" : ""}`}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <p className="text-sm font-medium">{chunk.kilde_titel}</p>
+                                        {fortolkning && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{chunk.tekst}</p>
+                                </div>
+                                {!isEditing && (
+                                    <Button variant="ghost" size="sm" className="shrink-0 gap-1.5 text-xs"
+                                        onClick={() => { setEditingId(chunk.kilde_id); setEditValue(fortolkning ?? "") }}>
+                                        <Pencil className="h-3 w-3" />{fortolkning ? "Rediger" : "Tilføj"}
+                                    </Button>
+                                )}
+                            </div>
+                            {!isEditing && fortolkning && (
+                                <p className="text-xs text-muted-foreground border-l-2 border-emerald-300 pl-3 italic">{fortolkning}</p>
+                            )}
+                            {!isEditing && !fortolkning && (
+                                <p className="text-xs text-muted-foreground/50 italic">Ingen DFKS-fortolkning — klik Tilføj</p>
+                            )}
+                            {isEditing && (
+                                <div className="space-y-2 pt-1">
+                                    <Textarea value={editValue} onChange={e => setEditValue(e.target.value)}
+                                        placeholder="DFKS's fortolkning og anbefaling..." className="text-xs min-h-[100px]" autoFocus />
+                                    <div className="flex gap-2 justify-end">
+                                        <Button variant="outline" size="sm" onClick={() => setEditingId(null)} disabled={saving}>
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                        <Button size="sm" onClick={() => saveEdit(chunk.kilde_id)} disabled={saving}>
+                                            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Gem og genindeksér"}
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )
+                })}
+            </div>
+            <AddChunkDialog open={showAdd} onClose={() => setShowAdd(false)}
+                onSaved={c => { setChunks(prev => [...prev, c].sort((a, b) => a.kilde_id.localeCompare(b.kilde_id))); setShowAdd(false) }} />
+        </div>
+    )
+}
+
+function AddChunkDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: (c: Chunk) => void }) {
+    const [form, setForm] = useState({ kilde_id: "", kilde_titel: "", tekst: "", dfks_fortolkning: "" })
+    const [saving, setSaving] = useState(false)
+    const save = async () => {
+        if (!form.kilde_id || !form.kilde_titel || !form.tekst) return
+        setSaving(true)
+        try {
+            const res = await fetch("/api/videnbase", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, kilde_type: "sagserfaring" }) })
+            if (!res.ok) throw new Error((await res.json()).error)
+            onSaved({ kilde_id: form.kilde_id, kilde_titel: form.kilde_titel, tekst: form.tekst, kilde_type: "sagserfaring", metadata: { dfks_fortolkning: form.dfks_fortolkning || null } })
+            setForm({ kilde_id: "", kilde_titel: "", tekst: "", dfks_fortolkning: "" })
+            toast.success("Chunk tilføjet og indekseret")
+        } catch (e: any) { toast.error(e.message) }
+        finally { setSaving(false) }
+    }
+    return (
+        <Dialog open={open} onOpenChange={o => { if (!o) onClose() }}>
+            <DialogContent className="sm:max-w-[560px]">
+                <DialogHeader><DialogTitle className="flex items-center gap-2"><BookOpen className="h-4 w-4" />Tilføj chunk</DialogTitle></DialogHeader>
+                <div className="space-y-3 py-2">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label className="text-xs">ID (unikt)</Label><Input className="h-8 text-xs" placeholder="fx erfaring-001" value={form.kilde_id} onChange={e => setForm(f => ({ ...f, kilde_id: e.target.value }))} /></div>
+                        <div className="space-y-1"><Label className="text-xs">Titel</Label><Input className="h-8 text-xs" value={form.kilde_titel} onChange={e => setForm(f => ({ ...f, kilde_titel: e.target.value }))} /></div>
+                    </div>
+                    <div className="space-y-1"><Label className="text-xs">Semantisk beskrivelse</Label><Textarea className="text-xs min-h-[80px]" value={form.tekst} onChange={e => setForm(f => ({ ...f, tekst: e.target.value }))} /></div>
+                    <div className="space-y-1"><Label className="text-xs">DFKS-fortolkning <span className="text-muted-foreground">(valgfri)</span></Label><Textarea className="text-xs min-h-[80px]" value={form.dfks_fortolkning} onChange={e => setForm(f => ({ ...f, dfks_fortolkning: e.target.value }))} /></div>
+                </div>
+                <DialogFooter>
+                    <Button variant="outline" onClick={onClose} disabled={saving}>Annuller</Button>
+                    <Button onClick={save} disabled={saving || !form.kilde_id || !form.kilde_titel || !form.tekst}>
+                        {saving && <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" />}Gem og indeksér
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fane 2 — Noteringer  (samme mønster som overenskomster/page.tsx Section C)
+// ─────────────────────────────────────────────────────────────
+
+const PRIORITY_CONFIG: Record<string, { label: string; color: string; dot: string }> = {
+    altid:    { label: "Altid",    color: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800", dot: "bg-orange-500" },
+    baggrund: { label: "Baggrund", color: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-800",  dot: "bg-indigo-500" },
+}
+const PRIORITY_ORDER = ["altid", "baggrund"] as const
+
+function NoteringerTab() {
+    const [notes, setNotes] = useState<LegalNote[]>([])
+    const [loading, setLoading] = useState(true)
+    const [editingId, setEditingId] = useState<string | null>(null)
+
+    useEffect(() => {
+        fetch("/api/legal-notes").then(r => r.json())
+            .then(data => { setNotes(data ?? []); setLoading(false) })
+            .catch(() => setLoading(false))
+    }, [])
+
+    const apiPatch = async (id: string, updates: Record<string, unknown>) => {
+        const res = await fetch("/api/legal-notes", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ...updates }) })
+        if (!res.ok) throw new Error((await res.json()).error)
+        return res.json() as Promise<LegalNote>
+    }
+
+    const updateLocal = (id: string, patch: Partial<LegalNote>) =>
+        setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n))
+
+    const saveNote = async (note: LegalNote) => {
+        try {
+            await apiPatch(note.id, { title: note.title, body: note.body, priority: note.priority, gyldig_fra: note.gyldig_fra, gyldig_til: note.gyldig_til })
+            setEditingId(null)
+            toast.success("Notering gemt")
+        } catch (e: any) { toast.error(e.message) }
+    }
+
+    const addNote = async () => {
+        try {
+            const res = await fetch("/api/legal-notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "Ny notering", body: "", priority: "baggrund" }) })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const created: LegalNote = await res.json()
+            setNotes(prev => [created, ...prev])
+            setEditingId(created.id)
+        } catch (e: any) { toast.error(e.message) }
+    }
+
+    const deleteNote = async (id: string) => {
+        try {
+            const res = await fetch("/api/legal-notes", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })
+            if (!res.ok) throw new Error((await res.json()).error)
+            setNotes(prev => prev.filter(n => n.id !== id))
+            if (editingId === id) setEditingId(null)
+            toast.success("Notering slettet")
+        } catch (e: any) { toast.error(e.message) }
+    }
+
+    if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-start justify-between">
+                <p className="text-sm text-muted-foreground mt-1">
+                    Noteringer injiceres i alle kontraktanalyser. <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
+                </p>
+                <Button size="sm" variant="outline" onClick={addNote}>
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj notering
+                </Button>
+            </div>
+
+            <div className="space-y-3">
+                {notes.map(note => {
+                    const isEditing = editingId === note.id
+                    const pc = PRIORITY_CONFIG[note.priority] ?? PRIORITY_CONFIG.baggrund
+                    return (
+                        <div key={note.id} className="rounded-lg border">
+                            <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                    {isEditing ? (
+                                        <input
+                                            className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
+                                            value={note.title}
+                                            onChange={e => updateLocal(note.id, { title: e.target.value })}
+                                        />
+                                    ) : (
+                                        <span className="text-sm font-medium truncate">{note.title}</span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                        type="button"
+                                        title="Skift type"
+                                        onClick={async () => {
+                                            const idx = PRIORITY_ORDER.indexOf(note.priority as any)
+                                            const next = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
+                                            updateLocal(note.id, { priority: next })
+                                            await apiPatch(note.id, { priority: next }).catch(e => toast.error(e.message))
+                                        }}
+                                        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${pc.color}`}
+                                    >
+                                        <span className={`h-1.5 w-1.5 rounded-full ${pc.dot}`} />
+                                        {pc.label}
+                                    </button>
+                                    <span className="text-xs text-muted-foreground hidden sm:block">
+                                        {new Date(note.created_at).toLocaleDateString("da-DK")}
+                                    </span>
+                                    <Button
+                                        variant={isEditing ? "default" : "ghost"}
+                                        size="icon"
+                                        className="h-7 w-7"
+                                        title={isEditing ? "Gem" : "Rediger"}
+                                        onClick={() => isEditing ? saveNote(note) : setEditingId(note.id)}
+                                    >
+                                        {isEditing ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteNote(note.id)}>
+                                        <X className="h-3.5 w-3.5" />
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="px-4 py-3 space-y-3">
+                                {isEditing ? (
+                                    <>
+                                        <Textarea
+                                            value={note.body}
+                                            onChange={e => updateLocal(note.id, { body: e.target.value })}
+                                            rows={5}
+                                            className="text-sm font-mono"
+                                        />
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Gyldig fra</Label>
+                                                <Input type="date" className="h-7 text-xs" value={note.gyldig_fra ?? ""} onChange={e => updateLocal(note.id, { gyldig_fra: e.target.value || null })} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Gyldig til</Label>
+                                                <Input type="date" className="h-7 text-xs" value={note.gyldig_til ?? ""} onChange={e => updateLocal(note.id, { gyldig_til: e.target.value || null })} />
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{note.body}</p>
+                                )}
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+
+            {notes.length === 0 && (
+                <div className="rounded-lg border border-dashed px-4 py-6 text-center">
+                    <p className="text-sm text-muted-foreground">Ingen noteringer. Klik "Tilføj notering" for at oprette en.</p>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fane 3 — Lærte mønstre (samme mønster som overenskomster/page.tsx Section D)
+// ─────────────────────────────────────────────────────────────
+
+function LaerteMoenstreTab() {
+    const [patterns, setPatterns] = useState<LearnedPattern[]>([])
+    const [pending, setPending] = useState<PendingFeedback[]>([])
+    const [loading, setLoading] = useState(true)
+    const [editingId, setEditingId] = useState<string | null>(null)
+    const [approving, setApproving] = useState<string | null>(null)
+    const [approveForm, setApproveForm] = useState({ titel: "", regel: "", semantisk_beskrivelse: "" })
+    const [savingApprove, setSavingApprove] = useState(false)
+
+    useEffect(() => {
+        fetch("/api/learned-patterns").then(r => r.json()).then(data => {
+            setPatterns(data.patterns ?? [])
+            setPending(data.pending ?? [])
+            setLoading(false)
+        }).catch(() => setLoading(false))
+    }, [])
+
+    const grouped = useMemo(() => {
+        const map: Record<string, { items: PendingFeedback[]; korrektioner: string[] }> = {}
+        for (const f of pending) {
+            if (!map[f.fund_titel]) map[f.fund_titel] = { items: [], korrektioner: [] }
+            map[f.fund_titel].items.push(f)
+            if (f.jurist_korrektion && !map[f.fund_titel].korrektioner.includes(f.jurist_korrektion))
+                map[f.fund_titel].korrektioner.push(f.jurist_korrektion)
+        }
+        return Object.entries(map).sort((a, b) => b[1].items.length - a[1].items.length)
+    }, [pending])
+
+    const updateLocal = (id: string, patch: Partial<LearnedPattern>) =>
+        setPatterns(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
+
+    const savePattern = async (p: LearnedPattern) => {
+        try {
+            await fetch("/api/learned-patterns", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, titel: p.titel, regel: p.regel, semantisk_beskrivelse: p.semantisk_beskrivelse }) })
+            setEditingId(null)
+            toast.success("Regel gemt")
+        } catch (e: any) { toast.error(e.message) }
+    }
+
+    const addFromFeedback = async () => {
+        setSavingApprove(true)
+        try {
+            const items = pending.filter(p => p.fund_titel === approving)
+            const res = await fetch("/api/learned-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...approveForm, kilde_feedback_id: items[0]?.id ?? null }) })
+            const created: LearnedPattern = await res.json()
+            if (!res.ok) throw new Error((created as any).error)
+            setPatterns(prev => [created, ...prev])
+            setPending(prev => prev.filter(p => p.fund_titel !== approving))
+            setApproving(null)
+            toast.success("Regel gemt og indekseret")
+        } catch (e: any) { toast.error(e.message) }
+        finally { setSavingApprove(false) }
+    }
+
+    const addNew = async () => {
+        try {
+            const res = await fetch("/api/learned-patterns", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ titel: "Ny regel", regel: "", semantisk_beskrivelse: "" }) })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const created: LearnedPattern = await res.json()
+            setPatterns(prev => [created, ...prev])
+            setEditingId(created.id)
+        } catch (e: any) { toast.error(e.message) }
+    }
+
+    if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+
+    return (
+        <div className="space-y-6">
+            {/* Afventer godkendelse */}
+            {grouped.length > 0 && (
+                <div className="space-y-4">
+                    <div>
+                        <h3 className="text-sm font-semibold">Afventer godkendelse</h3>
+                        <p className="text-sm text-muted-foreground mt-0.5">Gentagne fejl fra juristers feedback — kan godkendes som permanente regler.</p>
+                    </div>
+                    <div className="space-y-3">
+                        {grouped.map(([titel, { items, korrektioner }]) => (
+                            <div key={titel} className="rounded-lg border">
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                        <span className="text-sm font-medium truncate">{titel}</span>
+                                        <span className="text-xs text-muted-foreground shrink-0">× {items.length}</span>
+                                    </div>
+                                    {approving !== titel && (
+                                        <Button size="sm" variant="outline" className="shrink-0 text-xs h-7"
+                                            onClick={() => { setApproving(titel); setApproveForm({ titel, semantisk_beskrivelse: titel, regel: korrektioner[0] ?? "" }) }}>
+                                            Godkend som regel
+                                        </Button>
+                                    )}
+                                </div>
+                                <div className="px-4 py-3 space-y-3">
+                                    {korrektioner.length > 0 && approving !== titel && (
+                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap italic">{korrektioner[0]}</p>
+                                    )}
+                                    {approving === titel && (
+                                        <div className="space-y-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Titel</Label>
+                                                <input className="w-full text-sm bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-1" value={approveForm.titel} onChange={e => setApproveForm(f => ({ ...f, titel: e.target.value }))} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Regel (injiceres i AI-prompten)</Label>
+                                                <Textarea value={approveForm.regel} onChange={e => setApproveForm(f => ({ ...f, regel: e.target.value }))} rows={4} className="text-sm font-mono" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Semantisk beskrivelse (til søgning)</Label>
+                                                <Textarea value={approveForm.semantisk_beskrivelse} onChange={e => setApproveForm(f => ({ ...f, semantisk_beskrivelse: e.target.value }))} rows={2} className="text-sm" />
+                                            </div>
+                                            <div className="flex gap-2 justify-end">
+                                                <Button variant="outline" size="sm" onClick={() => setApproving(null)} disabled={savingApprove}><X className="h-3.5 w-3.5" /></Button>
+                                                <Button size="sm" onClick={addFromFeedback} disabled={savingApprove || !approveForm.titel || !approveForm.regel}>
+                                                    {savingApprove ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Gem som regel"}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <Separator />
+                </div>
+            )}
+
+            {/* Aktive regler */}
+            <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                    <div>
+                        <h3 className="text-sm font-semibold">Lærte regler</h3>
+                        <p className="text-sm text-muted-foreground mt-0.5">Matches semantisk og injiceres kun i relevante analyser.</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={addNew}>
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj regel
+                    </Button>
+                </div>
+                <div className="space-y-3">
+                    {patterns.map(p => {
+                        const isEditing = editingId === p.id
+                        return (
+                            <div key={p.id} className={`rounded-lg border ${!p.aktiv ? "opacity-50" : ""}`}>
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                        {isEditing ? (
+                                            <input
+                                                className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
+                                                value={p.titel}
+                                                onChange={e => updateLocal(p.id, { titel: e.target.value })}
+                                            />
+                                        ) : (
+                                            <span className="text-sm font-medium truncate">{p.titel}</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-xs text-muted-foreground hidden sm:block">
+                                            {new Date(p.created_at).toLocaleDateString("da-DK")}
+                                        </span>
+                                        <Button
+                                            variant={isEditing ? "default" : "ghost"}
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            onClick={() => isEditing ? savePattern(p) : setEditingId(p.id)}
+                                        >
+                                            {isEditing ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                        </Button>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive"
+                                            onClick={async () => {
+                                                await fetch("/api/learned-patterns", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, aktiv: !p.aktiv }) })
+                                                updateLocal(p.id, { aktiv: !p.aktiv })
+                                            }}>
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="px-4 py-3 space-y-2">
+                                    {isEditing ? (
+                                        <>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Regel (injiceres i AI-prompten)</Label>
+                                                <Textarea value={p.regel} onChange={e => updateLocal(p.id, { regel: e.target.value })} rows={4} className="text-sm font-mono" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs text-muted-foreground">Semantisk beskrivelse (til søgning)</Label>
+                                                <Textarea value={p.semantisk_beskrivelse} onChange={e => updateLocal(p.id, { semantisk_beskrivelse: e.target.value })} rows={2} className="text-sm" />
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{p.regel || <span className="italic">Ingen regel skrevet endnu</span>}</p>
+                                    )}
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+                {patterns.length === 0 && (
+                    <div className="rounded-lg border border-dashed px-4 py-6 text-center">
+                        <p className="text-sm text-muted-foreground">Ingen lærte regler endnu. Klik "Tilføj regel" eller godkend feedback ovenfor.</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fane 4 — Kvalitet (inline fra kvalitet/page.tsx)
+// ─────────────────────────────────────────────────────────────
+
+const SVAERHEDSGRAD_CONFIG = {
+    kritisk:  { label: "Kritisk",  icon: AlertCircle,   color: "text-red-600",     bg: "bg-red-50 dark:bg-red-950/30"     },
+    advarsel: { label: "Advarsel", icon: AlertTriangle, color: "text-amber-600",   bg: "bg-amber-50 dark:bg-amber-950/30" },
+    positiv:  { label: "Positiv",  icon: CheckCircle2,  color: "text-emerald-600", bg: "bg-emerald-50 dark:bg-emerald-950/30" },
+    info:     { label: "Info",     icon: Info,          color: "text-blue-600",    bg: "bg-blue-50 dark:bg-blue-950/30"   },
+} as const
+
+function KvalitetTab() {
+    const [feedback, setFeedback] = useState<FeedbackRow[]>([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        createClient().from("analysis_feedback").select("*").order("created_at", { ascending: false })
+            .then(({ data }) => { setFeedback(data ?? []); setLoading(false) })
+    }, [])
+
+    const stats = useMemo(() => {
+        const total = feedback.length
+        const correct = feedback.filter(f => f.godkendt).length
+        const pct = total === 0 ? null : Math.round((correct / total) * 100)
+        const bySvaerhed: Record<string, { correct: number; total: number }> = {}
+        for (const f of feedback) {
+            const k = f.fund_svaerhedsgrad ?? "info"
+            if (!bySvaerhed[k]) bySvaerhed[k] = { correct: 0, total: 0 }
+            bySvaerhed[k].total++
+            if (f.godkendt) bySvaerhed[k].correct++
+        }
+        const incorrectMap: Record<string, number> = {}
+        for (const f of feedback.filter(f => !f.godkendt)) {
+            incorrectMap[f.fund_titel] = (incorrectMap[f.fund_titel] ?? 0) + 1
+        }
+        const topForkerte = Object.entries(incorrectMap).sort((a, b) => b[1] - a[1]).slice(0, 6)
+        return { total, correct, incorrect: total - correct, pct, bySvaerhed, topForkerte }
+    }, [feedback])
+
+    if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+
+    if (stats.total === 0) return (
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
+            <FlaskConical className="h-10 w-10 text-muted-foreground/30" />
+            <p className="text-sm font-medium">Ingen feedback endnu</p>
+            <p className="text-xs text-muted-foreground max-w-sm">Indsamles automatisk fra kontraktgennemgangen.</p>
+        </div>
+    )
+
+    return (
+        <div className="space-y-6">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {[
+                    { label: "Fund vurderet", value: stats.total },
+                    { label: "Samlet præcision", value: stats.pct === null ? "—" : `${stats.pct}%` },
+                    { label: "Korrekte", value: stats.correct },
+                    { label: "Forkerte", value: stats.incorrect },
+                ].map(s => (
+                    <div key={s.label} className="rounded-lg border p-4 space-y-1">
+                        <p className="text-xs text-muted-foreground">{s.label}</p>
+                        <p className="text-2xl font-bold tabular-nums">{s.value}</p>
+                    </div>
+                ))}
+            </div>
+            <div className="space-y-3">
+                {(["kritisk", "advarsel", "positiv", "info"] as const).map(k => {
+                    const cfg = SVAERHEDSGRAD_CONFIG[k]
+                    const d = stats.bySvaerhed[k] ?? { correct: 0, total: 0 }
+                    const pct = d.total === 0 ? null : Math.round((d.correct / d.total) * 100)
+                    const Icon = cfg.icon
+                    return (
+                        <div key={k} className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-1.5">
+                                    <Icon className={`h-3.5 w-3.5 ${cfg.color}`} />
+                                    <span className="text-sm font-medium">{cfg.label}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {pct !== null && (pct >= 80 ? <TrendingUp className="h-3.5 w-3.5 text-emerald-500" /> : pct >= 60 ? <Minus className="h-3.5 w-3.5 text-amber-500" /> : <TrendingDown className="h-3.5 w-3.5 text-red-500" />)}
+                                    <span className="text-sm tabular-nums">{pct === null ? "—" : `${pct}%`}</span>
+                                    <span className="text-xs text-muted-foreground">{d.correct}/{d.total}</span>
+                                </div>
+                            </div>
+                            <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                {pct !== null && <div className={`h-full rounded-full ${pct >= 80 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-red-500"}`} style={{ width: `${pct}%` }} />}
+                            </div>
+                        </div>
+                    )
+                })}
+            </div>
+            {stats.topForkerte.length > 0 && (
+                <div className="space-y-2">
+                    <p className="text-sm font-semibold">Hyppigst forkerte fund</p>
+                    <div className="rounded-lg border divide-y">
+                        {stats.topForkerte.map(([titel, count]) => (
+                            <div key={titel} className="flex items-center justify-between px-4 py-2.5">
+                                <span className="text-sm">{titel}</span>
+                                <Badge variant="outline" className="tabular-nums">{count}×</Badge>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
+// Hovedside
+// ─────────────────────────────────────────────────────────────
+
+export default function AiKontrolrumPage() {
+    return (
+        <div className="space-y-6 max-w-3xl">
+            <PageHeader
+                title="AI Videns-kontrolrum"
+                subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
+            />
+            <Tabs defaultValue="videnbase">
+                <TabsList className="grid grid-cols-4 w-full">
+                    <TabsTrigger value="videnbase" className="gap-1.5 text-xs">
+                        <BookOpen className="h-3.5 w-3.5" />Videnbase
+                    </TabsTrigger>
+                    <TabsTrigger value="noteringer" className="gap-1.5 text-xs">
+                        <ListChecks className="h-3.5 w-3.5" />Noteringer
+                    </TabsTrigger>
+                    <TabsTrigger value="moenstre" className="gap-1.5 text-xs">
+                        <Brain className="h-3.5 w-3.5" />Mønstre
+                    </TabsTrigger>
+                    <TabsTrigger value="kvalitet" className="gap-1.5 text-xs">
+                        <FlaskConical className="h-3.5 w-3.5" />Kvalitet
+                    </TabsTrigger>
+                </TabsList>
+                <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
+                <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
+                <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>
+                <TabsContent value="kvalitet" className="mt-4"><KvalitetTab /></TabsContent>
+            </Tabs>
+        </div>
+    )
+}

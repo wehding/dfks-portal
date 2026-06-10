@@ -1,0 +1,20 @@
+[
+  {
+    "id": "barsel-§6",
+    "kilde_titel": "Barselsloven § 6 — Ret til orlov og barselsrettigheder",
+    "semantisk_beskrivelse": "Lønmodtagere har ret til barselsorlov. Moderen har ret til 4 ugers barsel før forventet fødsel og 14 uger efter. Faren/medfaren har ret til 2 ugers orlov efter fødslen. Herefter har forældrene tilsammen ret til 32 ugers forældreorlof. Disse rettigheder gælder kun A-lønskontrakter.",
+    "raa_tekst": "En lønmodtager har ret til fravær fra arbejdet på grund af graviditet, fødsel og adoption. Moderen har ret til fravær i 4 uger inden for de seneste 4 uger før forventet fødselstidspunkt og 14 uger efter fødslen. Faren har ret til 2 uger inden for 14 uger efter barnets fødsel.",
+    "dfks_fortolkning": "For klippere på A-lønskontrakter gælder barselslovens fulde rettigheder. Producenten kan ikke kontraktmæssigt begrænse retten til barselsorlov. En leverandørkontrakt giver ikke automatisk ret til barselsorlov — her afhænger det af om klipperen er selvstændig eller reelt lønmodtager.",
+    "roede_flag": ["ingen barselsret", "kontrakt ophører ved graviditet", "ingen ret til orlov"],
+    "standard_formulering": null
+  },
+  {
+    "id": "barsel-§26",
+    "kilde_titel": "Barselsloven § 26 — Løn under barsel (overenskomstdækkede)",
+    "semantisk_beskrivelse": "Overenskomstdækkede lønmodtagere kan have ret til løn under barsel ifølge overenskomsten ud over de lovpligtige dagpenge. Under De4-overenskomsten har klippere ret til løn under barsel. Producenten er forpligtet til at betale forskellen mellem dagpenge og overenskomstlønnen.",
+    "raa_tekst": "Ret til løn under barsel kan følge af overenskomst. Arbejdsgiveren kan modregne eventuelle dagpenge fra det offentlige i lønnen under barsel. Lønnen under barsel kan ikke aftales til et lavere beløb end overenskomsten foreskriver.",
+    "dfks_fortolkning": "Under De4-fiktionsoverenskomsten har klippere typisk ret til løn under i hvert fald en del af barselsorloven. Producenten må ikke aftale ringere barselsvilkår end overenskomsten. En kontrakt der slet ikke nævner barselsvilkår for A-lønskontrakter under overenskomsten bør have en reference til overenskomstens barselsbestemmelser.",
+    "roede_flag": ["ingen løn under barsel", "kontrakt ophører ved barsel", "dagpenge er eneste ret under barsel"],
+    "standard_formulering": "Klipperen har ret til barselsorlov og løn under barsel i overensstemmelse med de til enhver tid gældende regler i De4-fiktionsoverenskomsten og barselsloven."
+  }
+]

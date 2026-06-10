@@ -1,0 +1,29 @@
+[
+  {
+    "id": "fl-§2",
+    "kilde_titel": "Funktionærloven § 2 — Opsigelsesvarsler ved A-lønskontrakter",
+    "semantisk_beskrivelse": "Minimumsvarsler for opsigelse af funktionærer afhænger af anciennitet. Første 5 måneder: 1 måneds varsel. Derefter stiger varslet med 1 måned per påbegyndt 2,5 år. Producenten kan ikke aftale kortere varsler end lovens minimumsvarsler i en A-lønskontrakt.",
+    "raa_tekst": "Funktionæren kan opsiges med følgende varsler: Inden for de første 5 måneder af ansættelsen: 1 måneds varsel. Fra og med 6. måneds ansættelse: 3 måneder. Anciennitetsbaserede varsler: efter 2 år og 9 måneder 4 måneder, efter 5 år og 8 måneder 5 måneder, efter 8 år og 7 måneder 6 måneder.",
+    "dfks_fortolkning": "En A-lønsklipperkkontrakt der giver producenten ret til at opsige med kortere varsel end funktionærlovens minimumsvarsler er ugyldig. Et varsel på '14 dage' i en A-lønskontrakt er typisk ugyldig. Prøvetidsreglerne (5 måneder) gælder dog — her er 1 måneds varsel tilladt.",
+    "roede_flag": ["opsigelse med øjeblikkelig virkning", "7 dages opsigelsesvarsel i A-lønskontrakt", "14 dages varsel i fast ansættelse", "ingen opsigelsesvarsel"],
+    "standard_formulering": "Aftalen kan opsiges i overensstemmelse med Funktionærlovens opsigelsesvarsler, dog minimum [X] måneder fra begge parter."
+  },
+  {
+    "id": "fl-§5",
+    "kilde_titel": "Funktionærloven § 5 — Opsigelse ved sygdom og § 5,2-klausul",
+    "semantisk_beskrivelse": "Funktionæren kan opsiges med forkortet varsel (1 måneds varsel til månedsskifte) hvis der er aftalt § 5,2-klausul og funktionæren har haft mere end 120 sygedage inden for 12 måneder. § 5,2-klausulen skal aftales udtrykkeligt — den gælder ikke automatisk.",
+    "raa_tekst": "Hvis det i ansættelseskontrakten er aftalt, at § 5, stk. 2 finder anvendelse, kan funktionæren opsiges med 1 måneds varsel til udgangen af en måned, når funktionæren inden for de seneste 12 måneder har oppebåret løn under sygdom i i alt 120 dage.",
+    "dfks_fortolkning": "Producenter der ønsker § 5,2-adgang skal have det eksplicit aftalt i kontrakten. En klausul om § 5,2 er acceptabel men bør afbalanceres af en sygdomsbestemmelse der sikrer klipperen løn under sygdom. Producenten skal dokumentere de 120 sygedage.",
+    "roede_flag": ["opsigelse ved første sygedag", "ingen løn under sygdom", "sygdom er opsigelsesgrund uden varsel"],
+    "standard_formulering": "Ved sygdom af mere end [X] dages varighed kan aftalen opsiges af begge parter med [X] ugers skriftligt varsel."
+  },
+  {
+    "id": "fl-§21",
+    "kilde_titel": "Funktionærloven § 21 — Konkurrenceklausuler",
+    "semantisk_beskrivelse": "Konkurrenceklausuler i ansættelseskontrakter er kun gyldige inden for bestemte grænser. Klausulen skal have et rimeligt formål, og funktionæren skal kompenseres særskilt. Konkurrenceklausuler der reelt forhindrer klipperen i at arbejde i filmbranchen er urimelige.",
+    "raa_tekst": "En aftale, hvorved en funktionær forpligter sig til efter ansættelsesforholdets ophør ikke at drive konkurrerende virksomhed, er kun gyldig, hvis arbejdsgiveren har en konkurrencemæssig interesse, der er beskyttelsesværdig, og hvis klausulen er tidsbegrænset.",
+    "dfks_fortolkning": "En konkurrenceklausul der forhindrer en filmklipper i at arbejde for andre producenter under eller efter produktionen er problematisk. Freelanceklippere arbejder typisk på mehrere projekter og en bred konkurrenceklausul er branchemæssigt urimelig. DFKS anbefaler at konkurrenceklausuler begrænses til producentens egne aktive projekter.",
+    "roede_flag": ["klipperen må ikke arbejde for andre producenter", "eksklusivitet i hele perioden", "konkurrenceklausul efter kontraktens udløb"],
+    "standard_formulering": "Klipperen er berettiget til at påtage sig andre opgaver i perioden, forudsat dette ikke er til direkte skade for nærværende produktion."
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/reindex",
+      "schedule": "0 3 * * 1"
+    }
+  ]
+}

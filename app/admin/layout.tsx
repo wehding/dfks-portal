@@ -24,6 +24,7 @@ import {
     Layers,
     UserCheck,
     FlaskConical,
+    BrainCircuit,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -51,6 +52,8 @@ const ALL_NAV_ITEMS = [
     { key: "validering",          href: "/admin/validering",          icon: CheckCircle, labelKey: "nav.validation"         },
     { key: "overenskomster",     href: "/admin/overenskomster",     icon: BookOpen,    labelKey: "nav.agreements"       },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
+    { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
+    { key: "videnbase",          href: "/admin/videnbase",          icon: BrainCircuit, labelKey: "nav.knowledgeBase"    },
     { key: "kvalitet",           href: "/admin/kvalitet",           icon: FlaskConical, labelKey: "nav.quality"          },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },

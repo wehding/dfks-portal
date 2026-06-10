@@ -1,0 +1,20 @@
+[
+  {
+    "id": "afl-§36",
+    "kilde_titel": "Aftaleloven § 36 — Urimelige kontraktvilkår",
+    "semantisk_beskrivelse": "En aftale kan tilsidesættes helt eller delvist hvis det vil være urimeligt eller i strid med god handelsskik at gøre den gældende. Faktorer: parternes styrkeforhold, forholdene ved aftalens indgåelse, aftalens indhold og efterfølgende omstændigheder. Freelanceklippere er typisk den svagere part over for en professionel producent.",
+    "raa_tekst": "En aftale kan ændres eller tilsidesættes helt eller delvis, hvis det vil være urimeligt eller i strid med redelig handlemåde at gøre den gældende. Det samme gælder andre retshandler. Ved afgørelsen tages hensyn til forholdene ved aftalens indgåelse, aftalens indhold og senere indtrufne omstændigheder.",
+    "dfks_fortolkning": "§ 36 kan bruges til at anfægte kontraktvilkår der er åbenbart urimelige — fx ubegrænset rettigheds-buy-out til en pris langt under markedsværdi, ensidigt opsigelsesret for producenten, eller skadesløsholdelsesklausuler der overvælter al risiko på klipperen. Klausuler der er markant ringere end overenskomstens minimumsstandarder kan anfægtes.",
+    "roede_flag": ["klipperen fraskriver sig alle rettigheder til ingen betaling", "producenten kan opsige uden varsel og uden begrundelse", "klipperen hæfter ubegrænset for producentens tab"],
+    "standard_formulering": null
+  },
+  {
+    "id": "afl-§38a",
+    "kilde_titel": "Aftaleloven § 38a — Aftaler om fremtidige ophavsrettigheder",
+    "semantisk_beskrivelse": "Aftaler om overdragelse af fremtidige ophavsrettigheder er kun gyldige i det omfang de er rimeligt afgrænset med hensyn til tid, sted og omfang. En aftale der overdragere alle fremtidige rettigheder for al tid er ikke gyldig.",
+    "raa_tekst": "Aftaler om overdragelse af ophavsret til endnu ikke frembragte værker er kun bindende for ophavsmanden i det omfang aftalen er tilstrækkelig bestemt med hensyn til art og omfang af den overdragede ret og de vederlag, der skal betales for den.",
+    "dfks_fortolkning": "En kontraktklausul der overdragere rettigheder til 'alle fremtidige film klipperen medvirker i' eller 'alle fremtidige opfindne udnyttelsesformer' er ikke gyldig. Rettigheder skal knyttes til et specifikt projekt og specificerede udnyttelsesformer for at overdragelsen er bindende.",
+    "roede_flag": ["alle fremtidige projekter", "alle fremtidige udnyttelsesformer uanset opfindelse", "klipperen må ikke arbejde for andre producenter"],
+    "standard_formulering": null
+  }
+]

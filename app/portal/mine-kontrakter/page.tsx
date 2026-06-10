@@ -84,6 +84,8 @@ type DbContract = {
     created_at: string
     employer_name: string | null
     work_title: string | null
+    pdf_url: string | null
+    rights: { svod: boolean; copydan: boolean; royalty: boolean; royaltyPercent?: number } | null
 }
 
 const STATUS_MAP: Record<string, { label: string; variant: "default" | "secondary" | "outline" }> = {
@@ -120,9 +122,32 @@ export default function MineKontrakterPage() {
             // Hent kontrakter
             const { data } = await supabase
                 .from("contracts")
-                .select("id, working_title, type, overenskomst, status, contract_date, created_at, employers(name), works(title)")
+                .select("id, working_title, type, overenskomst, status, contract_date, created_at, pdf_url, employers(name), works(title)")
                 .eq("rights_holder_id", rh.id)
                 .order("created_at", { ascending: false })
+
+            const contractIds = (data ?? []).map((c: any) => c.id)
+
+            // Hent rettighedsdata fra validering
+            const { data: valRows } = contractIds.length > 0
+                ? await supabase
+                    .from("contract_validations")
+                    .select("contract_id, extracted_data")
+                    .in("contract_id", contractIds)
+                : { data: [] }
+
+            const rightsMap: Record<string, DbContract["rights"]> = {}
+            for (const v of valRows ?? []) {
+                const d = v.extracted_data
+                if (d && rightsMap[v.contract_id] === undefined) {
+                    rightsMap[v.contract_id] = {
+                        svod: !!d.svod,
+                        copydan: !!d.copydan,
+                        royalty: !!d.royalty,
+                        royaltyPercent: d.royaltyPercent ?? undefined,
+                    }
+                }
+            }
 
             setMyContracts((data ?? []).map((c: any) => ({
                 id: c.id,
@@ -134,6 +159,8 @@ export default function MineKontrakterPage() {
                 created_at: c.created_at,
                 employer_name: c.employers?.name ?? null,
                 work_title: c.works?.title ?? null,
+                pdf_url: c.pdf_url ?? null,
+                rights: rightsMap[c.id] ?? null,
             })))
             setLoadingContracts(false)
         }
@@ -158,7 +185,8 @@ export default function MineKontrakterPage() {
 
     // Contract detail preview
     const [previewContractId, setPreviewContractId] = useState<string | null>(null)
-    const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
+    const [viewPdfUrl, setViewPdfUrl] = useState<string | null>(null)
+    const [viewValidation, setViewValidation] = useState<any>(null)
 
     // Work matching
     const [matchedWork, setMatchedWork] = useState<any>(null)
@@ -256,12 +284,26 @@ export default function MineKontrakterPage() {
         return () => { cancelled = true }
     }, [file]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const handleLocalPdf = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0]
-        if (file) setLocalPdfUrl(URL.createObjectURL(file))
-    }
-
     const previewContract = myContracts.find((c) => c.id === previewContractId)
+
+    const openContract = async (c: DbContract) => {
+        setPreviewContractId(c.id)
+        setViewPdfUrl(null)
+        setViewValidation(null)
+        const supabase = createClient()
+        if (c.pdf_url) {
+            const { data } = await supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 3600)
+            if (data?.signedUrl) setViewPdfUrl(data.signedUrl)
+        }
+        const { data: val } = await supabase
+            .from("contract_validations")
+            .select("extracted_data")
+            .eq("contract_id", c.id)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single()
+        if (val?.extracted_data) setViewValidation(val.extracted_data)
+    }
 
     return (
         <div className="space-y-6">
@@ -299,7 +341,7 @@ export default function MineKontrakterPage() {
                             <TableRow>
                                 <TableHead>Produktion</TableHead>
                                 <TableHead>Producent</TableHead>
-                                <TableHead>Type</TableHead>
+                                <TableHead>Rettigheder</TableHead>
                                 <TableHead>Dato</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="w-[50px]" />
@@ -314,8 +356,22 @@ export default function MineKontrakterPage() {
                                     <TableRow key={c.id}>
                                         <TableCell className="font-medium">{displayTitle}</TableCell>
                                         <TableCell className="text-sm text-muted-foreground">{c.employer_name ?? "—"}</TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {c.type === "a-løn" ? "A-løn" : "Leverandør"}
+                                        <TableCell>
+                                            {c.rights ? (
+                                                <div className="flex flex-wrap gap-1">
+                                                    <Badge variant={c.rights.svod ? "default" : "outline"} className="font-normal text-[11px] px-1.5 py-0">
+                                                        SVOD {c.rights.svod ? "✓" : "✗"}
+                                                    </Badge>
+                                                    <Badge variant={c.rights.copydan ? "default" : "outline"} className="font-normal text-[11px] px-1.5 py-0">
+                                                        Copydan {c.rights.copydan ? "✓" : "✗"}
+                                                    </Badge>
+                                                    <Badge variant={c.rights.royalty ? "default" : "outline"} className="font-normal text-[11px] px-1.5 py-0">
+                                                        Royalty {c.rights.royalty ? `${c.rights.royaltyPercent ?? ""}%` : "✗"}
+                                                    </Badge>
+                                                </div>
+                                            ) : (
+                                                <span className="text-xs text-muted-foreground">—</span>
+                                            )}
                                         </TableCell>
                                         <TableCell className="text-sm text-muted-foreground tabular-nums">
                                             {new Date(displayDate).toLocaleDateString("da-DK")}
@@ -330,7 +386,7 @@ export default function MineKontrakterPage() {
                                                 variant="ghost"
                                                 size="icon"
                                                 className="h-7 w-7"
-                                                onClick={() => setPreviewContractId(c.id)}
+                                                onClick={() => openContract(c)}
                                             >
                                                 <Eye className="h-3.5 w-3.5" />
                                             </Button>
@@ -775,6 +831,8 @@ export default function MineKontrakterPage() {
                                                     created_at: saved.created_at,
                                                     employer_name: null,
                                                     work_title: null,
+                                                    pdf_url: saved.pdf_url ?? null,
+                                                    rights: null,
                                                 }, ...prev])
                                             }
 
@@ -828,178 +886,167 @@ export default function MineKontrakterPage() {
                 open={!!previewContractId}
                 onOpenChange={() => {
                     setPreviewContractId(null)
-                    setLocalPdfUrl(null)
+                    setViewPdfUrl(null)
+                    setViewValidation(null)
                 }}
             >
                 <DialogContent className="h-[90vh] flex flex-col" style={{ maxWidth: "92vw", width: "92vw" }}>
                     <DialogHeader>
-                        <DialogTitle>
-                            {previewContract?.working_title}
+                        <DialogTitle className="flex items-center gap-2">
+                            {previewContract?.work_title ?? previewContract?.working_title ?? "Kontrakt"}
                             <Badge
-                                variant={statusVariant[previewContract?.status || "pending"]}
-                                className="ml-3 font-normal"
+                                variant={STATUS_MAP[previewContract?.status ?? "kladde"]?.variant ?? "outline"}
+                                className="ml-1 font-normal text-xs"
                             >
-                                {previewContract
-                                    ? t(statusLabels[previewContract.status] as any)
-                                    : ""}
+                                {STATUS_MAP[previewContract?.status ?? "kladde"]?.label ?? previewContract?.status}
                             </Badge>
                         </DialogTitle>
                     </DialogHeader>
-                    {(() => {
-                        const data = null as any
-                        const isApproved = previewContract?.status === "approved"
+                    <div className={`flex-1 grid gap-4 overflow-hidden ${viewValidation ? "lg:grid-cols-[3fr_2fr]" : ""}`}>
+                        {/* PDF */}
+                        <div className="rounded-lg border overflow-hidden flex flex-col">
+                            {viewPdfUrl ? (
+                                <PdfViewer url={viewPdfUrl} />
+                            ) : previewContract?.pdf_url ? (
+                                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />Henter PDF...
+                                </div>
+                            ) : (
+                                <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                                    Ingen PDF tilknyttet
+                                </div>
+                            )}
+                        </div>
 
-                        return (
-                            <div
-                                className={`flex-1 grid gap-4 overflow-hidden ${isApproved && data ? "lg:grid-cols-[3fr_2fr]" : ""
-                                    }`}
-                            >
-                                {/* PDF */}
-                                <div className="rounded-lg border overflow-hidden flex flex-col">
-                                    {localPdfUrl ? (
-                                        <PdfViewer url={localPdfUrl} />
-                                    ) : (
-                                        <div className="flex flex-1 flex-col items-center justify-center bg-muted/30">
-                                            <p className="text-sm text-muted-foreground mb-3">
-                                                Vælg en PDF for at teste preview
+                        {/* Validation data (when available) */}
+                        {viewValidation && (
+                            <div className="rounded-lg border overflow-auto">
+                                <div className="flex items-center gap-2 border-b px-4 py-3 sticky top-0 bg-background z-10">
+                                    <span className="text-sm font-medium">Kontraktdata</span>
+                                </div>
+                                <div className="p-4 space-y-4 text-sm">
+                                    {viewValidation.salary != null && (
+                                        <div>
+                                            <p className="text-xs text-muted-foreground mb-1">Løn</p>
+                                            <p className="font-medium tabular-nums">
+                                                {viewValidation.salary?.toLocaleString("da-DK")} kr.
+                                                {viewValidation.salaryUnit && ` / ${viewValidation.salaryUnit === "monthly" ? "md." : viewValidation.salaryUnit}`}
                                             </p>
-                                            <label className="cursor-pointer">
-                                                <input
-                                                    type="file"
-                                                    accept=".pdf"
-                                                    className="hidden"
-                                                    onChange={handleLocalPdf}
-                                                />
-                                                <span className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm hover:bg-muted transition-colors">
-                                                    <Upload className="h-4 w-4" />
-                                                    Vælg PDF
-                                                </span>
-                                            </label>
                                         </div>
                                     )}
-                                </div>
-
-                                {/* Extracted Data (approved only) */}
-                                {isApproved && data && (
-                                    <div className="rounded-lg border overflow-auto">
-                                        <div className="flex items-center gap-2 border-b px-4 py-3 sticky top-0 bg-background z-10">
-                                            <span className="text-sm font-medium">
-                                                {t("admin.validation.extracted")}
-                                            </span>
-                                            <Badge
-                                                variant="default"
-                                                className="ml-auto text-[10px] font-normal"
-                                            >
-                                                {t("admin.contracts.approved")}
+                                    {viewValidation.workingWeeks != null && (
+                                        <div>
+                                            <p className="text-xs text-muted-foreground mb-1">Arbejdsuger</p>
+                                            <p className="tabular-nums">{viewValidation.workingWeeks} uger</p>
+                                        </div>
+                                    )}
+                                    {(viewValidation.startDate || viewValidation.endDate) && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">Startdato</p>
+                                                <p>{viewValidation.startDate ?? "—"}</p>
+                                            </div>
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">Slutdato</p>
+                                                <p>{viewValidation.endDate ?? "—"}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {(viewValidation.pensionPercent != null || viewValidation.pensionSupplement != null) && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {viewValidation.pensionPercent != null && (
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">Pensionsprocent</p>
+                                                    <p className="tabular-nums">{viewValidation.pensionPercent} %</p>
+                                                </div>
+                                            )}
+                                            {viewValidation.pensionSupplement != null && (
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">Pensionstillæg</p>
+                                                    <p className="tabular-nums">{viewValidation.pensionSupplement?.toLocaleString("da-DK")} kr.</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    {viewValidation.personalSupplement != null && (
+                                        <div>
+                                            <p className="text-xs text-muted-foreground mb-1">Personligt tillæg</p>
+                                            <p className="tabular-nums">{viewValidation.personalSupplement?.toLocaleString("da-DK")} kr.</p>
+                                        </div>
+                                    )}
+                                    {viewValidation.otherSupplements && (
+                                        <div>
+                                            <p className="text-xs text-muted-foreground mb-1">Andre tillæg</p>
+                                            <p>{viewValidation.otherSupplements}</p>
+                                        </div>
+                                    )}
+                                    {(viewValidation.holidayPayRate != null || viewValidation.betaRate != null) && (
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {viewValidation.holidayPayRate != null && (
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">Feriegodtgørelse</p>
+                                                    <p className="tabular-nums">{viewValidation.holidayPayRate} %</p>
+                                                </div>
+                                            )}
+                                            {viewValidation.betaRate != null && (
+                                                <div>
+                                                    <p className="text-xs text-muted-foreground mb-1">Beta-sats</p>
+                                                    <p className="tabular-nums">{viewValidation.betaRate} %</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    <Separator />
+                                    <div>
+                                        <p className="text-xs text-muted-foreground mb-2">Rettigheder</p>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            <Badge variant={viewValidation.svod ? "default" : "outline"} className="font-normal">
+                                                SVOD {viewValidation.svod ? "✓" : "✗"}
                                             </Badge>
-                                        </div>
-                                        <div className="p-4 space-y-4 text-sm">
-                                            <div>
-                                                <p className="text-xs text-muted-foreground mb-1">
-                                                    {t("admin.validation.salary")}
-                                                </p>
-                                                <p className="font-medium tabular-nums">
-                                                    {data.salary?.toLocaleString("da-DK")} {t("common.kr")}{" "}
-                                                    /{" "}
-                                                    {t(
-                                                        `admin.validation.${data.salaryUnit || "monthly"}` as any
-                                                    )}
-                                                </p>
-                                            </div>
-                                            <Separator />
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div>
-                                                    <p className="text-xs text-muted-foreground mb-1">
-                                                        {t("admin.validation.startDate")}
-                                                    </p>
-                                                    <p>{data.startDate}</p>
-                                                </div>
-                                                <div>
-                                                    <p className="text-xs text-muted-foreground mb-1">
-                                                        {t("admin.validation.endDate")}
-                                                    </p>
-                                                    <p>{data.endDate}</p>
-                                                </div>
-                                            </div>
-                                            {data.pensionSupplement && (
-                                                <>
-                                                    <Separator />
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground mb-1">
-                                                            {t("admin.validation.pension")}
-                                                        </p>
-                                                        <p className="tabular-nums">
-                                                            {data.pensionSupplement?.toLocaleString("da-DK")}{" "}
-                                                            {t("common.kr")}
-                                                        </p>
-                                                    </div>
-                                                </>
-                                            )}
-                                            <Separator />
-                                            <div>
-                                                <p className="text-xs text-muted-foreground mb-2">
-                                                    {t("admin.validation.rights")}
-                                                </p>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                    <Badge
-                                                        variant={data.svod ? "default" : "outline"}
-                                                        className="font-normal"
-                                                    >
-                                                        SVOD {data.svod ? "✓" : "✗"}
-                                                    </Badge>
-                                                    <Badge
-                                                        variant={data.copydan ? "default" : "outline"}
-                                                        className="font-normal"
-                                                    >
-                                                        Copydan {data.copydan ? "✓" : "✗"}
-                                                    </Badge>
-                                                    <Badge
-                                                        variant={data.royalty ? "default" : "outline"}
-                                                        className="font-normal"
-                                                    >
-                                                        Royalty{" "}
-                                                        {data.royalty ? `${data.royaltyPercent}%` : "✗"}
-                                                    </Badge>
-                                                </div>
-                                            </div>
-                                            {data.distribution && data.distribution.length > 0 && (
-                                                <>
-                                                    <Separator />
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground mb-1">
-                                                            {t("admin.validation.distribution")}
-                                                        </p>
-                                                        <p>{data.distribution.join(", ")}</p>
-                                                    </div>
-                                                </>
-                                            )}
-                                            {data.collectiveAgreement && (
-                                                <>
-                                                    <Separator />
-                                                    <div>
-                                                        <p className="text-xs text-muted-foreground mb-1">
-                                                            {t("admin.validation.agreement")}
-                                                        </p>
-                                                        <p>{data.collectiveAgreementName}</p>
-                                                    </div>
-                                                </>
+                                            <Badge variant={viewValidation.copydan ? "default" : "outline"} className="font-normal">
+                                                Copydan {viewValidation.copydan ? "✓" : "✗"}
+                                            </Badge>
+                                            <Badge variant={viewValidation.royalty ? "default" : "outline"} className="font-normal">
+                                                Royalty {viewValidation.royalty ? `${viewValidation.royaltyPercent}%` : "✗"}
+                                            </Badge>
+                                            {viewValidation.aiDataMiningClause != null && (
+                                                <Badge variant={viewValidation.aiDataMiningClause ? "default" : "outline"} className="font-normal">
+                                                    AI-klausul {viewValidation.aiDataMiningClause ? "✓" : "✗"}
+                                                </Badge>
                                             )}
                                         </div>
                                     </div>
-                                )}
-
-                                {/* Status message for non-approved */}
-                                {!isApproved && (
-                                    <div className="hidden lg:flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-8">
-                                        <Clock className="h-8 w-8 text-muted-foreground/40" />
-                                        <p className="mt-3 text-sm text-muted-foreground text-center">
-                                            Kontraktdata vises når din kontrakt er godkendt af administrationen.
-                                        </p>
-                                    </div>
-                                )}
+                                    {viewValidation.collectiveAgreement && viewValidation.collectiveAgreementName && (
+                                        <>
+                                            <Separator />
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">Overenskomst</p>
+                                                <p>{viewValidation.collectiveAgreementName}</p>
+                                            </div>
+                                        </>
+                                    )}
+                                    {viewValidation.distribution && viewValidation.distribution.length > 0 && (
+                                        <>
+                                            <Separator />
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">Distribution</p>
+                                                <p>{Array.isArray(viewValidation.distribution) ? viewValidation.distribution.join(", ") : viewValidation.distribution}</p>
+                                            </div>
+                                        </>
+                                    )}
+                                    {viewValidation.specialNotes && (
+                                        <>
+                                            <Separator />
+                                            <div>
+                                                <p className="text-xs text-muted-foreground mb-1">Noter</p>
+                                                <p className="text-muted-foreground">{viewValidation.specialNotes}</p>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </div>
-                        )
-                    })()}
+                        )}
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

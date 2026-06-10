@@ -1,0 +1,74 @@
+[
+  {
+    "id": "orl-§1",
+    "kilde_titel": "Ophavsretsloven § 1 — Filmklipperens ophavsret",
+    "semantisk_beskrivelse": "Filmklippere er ophavsretshavere til filmværker de medvirker til at skabe. Ophavsret opstår automatisk ved skabelsen og kræver ingen registrering. En filmklippers kreative bidrag til klipning, rytme og fortælling er ophavsretligt beskyttet.",
+    "raa_tekst": "Den, der frembringer et litterært eller kunstnerisk værk, har ophavsret til værket, hvad enten dette fremtræder som en skønlitterær eller faglitterær fremstilling, som musikværk, sceneværk, filmværk, fotografisk værk eller et andet sådant værk.",
+    "dfks_fortolkning": "En filmklipper er ophavsmand til filmværket og har de rettigheder der følger heraf — herunder ret til vederlag ved enhver form for udnyttelse, medmindre andet udtrykkeligt er aftalt. Producenten kan ikke påstå at klipperens bidrag ikke er ophavsretligt beskyttet.",
+    "roede_flag": ["ingen ophavsret til klipperens arbejde", "buy-out af alle rettigheder", "overdragelse af samtlige rettigheder for alle tider"],
+    "standard_formulering": null
+  },
+  {
+    "id": "orl-§2",
+    "kilde_titel": "Ophavsretsloven § 2 — Eneret til eksemplarfremstilling og tilgængeliggørelse",
+    "semantisk_beskrivelse": "Ophavsmanden har eneret til at råde over sit værk ved at fremstille eksemplarer og gøre det tilgængeligt for almenheden. Streaming, TV-transmission, download og alle digitale distributionsformer kræver ophavsmandets samtykke eller eksplicit aftale.",
+    "raa_tekst": "Ophavsretten indebærer, med de i denne lov fastsatte indskrænkninger, eneret til at råde over værket ved at fremstille eksemplarer af det og ved at gøre det tilgængeligt for almenheden i oprindelig eller ændret skikkelse, i oversættelse, i bearbejdning til andet kunstnerisk udtryksform eller i anden omarbejdelse.",
+    "dfks_fortolkning": "Enhver udnyttelse af filmklipperens arbejde — herunder streaming, VOD, SVOD, TV-transmission, biografvisning og salg — kræver samtykke. Kontrakten skal eksplicit angive hvilke udnyttelsesformer der overdrages. Formuleringer som 'alle kendte og fremtidige udnyttelsesformer' er problematiske fordi de overdimensionerede rettigheder man ikke kan overskue konsekvenserne af.",
+    "roede_flag": ["alle kendte og fremtidige udnyttelsesformer", "ubegrænset ret til enhver udnyttelse", "fremtidige ukendte platforme"],
+    "standard_formulering": "Producenten erhverver ret til [specificerede udnyttelsesformer] i [tidsperiode]."
+  },
+  {
+    "id": "orl-§3",
+    "kilde_titel": "Ophavsretsloven § 3 — Ideelle rettigheder og kreditering",
+    "semantisk_beskrivelse": "Ophavsmanden har ret til at blive navngivet og til at værket ikke ændres på en måde der krænker dennes litterære eller kunstneriske anseelse. Disse ideelle rettigheder kan ikke fuldstændigt frafaldes ved aftale. Kreditering som klipper er en ophavsretlig rettighed.",
+    "raa_tekst": "Ophavsmanden har krav på at blive navngivet i overensstemmelse med, hvad god skik kræver, på eksemplarer af værket og, når det gøres tilgængeligt for almenheden. Ophavsmanden kan ikke fuldstændigt fraskrive sig disse rettigheder.",
+    "dfks_fortolkning": "Klipperen har ret til at krediteres med sit navn på en måde der svarer til vedkommendes reelle bidrag. En kreditering som 'Klippeassistent' på et arbejde udført som selvstændig klipper er en krænkelse af de ideelle rettigheder. Producenten kan ikke kontraktmæssigt fjerne klipperens kreditering.",
+    "roede_flag": ["ingen kreditering", "producenten bestemmer kreditering", "kreditering kan udelades", "klipper krediteres som assistent"],
+    "standard_formulering": "Filmklipperen krediteres som 'Klipper' eller 'Film Editor' i filmen og på alle markedsføringsmaterialer."
+  },
+  {
+    "id": "orl-§11b",
+    "kilde_titel": "Ophavsretsloven § 11b — Tekst- og datamining (TDM/AI)",
+    "semantisk_beskrivelse": "Ophavsmanden kan forbeholde sig retten til at nægte tekst- og datamining (TDM) af sit værk til kommercielle AI-formål. Et sådant forbehold skal udtrykkes maskinlæsbart. Producenter kan ikke kræve TDM-rettigheder uden særskilt aftale med ophavsmanden.",
+    "raa_tekst": "Fremstilling af eksemplarer af lovligt tilgængelige værker og andre frembringelser med henblik på tekst- og datamining er tilladt, medmindre rettighedshaveren har taget skridt til at forbeholde sig denne ret på en hensigtsmæssig måde, f.eks. ved brug af maskinlæsbare midler.",
+    "dfks_fortolkning": "En kontrakt der giver producenten ret til TDM/AI-udnyttelse af klipperens bidrag uden særskilt aftale er kritisk. DFKS anbefaler en eksplicit klausul der kræver samtykke fra både producent og klipperom TDM-udnyttelse. Hvis kontrakten er tavs om TDM er det en advarsel — teknologien udvikler sig og tavsheden er en risiko.",
+    "roede_flag": ["producenten har ret til AI-træning", "TDM er tilladt uden samtykke", "alle digitale rettigheder inkl. AI", "machine learning rettigheder"],
+    "standard_formulering": "Retten til at udnytte indholdet med henblik på tekst- og datamining, jf. ophavsretslovens § 11b og DSM-direktivets artikel 4, kræver såvel Producentens som Filmklipperens samtykke."
+  },
+  {
+    "id": "orl-§53",
+    "kilde_titel": "Ophavsretsloven § 53 — Overdragelse af ophavsret til filmværker",
+    "semantisk_beskrivelse": "Regler for overdragelse af filmklippers ophavsret til producent. Overdragelse kan kun ske skriftligt og for de specificerede udnyttelsesformer. Uklare formuleringer fortolkes til fordel for ophavsmanden. Fremtidige ukendte udnyttelsesformer overdrages ikke automatisk.",
+    "raa_tekst": "Er ophavsret overdraget, er erhververen ikke berettiget til at ændre værket og kan ikke overdrage sin ret videre, medmindre sådant er aftalt eller er en forudsætning for det aftalte. Har ophavsmanden overdraget retten til at gøre et litterært værk tilgængeligt for almenheden, medtages derved ikke retten til at offentliggøre det i anden form.",
+    "dfks_fortolkning": "Overdrages 'alle rettigheder' overdrages ikke automatisk fremtidige ukendte udnyttelsesformer — de skal specificeres. En kontrakt der overdragere 'alle rettigheder' inkl. streaming skal specificere at streaming-vederlaget aftales via Create Denmark. Producenten kan ikke videresælge filmklipperens rettigheder uden samtykke.",
+    "roede_flag": ["alle rettigheder overdrages fuldstændigt", "producenten kan sælge rettigheder videre", "ingen begrænsning på videreoverdragelse"],
+    "standard_formulering": "Leverandøren overdrager til Producenten den eksklusive ret til de i denne aftale specificerede udnyttelsesformer. Streaming-rettigheder aftales separat via Create Denmark."
+  },
+  {
+    "id": "orl-§55",
+    "kilde_titel": "Ophavsretsloven § 55 — Ret til passende vederlag ved streaming",
+    "semantisk_beskrivelse": "Ophavsmænd har ret til passende og forholdsmæssig betaling for udnyttelse af deres rettigheder — herunder streaming. Denne ret kan ikke frafaldes. Create Denmark administrerer streaming-vederlag for filmklippere og andre ophavsmænd.",
+    "raa_tekst": "Ophavsmænd og udøvende kunstnere, der har indgået licens- eller overdragelsesaftaler, har ret til passende og forholdsmæssig betaling for udnyttelse af rettigheder i forbindelse med audiovisuelle tjenester.",
+    "dfks_fortolkning": "Streaming-vederlag er en ikke-fravigelig ret for klipperen. Producenten kan ikke kontraktmæssigt fritage sig fra at sikre klipperens streaming-vederlag. Vilkår herfor aftales samlet via Create Denmark — producenten er forpligtet til at anerkende dette.",
+    "roede_flag": ["ingen streaming-vederlag", "buy-out dækker streaming", "streaming-rettigheder overdraget fuldt ud"],
+    "standard_formulering": "Filmklipperen har desuagtet aftalens øvrige vilkår ret til passende og forholdsmæssig betaling for udnyttelse af sine rettigheder ifm. den færdige produktion, jf. Ophavslovens § 55 (fx streaming og salg til tredjemand). Vilkår herfor aftales samlet via Create Denmark."
+  },
+  {
+    "id": "orl-§65",
+    "kilde_titel": "Ophavsretsloven § 65 — Filmværkets ophavsmænd",
+    "semantisk_beskrivelse": "Filmværkets ophavsmænd er de personer der har skabt værket — herunder instruktør, manuskriptforfatter og filmklipper. Alle har ophavsret til filmen. Producenten har en særskilt ret der ikke udsletter de individuelle ophavsmænds rettigheder.",
+    "raa_tekst": "Ophavsmændene til et filmværk er de fysiske personer, der har skabt filmværket. Disse ophavsmænd har ophavsret til filmværket. Producenten har særlige rettigheder til filmværket, men disse rettigheder udtømmer ikke de individuelle ophavsmænds rettigheder.",
+    "dfks_fortolkning": "Filmklipperen er medophavsmand til filmen på linje med instruktøren. En producent kan ikke påstå at klipperens bidrag er et 'tjenestemandsarbejde' der tilhører producenten automatisk. Klipperens ophavsret skal beskyttes eksplicit i kontrakten.",
+    "roede_flag": ["klipperens arbejde er producentens ejendom", "ingen individuel ophavsret for ansatte", "work for hire"],
+    "standard_formulering": null
+  },
+  {
+    "id": "orl-§66",
+    "kilde_titel": "Ophavsretsloven § 66 — Producentens rettigheder til filmværket",
+    "semantisk_beskrivelse": "Producenten tillægges visse rettigheder til at råde over filmværket kommercielt, men dette sker ikke på bekostning af de individuelle ophavsmænds rettigheder. Producenten kan ikke udnytte filmværket på måder der ikke er aftalt med ophavsmændene.",
+    "raa_tekst": "Producenten af et filmværk har ret til at råde over filmværket på de vilkår der er aftalt med ophavsmændene. Producenten må ikke foretage ændringer i filmværket der krænker ophavsmændenes ideelle rettigheder.",
+    "dfks_fortolkning": "Producenten har brug for eksplicitte aftaler med klipperen om enhver udnyttelsesform. En generel 'alle rettigheder'-klausul er ikke nok — producenten skal anerkende klipperens rettigheder til streaming-vederlag via Create Denmark og Copydan-vederlag.",
+    "roede_flag": ["producenten ejer alle rettigheder til filmen", "producenten kan ændre klipningen uden samtykke"],
+    "standard_formulering": null
+  }
+]
