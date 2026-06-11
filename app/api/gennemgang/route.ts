@@ -69,6 +69,9 @@ type Klassifikation = {
     aftalt_loen: number | null
     loen_enhed: "kr/uge" | "kr/dag" | null
     producent_navn: string
+    kontraktsprog: "da" | "en" | "other"
+    loen_type: "ugeloeen" | "dagsloen" | "fast_total" | "ukendt"
+    loen_valuta: "DKK" | "USD" | "EUR" | "GBP" | "other"
 }
 
 // ── Trin 1: Klassificér kontrakten ──────────────────────────
@@ -104,26 +107,33 @@ Returnér JSON med disse felter:
   "membres_efternavn": "efternavn",
   "aftalt_loen": tal (kun nummeret, fx 17500) eller null,
   "loen_enhed": "kr/uge" ELLER "kr/dag" eller null,
-  "producent_navn": "navn på produktionsselskab"
+  "producent_navn": "navn på produktionsselskab",
+  "kontraktsprog": "da" ELLER "en" ELLER "other",
+  "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" ELLER "ukendt",
+  "loen_valuta": "DKK" ELLER "USD" ELLER "EUR" ELLER "GBP" ELLER "other"
 }`,
             }],
         }),
     })
 
+    const defaultKlassifikation: Klassifikation = {
+        kontrakttype: "hybrid",
+        er_overenskomst: false,
+        overenskomst_navn: null,
+        membres_fornavn: "",
+        membres_efternavn: "",
+        aftalt_loen: null,
+        loen_enhed: null,
+        producent_navn: "",
+        kontraktsprog: "da",
+        loen_type: "ukendt",
+        loen_valuta: "DKK",
+    }
+
     if (!response.ok) {
         const err = await response.text()
         console.warn("[gennemgang] Klassifikation fejlede:", err)
-        // Returner safe default — analyse fortsætter
-        return {
-            kontrakttype: "hybrid",
-            er_overenskomst: false,
-            overenskomst_navn: null,
-            membres_fornavn: "",
-            membres_efternavn: "",
-            aftalt_loen: null,
-            loen_enhed: null,
-            producent_navn: "",
-        }
+        return defaultKlassifikation
     }
 
     const data = await response.json()
@@ -132,16 +142,7 @@ Returnér JSON med disse felter:
     const last = raw.lastIndexOf("}")
     if (first === -1 || last === -1) {
         console.warn("[gennemgang] Klassifikation returnerede ingen JSON")
-        return {
-            kontrakttype: "hybrid",
-            er_overenskomst: false,
-            overenskomst_navn: null,
-            membres_fornavn: "",
-            membres_efternavn: "",
-            aftalt_loen: null,
-            loen_enhed: null,
-            producent_navn: "",
-        }
+        return defaultKlassifikation
     }
 
     try {
@@ -155,19 +156,13 @@ Returnér JSON med disse felter:
             aftalt_loen: typeof p.aftalt_loen === "number" ? p.aftalt_loen : null,
             loen_enhed: p.loen_enhed ?? null,
             producent_navn: p.producent_navn ?? "",
+            kontraktsprog: p.kontraktsprog ?? "da",
+            loen_type: p.loen_type ?? "ukendt",
+            loen_valuta: p.loen_valuta ?? "DKK",
         }
     } catch {
         console.warn("[gennemgang] Klassifikation JSON parse fejl")
-        return {
-            kontrakttype: "hybrid",
-            er_overenskomst: false,
-            overenskomst_navn: null,
-            membres_fornavn: "",
-            membres_efternavn: "",
-            aftalt_loen: null,
-            loen_enhed: null,
-            producent_navn: "",
-        }
+        return defaultKlassifikation
     }
 }
 
@@ -195,6 +190,16 @@ function byggAbsolutteRegler(
     const loenInfo = klassifikation.aftalt_loen
         ? `${klassifikation.aftalt_loen} ${klassifikation.loen_enhed ?? "kr/uge"}`
         : "[ikke fundet i kontrakt]"
+
+    const sprogRegel = klassifikation.kontraktsprog === "en"
+        ? "🌐 ENGELSK KONTRAKT: Skriv HELE feedbackmailen på engelsk — både tekst til medlemmet, snippets til producenten og TIL DIG-sektionen. Brug engelske juridiske termer."
+        : "✓ Dansk kontrakt — skriv på dansk."
+
+    const loenTypeRegel = klassifikation.loen_type === "fast_total"
+        ? `🚫 FAST TOTALBELØB — ABSOLUT FORBUD: Gang ALDRIG beløbet op per uge. ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} er det samlede honorar for hele perioden.`
+        : klassifikation.loen_type === "ugeloeen"
+        ? `✓ UGELØN — ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} per uge.`
+        : "⚠ LØNTYPE UKLAR — undgå beregninger der forudsætter en specifik løntype."
 
     const kontrakttypeRegler =
         klassifikation.kontrakttype === "leverandoer"
@@ -224,6 +229,8 @@ ${klassifikation.er_overenskomst && klassifikation.kontrakttype === "a-loen"
 ${satsLinje("Feriepenge", feriepenge)}
 
 ABSOLUTTE REGLER FOR DENNE ANALYSE:
+${sprogRegel}
+${loenTypeRegel}
 ${kontrakttypeRegler}
 ${overenskomstRegler}
 Start feedbackmailen med: Kære ${fornavn},
