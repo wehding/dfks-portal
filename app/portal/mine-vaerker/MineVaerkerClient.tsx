@@ -7,6 +7,7 @@ import {
 import { useRouter } from "next/navigation";
 import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { addWorkForMember, removeWorkAssignment } from "@/app/actions/member-works";
 import { createClient } from "@/lib/supabase/client";
 
 const TMDB_IMG = "https://image.tmdb.org/t/p/w154";
@@ -133,49 +134,28 @@ export default function MineVaerkerClient({
   const handleAddWork = async () => {
     if (!pickedResult || !pickedSource || !rightsHolderId) return;
     setIsSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setIsSaving(false); return; }
-
-    const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).single();
-    const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
-
     try {
-      let workId: string | null = null;
-
+      let workData: any;
       if (pickedSource === "dfi") {
-        const dfiId = String(pickedResult.Id);
-        const { data: ex } = await supabase.from("works").select("id").eq("dfi_id", dfiId).maybeSingle();
-        if (ex) {
-          workId = ex.id;
-        } else {
-          const det = await getDFIFilmDetails(pickedResult.Id);
-          const film = det.success ? (det as any).film : pickedResult;
-          const wtype = (film.Category || film.Type || "").toLowerCase().includes("dokumentar") ? "dokumentar" : (film.Type || "").toLowerCase().includes("serie") ? "serie" : "fiktion";
-          const { data: nw, error } = await supabase.from("works").insert({ org_id: orgId, dfi_id: dfiId, title: film.Title || film.DanishTitle || pickedResult.Title || "Ukendt", type: wtype, year: film.ProductionYear || film.ReleaseYear || pickedResult.ProductionYear || null, description: film.Synopsis || null }).select("id").single();
-          if (error || !nw) throw new Error(error?.message ?? "Fejl");
-          workId = nw.id;
-        }
+        const det = await getDFIFilmDetails(pickedResult.Id);
+        const film = det.success ? (det as any).film : pickedResult;
+        const combined = ((film.Category || "") + " " + (film.Type || "")).toLowerCase();
+        const type = (combined.includes("dokumentar") && combined.includes("serie")) ? "serie"
+          : combined.includes("dokumentar") ? "dokumentar"
+          : (combined.includes("serie") || combined.includes("tv-")) ? "serie"
+          : combined.includes("kort") ? "kortfilm" : "fiktion";
+        workData = { dfi_id: String(pickedResult.Id), title: film.Title || film.DanishTitle || pickedResult.Title || "Ukendt", type, year: film.ProductionYear || film.ReleaseYear || null, description: film.Synopsis || null };
       } else {
-        const tmdbId = pickedResult.id;
-        const { data: ex } = await supabase.from("works").select("id").eq("tmdb_id", tmdbId).maybeSingle();
-        if (ex) {
-          workId = ex.id;
-        } else {
-          const det = await getTMDBWorkDetails(tmdbId, pickedResult.media_type || "movie");
-          const d = det.success ? (det as any).details : pickedResult;
-          const title = d.title || d.name || "Ukendt";
-          const year = d.release_date ? parseInt(d.release_date.substring(0, 4)) : d.first_air_date ? parseInt(d.first_air_date.substring(0, 4)) : null;
-          const poster = d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null;
-          const { data: nw, error } = await supabase.from("works").insert({ org_id: orgId, tmdb_id: tmdbId, title, type: pickedResult.media_type === "tv" ? "serie" : "fiktion", year, description: d.overview || null, poster_url: poster }).select("id").single();
-          if (error || !nw) throw new Error(error?.message ?? "Fejl");
-          workId = nw.id;
-        }
+        const det = await getTMDBWorkDetails(pickedResult.id, pickedResult.media_type || "movie");
+        const d = det.success ? (det as any).details : pickedResult;
+        const title = d.title || d.name || "Ukendt";
+        const year = d.release_date ? parseInt(d.release_date.substring(0, 4)) : d.first_air_date ? parseInt(d.first_air_date.substring(0, 4)) : null;
+        workData = { tmdb_id: pickedResult.id, title, type: pickedResult.media_type === "tv" ? "serie" : "fiktion", year, description: d.overview || null, poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null };
       }
 
-      await supabase.from("work_assignments").upsert({ work_id: workId, org_id: orgId, rights_holder_id: rightsHolderId, role: addRole }, { onConflict: "work_id,rights_holder_id,role" });
-
-      const { data: fresh } = await supabase.from("work_assignments").select("id, role, contract_id, works(id, title, type, year, dfi_id, tmdb_id, poster_url, description)").eq("work_id", workId!).eq("rights_holder_id", rightsHolderId).single();
-      if (fresh) setAssignments(prev => [fresh as unknown as Assignment, ...prev]);
+      const res = await addWorkForMember({ rightsHolderId, role: addRole, workData });
+      if (!res.success) throw new Error(res.error);
+      if (res.assignment) setAssignments(prev => [res.assignment as unknown as Assignment, ...prev]);
 
       setMsg({ type: "success", text: "Værket er tilføjet." });
       setIsAdding(false);
@@ -190,8 +170,8 @@ export default function MineVaerkerClient({
   // ── Slet valgte ───────────────────────────────────────────
   const handleDeleteSelected = async () => {
     if (!selected.length || !confirm(`Fjern ${selected.length} valgte værk(er) fra din liste?`)) return;
-    const { error } = await supabase.from("work_assignments").delete().in("id", selected);
-    if (!error) {
+    const results = await Promise.all(selected.map(id => removeWorkAssignment(id)));
+    if (results.every(r => r.success)) {
       setAssignments(prev => prev.filter(a => !selected.includes(a.id)));
       setSelected([]);
       setMsg({ type: "success", text: "Valgte værker fjernet." });
