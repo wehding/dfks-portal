@@ -834,16 +834,16 @@ export default function AdminValideringPage() {
             royalty: ["royalt", royaltySrc ? royaltySrc.slice(0, 30) : null].filter(Boolean).join("||"),
             agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
-        const resolvedActiveHighlight = activeSource
-            ? (rightsHighlightSource[activeSource] || rightsPageSource[activeSource] || activeSource)
+        const resolvedActiveHighlight = activeField
+            ? (rightsHighlightSource[activeField] || rightsPageSource[activeField] || activeSource)
             : null
-        const resolvedPageSource = activeSource
-            ? (rightsPageSource[activeSource] || activeSource)
+        const resolvedPageSource = activeField
+            ? (rightsPageSource[activeField] || activeSource)
             : null
         // Only show section highlights for the currently active rights button —
         // always-on generic terms like "§§" match too many wrong spans.
-        const activeSectionHighlights: string[] = activeSource && rightsHighlightSource[activeSource]
-            ? rightsHighlightSource[activeSource].split("||").map(s => s.trim()).filter(Boolean)
+        const activeSectionHighlights: string[] = activeField && rightsHighlightSource[activeField]
+            ? rightsHighlightSource[activeField].split("||").map(s => s.trim()).filter(Boolean)
             : []
 
         return (
