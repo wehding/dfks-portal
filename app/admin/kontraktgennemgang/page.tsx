@@ -716,63 +716,6 @@ export default function KontraktGennemgangPage() {
                                                                         Gem feedback
                                                                     </button>
                                                                     )}
-                                                                    {fundKorrektioner[fp.id]?.trim() && (
-                                                                        <button
-                                                                            className="text-[11px] text-primary font-medium underline underline-offset-2"
-                                                                            onClick={async () => {
-                                                                                const korrektion = fundKorrektioner[fp.id]
-                                                                                const supabase = createClient()
-                                                                                // Gem feedback
-                                                                                await supabase.from("analysis_feedback").upsert({
-                                                                                    analyse_id: analyseId,
-                                                                                    fund_id: fp.id,
-                                                                                    fund_titel: fp.titel,
-                                                                                    fund_svaerhedsgrad: fp.type,
-                                                                                    fund_beskrivelse: fp.beskrivelse,
-                                                                                    godkendt: false,
-                                                                                    korrektion_beskrivelse: korrektion,
-                                                                                    org_id: orgId,
-                                                                                }, { onConflict: "analyse_id,fund_id" })
-                                                                                // Gem som sagserfaring i DB
-                                                                                const { data: saved } = await supabase
-                                                                                    .from("case_learnings")
-                                                                                    .insert({
-                                                                                        org_id: orgId,
-                                                                                        kontrakttype: "alle",
-                                                                                        titel: fp.titel,
-                                                                                        regel: korrektion,
-                                                                                        added_at: new Date().toISOString(),
-                                                                                    })
-                                                                                    .select()
-                                                                                    .single()
-                                                                                // Embed i RAG-videnbase
-                                                                                if (saved) {
-                                                                                    fetch("/api/knowledge/upsert", {
-                                                                                        method: "POST",
-                                                                                        headers: { "Content-Type": "application/json" },
-                                                                                        body: JSON.stringify({
-                                                                                            kilde_id: saved.id,
-                                                                                            kilde_type: "sagserfaring",
-                                                                                            kilde_titel: fp.titel,
-                                                                                            tekst: `${fp.titel}: ${korrektion}`,
-                                                                                            org_id: orgId,
-                                                                                            metadata: { kilde: "feedback", fund_id: fp.id },
-                                                                                        }),
-                                                                                    }).catch(() => {})
-                                                                                }
-                                                                                setFundGemtSagserfaring(prev => ({ ...prev, [fp.id]: true }))
-                                                                                toast.success("Gemt som sagserfaring — bruges ved næste gennemgang")
-                                                                            }}
-                                                                        >
-                                                                            + Gem som sagserfaring
-                                                                        </button>
-                                                                    )}
-                                                                    {fundGemtSagserfaring[fp.id] && (
-                                                                        <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                                                                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                                                                            Gemt som sagserfaring
-                                                                        </span>
-                                                                    )}
                                                                 </div>
                                                             </div>
                                                         )}
