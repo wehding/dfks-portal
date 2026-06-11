@@ -21,7 +21,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
     const body = await req.json()
     const { title, body: noteBody, priority, gyldig_fra, gyldig_til } = body
-    if (!title || !noteBody || !priority) {
+    if (!title || noteBody === undefined || noteBody === null || !priority) {
         return NextResponse.json({ error: "title, body og priority er påkrævet" }, { status: 400 })
     }
     const { data, error } = await sb()
