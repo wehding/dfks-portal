@@ -52,13 +52,21 @@ ordret ind i noteringen — ikke en beskrivelse af den.
 Dårligt:
 "Foreslå at tilføje Copydan-standardklausulen"
 
-Godt:
-'Foreslå at tilføje: "Filmklipperen og Producenten bevarer,
-desuagtet øvrige aftalevilkår, hver deres rettigheder samt en
-vederlagsret for brug af Produktionen omfattet af
-Ophavsretslovens §§ 13, 13a, 17, 30a, 35..."'
+Stadig dårligt — selvom teksten er med:
+"Foreslå at tilføje en klausul om at klipperen forbeholder sig
+ret til individuelt vederlag via Copydan for TV-visning..."
+(AI'en omskriver og forkorter — og mister den juridiske præcision)
 
-AI'en citerer teksten præcist i mailen til producenten.`,
+Korrekt:
+'Foreslå PRÆCIS denne tekst — ingen omskrivning, brug ordret:
+"Filmklipperen og Producenten bevarer, desuagtet øvrige
+aftalevilkår, hver deres rettigheder samt en vederlagsret for
+brug af Produktionen omfattet af Ophavsretslovens §§ 13, 13a,
+17, 30a, 35, 39-46a og 50, stk. 2..."'
+
+De tre nøgleord der virker: PRÆCIS, ingen omskrivning, brug ordret.
+AI'en respekterer eksplicitte forbud mod omformulering — men kun
+når det er skrevet direkte og tydeligt i noteringen.`,
   },
   {
     titel: "Brug gyldig_fra og gyldig_til",
