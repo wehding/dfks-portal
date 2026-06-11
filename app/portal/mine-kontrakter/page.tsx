@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
