@@ -611,7 +611,7 @@ export default function AdminValideringPage() {
                 const resp = await fetch("/api/validate/extract", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ contractId: reviewingContract!.id, pdfPath: reviewingContract!.pdf_url }),
+                    body: JSON.stringify({ contractId: reviewingContract!.id, pdfPath: reviewingContract!.pdf_url, signedPdfUrl: reviewingContract!.signedPdfUrl }),
                 })
                 const json = await resp.json()
                 if (!resp.ok) throw new Error(json.error)

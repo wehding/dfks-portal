@@ -70,7 +70,7 @@ const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som
 
 export async function POST(req: NextRequest) {
     try {
-        const { contractId, pdfPath } = await req.json()
+        const { contractId, pdfPath, signedPdfUrl } = await req.json()
         if (!contractId && !pdfPath) {
             return NextResponse.json({ error: "contractId eller pdfPath påkrævet" }, { status: 400 })
         }
@@ -90,30 +90,26 @@ export async function POST(req: NextRequest) {
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Opret signed URL via REST API og hent filen
-        const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        const signResponse = await fetch(
-            `${supabaseUrl}/storage/v1/object/sign/kontrakter/${storagePath}`,
-            {
-                method: "POST",
-                headers: {
-                    Authorization: `Bearer ${serviceKey}`,
-                    apikey: anonKey,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ expiresIn: 60 }),
+        // Hent PDF — brug signedPdfUrl fra klienten hvis tilgængeligt (admin har allerede hentet den)
+        // Ellers fall back til service-role download
+        let buffer: Buffer
+        if (signedPdfUrl) {
+            const fileResponse = await fetch(signedPdfUrl)
+            if (!fileResponse.ok) {
+                return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
             }
-        )
-        if (!signResponse.ok) {
-            const errText = await signResponse.text()
-            return NextResponse.json({ error: `Kunne ikke signere URL: HTTP ${signResponse.status} — ${errText}` }, { status: 500 })
+            buffer = Buffer.from(await fileResponse.arrayBuffer())
+        } else {
+            // Fallback: direkte download med service-role
+            const fileResponse = await fetch(
+                `${supabaseUrl}/storage/v1/object/authenticated/kontrakter/${storagePath}`,
+                { headers: { Authorization: `Bearer ${serviceKey}`, apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! } }
+            )
+            if (!fileResponse.ok) {
+                return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
+            }
+            buffer = Buffer.from(await fileResponse.arrayBuffer())
         }
-        const { signedURL } = await signResponse.json()
-        const fileResponse = await fetch(`${supabaseUrl}/storage/v1${signedURL}`)
-        if (!fileResponse.ok) {
-            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
-        }
-        const buffer = Buffer.from(await fileResponse.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
