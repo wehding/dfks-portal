@@ -25,6 +25,8 @@ export default async function MineVaerkerPage() {
         .order("created_at", { ascending: false })
     : { data: [] };
 
+  console.log("[mine-vaerker] rh:", rh?.id, "assignments:", assignments?.length)
+
   const workIds = (assignments ?? []).map((a: any) => a.works?.id).filter(Boolean);
   const { data: allAssignments } = workIds.length
     ? await db
