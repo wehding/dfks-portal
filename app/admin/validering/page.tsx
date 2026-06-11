@@ -604,24 +604,34 @@ export default function AdminValideringPage() {
             return
         }
 
-        // Direkte udtræk fra Storage (ingen lokal fil) — spring maskeringsvisning over
+        // Storage-PDF: hent filen i browseren (signed URL virker), udtræk tekst og send som maskedText
         if (hasStoragePdf && !localPdfFile) {
-            setScreening(true)
+            if (!reviewingContract!.signedPdfUrl) {
+                toast.error("Ingen adgang til PDF — åbn kontrakten og prøv igen")
+                return
+            }
+            setTextLoading(true)
             try {
-                const resp = await fetch("/api/validate/extract", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ contractId: reviewingContract!.id, pdfPath: reviewingContract!.pdf_url, signedPdfUrl: reviewingContract!.signedPdfUrl }),
-                })
-                const json = await resp.json()
-                if (!resp.ok) throw new Error(json.error)
-                if (json.data?._sources) setSources(normaliseSources(json.data._sources))
-                overwriteWithAi(json.data)
-                toast.success("Felter opdateret fra AI-udtræk")
+                const pdfResp = await fetch(reviewingContract!.signedPdfUrl)
+                if (!pdfResp.ok) throw new Error(`Kunne ikke hente PDF: HTTP ${pdfResp.status}`)
+                const blob = await pdfResp.blob()
+                const file = new File([blob], reviewingContract!.pdf_url?.split("/").pop() ?? "kontrakt.pdf", { type: blob.type })
+                const { extractTextFromFile } = await import("@/lib/ai")
+                const raw = await extractTextFromFile(file)
+                const masked = maskPersonalData(raw)
+                const types: string[] = []
+                if (masked.includes("[CPR-NUMMER]")) types.push("CPR-numre")
+                if (masked.includes("[KONTONUMMER]") || masked.includes("[IBAN]")) types.push("kontonumre")
+                if (masked.includes("[TELEFON]")) types.push("telefonnumre")
+                if (masked.includes("[EMAIL]")) types.push("email-adresser")
+                const count = (masked.match(/\[(?:CPR-NUMMER|KONTONUMMER|IBAN|TELEFON|EMAIL|ADRESSE|POSTNR-BY|CVR-NUMMER)\]/g) || []).length
+                setMaskingPreview({ count, types })
+                setMaskedText(masked)
+                setShowMaskingConfirm(true)
             } catch (e: any) {
-                toast.error(`Udtræk fejlede: ${e.message}`)
+                toast.error(`Kunne ikke forberede udtræk: ${e.message}`)
             } finally {
-                setScreening(false)
+                setTextLoading(false)
             }
             return
         }
