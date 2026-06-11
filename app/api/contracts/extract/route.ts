@@ -32,7 +32,12 @@ import {
 const SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
 Din opgave er at læse kontrakten og returnere et JSON-objekt med præcis de felter der er angivet.
 Vær præcis — brug null for felter der ikke fremgår af kontrakten. Brug aldrig gæt.
-Returner KUN JSON — ingen forklaringstekst.`
+Returner KUN JSON — ingen forklaringstekst.
+
+VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
+[CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
+Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
+Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
 
 const EXTRACTION_PROMPT = `Udtræk følgende data fra denne kontrakt og returner som JSON.
 Returner KUN JSON — ingen forklaringstekst.

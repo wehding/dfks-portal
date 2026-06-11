@@ -61,7 +61,9 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
     (async () => {
       try {
         const { extractTextFromFile, screenPortalContract } = await import("@/lib/ai");
-        const text = await extractTextFromFile(file);
+        const { maskPersonalData } = await import("@/lib/mask-text");
+        const rawText = await extractTextFromFile(file);
+        const text = maskPersonalData(rawText); // mask CPR, kontonumre, telefon mv. inden AI
         if (cancelled) return;
         const result = await screenPortalContract(text, ROLES);
         if (cancelled) return;
