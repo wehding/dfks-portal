@@ -90,23 +90,27 @@ export async function POST(req: NextRequest) {
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Hent PDF — brug signedPdfUrl fra klienten hvis tilgængeligt (admin har allerede hentet den)
-        // Ellers fall back til service-role download
+        // Hent PDF — brug signedPdfUrl fra klienten hvis tilgængeligt
         let buffer: Buffer
+        console.log("[validate/extract] storagePath:", storagePath, "| signedPdfUrl:", signedPdfUrl ? signedPdfUrl.substring(0, 80) + "..." : "null")
         if (signedPdfUrl) {
             const fileResponse = await fetch(signedPdfUrl)
+            const body = !fileResponse.ok ? await fileResponse.text() : ""
+            console.log("[validate/extract] signed URL fetch:", fileResponse.status, body.substring(0, 200))
             if (!fileResponse.ok) {
-                return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
+                return NextResponse.json({ error: `Kunne ikke hente PDF via signed URL: HTTP ${fileResponse.status} — ${body}` }, { status: 500 })
             }
             buffer = Buffer.from(await fileResponse.arrayBuffer())
         } else {
-            // Fallback: direkte download med service-role
+            console.log("[validate/extract] ingen signedPdfUrl — forsøger service-role download")
             const fileResponse = await fetch(
                 `${supabaseUrl}/storage/v1/object/authenticated/kontrakter/${storagePath}`,
                 { headers: { Authorization: `Bearer ${serviceKey}`, apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY! } }
             )
+            const body = !fileResponse.ok ? await fileResponse.text() : ""
+            console.log("[validate/extract] service-role fetch:", fileResponse.status, body.substring(0, 200))
             if (!fileResponse.ok) {
-                return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
+                return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status} — ${body}` }, { status: 500 })
             }
             buffer = Buffer.from(await fileResponse.arrayBuffer())
         }
