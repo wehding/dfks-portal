@@ -82,20 +82,22 @@ export async function POST(req: NextRequest) {
         const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 
+        const admin = createServiceClient()
+
         let storagePath = pdfPath
         if (!storagePath && contractId) {
-            const admin = createServiceClient()
             const { data: contract } = await admin.from("contracts").select("pdf_url").eq("id", contractId).single()
             storagePath = contract?.pdf_url
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Hent PDF — prøv signed URL fra admin-klienten, ellers createSignedUrl via service-client
+        // Hent PDF — prøv signed URL fra admin-klienten, ellers opret via service-client
         let buffer: Buffer
-        const downloadUrl = signedPdfUrl ?? await (async () => {
+        let downloadUrl = signedPdfUrl
+        if (!downloadUrl) {
             const { data } = await admin.storage.from("kontrakter").createSignedUrl(storagePath, 120)
-            return data?.signedUrl ?? null
-        })()
+            downloadUrl = data?.signedUrl ?? null
+        }
 
         if (!downloadUrl) {
             return NextResponse.json({ error: "Kunne ikke oprette adgang til PDF — prøv at uploade filen manuelt i stedet" }, { status: 500 })
