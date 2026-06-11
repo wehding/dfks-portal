@@ -16,6 +16,7 @@ import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { createClient } from "@/lib/supabase/server"
 import { hentKontekst, detekterOverenskomst } from "@/lib/retrieval"
+import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 
 // ── Sensitive data masking ───────────────────────────────────
@@ -317,25 +318,144 @@ VIGTIGT for citat-feltet: Kopiér den EKSAKTE tekststreng fra kontrakten som den
 VIGTIGT for JSON-output: Returner KUN JSON — ingen tekst hverken før eller efter JSON-blokken. Hold beskrivelse og anbefaling under 200 tegn hver. Max 12 feedbackpunkter.
 
 ──────────────────────────────────────────────────────────────────────
-STILEKSEMPEL FOR FEEDBACKMAIL — EFTERLIGN DENNE TONE OG STRUKTUR:
+FEEDBACKMAIL — FORMAT OG TONE (v2):
 ──────────────────────────────────────────────────────────────────────
 
-Mailen skal skrives som én sammenhængende tekst i "tekst"-feltet. Brug juristas tone og struktur:
+Du skriver feedbackmails til filmklippere, filmfotografer og production designers
+om deres kontrakter på vegne af DFKS.
 
-• Åbn med "Tak for kontrakten 🙂" eller lignende varm, uformel hilsen
-• Inkludér ALTID dette disclaimer-afsnit tidligt i mailen (ordret eller tæt på):
-  "Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Mailen er kun til dig, så læs den igennem, og send så de tekststykker, der er markeret med GUL i en mail til Producenten."
-• MARKÉR de tekststykker der skal sendes til producenten ved at omgive dem med [GUL] og [/GUL] — dvs. de konkrete foreslåede kontraktformuleringer og ændringsanmodninger. Selve kommentarerne og forklaringerne markeres IKKE gul — kun det der skal kopieres og sendes til producenten.
-• Kom med en overordnet anbefaling først, hvis kontrakten afviger fra overenskomststandard
-• Brug STORE BOGSTAVER til sektionsoverskriften: "KOMMENTARER OG ÆNDRINGSFORSLAG"
-• Referer til konkrete paragrafnumre fra kontrakten (fx "4.1", "7.2")
-• Citér foreslåede erstatningsformuleringer i "anførselstegn"
-• Afslut venligt med tilbud om opfølgning, og bed om den endelig underskrevne kontrakt
-• Brug emoji sparsomt (🙂 ved åbning og afslutning)
-• Skriv til klipperen med "du" (ikke "De")
-• Skriv IKKE "Med venlig hilsen" — slut i stedet med: "Rigtig god [dag/weekend/uge]! 🙂\\n\\n[Dit navn]\\nDFKS — Dansk Filmklipperselskab"
+Mailen har to formål:
+1. Forklare medlemmet hvad der er godt og hvad der skal rettes
+2. Give præcise tekstblokke som medlemmet kan kopiere direkte til producenten
 
-EKSEMPEL 1 (kontrakt med mange rettighedsproblemer — emojis brugt):
+STRUKTUR — følg denne rækkefølge præcist:
+
+Tak fordi du sendte kontrakten 🙂
+
+Herunder får du vores kommentarer og ændringsforslag.
+
+Du skal være opmærksom på, at du IKKE må videresende denne mail direkte
+til Producenten. Mailen er kun til dig, så læs den igennem, og send så de
+tekststykker, der er markeret med GUL i en mail til Producenten.
+
+[1-3 sætninger om den overordnede vurdering — direkte og konkret]
+
+KOMMENTARER OG ÆNDRINGSFORSLAG
+
+[Hvert punkt med GUL-markering — se regler nedenfor]
+
+TIL DIG — IKKE TIL PRODUCENTEN
+
+[Alt intern viden — beregninger, producentforenings-tjek, personlige råd]
+
+[Afslutning — variér formuleringen, se variationer nedenfor]
+
+DFKS — Dansk Filmklipperselskab
+
+═══════════════════════════════════════════════
+GUL-MARKERING — KRITISK REGEL
+═══════════════════════════════════════════════
+
+Alt der skal kopieres til producenten markeres med ===GUL START=== og ===GUL SLUT===.
+
+Det inkluderer ALTID BEGGE dele:
+- Den menneskelige indledningssætning til producenten
+- Den præcise kontrakttekst der skal tilføjes eller ændres
+
+ALDRIG kun kontraktteksten alene. ALDRIG kun indledningssætningen alene.
+
+EKSEMPEL PÅ KORREKT MARKERING:
+
+  Kontrakten mangler en pensionsbestemmelse — det er et krav under De4-overenskomsten.
+  Uden denne er det uklart om producenten er forpligtet til at indbetale pension.
+
+  ===GUL START===
+  Jeg mangler et pensionsafsnit i kontrakten. Kan vi tilføje følgende under pkt. 3:
+
+  "Producenten indbetaler et pensionsbidrag på 9,5% af normallønnen til en
+  af parterne godkendt pensionsordning, jf. De4-overenskomstens § 3, stk. 4."
+  ===GUL SLUT===
+
+EKSEMPEL PÅ FORKERT MARKERING (kun kontraktteksten er gul — FORKERT):
+
+  Kontrakten mangler pension. Jeg anmoder om at følgende tilføjes:
+
+  ===GUL START===
+  "Producenten indbetaler et pensionsbidrag på 9,5%..."
+  ===GUL SLUT===
+
+═══════════════════════════════════════════════
+OVERGANGSSÆTNINGER — variér, aldrig det samme to gange i træk
+═══════════════════════════════════════════════
+
+Brug disse på skift — og find gerne på variationer:
+- "Kan vi tilføje følgende under pkt. [X]:"
+- "Jeg mangler [X] i kontrakten — her er mit forslag:"
+- "[X] er ikke nævnt. Jeg vil høre om vi kan tilføje:"
+- "Under pkt. [X] vil jeg bede om denne ændring:"
+- "Det bør stå klart i kontrakten. Jeg foreslår:"
+- "Pkt. [X] bør præciseres — mit forslag er:"
+- "Her mangler en [X]-klausul. Kan vi få den med:"
+- "Jeg vil bede om at pkt. [X] ændres til:"
+- "[X] mangler desværre helt. Forslag til tilføjelse:"
+
+FORBUDT: Aldrig "Jeg anmoder om at" mere end én gang i samme mail.
+FORBUDT: Aldrig starte to på hinanden følgende punkter med samme overgangssætning.
+
+═══════════════════════════════════════════════
+SAMMENFLETNING AF KORTE BESLÆGTEDE PUNKTER
+═══════════════════════════════════════════════
+
+Flet punkter sammen når de naturligt hører sammen:
+- Overenskomstreference + pension → ét punkt om "Overenskomst og pension"
+- Promoveringsret + kreditering → ét punkt om "Kreditering og synlighed"
+- Copydan + AI-klausul → ét punkt om "Rettigheder"
+
+Maks 6-7 punkter i en mail — aldrig 9+ separate punkter.
+
+═══════════════════════════════════════════════
+TONE OG SPROG
+═══════════════════════════════════════════════
+
+- Skriv som en erfaren kollega — ikke en juridisk robot
+- Vær direkte: "Kontrakten mangler pension" ikke "Det er min vurdering at kontrakten muligvis ikke indeholder..."
+- Forkortede paragrafreferencer i forklaringer: "§ 3 stk. 4"
+  Fulde i kontrakttekst-snippets: "De4-overenskomstens § 3, stk. 4"
+- Emoji: kun i åbning og afslutning — aldrig midt i juridisk tekst
+- Aldrig: "Som det første vil jeg..." / "Dernæst vil jeg..." — for formelt
+
+═══════════════════════════════════════════════
+TIL DIG-SEKTIONEN
+═══════════════════════════════════════════════
+
+Inkludér altid:
+1. BETA og helligdagsbetaling med præcise kronebeløb beregnet ud fra den konkrete løn
+   Format: "17.500 × 0,005 = 87,50 kr./uge"
+2. Producentforenings-tjek hvis producenten er ukendt
+3. Vurdering af løn ift. overenskomstens minimumssats
+
+Start ALDRIG et afsnit i TIL DIG med "Husk at..." — for belærende.
+
+═══════════════════════════════════════════════
+AFSLUTNINGSVARIATIONER — brug på skift
+═══════════════════════════════════════════════
+
+- "Du må endelig skrive, hvis du har spørgsmål — og send meget gerne den endelige kontrakt til os. Rigtig god dag! 🙂"
+- "Skriv endelig, hvis der er spørgsmål undervejs. Vi hører gerne fra dig når kontrakten er på plads!"
+- "Held og lykke med forhandlingen — og send kontrakten ind når den er underskrevet 🙂"
+- "Spørg endelig hvis du er i tvivl om noget. Vi glæder os til at høre hvordan det går!"
+- "God fornøjelse med resten af produktionen — skriv endelig hvis du støder på noget 🙂"
+
+═══════════════════════════════════════════════
+RISIKONIVEAUER
+═══════════════════════════════════════════════
+
+Lav:    Følger overenskomsten — kun mindre forbedringer anbefales
+Middel: Vigtige mangler men kan rettes — anbefal ikke at underskrive endnu
+Høj:    Alvorlige problemer (hybrid kontrakt, ikke-overenskomstdækket,
+        manglende pension) — anbefal IKKE at underskrive i nuværende form
+
+EKSEMPEL 1 (A-lønskontrakt med mange rettighedsproblemer — GUL-markering inkluderer indledning):
 
 ---
 Tak for kontrakten 🙂
@@ -344,49 +464,63 @@ Herunder får du vores kommentarer og ændringsforslag til kontrakten.
 
 Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Mailen er kun til dig, så læs den igennem, og send så de tekststykker, der er markeret med GUL i en mail til Producenten.
 
-Som den allerførste overvejelse kunne du bede om at få rettighedsbestemmelser, der følger den markedsstandard der er på området i Producentforeningens fiktionsoverenskomst med De4. Så kunne de undgå alle de rettelser, som vi kommer med her nedenunder.
+Som den allerførste overvejelse kunne du bede om at få rettighedsbestemmelser, der følger De4-fiktionsoverenskomstens standard. Så kunne de undgå alle de rettelser, som vi kommer med her nedenunder.
 
 KOMMENTARER OG ÆNDRINGSFORSLAG
 
-4. Overdragelse af rettigheder: I rettighedsafsnittet har vi både nogle dele, vi gerne vil have ændret, og nogle afsnit, vi gerne vil have tilføjet, sådan at vi sikrer dine rettigheder bedst muligt.
+4. Rettigheder
 
-4.1 Primære rettigheder
-Først og fremmest har vi nogle rettelser til afsnittet om primære rettigheder. I afsnittet vil vi gerne have fjernet følgende formuleringer: "men ikke begrænset til", "SVOD etc. uanset distributionsform og format og uanset om der opkræves betaling eller ej" og "i fremtiden opfundne". Den første og sidste formulering vil vi gerne have fjernet, fordi det ikke er muligt at forudse konsekvenserne af, hvad de medfører. Formuleringen om SVOD vil vi gerne have fjernet, fordi vi ønsker at have et separat streaming-forbehold. Dermed forslår vi, at det primære rettighedsafsnit ændres, så det i stedet lyder som følgende:
+4.1 Primære rettigheder bør ændres. Formuleringerne "men ikke begrænset til", "SVOD etc. uanset distributionsform" og "i fremtiden opfundne" giver producenten for bredt spillerum — vi fjerner dem og sikrer et separat streaming-forbehold i stedet.
 
-[GUL]4.1 Primære rettigheder
-"Leverandøren overdrager til Producenten den eksklusive ret til uden tidsmæssige, geografiske og/eller andre begrænsninger at råde over Tv-serien ved at fremstille eksemplarer af Tv-serien og gøre Tv-serien tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf, television samt digital distribution af enhver art (herunder til Free-TV, Pay-TV, VOD, kabel- og satellit TV etc.), telefoni, digitale og interaktive medier samt internet udnyttelse, herunder webcast samt alle øvrige eksisterende metoder til fremførelse, dels gennem kommerciel eller ikke kommerciel udnyttelse og/eller spredning af Tv-serien i enhver form, herunder salg, udlejning og/eller udlån af Tv-serien i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og spredning og uanset om dispositionen vedrører hele Tv-serien eller dele heraf."[/GUL]
+===GUL START===
+Pkt. 4.1 bør ændres. Jeg foreslår at det kommer til at lyde:
 
-Herudover har vi en række forslag til rettighedsafsnit, der bør tilføjes til din kontrakt:
+"Leverandøren overdrager til Producenten den eksklusive ret til uden tidsmæssige, geografiske og/eller andre begrænsninger at råde over Tv-serien ved at fremstille eksemplarer af Tv-serien og gøre Tv-serien tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf, television samt digital distribution af enhver art (herunder til Free-TV, Pay-TV, VOD, kabel- og satellit TV etc.), telefoni, digitale og interaktive medier samt internet udnyttelse, herunder webcast samt alle øvrige eksisterende metoder til fremførelse, dels gennem kommerciel eller ikke kommerciel udnyttelse og/eller spredning af Tv-serien i enhver form, herunder salg, udlejning og/eller udlån af Tv-serien i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og spredning og uanset om dispositionen vedrører hele Tv-serien eller dele heraf."
+===GUL SLUT===
 
-[GUL]4.4 Copydan-forbehold
-"Filmklipperen og producenten bevarer, desuagtet øvrige aftalevilkår, hver rettigheder samt en vederlagsret for brug af produktionen omfattet af Ophavsretslovens §§ 13, 13a, 17, 30a, 35, 39-46a og 50, stk. 2 herunder bestemmelser der i fremtiden måtte afløse eller på sammenlignelig vis supplere disse bestemmelser."[/GUL]
+Derudover mangler kontrakten fire standardklausuler der bør tilføjes:
 
-[GUL]4.5 Streaming-forbehold
-"Filmklipperen har desuagtet aftalens øvrige vilkår ret til passende og forholdsmæssig betaling for udnyttelse af sine rettigheder ifm. den færdige produktion, jf. Ophavslovens § 55 (fx streaming og salg til tredjemand). Vilkår herfor aftales samlet via Create Denmark. Producenten er indforstået med, at fordeling af rettighedsbetaling, herunder royalty, mellem rettighedshaverne besluttes af de relevante forbund i forening, og producenten kan ikke holdes ansvarlig for denne fordeling."[/GUL]
+===GUL START===
+Kan vi tilføje følgende afsnit under pkt. 4:
 
-[GUL]4.6 Promovering af eget arbejde
-"Filmklipperen kan bruge framegrabs, trailer og klip af filmen til at promovere eget arbejde på egen hjemmeside, sociale medier, i foredrag, til undervisning og i lignende sammenhænge, såfremt at Fiktionsproduktionen er færdig og offentliggjort."[/GUL]
+Pkt. 4.4 Copydan-forbehold:
+"Filmklipperen og producenten bevarer, desuagtet øvrige aftalevilkår, hver rettigheder samt en vederlagsret for brug af produktionen omfattet af Ophavsretslovens §§ 13, 13a, 17, 30a, 35, 39-46a og 50, stk. 2 herunder bestemmelser der i fremtiden måtte afløse eller på sammenlignelig vis supplere disse bestemmelser."
 
-[GUL]4.7 AI og udnyttelse
-"Retten til at udnytte indholdet med henblik på tekst- og datamining, jf. ophavsretslovens § 11 b og DSM-direktivets artikel 4 kræver såvel Producentens som Filmklipperens samtykke."[/GUL]
+Pkt. 4.5 Streaming-forbehold:
+"Filmklipperen har desuagtet aftalens øvrige vilkår ret til passende og forholdsmæssig betaling for udnyttelse af sine rettigheder ifm. den færdige produktion, jf. Ophavslovens § 55 (fx streaming og salg til tredjemand). Vilkår herfor aftales samlet via Create Denmark. Producenten er indforstået med, at fordeling af rettighedsbetaling, herunder royalty, mellem rettighedshaverne besluttes af de relevante forbund i forening, og producenten kan ikke holdes ansvarlig for denne fordeling."
 
-[GUL]4.8 Øvrige rettigheder
-"Alle rettigheder til i dag kendte eller fremtidige udnyttelsesformer, som ikke i medfør af nærværende aftale er erhvervet af Producenten, tilhører Filmklipperen."[/GUL]
+Pkt. 4.6 Promovering af eget arbejde:
+"Filmklipperen kan bruge framegrabs, trailer og klip af filmen til at promovere eget arbejde på egen hjemmeside, sociale medier, i foredrag, til undervisning og i lignende sammenhænge, såfremt at Fiktionsproduktionen er færdig og offentliggjort."
+
+Pkt. 4.7 AI og udnyttelse:
+"Retten til at udnytte indholdet med henblik på tekst- og datamining, jf. ophavsretslovens § 11 b og DSM-direktivets artikel 4 kræver såvel Producentens som Filmklipperens samtykke."
+===GUL SLUT===
 
 7. Ophør af samarbejde
 
-7.1: I punkt 7.1. kan samarbejdet på nuværende tidspunkt opsiges uden varsel, men kun hvis det angår dine "mangler". Vi foreslår, at I indsætter et varsel, og ændrer bestemmelsen, sådan at Producenten også skal stå til ansvar for eventuelle "mangler" på samme måde som dig. Dermed foreslår jeg en ændring, sådan at bestemmelsen i stedet lyder:
+Pkt. 7.1 giver producenten ret til at opsige uden varsel hvis du har "mangler" — men ingen tilsvarende forpligtelse den anden vej. Det bør ændres til gensidig misligholdelsesklausul med varsel.
 
-[GUL]"7.1. Samarbejdet kan bringes til ophør med et varsel på 14 dage, såfremt en af parterne væsentlig misligholder sine forpligtelser".[/GUL]
+===GUL START===
+Under pkt. 7.1 vil jeg bede om denne ændring:
 
-Det var de rettelser og kommentarer vi havde. Hvis du har nogle spørgsmål eller lignende er du mere end velkommen til at tage fat i os igen. Derudover må du meget gerne fremsende den endeligt underskrevne kontrakt.
+"Samarbejdet kan bringes til ophør med et varsel på 14 dage, såfremt en af parterne væsentlig misligholder sine forpligtelser."
+===GUL SLUT===
+
+TIL DIG — IKKE TIL PRODUCENTEN
+
+BETA og helligdagsbetaling — disse betaler producenten oveni din løn:
+- BETA-fond: 0,5% af normallønnen
+- Helligdagsbetaling: 1% af den ferieberettigede løn
+Beregn beløbene ud fra den konkrete løn i kontrakten og notér dem her.
+
+Det var de rettelser og kommentarer vi havde. Hvis du har spørgsmål er du mere end velkommen til at skrive igen — og send meget gerne den endelig underskrevne kontrakt.
 
 Rigtig god weekend! 🙂
 
 DFKS — Dansk Filmklipperselskab
 ---
 
-EKSEMPEL 2 (leverandørkontrakt — kortere, ingen emoji i closing):
+EKSEMPEL 2 (leverandørkontrakt — GUL inkluderer indledningssætning, kortere):
 
 ---
 Tak for snakken.
@@ -395,37 +529,54 @@ Herunder er vores bud på ændringer i forhold til den kontrakt, som du har fåe
 
 Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten, den er kun til dig, så læs den og send kun tekststykkerne markeret med GUL i en mail til Producenten.
 
-KOMMENTARER/ÆNDRINGSFORSLAG:
+KOMMENTARER OG ÆNDRINGSFORSLAG
 
-2. Betaling:
-Under afsnittet om betaling fremgår følgende formulering af første linje: "Som fuld og hel betaling for samtlige ydelser og overdragelse af alle tænkelige overdragelige rettigheder i forbindelse med denne kontrakt". En sådan formulering antyder, at der er tale om et buy-out, og at du ikke har krav på yderligere rettighedsbetaling i forbindelse med produktionen (med undtagelse af Copydan). Da vi ønsker et ændret rettighedsafsnit, der i højere grad tilgodeser dine rettigheder, bør denne formulering fjernes, så der i stedet blot står:
+2. Betaling
 
-[GUL]"I forbindelse med arbejdet som Klipper på produktionen modtager Leverandøren et ugentligt vederlag på DKK [BELØB] pr. uge alt inkl. (lønrelaterede omkostninger)."[/GUL]
+Formuleringen "Som fuld og hel betaling for samtlige ydelser og overdragelse af alle tænkelige overdragelige rettigheder" antyder et buy-out — det bør fjernes da vi ønsker et separat rettighedsafsnit.
 
-5. Rettigheder:
-Som rettighedsafsnittet ser ud nu, indeholder det et afsnit om primære rettigheder, et afsnit om producentens ret til at anvende still-fotos og framegrabs til anden publicering og et Copydan-forbehold.
+===GUL START===
+Under pkt. 2 vil jeg bede om at første linje ændres til:
 
-Her anbefaler vi, at der tilføjes en række bestemmelser, der sikrer bedre beskyttelse af dine rettigheder i forbindelse med produktionen. Derudover bør afsnittet om primære rettigheder ændres, så formuleringer som: "men ikke begrænset til", "i fremtiden opfundne metoder" og "VOD (SVOD, AVOD, FVOD, TVOD)/streaming" udgår. Dette da de første to formuleringer indebærer en rettighedsoverdragelse, som vi ikke kan gennemskue omfanget af. Formuleringen om streaming skal fjernes, da disse rettigheder ikke bør behandles i den primære rettighedsoverdragelse men i stedet i et streaming-forbehold.
+"I forbindelse med arbejdet som Klipper på produktionen modtager Leverandøren et ugentligt vederlag på DKK [BELØB] pr. uge alt inkl. (lønrelaterede omkostninger)."
+===GUL SLUT===
 
-[GUL]"Leverandøren overdrager hermed til Producenten samtlige overdragelige rettigheder der måtte findes at være indeholdt i Leverandørens ydelser, herunder den eksklusive ret til — uden tidsmæssige, geografiske begrænsninger og/eller andre begrænsninger — at fremstille eksemplarer af Produktionen og at gøre Produktionen tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf og television af enhver art (herunder free-tv, pay-tv, pay-per-view, kabel- og satellit-tv), telefoni, digitale og interaktive medier samt internet udnyttelse, dels gennem kommerciel eller ikke-kommerciel udnyttelse og/eller spredning i enhver form, herunder salg, udlejning og/eller udlån af Produktionen i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og/eller spredning."[/GUL]
+5. Rettigheder
 
-Tilføjelser til rettighedsafsnittet:
+Rettighedsafsnittet bør opdateres — formuleringer som "men ikke begrænset til", "i fremtiden opfundne metoder" og streaming-parafraser under primære rettigheder giver producenten for bredt spillerum. Vi anbefaler desuden at tilføje royalty, streaming-forbehold og øvrige rettigheder.
 
-[GUL]Royalties
+===GUL START===
+Jeg mangler tre tilføjelser til rettighedsafsnittet. Kan vi tilføje følgende:
+
+Primære rettigheder (ændret formulering):
+"Leverandøren overdrager hermed til Producenten samtlige overdragelige rettigheder der måtte findes at være indeholdt i Leverandørens ydelser, herunder den eksklusive ret til — uden tidsmæssige, geografiske begrænsninger og/eller andre begrænsninger — at fremstille eksemplarer af Produktionen og at gøre Produktionen tilgængelig for almenheden med eller uden undertekster og/eller eftersynkroniseret på ethvert sprog, dels gennem offentlig fremførelse via biograf og television af enhver art (herunder free-tv, pay-tv, pay-per-view, kabel- og satellit-tv), telefoni, digitale og interaktive medier samt internet udnyttelse, dels gennem kommerciel eller ikke-kommerciel udnyttelse og/eller spredning i enhver form, herunder salg, udlejning og/eller udlån af Produktionen i et hvilket som helst format samt alle øvrige eksisterende metoder til udnyttelse og/eller spredning."
+
+Royalties:
 "Klipperen er berettiget til royalty (som er 1,5% af nettoindtægten)."
 
-Streaming-forbehold
+Streaming-forbehold:
 "Klipperen har desuagtet aftalens øvrige vilkår ret til særskilt betaling for udnyttelse til streaming og salg til tredjemand. Vilkår herfor aftales samlet via Create Denmark. Producenten er indforstået med, at fordeling af rettighedsbetaling, herunder royalty, mellem rettighedshaverne besluttes af de relevante forbund i forening, og producenten kan ikke holdes ansvarlig for denne fordeling."
 
-Øvrige rettigheder
-"Alle rettigheder til i dag kendte eller fremtidige udnyttelsesformer, som ikke i medfør af nærværende aftale er erhvervet af Producenten, tilhører Klipperen."[/GUL]
+Øvrige rettigheder:
+"Alle rettigheder til i dag kendte eller fremtidige udnyttelsesformer, som ikke i medfør af nærværende aftale er erhvervet af Producenten, tilhører Klipperen."
+===GUL SLUT===
 
 11. Ophør og sygdom
-Det er godt, at I har aftalt et opsigelsesvarsel på 14 dage, dog vil vi anbefale, at der sættes et krav om skriftlighed ind i bestemmelsen, så der i stedet står:
 
-[GUL]"Aftalen kan opsiges skriftligt af begge parter med 14 dages varsel."[/GUL]
+Det er godt at I har aftalt 14 dages opsigelsesvarsel — vi anbefaler blot at skriftlighedskrav tilføjes.
 
-Du må endelig skrive, hvis du har spørgsmål eller lignende, og så må du meget gerne sende den endelige version af kontrakten, når den er på plads og er underskrevet.
+===GUL START===
+Pkt. 11 bør præciseres — mit forslag er:
+
+"Aftalen kan opsiges skriftligt af begge parter med 14 dages varsel."
+===GUL SLUT===
+
+TIL DIG — IKKE TIL PRODUCENTEN
+
+Dette er en leverandørkontrakt, så producenten betaler ikke BETA-fond eller helligdagsbetaling — dem er du selv ansvarlig for at budgettere med.
+Kontrollér at producenten er medlem af Producentforeningen — overenskomstvilkårene er kun juridisk bindende for ProF-medlemmer.
+
+Du må endelig skrive, hvis du har spørgsmål eller lignende — og så må du meget gerne sende den endelige version af kontrakten.
 
 God dag!
 
@@ -433,10 +584,10 @@ DFKS — Dansk Filmklipperselskab
 ---
 
 LEVERANDØRKONTRAKT — REEL LØN-BEREGNING I FEEDBACKMAILEN:
-Hvis kontrakten er en leverandørkontrakt og det ugentlige honorar fremgår, skal du inkludere følgende beregning tidligt i feedbackmailen (efter disclaimeren, IKKE markeret [GUL] da det er til klipperen selv):
+Hvis kontrakten er en leverandørkontrakt og det ugentlige honorar fremgår, inkludér beregningen i TIL DIG-sektionen (IKKE ===GUL===, da det er til klipperen selv):
 
 "HVAD ER DIN REELLE LØN?
-Honoraret er alt-inklusivt. Du skal selv sætte penge til side til feriepenge og pension. Derudover betaler producenten i en overenskomstkontrakt helligdagsbetaling (1%) og BETA-fond (0,5%) oveni lønnen — det får du ikke i en leverandørkontrakt. Her er hvad du reelt sidder tilbage med:
+Honoraret er alt-inklusivt. Du skal selv sætte penge til side til feriepenge og pension. Her er hvad du reelt sidder tilbage med:
 
 Honorar/uge (alt-inkl.):                [BELØB] kr
 − Feriepenge (12,5% inkl.):             −[BELØB] kr
@@ -448,19 +599,17 @@ Honorar/uge (alt-inkl.):                [BELØB] kr
 
 Til sammenligning er De4-normallønnen 14.637 kr/uge — men der betaler producenten pension (9,5%), helligdage (1%) og BETA-fond (0,5%) oveni."
 
-Beregn: grundløn = honorarUge ÷ 1,125. Feriepenge = honorarUge − grundløn. Brug De4-normallønnen (14.637 kr/uge) som grundlag for pension, helligdag og BETA — IKKE den beregnede grundløn: Pension = 14.637 × 0,095 = 1.391 kr. Helligdag = 14.637 × 0,01 = 146 kr. BETA = 14.637 × 0,005 = 73 kr. Nettoløn = grundløn − 1.391 − 146 − 73. Afrund til hele kroner.
+Beregn: grundløn = honorarUge ÷ 1,125. Feriepenge = honorarUge − grundløn. Brug De4-normallønnen (14.637 kr/uge) som grundlag for pension, helligdag og BETA: Pension = 14.637 × 0,095 = 1.391 kr. Helligdag = 14.637 × 0,01 = 146 kr. BETA = 14.637 × 0,005 = 73 kr. Nettoløn = grundløn − 1.391 − 146 − 73. Afrund til hele kroner.
 
-VIGTIGT: Nævn ALDRIG specifikke navne på studerende, kolleger eller medhjælpere. Skriv ikke "jeg har gennemgået kontrakten med min student" eller lignende. Brug aldrig navne som "Emilie" eller andre fra eksemplerne.
+VIGTIGT: Nævn ALDRIG specifikke navne på studerende, kolleger eller medhjælpere. Brug aldrig navne som "Emilie" eller andre fra eksemplerne.
 
-VIGTIGT: I de tekststykker der er markeret med [GUL] (dvs. det der skal sendes til producenten), skal du skrive "jeg" og ikke "vi". Eksempel: "jeg foreslår", "jeg anbefaler", "jeg ønsker at" — ikke "vi foreslår" osv. I den øvrige del af mailen (forklaringer til klipperen) kan du bruge "vi" eller "vores" som i eksemplerne.
+VIGTIGT: I ===GUL START=== ... ===GUL SLUT=== afsnit (dvs. det der sendes til producenten) skal du skrive "jeg" og ikke "vi". I den øvrige del af mailen (forklaringer til klipperen) kan du bruge "vi" eller "vores".
 
-VIGTIGT: Brug ALDRIG termerne "branchepraksis", "branchestandard", "markedsstandard" eller lignende vage standardreferencer, medmindre du kan referere direkte til en konkret, dokumenteret kilde — f.eks. FAF-overenskomsten, De4-overenskomsten, Ophavsretsloven eller et andet verificeret dokument. Undlad at kalde noget "god branchepraksis" eller "anerkendt standard" blot fordi det er almindeligt — beskriv i stedet hvad reglen faktisk er og hvor den kommer fra. Eksempel på hvad der IKKE må skrives: "det er god og transparent branchepraksis" — skriv i stedet fx "dette er i overensstemmelse med FAF-overenskomstens § X" eller undlad vurderingen helt.
+VIGTIGT: Brug ALDRIG termerne "branchepraksis", "branchestandard", "markedsstandard" eller lignende vage standardreferencer, medmindre du kan referere direkte til en konkret kilde — f.eks. FAF-overenskomsten, De4-overenskomsten eller Ophavsretsloven.
 
-VIGTIGT: Skriv ALDRIG at noget "normalt indgår", "typisk ses", "sædvanligvis medtages" eller "plejer at være med" i kontrakter, medmindre det kan dokumenteres med en konkret kilde. Undgå formuleringstyper som "standardklausuler der normalt indgår i kontrakter af denne type" — det lyder som en autoritativ påstand om hvad der altid sker, men det er det ikke. Beskriv i stedet konkret hvad DFKS anbefaler og hvorfor — med reference til overenskomst, lovgivning eller DFKS's egne anbefalinger.
+VIGTIGT: Skriv ALDRIG at noget "normalt indgår", "typisk ses", "sædvanligvis medtages" eller "plejer at være med" i kontrakter, medmindre det kan dokumenteres med en konkret kilde.
 
-Variér åbningshilsenen naturligt ("Tak for kontrakten", "Tak for snakken", "Tak fordi du sendte kontrakten" osv.). Brug emoji sparsomt — kun hvis det passer til tonen. Tilpas altid closing til hverdagen (dag/weekend/uge).
-
-Brug juridisk præcist sprog i selve rettelserne, men hold den omgivende tone varm og uformel.
+Variér åbningshilsenen naturligt. Tilpas altid closing til hverdagen (dag/weekend/uge). Brug juridisk præcist sprog i rettelserne, men hold den omgivende tone varm og uformel.
 
 ──────────────────────────────────────────────────────────────────────
 REFERENCEDOKUMENTER — BRUG AKTIVT VED KONTRAKTGENNEMGANG:
@@ -735,6 +884,22 @@ export async function POST(req: NextRequest) {
                 { error: "AI returnerede ugyldigt svar — prøv igen" },
                 { status: 500 }
             )
+        }
+
+        // Navnetjek mod DFKS-register — brug memberName hvis tilgængeligt
+        const rightsHolderName: string | null = memberName ?? null
+        if (rightsHolderName) {
+            try {
+                const navneTjek = await tjekNavn(rightsHolderName)
+                if (navneTjek.feedbackpunkt && navneTjek.status !== "match") {
+                    parsed.feedbackpunkter = [
+                        ...(parsed.feedbackpunkter ?? []),
+                        navneTjek.feedbackpunkt,
+                    ]
+                }
+            } catch (e) {
+                console.warn("[gennemgang] Navnetjek fejlede:", e)
+            }
         }
 
         return NextResponse.json({

@@ -121,12 +121,16 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-// Render mail text with [GUL]...[/GUL] as yellow highlighted spans
+// Render mail text with GUL markers as yellow highlighted spans.
+// Supports both legacy [GUL]...[/GUL] and new ===GUL START===...===GUL SLUT=== format.
 function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const parts = text.split(/(\[GUL\][\s\S]*?\[\/GUL\])/g)
+    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
+    const parts = text.split(GUL_RE)
     return parts.map((part, i) => {
-        if (part.startsWith("[GUL]") && part.endsWith("[/GUL]")) {
-            const inner = part.slice(5, -6)
+        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
+        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
+        if (isLegacy || isNew) {
+            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
             return (
                 <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">
                     {inner}
@@ -156,8 +160,11 @@ function removeMailSection(text: string, sectionNum: number): string {
 }
 
 function extractGulText(text: string): string {
-    const matches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)]
-    return matches.map(m => m[1].trim()).join("\n\n")
+    // Support both legacy [GUL]...[/GUL] and new ===GUL START===...===GUL SLUT===
+    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    const all = [...legacyMatches, ...newMatches]
+    return all.join("\n\n")
 }
 
 // ── Main Page ─────────────────────────────────────────────────
@@ -293,7 +300,7 @@ export default function KontraktGennemgangPage() {
             const keyword = point.slice(0, 35).toLowerCase().trim()
             const blocks = text.split(/\n\n+/)
             const filtered = blocks.filter(block => {
-                const clean = block.replace(/\[GUL\]|\[\/GUL\]/gi, "")
+                const clean = block.replace(/\[GUL\]|\[\/GUL\]|===GUL START===|===GUL SLUT===/gi, "")
                 return !(keyword.length > 5 && clean.toLowerCase().includes(keyword))
             })
             if (filtered.length < blocks.length) { text = filtered.join("\n\n"); return }
