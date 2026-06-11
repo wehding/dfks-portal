@@ -65,7 +65,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "betaRate": "${BETA_RATE_RULE}",
 
   "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
-  "copydan": "har kontrakten Copydan-forbehold? (boolean)",
+  "copydan": "har kontrakten Copydan-forbehold? Sæt true hvis kontrakten eksplicit nævner Copydan, aftalelicens, eksemplarfremstilling til privat brug, ophavsretslovens §§ 39-46a, eller kollektivt forvaltningsselskab i forbindelse med rettigheder der tilkommer klipper/leverandør. Sæt IKKE false blot fordi SVOD er overdraget — Copydan og SVOD er uafhængige rettigheder. (boolean)",
   "royalty": "har kontrakten royalty? (boolean). REGLER: (1) Spillefilm (feature) og dokumentarfilm: true automatisk — royalty er standard. (2) TV-serier (tvSeries, docSeries): ALDRIG true automatisk — kun hvis dedikeret royalty-afsnit adskilt fra SVOD/streaming. (3) Royalty nævnt i Create Denmark/SVOD-klausulen tæller IKKE som royalty-klausul — sæt false.",
   "royaltyPercent": "royaltyprocent som tal (number | null)",
   "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
