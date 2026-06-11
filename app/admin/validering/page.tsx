@@ -36,6 +36,8 @@ function nameTokens(name: string): string[] {
 }
 
 function tokenOverlapScore(a: string, b: string): number {
+    // Eksakt match (case-insensitiv) giver altid 1.0
+    if (a.toLowerCase() === b.toLowerCase()) return 1.0
     const ta = new Set(nameTokens(a))
     const tb = new Set(nameTokens(b))
     if (ta.size === 0 || tb.size === 0) return 0
@@ -552,7 +554,13 @@ export default function AdminValideringPage() {
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
         return {
-            producerName:                  ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? "",
+            producerName: (() => {
+                const raw = ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? ""
+                // Normaliser ALL CAPS til title case (bevarer blandinget case som er)
+                return raw === raw.toUpperCase() && raw.length > 3
+                    ? raw.replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                    : raw
+            })(),
             rightsHolderName:              ed.rightsHolderName ?? "",
             workTitle:                     ed.workTitle ?? "",
             creditedRoles:                 Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),
