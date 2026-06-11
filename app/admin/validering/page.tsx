@@ -627,6 +627,7 @@ export default function AdminValideringPage() {
                 const count = (masked.match(/\[(?:CPR-NUMMER|KONTONUMMER|IBAN|TELEFON|EMAIL|ADRESSE|POSTNR-BY|CVR-NUMMER)\]/g) || []).length
                 setMaskingPreview({ count, types })
                 setMaskedText(masked)
+                setContractText(raw)  // gem original tekst til highlighting
                 setShowMaskingConfirm(true)
             } catch (e: any) {
                 toast.error(`Kunne ikke forberede udtræk: ${e.message}`)
@@ -685,7 +686,7 @@ export default function AdminValideringPage() {
             if (!data.ok) throw new Error(data.error ?? "AI returnerede ingen data")
             const ed = data.data
             if (!ed) throw new Error("AI returnerede ingen data")
-            try { setContractText(originalText ?? "") } catch { /* ok */ }
+            if (originalText) { try { setContractText(originalText) } catch { /* ok */ } }
             if (ed._sources) setSources(normaliseSources(ed._sources))
             overwriteWithAi(ed)
             toast.success("Felter opdateret fra AI-udtræk")
