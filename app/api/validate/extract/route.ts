@@ -50,7 +50,7 @@ const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som
   "pensionSupplement": "tal i kr (number|null)",
   "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number|null)",
   "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string|null)",
-  "workingWeeks": "tal (number|null)",
+  "workingWeeks": "antal ARBEJDSUGER som tal (number|null). Hvis kontrakten angiver klippedage/arbejdsdage — divider med 5 (fx 35 klippedage = 7,0 uger). Hvis måneder — multiplicer med 4,33.",
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
   "betaRate": "${BETA_RATE_RULE}",
   "svod": "boolean",
