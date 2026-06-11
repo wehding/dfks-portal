@@ -122,6 +122,7 @@ export async function saveUploadedContract(params: {
       type: "a-løn",
       status: "kladde",
       pdf_url: params.filePath,
+      working_title: params.workTitle || null,
     })
     .select()
     .single();
