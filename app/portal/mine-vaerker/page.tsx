@@ -19,23 +19,26 @@ export default function MineVaerkerPage() {
     const supabase = createClient();
 
     async function load() {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: authErr } = await supabase.auth.getUser();
+      console.log("[mine-vaerker] user:", user?.id, "authErr:", authErr?.message);
       if (!user) { router.push("/"); return; }
 
-      const { data: rh } = await supabase
+      const { data: rh, error: rhErr } = await supabase
         .from("rettighedshavere")
         .select("id, full_name, dfi_person_id")
         .eq("user_id", user.id)
         .single();
+      console.log("[mine-vaerker] rh:", rh?.id, "rhErr:", rhErr?.message);
 
       if (!rh) { setData({ assignments: [], allAssignments: [], rightsHolderId: null, userName: "", dfiPersonId: null }); return; }
 
-      const { data: assignments } = await supabase
+      const { data: assignments, error: assErr } = await supabase
         .from("work_assignments")
         .select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, dfi_id, tmdb_id, poster_url, description)")
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false });
 
+      console.log("[mine-vaerker] assignments:", assignments?.length, "assErr:", assErr?.message);
       const workIds = (assignments ?? []).map((a: any) => a.works?.id).filter(Boolean);
       const { data: allAssignments } = workIds.length
         ? await supabase
