@@ -558,7 +558,7 @@ export default function AdminValideringPage() {
                 const raw = ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? ""
                 // Normaliser ALL CAPS til title case (bevarer blandinget case som er)
                 return raw === raw.toUpperCase() && raw.length > 3
-                    ? raw.replace(/\b\w+/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+                    ? raw.replace(/\b\w+/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
                     : raw
             })(),
             rightsHolderName:              ed.rightsHolderName ?? "",
