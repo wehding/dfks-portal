@@ -70,17 +70,13 @@ const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som
 
 export async function POST(req: NextRequest) {
     try {
-        const { contractId, pdfPath, signedPdfUrl } = await req.json()
+        const { contractId, pdfPath } = await req.json()
         if (!contractId && !pdfPath) {
             return NextResponse.json({ error: "contractId eller pdfPath påkrævet" }, { status: 400 })
         }
 
         const apiKey = getApiKey("anthropic")
         if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY mangler" }, { status: 500 })
-
-        // Hent PDF fra Supabase Storage via direkte HTTP (omgår SDK JWT-validering)
-        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 
         const admin = createServiceClient()
 
@@ -91,24 +87,9 @@ export async function POST(req: NextRequest) {
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Hent PDF — prøv signed URL fra admin-klienten, ellers opret via service-client
-        let buffer: Buffer
-        let downloadUrl = signedPdfUrl
-        if (!downloadUrl) {
-            const { data } = await admin.storage.from("kontrakter").createSignedUrl(storagePath, 120)
-            downloadUrl = data?.signedUrl ?? null
-        }
-
-        if (!downloadUrl) {
-            return NextResponse.json({ error: "Kunne ikke oprette adgang til PDF — prøv at uploade filen manuelt i stedet" }, { status: 500 })
-        }
-
-        const fileResponse = await fetch(downloadUrl)
-        if (!fileResponse.ok) {
-            const body = await fileResponse.text()
-            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status} — ${body.substring(0, 200)}` }, { status: 500 })
-        }
-        buffer = Buffer.from(await fileResponse.arrayBuffer())
+        const { data: fileData, error: dlErr } = await admin.storage.from("kontrakter").download(storagePath)
+        if (dlErr || !fileData) return NextResponse.json({ error: `Kunne ikke hente PDF: ${dlErr?.message}` }, { status: 500 })
+        const buffer = Buffer.from(await fileData.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
