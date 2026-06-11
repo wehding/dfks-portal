@@ -531,7 +531,7 @@ export default function AdminValideringPage() {
         const ingenOverenskomst = !overenskomst || overenskomst === "ingen"
 
         return {
-            producerName:                  ed.employerName ?? "",
+            producerName:                  ed.employerName ?? ed.producerName ?? ed.parentCompanyName ?? "",
             rightsHolderName:              ed.rightsHolderName ?? "",
             workTitle:                     ed.workTitle ?? "",
             creditedRoles:                 Array.isArray(ed.creditedRoles) ? ed.creditedRoles.join(", ") : (ed.creditedRoles ?? ""),

@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
 
 async function extractFromText(text: string, apiKey: string, systemPrompt?: string): Promise<string> {
     const body = {
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-6",
         max_tokens: 4096,
         system: systemPrompt ?? (SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT),
         messages: [{
