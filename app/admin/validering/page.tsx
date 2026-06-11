@@ -665,30 +665,27 @@ export default function AdminValideringPage() {
         if (!localPdfFile && !maskedText) return
         setScreening(true)
         try {
-            const { extractTextFromFile, buildSystemPrompt } = await import("@/lib/ai")
             let textToSend = maskedText
             let originalText = contractText
             if (!textToSend && localPdfFile) {
+                const { extractTextFromFile } = await import("@/lib/ai")
                 const raw = await extractTextFromFile(localPdfFile)
                 if (!raw.trim()) throw new Error("Ingen tekst fundet i filen")
                 originalText = raw
                 textToSend = maskPersonalData(raw)
             }
-            if (!textToSend.trim()) throw new Error("Ingen tekst fundet i filen")
-            const resp = await fetch("/api/screen", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    system: buildSystemPrompt(),
-                    userMessage: "Analyser denne kontrakt og returner JSON:\n\n" + textToSend.slice(0, 40000),
-                }),
-            })
+            if (!textToSend?.trim()) throw new Error("Ingen tekst fundet i filen")
+
+            // Brug contracts/extract (fuld admin-prompt med kilder og highlights)
+            const fd = new FormData()
+            fd.append("maskedText", textToSend)
+            const resp = await fetch("/api/contracts/extract", { method: "POST", body: fd })
             if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error ?? `Fejl ${resp.status}`) }
             const data = await resp.json()
-            if (data.error) throw new Error(data.error)
-            const ed = data.result?.extractedData
+            if (!data.ok) throw new Error(data.error ?? "AI returnerede ingen data")
+            const ed = data.data
             if (!ed) throw new Error("AI returnerede ingen data")
-            try { setContractText(originalText) } catch { /* ok */ }
+            try { setContractText(originalText ?? "") } catch { /* ok */ }
             if (ed._sources) setSources(normaliseSources(ed._sources))
             overwriteWithAi(ed)
             toast.success("Felter opdateret fra AI-udtræk")
