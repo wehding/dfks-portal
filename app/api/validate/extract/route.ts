@@ -90,15 +90,30 @@ export async function POST(req: NextRequest) {
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Download direkte fra storage REST API med service-role token
-        const storageResponse = await fetch(
-            `${supabaseUrl}/storage/v1/object/kontrakter/${storagePath}`,
-            { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey! } }
+        // Opret signed URL via REST API og hent filen
+        const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        const signResponse = await fetch(
+            `${supabaseUrl}/storage/v1/object/sign/kontrakter/${storagePath}`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${serviceKey}`,
+                    apikey: anonKey,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ expiresIn: 60 }),
+            }
         )
-        if (!storageResponse.ok) {
-            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${storageResponse.status}` }, { status: 500 })
+        if (!signResponse.ok) {
+            const errText = await signResponse.text()
+            return NextResponse.json({ error: `Kunne ikke signere URL: HTTP ${signResponse.status} — ${errText}` }, { status: 500 })
         }
-        const buffer = Buffer.from(await storageResponse.arrayBuffer())
+        const { signedURL } = await signResponse.json()
+        const fileResponse = await fetch(`${supabaseUrl}/storage/v1${signedURL}`)
+        if (!fileResponse.ok) {
+            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${fileResponse.status}` }, { status: 500 })
+        }
+        const buffer = Buffer.from(await fileResponse.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
