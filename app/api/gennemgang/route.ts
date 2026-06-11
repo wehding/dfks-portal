@@ -192,8 +192,8 @@ function byggAbsolutteRegler(
         : "[ikke fundet i kontrakt]"
 
     const sprogRegel = klassifikation.kontraktsprog === "en"
-        ? "🌐 ENGELSK KONTRAKT: Skriv HELE feedbackmailen på engelsk — både tekst til medlemmet, snippets til producenten og TIL DIG-sektionen. Brug engelske juridiske termer."
-        : "✓ Dansk kontrakt — skriv på dansk."
+        ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er markeret med ===GUL START=== og ===GUL SLUT=== skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
+        : "✓ Dansk kontrakt — skriv alt på dansk."
 
     const loenTypeRegel = klassifikation.loen_type === "fast_total"
         ? `🚫 FAST TOTALBELØB — ABSOLUT FORBUD: Gang ALDRIG beløbet op per uge. ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} er det samlede honorar for hele perioden.`
