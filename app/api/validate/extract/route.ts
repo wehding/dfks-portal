@@ -115,6 +115,7 @@ export async function POST(req: NextRequest) {
 
         // Hent overenskomsttekster fra DB
         let activeSystemPrompt = SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT
+        const admin = createServiceClient()
         try {
             const { data: refDocs } = await admin
                 .from("reference_docs")
