@@ -18,6 +18,29 @@ export default function LoginPage() {
     const [password, setPassword] = useState("")
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
+    const isDev = process.env.NODE_ENV === "development"
+
+    const handleDevLogin = async (type: "member" | "admin") => {
+        setLoading(true)
+        const creds = type === "admin"
+            ? { email: "wehding@gmail.com", password: "" }
+            : { email: "test@dfks.dk", password: "test1234" }
+        setEmail(creds.email)
+        setPassword(creds.password)
+        const supabase = createClient()
+        const { error: authError } = await supabase.auth.signInWithPassword(creds)
+        if (authError) { setError(authError.message); setLoading(false); return }
+        const { data: { user } } = await supabase.auth.getUser()
+        const role = user?.user_metadata?.role ?? "member"
+        if (role === "admin" || role === "org-admin" || role === "superadmin") {
+            router.push("/admin/kontraktgennemgang")
+        } else {
+            const supabase2 = createClient()
+            const { data: rh } = await supabase2.from("rettighedshavere").select("onboarding_completed").eq("user_id", user!.id).single()
+            router.push(rh?.onboarding_completed ? "/portal/mine-vaerker" : "/onboarding")
+        }
+        router.refresh()
+    }
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -118,6 +141,20 @@ export default function LoginPage() {
                             {loading ? "Logger ind…" : t("auth.login")}
                         </Button>
                     </form>
+
+                    {isDev && (
+                        <div className="border-t pt-4 mt-2 flex flex-col gap-2">
+                            <p className="text-xs text-center text-muted-foreground font-mono">DEV</p>
+                            <div className="flex gap-2">
+                                <Button type="button" variant="outline" className="flex-1 text-xs" onClick={() => handleDevLogin("member")} disabled={loading}>
+                                    👤 Test member
+                                </Button>
+                                <Button type="button" variant="outline" className="flex-1 text-xs" onClick={() => { setEmail("wehding@gmail.com"); setPassword("") }} disabled={loading}>
+                                    🔑 Admin (udfyld pw)
+                                </Button>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="border-t pt-6 mt-2">
                         <a

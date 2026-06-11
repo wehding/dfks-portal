@@ -32,10 +32,10 @@ export async function completeOnboarding(formData: FormData) {
 
   if (error) {
     console.error("Onboarding fejl:", error);
-    return { success: false, error: "Kunne ikke gemme onboarding-data." };
+    return { success: false, error: `Kunne ikke gemme onboarding-data: ${error.message} (${error.code})` };
   }
 
-  revalidatePath("/portal");
+  revalidatePath("/portal/mine-vaerker");
   revalidatePath("/portal/min-profil");
   return { success: true };
 }

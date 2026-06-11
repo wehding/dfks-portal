@@ -61,7 +61,7 @@ export default function OnboardingClient({
 
     const result = await completeOnboarding(payload);
     if (result.success) {
-      router.push("/portal");
+      router.push("/portal/mine-vaerker");
       router.refresh();
     } else {
       alert(result.error || "Der opstod en fejl. Prøv igen.");
@@ -82,9 +82,10 @@ export default function OnboardingClient({
         setDfiPersonId(person.Id);
         const creditsResult = await getDFIPersonCredits(person.Id);
         if (creditsResult.success && creditsResult.credits) {
-          setDfiCredits(creditsResult.credits);
+          const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
+          setDfiCredits(unique);
           const sel: Record<number, boolean> = {};
-          creditsResult.credits.forEach((c: any) => { sel[c.Id] = true; });
+          unique.forEach((c: any) => { sel[c.Id] = true; });
           setSelectedDfiCredits(sel);
         } else {
           setDfiError("Fandt profil, men kunne ikke hente film for personen.");
@@ -111,9 +112,10 @@ export default function OnboardingClient({
           setDfiPersonId(person.Id);
           const creditsResult = await getDFIPersonCredits(person.Id);
           if (creditsResult.success && creditsResult.credits) {
-            setDfiCredits(creditsResult.credits);
+            const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
+            setDfiCredits(unique);
             const sel: Record<number, boolean> = {};
-            creditsResult.credits.forEach((c: any) => { sel[c.Id] = true; });
+            unique.forEach((c: any) => { sel[c.Id] = true; });
             setSelectedDfiCredits(sel);
           }
         }
@@ -371,8 +373,8 @@ export default function OnboardingClient({
                     backgroundColor: "var(--surface-container-low)",
                     display: "flex", flexDirection: "column", padding: "4px",
                   }}>
-                    {dfiCredits.map((c) => (
-                      <label key={c.Id} style={{
+                    {dfiCredits.map((c, i) => (
+                      <label key={`${c.Id}-${i}`} style={{
                         display: "flex", alignItems: "flex-start", gap: "12px",
                         padding: "12px 16px",
                         borderBottom: "1px solid var(--outline-variant)",

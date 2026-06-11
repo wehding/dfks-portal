@@ -1,6 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 
 // DFI org_id bruges ved import — DFKS default
@@ -131,7 +132,8 @@ export async function getDFIFilmDetails(filmId: number) {
 }
 
 export async function importApprovedDFIWorks(personId: number, selectedCredits: any[]) {
-  const supabase = await createClient();
+  const supabase = await createClient();        // til auth + rettighedshaver
+  const db = createServiceClient();             // til works + work_assignments (bypasser RLS)
   const { data: authData } = await supabase.auth.getUser();
 
   if (!authData?.user) {
@@ -141,24 +143,26 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
   const userId = authData.user.id;
 
   // Hent rettighedshaver for denne bruger
-  const { data: rh } = await supabase
+  const { data: rh } = await db
     .from("rettighedshavere")
     .select("id")
     .eq("user_id", userId)
     .single();
 
   if (!rh) {
+    console.error("[DFI import] Ingen rettighedshaver fundet for user_id:", userId);
     return { success: false, error: "Kunne ikke finde din rettighedshaver-profil." };
   }
+  console.log("[DFI import] Rettighedshaver:", rh.id, "| Credits:", selectedCredits.length);
 
   // Gem dfi_person_id på rettighedshaveren
-  await supabase
+  await db
     .from("rettighedshavere")
     .update({ dfi_person_id: personId })
     .eq("id", rh.id);
 
   // Hent brugerens org (eller brug DFKS default)
-  const { data: orgRole } = await supabase
+  const { data: orgRole } = await db
     .from("user_org_roles")
     .select("org_id")
     .eq("user_id", userId)
@@ -182,6 +186,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       if (!filmId) return null;
       const res = await fetchDFI(`/v1/film/${filmId}`);
       if (res.success && res.data) return { credit, film: res.data };
+      console.error(`[DFI import] Film ${filmId} fejlede:`, res.error);
       errors.push(`Film ID ${filmId}: ${res.error}`);
       return null;
     })
@@ -224,7 +229,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       // Tjek om værket allerede eksisterer
       let existingId: string | null = null;
 
-      const { data: byDfi } = await supabase
+      const { data: byDfi } = await db
         .from("works")
         .select("id")
         .eq("dfi_id", String(filmId))
@@ -233,7 +238,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       if (byDfi) {
         existingId = byDfi.id;
       } else if (filmTitle && prodYear) {
-        const { data: byTitle } = await supabase
+        const { data: byTitle } = await db
           .from("works")
           .select("id")
           .ilike("title", filmTitle.trim())
@@ -255,23 +260,25 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       };
 
       if (workId) {
-        await supabase.from("works").update(workData).eq("id", workId);
+        await db.from("works").update(workData).eq("id", workId);
       } else {
-        const { data: newWork, error: insertErr } = await supabase
+        const { data: newWork, error: insertErr } = await db
           .from("works")
           .insert(workData)
           .select("id")
           .single();
 
         if (insertErr || !newWork) {
+          console.error(`[DFI import] INSERT works fejl for "${filmTitle}":`, insertErr);
           errors.push(`Fejl ved oprettelse af ${filmTitle}: ${insertErr?.message}`);
           continue;
         }
+        console.log(`[DFI import] Oprettet work: "${filmTitle}" (${workId})`);
         workId = newWork.id;
       }
 
       // Tilføj work_assignment
-      const { error: assignErr } = await supabase
+      const { error: assignErr } = await db
         .from("work_assignments")
         .upsert(
           {
@@ -284,6 +291,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         );
 
       if (assignErr) {
+        console.error(`[DFI import] UPSERT work_assignments fejl for "${filmTitle}":`, assignErr);
         errors.push(`Fejl ved kreditering af ${filmTitle}: ${assignErr.message}`);
         continue;
       }
