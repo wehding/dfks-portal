@@ -777,13 +777,13 @@ export default function AdminValideringPage() {
             svod:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
             copydan: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
             royalty: ["royalt", royaltySrc].filter(Boolean).join("||"),
-            agreement: [ca, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst"].filter(Boolean).join("||"),
+            agreement: [ca, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
         const rightsHighlightSource: Record<string, string> = {
             svod:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
             copydan: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
             royalty: ["royalt", royaltySrc ? royaltySrc.slice(0, 30) : null].filter(Boolean).join("||"),
-            agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst"].filter(Boolean).join("||"),
+            agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
         const resolvedActiveHighlight = activeSource
             ? (rightsHighlightSource[activeSource] || rightsPageSource[activeSource] || activeSource)
