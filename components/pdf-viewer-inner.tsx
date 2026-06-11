@@ -116,14 +116,6 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
 
     const allHighlights = [...highlights, ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim()))]
 
-    if (sectionHighlights.length > 0) {
-        const terms = allHighlights.map(q => norm(q)).filter(Boolean)
-        console.log("[hl] normFull (200):", normFull.slice(0, 200))
-        console.log("[hl] søger efter:", terms.slice(0, 5))
-        console.log("[hl] fundet:", terms.filter(t => normFull.includes(t)))
-        console.log("[hl] spans:", spans.length, "| activeHighlight:", activeHighlight?.slice(0, 40))
-    }
-
     allHighlights.forEach((quote) => {
         if (!quote || quote.length < 2) return
         const isSection = sectionHighlights.some(s => s.split("||").map(x => x.trim()).includes(quote))
@@ -253,11 +245,6 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         return () => clearTimeout(timer)
     }, [highlights, sectionHighlights, sectionEndMarkers, activeHighlight, pageNumber, pageRendered])
 
-    // Debug: log when key props change
-    useEffect(() => {
-        if (activeHighlight) console.log("[pv] activeHighlight:", activeHighlight?.slice(0, 60))
-        if (sectionHighlights?.length) console.log("[pv] sectionHighlights:", sectionHighlights)
-    }, [activeHighlight, sectionHighlights])
 
     if (error) {
         return (
