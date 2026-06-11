@@ -662,7 +662,7 @@ export default function AdminValideringPage() {
     }
 
     const handleExtract = async () => {
-        if (!localPdfFile) return
+        if (!localPdfFile && !maskedText) return
         setScreening(true)
         try {
             const { extractTextFromFile, buildSystemPrompt } = await import("@/lib/ai")
