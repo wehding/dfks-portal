@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic"
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { createClient as createAdmin } from "@supabase/supabase-js"
+import { createServiceClient } from "@/lib/supabase/service"
 import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
@@ -78,11 +78,7 @@ export async function POST(req: NextRequest) {
         if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY mangler" }, { status: 500 })
 
         // Hent PDF fra Supabase Storage
-        const admin = createAdmin(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY)!,
-            { auth: { autoRefreshToken: false, persistSession: false } }
-        )
+        const admin = createServiceClient()
 
         let storagePath = pdfPath
         if (!storagePath && contractId) {
