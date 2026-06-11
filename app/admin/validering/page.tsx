@@ -110,6 +110,9 @@ export default function AdminValideringPage() {
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
+    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string }[]>([])
+    const [rhSuggestions, setRhSuggestions] = useState<{ id: string; name: string; score: number }[]>([])
+    const [selectedRhId, setSelectedRhId] = useState<string | null>(null)
     const [employerSuggestions, setEmployerSuggestions] = useState<{
         id: string | null; name: string; source: "db" | "dfi"; score: number; dfi_id?: number
     }[]>([])
@@ -168,6 +171,8 @@ export default function AdminValideringPage() {
         const supabase = createClient()
         supabase.from("employers").select("id, name, dfi_company_id").order("name")
             .then(({ data }) => { if (data) setEmployers(data) })
+        supabase.from("rettighedshavere").select("id, full_name").order("full_name")
+            .then(({ data }) => { if (data) setRettighedshavere(data) })
 
         // Hent overenskomster fra reference_docs katalog
         supabase.from("reference_docs")
@@ -239,6 +244,21 @@ export default function AdminValideringPage() {
                 .finally(() => setSearchingDfi(false))
         }
     }, [formData.producerName, employers])
+
+    // Rettighedshaver-matching når rightsHolderName ændres
+    useEffect(() => {
+        const name = formData.rightsHolderName?.trim()
+        if (!name || name.length < 3) { setRhSuggestions([]); return }
+        const matches = rettighedshavere
+            .map(rh => ({ id: rh.id, name: rh.full_name, score: tokenOverlapScore(rh.full_name, name) }))
+            .filter(x => x.score >= 0.4)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 4)
+        setRhSuggestions(matches)
+        if (matches.length === 1 && matches[0].score >= 0.8) {
+            setSelectedRhId(matches[0].id)
+        }
+    }, [formData.rightsHolderName, rettighedshavere])
 
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
@@ -495,6 +515,7 @@ export default function AdminValideringPage() {
                 ...(selectedEmployerId && { employer_id: selectedEmployerId }),
                 ...(contractType && { type: contractType }),
                 ...(overenskomstVal !== undefined && { overenskomst: overenskomstVal }),
+                ...(selectedRhId && { rights_holder_id: selectedRhId }),
             }).eq("id", id)
 
             leaveReview()
@@ -999,9 +1020,30 @@ export default function AdminValideringPage() {
                                 <F label="Medarbejder / Klipper (fra AI-udtræk)" locked={isLocked("rightsHolderName")}>
                                     <Input
                                         value={String(formData.rightsHolderName ?? "")}
-                                        onChange={(e) => setField("rightsHolderName", e.target.value)}
+                                        onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
                                         placeholder="Klipperens fulde navn..."
                                     />
+                                    {selectedRhId && (
+                                        <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
+                                            <span>✓ Koblet til rettighedshaver i systemet</span>
+                                            <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
+                                        </div>
+                                    )}
+                                    {!selectedRhId && rhSuggestions.length > 0 && (
+                                        <div className="mt-1.5 space-y-1">
+                                            <p className="text-xs text-muted-foreground">Fundet i systemet:</p>
+                                            {rhSuggestions.map(s => (
+                                                <button key={s.id} type="button"
+                                                    className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
+                                                    onClick={() => setSelectedRhId(s.id)}>
+                                                    {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
+                                        <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere — kontrakten tilhører måske en ny person</p>
+                                    )}
                                 </F>
                             )}
                             <Separator />
