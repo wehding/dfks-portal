@@ -668,7 +668,7 @@ export default function AdminValideringPage() {
             const { extractTextFromFile, buildSystemPrompt } = await import("@/lib/ai")
             let textToSend = maskedText
             let originalText = contractText
-            if (!textToSend) {
+            if (!textToSend && localPdfFile) {
                 const raw = await extractTextFromFile(localPdfFile)
                 if (!raw.trim()) throw new Error("Ingen tekst fundet i filen")
                 originalText = raw
