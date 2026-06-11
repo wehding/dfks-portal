@@ -1,6 +1,7 @@
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import MineKontrakterClient from "./MineKontrakterClient";
 
 export default async function MineKontrakterPage() {
@@ -21,8 +22,12 @@ export default async function MineKontrakterPage() {
         .from("contracts")
         .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, created_at, works(id, title, year), employers(id, name), contract_validations(svod, copydan, royalty)")
         .eq("rights_holder_id", rh.id)
-        .order("uploaded_at", { ascending: false })
+        .order("created_at", { ascending: false })
     : { data: [] };
 
-  return <MineKontrakterClient initialContracts={(contracts ?? []) as any} />;
+  return (
+    <Suspense>
+      <MineKontrakterClient initialContracts={(contracts ?? []) as any} />
+    </Suspense>
+  );
 }

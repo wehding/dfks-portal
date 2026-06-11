@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { FileText, Upload, X, Loader2, AlertCircle, Trash2, Search } from "lucide-react";
 import { uploadMemberContract, deleteMemberContract, getContractSignedUrl } from "@/app/actions/member-contracts";
+import { useSearchParams } from "next/navigation";
 
 type Validation = { svod: boolean | null; copydan: boolean | null; royalty: boolean | null } | null;
 type Contract = {
@@ -44,6 +45,10 @@ function getValidation(c: Contract): Validation {
 
 export default function MineKontrakterClient({ initialContracts }: { initialContracts: Contract[] }) {
   const [contracts, setContracts] = useState(initialContracts);
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("upload") === "true") setIsUploading(true);
+  }, [searchParams]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);

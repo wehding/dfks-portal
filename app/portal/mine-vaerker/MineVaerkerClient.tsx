@@ -392,7 +392,7 @@ export default function MineVaerkerClient({
                 {/* Rolle */}
                 <div style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>{a.role ?? "–"}</div>
                 {/* Kontrakt */}
-                <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push("/portal/mine-kontrakter"); }}>
+                <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(a.contract_id ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true`); }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 600, color: a.contract_id ? "#16a34a" : "#dc2626", textDecoration: "underline", cursor: "pointer" }}>
                     <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: a.contract_id ? "#16a34a" : "#dc2626", display: "inline-block" }} />
                     {a.contract_id ? "OK" : "Mangler"}
