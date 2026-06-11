@@ -205,7 +205,25 @@ function byggAbsolutteRegler(
         klassifikation.kontrakttype === "leverandoer"
             ? "🚫 LEVERANDØRKONTRAKT — ABSOLUT FORBUD: Beregn ALDRIG pension/ferie oveni honoraret. Ferie er inkluderet i honoraret. Producenten betaler ingen pension."
         : klassifikation.kontrakttype === "hybrid"
-            ? "🚫 HYBRID KONTRAKT — ABSOLUT FORBUD: Lav INGEN lønberegning overhovedet. Skriv kun: 'Lønberegning kan ikke foretages — kontraktformen er uklar.'"
+            ? `🚫 HYBRID KONTRAKT — KRITISK PROBLEM:
+Dette er det mest alvorlige problem i kontrakten og skal nævnes FØRST og DIREKTE.
+Brug IKKE formuleringer som "lidt i tvivl" eller "jeg er usikker".
+
+Intern forklaring til medlemmet (ikke gul):
+Kontrakten blander A-løns- og leverandørterminologi på en måde der er juridisk uholdbar.
+Pkt. 1-10 bruger "Medarbejder" og "grundløn" (A-lønsord) mens pkt. 11 bruger
+"Leverandøren", "Kunden" og "faktura" (leverandørord). Det skaber usikkerhed om
+skat, pension, LG-dækning og rettigheder. ANBEFAL IKKE AT UNDERSKRIVE i nuværende form.
+
+Snippet til producenten (gul):
+"Kontrakten indeholder en juridisk inkonsistens der skal rettes inden underskrift.
+Pkt. 1-10 er formuleret som en A-lønsansættelse, mens pkt. 11 bruger leverandør-
+terminologi (Leverandøren, Kunden, faktura). De to kontraktformer kan ikke blandes.
+Jeg anmoder om at kontrakten rettes til en ren A-lønskontrakt, hvor alle
+formuleringer om Leverandøren og Kunden i pkt. 11 ændres til Medarbejderen
+og Producenten."
+
+🚫 ABSOLUT FORBUD: Lav INGEN lønberegning ved hybrid kontrakt.`
             : "✓ A-LØNSKONTRAKT — Beregn korrekt: feriepenge og pension betales OVENI lønnen. Brug udelukkende satser fra AKTUELLE SATSER nedenfor."
 
     const overenskomstRegler = klassifikation.er_overenskomst
