@@ -192,6 +192,7 @@ export default function KontraktGennemgangPage() {
     const [fundFeedback, setFundFeedback] = useState<Record<string, "good" | "bad">>({})
     const [fundKorrektioner, setFundKorrektioner] = useState<Record<string, string>>({})
     const [fundGemtSagserfaring, setFundGemtSagserfaring] = useState<Record<string, boolean>>({})
+    const [fundGemtFeedback, setFundGemtFeedback] = useState<Record<string, boolean>>({})
 
     useEffect(() => {
         getMyOrgRole().then(r => setOrgId(r?.org_id ?? null))
@@ -681,11 +682,16 @@ export default function KontraktGennemgangPage() {
                                                                     onChange={e => setFundKorrektioner(prev => ({ ...prev, [fp.id]: e.target.value }))}
                                                                 />
                                                                 <div className="flex items-center gap-3">
+                                                                    {fundGemtFeedback[fp.id] ? (
+                                                                        <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                                                                            <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                                                            Feedback gemt
+                                                                        </span>
+                                                                    ) : (
                                                                     <button
                                                                         className="text-[11px] text-muted-foreground underline underline-offset-2"
                                                                         onClick={async () => {
                                                                             const supabase = createClient()
-                                                                            // Resolve anker for dette fund hvis citat er tilgængeligt
                                                                             const ankerResultat = fp.citat && contractText
                                                                                 ? resolveAnker(fp.citat, contractText)
                                                                                 : null
@@ -703,11 +709,13 @@ export default function KontraktGennemgangPage() {
                                                                                 org_id: orgId,
                                                                                 ...ankerPayload,
                                                                             }, { onConflict: "analyse_id,fund_id" })
+                                                                            setFundGemtFeedback(prev => ({ ...prev, [fp.id]: true }))
                                                                             toast.success("Feedback gemt")
                                                                         }}
                                                                     >
                                                                         Gem feedback
                                                                     </button>
+                                                                    )}
                                                                     {fundKorrektioner[fp.id]?.trim() && (
                                                                         <button
                                                                             className="text-[11px] text-primary font-medium underline underline-offset-2"
