@@ -170,7 +170,7 @@ export default function MineVaerkerClient({
   // ── Slet valgte ───────────────────────────────────────────
   const handleDeleteSelected = async () => {
     if (!selected.length || !confirm(`Fjern ${selected.length} valgte værk(er) fra din liste?`)) return;
-    const results = await Promise.all(selected.map(id => removeWorkAssignment(id)));
+    const results = await Promise.all(selected.map(id => removeWorkAssignment(id, rightsHolderId ?? "")));
     if (results.every(r => r.success)) {
       setAssignments(prev => prev.filter(a => !selected.includes(a.id)));
       setSelected([]);

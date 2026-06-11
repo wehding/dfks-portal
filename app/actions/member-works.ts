@@ -1,6 +1,5 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -18,11 +17,15 @@ export async function addWorkForMember(params: {
     poster_url?: string | null;
   };
 }) {
-  const supabase = await createClient();
   const db = createServiceClient();
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: "Ikke logget ind" };
+  // Verificér at rightsHolderId rent faktisk eksisterer i systemet
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("id", params.rightsHolderId)
+    .single();
+  if (!rh) return { success: false, error: "Ugyldigt rettighedshaver-id" };
 
   const { data: orgRole } = await db
     .from("user_org_roles")
@@ -76,20 +79,8 @@ export async function addWorkForMember(params: {
   return { success: true, assignment: fresh };
 }
 
-export async function removeWorkAssignment(assignmentId: string) {
-  const supabase = await createClient();
+export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
   const db = createServiceClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { success: false, error: "Ikke logget ind" };
-
-  const { data: rh } = await db
-    .from("rettighedshavere")
-    .select("id")
-    .eq("user_id", user.id)
-    .single();
-  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil" };
-
-  await db.from("work_assignments").delete().eq("id", assignmentId).eq("rights_holder_id", rh.id);
+  await db.from("work_assignments").delete().eq("id", assignmentId).eq("rights_holder_id", rightsHolderId);
   return { success: true };
 }
