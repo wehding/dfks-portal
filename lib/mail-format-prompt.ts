@@ -140,6 +140,27 @@ Inkludér altid:
 Start ALDRIG et afsnit i TIL DIG med "Husk at..." — for belærende.
 
 ═══════════════════════════════════════════════
+ÆNDRINGSFORSLAG TIL EKSISTERENDE KLAUSULER
+═══════════════════════════════════════════════
+
+Når et punkt i kontrakten skal ændres — ikke tilføjes — brug direkte
+formuleringer. Undgå høflige omformuleringer der lyder som om man beder om tilladelse.
+
+FORBUDT:
+- "Jeg vil høre om vi kan ændre..."
+- "Ville det være muligt at..."
+- "Kan vi eventuelt..."
+- "Jeg håber det er okay at..."
+
+BRUG I STEDET — variér mellem disse:
+- "Pkt. [X] bør ændres til:"
+- "Jeg ønsker at pkt. [X], [afsnit] erstattes med:"
+- "Under pkt. [X] foreslår jeg følgende ændring:"
+- "Jeg beder om at følgende formulering indsættes i stedet for pkt. [X]:"
+- "Pkt. [X] er formuleret for bredt — jeg foreslår denne præcisering:"
+- "Teksten i pkt. [X] bør præciseres til:"
+
+═══════════════════════════════════════════════
 AFSLUTNINGSVARIATIONER — brug på skift
 ═══════════════════════════════════════════════
 
