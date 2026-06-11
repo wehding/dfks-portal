@@ -12,6 +12,7 @@ export interface NavneTjekResultat {
     status: "match" | "delvist-match" | "ikke-fundet"
     navnIKontrakt: string
     navnIRegister?: string
+    afvigendeSteder?: string[]
     feedbackpunkt?: {
         id: string
         type: "kritisk" | "advarsel" | "info"
@@ -23,8 +24,31 @@ export interface NavneTjekResultat {
     }
 }
 
+/**
+ * Find alle stavevarianter af et navn i kontraktteksten.
+ * Søger på efternavnet og returnerer alle forekomster der afviger fra registernavnet.
+ * GDPR: kontraktteksten forlader ikke serveren — kun afvigelserne returneres.
+ */
+export function tjekAlleNavneforekomster(
+    kontraktTekst: string,
+    registerNavn: string
+): string[] {
+    const efternavn = registerNavn.split(" ").pop() ?? registerNavn
+    const escaped = efternavn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+    // Match navne der slutter med efternavnet (inkl. evt. suffikser)
+    const regex = new RegExp(
+        `[A-ZÆØÅ][a-zæøå]+(?:\\s+[A-ZÆØÅ][a-zæøå]+)*\\s+${escaped}[a-zæøå]*`,
+        "g"
+    )
+
+    const forekomster = [...new Set(kontraktTekst.match(regex) ?? [])]
+    return forekomster.filter(f => f.toLowerCase() !== registerNavn.toLowerCase())
+}
+
 export async function tjekNavn(
-    navnIKontrakt: string
+    navnIKontrakt: string,
+    kontraktTekst?: string
 ): Promise<NavneTjekResultat> {
     if (!navnIKontrakt?.trim()) return { status: "ikke-fundet", navnIKontrakt }
 
@@ -39,10 +63,34 @@ export async function tjekNavn(
         .limit(1)
 
     if (eksakt && eksakt.length > 0) {
+        const registerNavn = eksakt[0].full_name
+
+        // Tjek alle forekomster i kontraktteksten mod registernavnet som facit
+        if (kontraktTekst) {
+            const afvigende = tjekAlleNavneforekomster(kontraktTekst, registerNavn)
+            if (afvigende.length > 0) {
+                return {
+                    status: "delvist-match",
+                    navnIKontrakt,
+                    navnIRegister: registerNavn,
+                    afvigendeSteder: afvigende,
+                    feedbackpunkt: {
+                        id: "navnetjek",
+                        type: "advarsel",
+                        titel: "Stavefejl i navn",
+                        beskrivelse: `Dit navn er stavet forkert ét eller flere steder i kontrakten. Korrekt stavning ifølge DFKS-registeret: "${registerNavn}". Forkert stavning fundet: ${afvigende.map(s => `"${s}"`).join(", ")}. Ret disse steder så stavningen er konsistent og korrekt.`,
+                        anbefaling: `Erstat alle forekomster med den korrekte stavning: "${registerNavn}"`,
+                        citat: afvigende[0],
+                        paragraf: "",
+                    },
+                }
+            }
+        }
+
         return {
             status: "match",
             navnIKontrakt,
-            navnIRegister: eksakt[0].full_name,
+            navnIRegister: registerNavn,
         }
     }
 
@@ -56,17 +104,27 @@ export async function tjekNavn(
             .limit(3)
 
         if (fuzzy && fuzzy.length > 0) {
+            const registerNavn = fuzzy[0].full_name
+            const afvigende = kontraktTekst
+                ? tjekAlleNavneforekomster(kontraktTekst, registerNavn)
+                : []
+
+            const beskrivelse = afvigende.length > 0
+                ? `Dit navn er stavet forkert ét eller flere steder i kontrakten. Korrekt stavning ifølge DFKS-registeret: "${registerNavn}". Forkert stavning fundet: ${afvigende.map(s => `"${s}"`).join(", ")}. Ret disse steder så stavningen er konsistent og korrekt.`
+                : `Kontrakten bruger "${navnIKontrakt}" men DFKS-registeret har "${registerNavn}". Bekræft at den ønskede stavemåde er brugt — det er den der kommer i rulleteksterne.`
+
             return {
                 status: "delvist-match",
                 navnIKontrakt,
-                navnIRegister: fuzzy[0].full_name,
+                navnIRegister: registerNavn,
+                afvigendeSteder: afvigende.length > 0 ? afvigende : undefined,
                 feedbackpunkt: {
                     id: "navnetjek",
                     type: "info",
                     titel: "Kreditering — navneforskel",
-                    beskrivelse: `Kontrakten bruger "${navnIKontrakt}" men DFKS-registeret har "${fuzzy[0].full_name}". Bekræft at den ønskede stavemåde er brugt — det er den der kommer i rulleteksterne.`,
-                    anbefaling: `Tjek at krediteringen "${fuzzy[0].full_name}" er aftalt og korrekt stavet i kontrakten.`,
-                    citat: navnIKontrakt,
+                    beskrivelse,
+                    anbefaling: `Tjek at krediteringen "${registerNavn}" er aftalt og korrekt stavet i kontrakten.`,
+                    citat: afvigende[0] ?? navnIKontrakt,
                     paragraf: "",
                 },
             }

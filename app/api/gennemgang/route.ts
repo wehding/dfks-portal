@@ -766,10 +766,16 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Navnetjek mod DFKS-register ───────────────────────────
-        const rightsHolderName: string | null = memberName ?? null
+        // Brug klassifikationens navn hvis tilgængeligt — ellers memberName
+        const rightsHolderName: string | null =
+            (klassifikation?.membres_fornavn && klassifikation?.membres_efternavn)
+                ? `${klassifikation.membres_fornavn} ${klassifikation.membres_efternavn}`.trim()
+                : memberName ?? null
+
         if (rightsHolderName) {
             try {
-                const navneTjek = await tjekNavn(rightsHolderName)
+                // Send contractText med så alle stavevarianter kan tjekkes
+                const navneTjek = await tjekNavn(rightsHolderName, contractText || undefined)
                 if (navneTjek.feedbackpunkt && navneTjek.status !== "match") {
                     parsed.feedbackpunkter = [
                         ...(parsed.feedbackpunkter ?? []),

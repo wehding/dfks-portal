@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Lock, Heart, User, Save, Info, Loader2 } from "lucide-react"
+import { Lock, Heart, User, Save, Info, Loader2, Plus, X } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -23,6 +23,7 @@ interface ProfileData {
     is_member: boolean
     member_no: string | null
     valid_from: string | null
+    alternative_names: string[]
 }
 
 export default function MinProfilPage() {
@@ -31,10 +32,12 @@ export default function MinProfilPage() {
     const [saving, setSaving] = useState(false)
 
     // Editable fields
-    const [name, setName]     = useState("")
-    const [email, setEmail]   = useState("")
-    const [phone, setPhone]   = useState("")
-    const [address, setAddress] = useState("")
+    const [name, setName]         = useState("")
+    const [email, setEmail]       = useState("")
+    const [phone, setPhone]       = useState("")
+    const [address, setAddress]   = useState("")
+    const [altNavne, setAltNavne] = useState<string[]>([])
+    const [nytAltNavn, setNytAltNavn] = useState("")
 
     // Arvekontakt (stored in user_metadata — ingen DB-tabel endnu)
     const [kinName, setKinName]         = useState("")
@@ -52,7 +55,7 @@ export default function MinProfilPage() {
             // Slå op via user_id
             let { data: rh } = await supabase
                 .from("rettighedshavere")
-                .select("id, full_name, email, phone, address, cpr_no, created_at")
+                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names")
                 .eq("user_id", user.id)
                 .single()
 
@@ -60,7 +63,7 @@ export default function MinProfilPage() {
             if (!rh && user.email) {
                 const res = await supabase
                     .from("rettighedshavere")
-                    .select("id, full_name, email, phone, address, cpr_no, created_at")
+                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names")
                     .eq("email", user.email)
                     .single()
                 rh = res.data
@@ -81,12 +84,14 @@ export default function MinProfilPage() {
                     is_member: aff?.is_member ?? false,
                     member_no: aff?.member_no ?? null,
                     valid_from: aff?.valid_from ?? null,
+                    alternative_names: rh.alternative_names ?? [],
                 }
                 setProfile(profileData)
                 setName(rh.full_name)
                 setEmail(rh.email ?? "")
                 setPhone(rh.phone ?? "")
                 setAddress(rh.address ?? "")
+                setAltNavne(rh.alternative_names ?? [])
             }
 
             // Arvekontakt fra user_metadata
@@ -110,7 +115,7 @@ export default function MinProfilPage() {
             // Opdater rettighedshaver
             const { error } = await supabase
                 .from("rettighedshavere")
-                .update({ full_name: name, email, phone, address })
+                .update({ full_name: name, email, phone, address, alternative_names: altNavne })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
 
@@ -185,6 +190,67 @@ export default function MinProfilPage() {
                     <div className="space-y-1.5">
                         <Label>Adresse</Label>
                         <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="Vejnavn og husnummer, postnummer, by" />
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-2">
+                        <div>
+                            <Label>Alternative navne</Label>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                                Fx tidligere navn, kunstnernavn eller forkortede versioner. Bruges til at genkende dig i kontrakter og sikre korrekt kreditering.
+                            </p>
+                        </div>
+                        <div className="space-y-2">
+                            {altNavne.map((navn, i) => (
+                                <div key={i} className="flex items-center gap-2">
+                                    <Input
+                                        value={navn}
+                                        onChange={e => {
+                                            const ny = [...altNavne]
+                                            ny[i] = e.target.value
+                                            setAltNavne(ny)
+                                        }}
+                                        className="h-8 text-sm"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setAltNavne(altNavne.filter((_, j) => j !== i))}
+                                        className="text-muted-foreground hover:text-destructive transition-colors"
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </button>
+                                </div>
+                            ))}
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    value={nytAltNavn}
+                                    onChange={e => setNytAltNavn(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === "Enter" && nytAltNavn.trim()) {
+                                            e.preventDefault()
+                                            setAltNavne([...altNavne, nytAltNavn.trim()])
+                                            setNytAltNavn("")
+                                        }
+                                    }}
+                                    placeholder="Tilføj alternativt navn..."
+                                    className="h-8 text-sm"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (nytAltNavn.trim()) {
+                                            setAltNavne([...altNavne, nytAltNavn.trim()])
+                                            setNytAltNavn("")
+                                        }
+                                    }}
+                                    className="text-muted-foreground hover:text-primary transition-colors"
+                                    title="Tilføj"
+                                >
+                                    <Plus className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
                     </div>
 
                     {profile && (
