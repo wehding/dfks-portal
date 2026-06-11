@@ -535,8 +535,6 @@ export async function POST(req: NextRequest) {
                 .select("title, body")
                 .eq("priority", "altid")
                 .eq("active", true)
-                .or("gyldig_fra.is.null,gyldig_fra.lte.now()")
-                .or("gyldig_til.is.null,gyldig_til.gte.now()")
             altidNoteringer = noter ?? []
         } catch (e) {
             console.warn("[gennemgang] Altid-noteringer hentning fejlede:", e)
