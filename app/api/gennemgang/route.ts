@@ -15,7 +15,8 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { createClient } from "@/lib/supabase/server"
-import { hentKontekst } from "@/lib/retrieval"
+import { hentKontekst, detekterOverenskomst } from "@/lib/retrieval"
+import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 
 // ── Sensitive data masking ───────────────────────────────────
 // Masks CPR numbers, bank account numbers and private addresses
@@ -142,6 +143,22 @@ FAF-standardkontrakten (2025-2027):
 - ROYALTIES er ikke nævnt i FAF-standardkontrakten.
 - Konsekvens: Hvis en kontrakt følger FAF-standardkontrakten (2025-2027) og ikke tilføjer eksplicitte klausuler for Copydan, SVOD og royalties, er disse rettigheder IKKE sikrede på samme måde som ved De4-overenskomsten.
 - DFKS anbefaler at der altid tilføjes eksplicitte klausuler for Copydan-forbehold, SVOD-forbehold og royalty ved kontrakter under FAF-overenskomsten.
+
+PRODUCENTFORENINGENS MEDLEMSSKAB — KRITISK JURIDISK FORUDSÆTNING:
+
+Overenskomsterne (De4 2022, FAF 2025-2027) er aftaler MELLEM fagforeningen (DFKS/FAF) OG Producentforeningen (ProF). De er KUN bindende for producenter der er MEDLEMMER af Producentforeningen.
+
+Hvis producenten IKKE er medlem af Producentforeningen:
+- Er overenskomsten IKKE juridisk bindende for producenten — selv hvis kontrakten refererer til den
+- En overenskomsthenvisning i kontrakten er da kun en "gentlemen's agreement" uden retlig forankring
+- Klipperen kan IKKE kræve overenskomstvilkår opfyldt ved tvistesag via fagorganisationen
+- DFKS anbefaler i dette tilfælde at alle væsentlige vilkår (løn, Copydan, SVOD, royalties, opsigelse, pension) aftales EKSPLICIT i selve kontrakten — ikke blot ved reference til overenskomsten
+
+Hvad du skal gøre:
+1. Tjek om det fremgår af kontrakten (eller konteksten) om producenten er ProF-член
+2. Hvis producenten IKKE er ProF-член: flag det som et vigtigt forhold og anbefal at alle rettigheder aftales eksplicit
+3. Hvis det er UKLART: nævn at DFKS bør verificere ProF-членsskab, da det har afgørende betydning for overenskomstens juridiske kraft
+4. Kendte ProF-члены (store produktionsselskaber som SF Film, Nordisk Film, DR, TV 2, Zentropa m.fl.) behøver normalt ikke nævnes — fokuser på ukendte eller mindre selskaber hvor tvivlen er reel
 
 FAF-overenskomsten (dokumentar) og De4-overenskomsten (fiktion):
 - SKELNE MELLEM KONTRAKTTYPER er afgørende:
@@ -483,6 +500,14 @@ export async function POST(req: NextRequest) {
         // Byg system prompt
         let activeSystemPrompt = SYSTEM_PROMPT
 
+        // Few-shot eksempler og tone-regler
+        activeSystemPrompt +=
+            "\n\n──────────────────────────────────────────────────────────────────────\n" +
+            "FEW-SHOT EKSEMPLER FRA DFKS SAGSBEHANDLING:\n" +
+            "──────────────────────────────────────────────────────────────────────\n" +
+            FEW_SHOT_EXAMPLES +
+            "\n\n" + TONE_REGLER
+
         // Referencedokumenter (standardkontrakter, lønskemaer)
         if (refDocs?.length) {
             for (const doc of refDocs) {
@@ -569,6 +594,42 @@ export async function POST(req: NextRequest) {
                         "DFKS BAGGRUNDSVIDEN:\n" +
                         "──────────────────────────────────────────────────────────────────────\n" +
                         kontekst.baggrund.map(n => `${n.title}: ${n.body}`).join("\n\n")
+                }
+
+                // Dynamiske satser — separat blok adskilt fra RAG-embeddings
+                try {
+                    const overenskomster = kontekst.detekteredeOverenskomster
+                    if (overenskomster.length > 0) {
+                        // Normalisér overenskomst-navne til satser-tabelformat
+                        const satsOverenskomster = overenskomster.map(o => {
+                            if (o === "de4" || o === "de4-fiktion") return "de4-fiktion"
+                            if (o === "faf-dokumentar" || o === "faf-dok") return "dokumentar"
+                            return o
+                        })
+                        const { createClient: createAdminClient } = await import("@supabase/supabase-js")
+                        const adminClient = createAdminClient(
+                            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                            process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+                        )
+                        const { data: satser } = await adminClient
+                            .from("overenskomst_satser")
+                            .select()
+                            .in("overenskomst", satsOverenskomster)
+                            .is("gyldig_til", null)
+                            .order("overenskomst")
+                            .order("kategori")
+
+                        if (satser && satser.length > 0) {
+                            activeSystemPrompt +=
+                                "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                                "AKTUELLE SATSER (hentes dynamisk — ikke fra videnbase-embeddings):\n" +
+                                "──────────────────────────────────────────────────────────────────────\n" +
+                                "Brug disse eksakte tal ved beregninger. De er altid korrekte og opdaterede.\n\n" +
+                                satser.map(s => `${s.beskrivelse}: ${s.vaerdi} ${s.enhed} (${s.overenskomst}, gyldig fra ${s.gyldig_fra})`).join("\n")
+                        }
+                    }
+                } catch (satsErr) {
+                    console.warn("[gennemgang] Sats-hentning fejlede (fortsætter uden):", satsErr)
                 }
 
             } catch (ragErr) {
