@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic"
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
+// Note: storage download bruger direkte fetch (omgår SDK JWT-validering for storage)
 import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
@@ -77,28 +78,27 @@ export async function POST(req: NextRequest) {
         const apiKey = getApiKey("anthropic")
         if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY mangler" }, { status: 500 })
 
-        // Hent PDF fra Supabase Storage
-        const admin = createServiceClient()
+        // Hent PDF fra Supabase Storage via direkte HTTP (omgår SDK JWT-validering)
+        const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
 
         let storagePath = pdfPath
         if (!storagePath && contractId) {
+            const admin = createServiceClient()
             const { data: contract } = await admin.from("contracts").select("pdf_url").eq("id", contractId).single()
             storagePath = contract?.pdf_url
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        // Brug signed URL + fetch i stedet for direkte download (mere robust)
-        const { data: signedData, error: signErr } = await admin.storage
-            .from("kontrakter")
-            .createSignedUrl(storagePath, 60)
-        if (signErr || !signedData?.signedUrl) {
-            return NextResponse.json({ error: `Kunne ikke oprette signed URL: ${signErr?.message}` }, { status: 500 })
+        // Download direkte fra storage REST API med service-role token
+        const storageResponse = await fetch(
+            `${supabaseUrl}/storage/v1/object/kontrakter/${storagePath}`,
+            { headers: { Authorization: `Bearer ${serviceKey}`, apikey: serviceKey! } }
+        )
+        if (!storageResponse.ok) {
+            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${storageResponse.status}` }, { status: 500 })
         }
-        const pdfResponse = await fetch(signedData.signedUrl)
-        if (!pdfResponse.ok) {
-            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${pdfResponse.status}` }, { status: 500 })
-        }
-        const buffer = Buffer.from(await pdfResponse.arrayBuffer())
+        const buffer = Buffer.from(await storageResponse.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
