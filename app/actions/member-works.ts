@@ -19,20 +19,7 @@ export async function addWorkForMember(params: {
 }) {
   const db = createServiceClient();
 
-  // Verificér at rightsHolderId rent faktisk eksisterer i systemet
-  const { data: rh } = await db
-    .from("rettighedshavere")
-    .select("id")
-    .eq("id", params.rightsHolderId)
-    .single();
-  if (!rh) return { success: false, error: "Ugyldigt rettighedshaver-id" };
-
-  const { data: orgRole } = await db
-    .from("rettighedshavere")
-    .select("org_affiliations(org_id)")
-    .eq("id", params.rightsHolderId)
-    .single();
-  const orgId = (orgRole?.org_affiliations as any)?.[0]?.org_id ?? DFKS_ORG_ID;
+  const orgId = DFKS_ORG_ID;
 
   // Find eksisterende værk
   let workId: string | null = null;
