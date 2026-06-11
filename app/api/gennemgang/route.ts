@@ -540,6 +540,28 @@ export async function POST(req: NextRequest) {
             console.warn("[gennemgang] Altid-noteringer hentning fejlede:", e)
         }
 
+        // ── Hent godkendte eksempler baseret på klassifikation ───
+        let godkendteEksempler: Array<{ kontrakttype: string; er_overenskomst: boolean; ai_analyse: any; feedbackmail: string | null; noter: string | null }> = []
+        if (klassifikation) {
+            try {
+                const admin = createAdminClient(
+                    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                    process.env.SUPABASE_SERVICE_ROLE_KEY!
+                )
+                const { data: eksempler } = await admin
+                    .from("case_learnings")
+                    .select("kontrakttype, er_overenskomst, ai_analyse, feedbackmail, noter")
+                    .eq("kilde_type", "godkendt_eksempel")
+                    .eq("kontrakttype", klassifikation.kontrakttype)
+                    .eq("er_overenskomst", klassifikation.er_overenskomst)
+                    .order("created_at", { ascending: false })
+                    .limit(2)
+                godkendteEksempler = eksempler ?? []
+            } catch (e) {
+                console.warn("[gennemgang] Eksempel-hentning fejlede:", e)
+            }
+        }
+
         // ── Byg system prompt til trin 2 ──────────────────────────
         let activeSystemPrompt = ""
 
@@ -553,7 +575,27 @@ export async function POST(req: NextRequest) {
                 "\n\n"
         }
 
-        // 2. Absolutte regler baseret på klassifikation
+        // 2. Godkendte eksempler fra jurister
+        if (godkendteEksempler.length > 0) {
+            activeSystemPrompt +=
+                "══════════════════════════════════════════════════════════════════════\n" +
+                "GODKENDTE EKSEMPLER FRA DFKS-JURISTER — BRUG SOM REFERENCE:\n" +
+                "══════════════════════════════════════════════════════════════════════\n" +
+                godkendteEksempler.map(e =>
+                    `Kontrakttype: ${e.kontrakttype}\n` +
+                    `Overenskomst: ${e.er_overenskomst ? "ja" : "nej"}\n` +
+                    `Note: ${e.noter ?? "ingen"}\n` +
+                    `Analysepunkter: ${JSON.stringify(
+                        (e.ai_analyse as any)?.feedbackpunkter?.map((f: any) => f.titel)
+                    )}\n` +
+                    (e.feedbackmail
+                        ? `Eksempel på feedbackmail:\n${e.feedbackmail.slice(0, 800)}`
+                        : "")
+                ).join("\n\n") +
+                "\n\n"
+        }
+
+        // 3. Absolutte regler baseret på klassifikation
         if (klassifikation) {
             activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser) + "\n\n"
         } else if (dbSatser.length > 0) {

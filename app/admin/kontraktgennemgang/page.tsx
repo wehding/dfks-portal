@@ -17,7 +17,7 @@ import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
     MessageSquare, Archive, X, Send, Pencil, Eye, BookMarked,
-    ThumbsUp, ThumbsDown,
+    ThumbsUp, ThumbsDown, Star,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -185,6 +185,10 @@ export default function KontraktGennemgangPage() {
     const [mailEditMode, setMailEditMode] = useState(false)
     const [showSaveLearning, setShowSaveLearning] = useState(false)
     const [learningDraft, setLearningDraft] = useState<{ titel: string; kontrakttype: CaseLearningKontrakttype; regel: string }>({ titel: "", kontrakttype: "alle", regel: "" })
+    const [klassifikation, setKlassifikation] = useState<any>(null)
+    const [showSaveEksempel, setShowSaveEksempel] = useState(false)
+    const [eksempelNote, setEksempelNote] = useState("")
+    const [gemmerEksempel, setGemmerEksempel] = useState(false)
     const [pdfUrl, setPdfUrl] = useState<string | null>(null)
     const [dismissedPoints, setDismissedPoints] = useState<Set<number>>(new Set())
     const [orgId, setOrgId] = useState<string | null>(null)
@@ -261,6 +265,7 @@ export default function KontraktGennemgangPage() {
 
             setResult(data.result)
             setContractText(data.contractText || "")
+            setKlassifikation(data.klassifikation ?? null)
             toast.success("Gennemgang fuldført")
 
             // Gem resultat til Supabase
@@ -501,7 +506,7 @@ export default function KontraktGennemgangPage() {
                     size="sm"
                     variant="outline"
                     className="gap-1.5 text-xs h-7"
-                    title="Gem en regel AI'en skal lære af denne sag"
+                    title="Tilføj en regel AI'en skal lære af denne sag"
                     onClick={() => {
                         const kontrakttype: CaseLearningKontrakttype = result.overblik.erLeverandoerkontrakt ? "leverandoer" : "a-loen"
                         setLearningDraft({ titel: "", kontrakttype, regel: "" })
@@ -509,7 +514,21 @@ export default function KontraktGennemgangPage() {
                     }}
                 >
                     <BookMarked className="h-3.5 w-3.5" />
-                    Gem som sagserfaring
+                    Tilføj lært regel
+                </Button>
+                <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 text-xs h-7"
+                    title="Gem hele analysen som et godkendt eksempel AI'en kan lære af"
+                    disabled={!Object.values(fundFeedback).some(v => v === "good")}
+                    onClick={() => {
+                        setEksempelNote("")
+                        setShowSaveEksempel(true)
+                    }}
+                >
+                    <Star className="h-3.5 w-3.5" />
+                    Gem som eksempel
                 </Button>
                 <span className="text-[10px] text-muted-foreground border rounded px-2 py-1">
                     Følsomme data maskeret · Fil ikke gemt
@@ -839,13 +858,13 @@ export default function KontraktGennemgangPage() {
             </div>
 
 
-            {/* ── Gem som sagserfaring dialog ─────────────────── */}
+            {/* ── Tilføj lært regel dialog ─────────────────── */}
             <Dialog open={showSaveLearning} onOpenChange={setShowSaveLearning}>
                 <DialogContent className="max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>Gem som sagserfaring</DialogTitle>
+                        <DialogTitle>Tilføj regel fra denne sag</DialogTitle>
                         <DialogDescription>
-                            Formulér hvad AI'en fejlede og den korrekte regel — den tilføjes til AI-prompten ved alle fremtidige gennemgange.
+                            Skriv den regel AI'en skal lære af denne kontrakt. Den tilføjes til lærte mønstre og bruges i fremtidige analyser.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
@@ -903,7 +922,7 @@ export default function KontraktGennemgangPage() {
                                     .select()
                                     .single()
 
-                                if (!saved || saveErr) { toast.error(`Kunne ikke gemme sagserfaring: ${saveErr?.message ?? "ukendt fejl"}`); return }
+                                if (!saved || saveErr) { toast.error(`Kunne ikke gemme regel: ${saveErr?.message ?? "ukendt fejl"}`); return }
 
                                 // Embed i RAG
                                 fetch("/api/knowledge/upsert", {
@@ -920,11 +939,86 @@ export default function KontraktGennemgangPage() {
                                 }).catch(() => {})
 
                                 setShowSaveLearning(false)
-                                toast.success("Sagserfaring gemt og indekseret — bruges ved næste gennemgang")
+                                toast.success("Regel tilføjet til lærte mønstre")
                             }}
                         >
                             <BookMarked className="mr-1.5 h-3.5 w-3.5" />
-                            Gem sagserfaring
+                            Tilføj regel
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+            {/* ── Gem som eksempel dialog ───────────────────────── */}
+            <Dialog open={showSaveEksempel} onOpenChange={setShowSaveEksempel}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Gem analyse som eksempel</DialogTitle>
+                        <DialogDescription>
+                            Dette gemmer hele analysen som et godkendt eksempel AI'en kan lære af ved fremtidige gennemgange af lignende kontrakter.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Kontrakttype</Label>
+                                <div className="text-sm font-medium px-3 py-2 bg-muted rounded-md">
+                                    {klassifikation?.kontrakttype ?? result?.overblik?.erLeverandoerkontrakt ? "leverandoer" : "a-loen"}
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <Label className="text-xs text-muted-foreground">Produktionstype</Label>
+                                <div className="text-sm font-medium px-3 py-2 bg-muted rounded-md">
+                                    {klassifikation?.produktionstype ?? "ukendt"}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Note (valgfrit)</Label>
+                            <Textarea
+                                value={eksempelNote}
+                                onChange={e => setEksempelNote(e.target.value)}
+                                rows={3}
+                                placeholder="Hvorfor er dette et godt eksempel? Fx: God håndtering af hybrid kontrakt med ikke-overenskomstdækket producent."
+                            />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setShowSaveEksempel(false)}>Annuller</Button>
+                        <Button
+                            disabled={gemmerEksempel}
+                            onClick={async () => {
+                                if (!result || !orgId) return
+                                setGemmerEksempel(true)
+                                try {
+                                    const supabase = createClient()
+                                    const { error } = await supabase
+                                        .from("case_learnings")
+                                        .insert({
+                                            org_id: orgId,
+                                            kilde_type: "godkendt_eksempel",
+                                            kontrakttype: klassifikation?.kontrakttype ?? (result.overblik.erLeverandoerkontrakt ? "leverandoer" : "a-loen"),
+                                            produktionstype: klassifikation?.produktionstype ?? "ukendt",
+                                            er_overenskomst: klassifikation?.er_overenskomst ?? false,
+                                            kontrakttitel: result.overblik?.titel ?? "Ukendt",
+                                            producent_type: klassifikation?.er_overenskomst ? "overenskomstdaekket" : "ikke-overenskomstdaekket",
+                                            ai_analyse: result,
+                                            feedbackmail: mailText,
+                                            noter: eksempelNote.trim() || null,
+                                            godkendt_af: orgId,
+                                            added_at: new Date().toISOString(),
+                                        })
+                                    if (error) throw error
+                                    setShowSaveEksempel(false)
+                                    toast.success("Analyse gemt som eksempel — bruges ved næste gennemgang")
+                                } catch (e: any) {
+                                    toast.error(`Kunne ikke gemme eksempel: ${e.message ?? "ukendt fejl"}`)
+                                } finally {
+                                    setGemmerEksempel(false)
+                                }
+                            }}
+                        >
+                            <Star className="mr-1.5 h-3.5 w-3.5" />
+                            {gemmerEksempel ? "Gemmer..." : "Gem som eksempel"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
