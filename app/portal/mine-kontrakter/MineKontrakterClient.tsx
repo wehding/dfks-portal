@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { FileText, Upload, X, Loader2, AlertCircle, Trash2, Search } from "lucide-react";
-import { uploadMemberContract, deleteMemberContract, getContractSignedUrl } from "@/app/actions/member-contracts";
+import { FileText, Upload, X, Trash2, Search, Loader2 } from "lucide-react";
+import { deleteMemberContract, getContractSignedUrl } from "@/app/actions/member-contracts";
 import { useSearchParams } from "next/navigation";
+import UploadDialog from "./UploadDialog";
 
 type Validation = { svod: boolean | null; copydan: boolean | null; royalty: boolean | null } | null;
 type Contract = {
@@ -46,14 +47,10 @@ function getValidation(c: Contract): Validation {
 export default function MineKontrakterClient({ initialContracts }: { initialContracts: Contract[] }) {
   const [contracts, setContracts] = useState(initialContracts);
   const searchParams = useSearchParams();
+  const [isUploading, setIsUploading] = useState(false);
   useEffect(() => {
     if (searchParams.get("upload") === "true") setIsUploading(true);
   }, [searchParams]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
@@ -73,33 +70,6 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
       (c.overenskomst ?? "").toLowerCase().includes(t)
     );
   });
-
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setUploadFile(file);
-    setUploadError(null);
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setPreviewUrl(file ? URL.createObjectURL(file) : null);
-  }
-
-  async function handleUploadSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!uploadFile) return;
-    setIsAnalyzing(true);
-    setUploadError(null);
-
-    const fd = new FormData();
-    fd.append("file", uploadFile);
-    const res = await uploadMemberContract(fd);
-
-    if (res.success) {
-      closeUpload();
-      window.location.reload();
-    } else {
-      setUploadError(res.error ?? "Der opstod en fejl");
-      setIsAnalyzing(false);
-    }
-  }
 
   async function handleDelete(id: string) {
     if (!confirm("Er du sikker på at du vil slette denne kontrakt?")) return;
@@ -121,14 +91,6 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
     const res = await getContractSignedUrl(contract.pdf_url);
     setViewUrl(res.url ?? null);
     setViewLoading(false);
-  }
-
-  function closeUpload() {
-    setIsUploading(false);
-    setUploadFile(null);
-    setUploadError(null);
-    if (previewUrl) { URL.revokeObjectURL(previewUrl); setPreviewUrl(null); }
-    setIsAnalyzing(false);
   }
 
   return (
@@ -219,52 +181,15 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
         })}
       </div>
 
-      {/* Upload-panel */}
       {isUploading && (
-        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }} onClick={e => { if (e.target === e.currentTarget) closeUpload(); }}>
-          <div style={{ backgroundColor: "var(--background, white)", borderRadius: "12px", width: "100%", maxWidth: uploadFile ? "860px" : "480px", maxHeight: "90vh", display: "flex", overflow: "hidden", border: "1px solid var(--outline-variant)", transition: "max-width 0.3s" }}>
-            {previewUrl && (
-              <div style={{ flex: 1, backgroundColor: "#f0f2f5", borderRight: "1px solid var(--outline-variant)" }}>
-                {uploadFile?.type === "application/pdf"
-                  ? <iframe src={`${previewUrl}#navpanes=0`} style={{ width: "100%", height: "100%", border: "none" }} title="Forhåndsvisning" />
-                  : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", flexDirection: "column", gap: "12px", color: "var(--on-surface-variant)" }}><FileText size={40} style={{ opacity: 0.4 }} /><span style={{ fontSize: "13px" }}>Forhåndsvisning ikke tilgængelig</span></div>
-                }
-              </div>
-            )}
-            <div style={{ width: uploadFile ? "400px" : "100%", padding: "28px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "20px", flexShrink: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Upload Kontrakt</h2>
-                <button onClick={closeUpload} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
-              </div>
-              <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: 0 }}>
-                Upload som PDF eller DOCX. Claude analyserer automatisk — DFKS validerer herefter.
-              </p>
-              <form onSubmit={handleUploadSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                <input type="file" accept=".pdf,.docx,.txt" onChange={handleFileChange} disabled={isAnalyzing} style={{ border: "1px solid var(--outline-variant)", padding: "14px", borderRadius: "8px", fontSize: "13px" }} />
-                {isAnalyzing && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "14px", color: "var(--on-surface-variant)" }}>
-                      <Loader2 size={16} style={{ animation: "spin 1s linear infinite", color: "var(--primary, #000)" }} />
-                      Uploader og analyserer med Claude AI...
-                    </div>
-                    <div style={{ width: "100%", height: "4px", backgroundColor: "var(--surface-container-high, #e4e4e4)", borderRadius: "2px", overflow: "hidden" }}>
-                      <div style={{ height: "100%", backgroundColor: "var(--on-surface, #000)", animation: "ai-progress 30s ease-out forwards", borderRadius: "2px" }} />
-                    </div>
-                    <style>{`@keyframes ai-progress{0%{width:0%}30%{width:40%}70%{width:75%}95%{width:92%}}`}</style>
-                  </div>
-                )}
-                {uploadError && (
-                  <div style={{ padding: "12px 14px", backgroundColor: "#FCE8E6", color: "#C5221F", borderRadius: "8px", fontSize: "13px", display: "flex", gap: "8px", alignItems: "flex-start" }}>
-                    <AlertCircle size={16} style={{ flexShrink: 0, marginTop: "1px" }} />{uploadError}
-                  </div>
-                )}
-                <button type="submit" disabled={!uploadFile || isAnalyzing} style={{ backgroundColor: "var(--on-surface, #000)", color: "var(--surface, white)", padding: "12px 24px", borderRadius: "6px", border: "none", fontWeight: 600, cursor: (!uploadFile || isAnalyzing) ? "not-allowed" : "pointer", opacity: (!uploadFile || isAnalyzing) ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                  {isAnalyzing ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Analyserer...</> : <><Upload size={15} /> Upload og analysér</>}
-                </button>
-              </form>
-            </div>
-          </div>
-        </div>
+        <UploadDialog
+          onClose={() => setIsUploading(false)}
+          onUploaded={(saved) => {
+            setContracts(prev => [{ id: saved.id, type: saved.type, overenskomst: null, status: saved.status, contract_date: null, start_date: null, end_date: null, pdf_url: saved.pdf_url, created_at: saved.created_at, works: null, employers: null, contract_validations: null }, ...prev]);
+            setIsUploading(false);
+            setMsg({ type: "success", text: "Kontrakt indsendt til DFKS." });
+          }}
+        />
       )}
 
       {/* Kontrakt-visning */}
