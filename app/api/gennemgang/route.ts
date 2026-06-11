@@ -488,10 +488,39 @@ export async function POST(req: NextRequest) {
             console.warn("[gennemgang] Sats-hentning fejlede:", e)
         }
 
+        // ── Hent altid-noteringer direkte fra DB ─────────────────
+        let altidNoteringer: Array<{ title: string; body: string }> = []
+        try {
+            const admin = createAdminClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.SUPABASE_SERVICE_ROLE_KEY!
+            )
+            const { data: noter } = await admin
+                .from("legal_notes")
+                .select("title, body")
+                .eq("priority", "altid")
+                .eq("active", true)
+                .or("gyldig_fra.is.null,gyldig_fra.lte.now()")
+                .or("gyldig_til.is.null,gyldig_til.gte.now()")
+            altidNoteringer = noter ?? []
+        } catch (e) {
+            console.warn("[gennemgang] Altid-noteringer hentning fejlede:", e)
+        }
+
         // ── Byg system prompt til trin 2 ──────────────────────────
         let activeSystemPrompt = ""
 
-        // 1. Absolutte regler baseret på klassifikation (ØVERST)
+        // 1. Altid-noteringer ALLERØVERST — højest prioritet
+        if (altidNoteringer.length > 0) {
+            activeSystemPrompt +=
+                "──────────────────────────────────────────────────────────────────────\n" +
+                "DFKS AKTIVE NOTERINGER — KOMMENTER ALTID PÅ DISSE I FEEDBACKMAILEN:\n" +
+                "──────────────────────────────────────────────────────────────────────\n" +
+                altidNoteringer.map(n => `ALTID KOMMENTER: ${n.title} — ${n.body}`).join("\n\n") +
+                "\n\n"
+        }
+
+        // 2. Absolutte regler baseret på klassifikation
         if (klassifikation) {
             activeSystemPrompt += byggAbsolutteRegler(klassifikation, dbSatser) + "\n\n"
         } else if (dbSatser.length > 0) {
@@ -529,13 +558,7 @@ export async function POST(req: NextRequest) {
                 const orgId: string | undefined = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
                 const kontekst = await hentKontekst(ragText, orgId)
 
-                if (kontekst.altid.length > 0) {
-                    activeSystemPrompt +=
-                        "\n\n──────────────────────────────────────────────────────────────────────\n" +
-                        "DFKS AKTIVE NOTERINGER — KOMMENTER ALTID PÅ DISSE:\n" +
-                        "──────────────────────────────────────────────────────────────────────\n" +
-                        kontekst.altid.map(n => `ALTID KOMMENTER: ${n.title} — ${n.body}`).join("\n\n")
-                }
+                // altid-noteringer hentes separat øverst — ikke her
                 if (kontekst.kategorier.length > 0) {
                     activeSystemPrompt +=
                         "\n\n──────────────────────────────────────────────────────────────────────\n" +
