@@ -253,6 +253,12 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         return () => clearTimeout(timer)
     }, [highlights, sectionHighlights, sectionEndMarkers, activeHighlight, pageNumber, pageRendered])
 
+    // Debug: log when key props change
+    useEffect(() => {
+        if (activeHighlight) console.log("[pv] activeHighlight:", activeHighlight?.slice(0, 60))
+        if (sectionHighlights?.length) console.log("[pv] sectionHighlights:", sectionHighlights)
+    }, [activeHighlight, sectionHighlights])
+
     if (error) {
         return (
             <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground text-center">
