@@ -14,7 +14,8 @@ const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
 type Work = { id: string; title: string; type: string; year: number | null; dfi_id: string | null; tmdb_id: number | null; poster_url: string | null; description: string | null };
-type Assignment = { id: string; role: string | null; contract_id: string | null; works: Work | null };
+type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; episodes: { episode_number: number } | null; works: Work | null };
+type OtherAssignment = { work_id: string; role: string | null; rettighedshavere: { full_name: string } | null };
 
 function typeLabel(t: string) {
   const m: Record<string, string> = { fiktion: "Feature", film: "Feature", serie: "TV-serie", dokumentar: "Dokumentar", kort: "Kortfilm", animation: "Animation", movie: "Feature", tv: "TV-serie", documentary: "Dokumentar", short: "Kortfilm" };
@@ -22,14 +23,27 @@ function typeLabel(t: string) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, rightsHolderId, userName, dfiPersonId,
+  initialAssignments, allAssignments, rightsHolderId, userName, dfiPersonId,
 }: {
   initialAssignments: Assignment[];
+  allAssignments: OtherAssignment[];
   rightsHolderId: string | null;
   userName: string;
   dfiPersonId: number | null;
 }) {
   const [assignments, setAssignments] = useState(initialAssignments);
+
+  // Byg et map: work_id → medklippere (andre klippere på samme værk)
+  const coEditorMap = React.useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const a of allAssignments) {
+      const name = a.rettighedshavere?.full_name;
+      if (!name || !a.work_id) continue;
+      if (!map[a.work_id]) map[a.work_id] = [];
+      if (!map[a.work_id].includes(name)) map[a.work_id].push(name);
+    }
+    return map;
+  }, [allAssignments]);
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("Alle");
   const [sortKey, setSortKey] = useState<"title" | "year" | "type">("year");
@@ -337,12 +351,14 @@ export default function MineVaerkerClient({
         </div>
 
         {/* Tabel-header */}
-        <div style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.6fr 1fr 1fr 0.5fr", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", userSelect: "none" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", userSelect: "none" }}>
           <input type="checkbox" checked={selected.length === filtered.length && filtered.length > 0} onChange={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
           <div onClick={() => handleSort("title")} style={{ cursor: "pointer" }}>VÆRKTITEL{sortArrow("title")}</div>
           <div onClick={() => handleSort("year")} style={{ cursor: "pointer" }}>ÅR{sortArrow("year")}</div>
           <div onClick={() => handleSort("type")} style={{ cursor: "pointer" }}>TYPE{sortArrow("type")}</div>
           <div>ROLLE</div>
+          <div>AFSNIT</div>
+          <div>MEDKLIPPERE</div>
           <div style={{ textAlign: "right" }}>KONTRAKT</div>
         </div>
 
@@ -358,7 +374,7 @@ export default function MineVaerkerClient({
             if (!w) return null;
             const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
             return (
-              <div key={a.id} onClick={() => openEdit(a)} style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.6fr 1fr 1fr 0.5fr", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--outline-variant)", cursor: "pointer", transition: "background-color 0.15s" }}
+              <div key={a.id} onClick={() => openEdit(a)} style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--outline-variant)", cursor: "pointer", transition: "background-color 0.15s" }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = "var(--surface-container-low)")}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}
               >
@@ -391,6 +407,15 @@ export default function MineVaerkerClient({
                 <div style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>{typeLabel(w.type)}</div>
                 {/* Rolle */}
                 <div style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>{a.role ?? "–"}</div>
+                {/* Afsnit */}
+                <div style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>
+                  {a.episodes?.episode_number ? `E${a.episodes.episode_number}` : "–"}
+                </div>
+                {/* Medklippere */}
+                <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={(coEditorMap[w.id] ?? []).join(", ")}>
+                  {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
+                </div>
                 {/* Kontrakt */}
                 <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(a.contract_id ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true`); }}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 600, color: a.contract_id ? "#16a34a" : "#dc2626", textDecoration: "underline", cursor: "pointer" }}>
