@@ -218,8 +218,9 @@ Producent:           ${klassifikation.producent_navn || "[ikke fundet]"}
 AKTUELLE SATSER FRA DATABASE — BRUG KUN DISSE TAL, ALDRIG EGNE:
 ${satsLinje("Normalløn", normallon)}
 ${satsLinje("Pension", pension)}
-${satsLinje("BETA-fond", beta)}
-${satsLinje("Helligdagsbetaling", helligdag)}
+${klassifikation.er_overenskomst && klassifikation.kontrakttype === "a-loen"
+    ? satsLinje("BETA-fond", beta) + "\n" + satsLinje("Helligdagsbetaling", helligdag)
+    : "BETA-fond og helligdagsbetaling: Ikke relevant — kun ved overenskomstdækket A-løn"}
 ${satsLinje("Feriepenge", feriepenge)}
 
 ABSOLUTTE REGLER FOR DENNE ANALYSE:
