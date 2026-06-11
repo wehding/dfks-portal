@@ -23,6 +23,7 @@ import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { maskPersonalData } from "@/lib/mask-text"
 import { normaliseSources } from "@/lib/ai-sources"
+import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
 
 const ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
@@ -761,14 +762,22 @@ export default function AdminValideringPage() {
     if (reviewingContract) {
         const pdfUrl = localPdfUrl ?? reviewingContract.signedPdfUrl
 
-        const salaryHl = sources.salary ?? (formData.salary ? String(formData.salary) : undefined)
-        const datesHl = sources.dates ?? undefined  // Kun eksakt kildecitat — ikke ISO-dato
-        const weeksHl = sources.workingWeeks ?? undefined  // Kun eksakt kildecitat
-        const supplementsHl = sources.supplements ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
-        const svodSrc = sources.svod ?? null
-        const copydanSrc = sources.copydan ?? null
-        const royaltySrc = sources.royalty ?? null
-        const ca = sources.collectiveAgreement ?? null
+        // Pre-processér sources med resolveAnker() hvis kontrakttekst er tilgængelig
+        const resolve = (s: string | null | undefined): string | undefined => {
+            if (!s) return undefined
+            if (!contractText) return s
+            const r = resolveAnker(s, contractText)
+            return r.fundet ? r.anker : s
+        }
+
+        const salaryHl = resolve(sources.salary) ?? (formData.salary ? String(formData.salary) : undefined)
+        const datesHl = resolve(sources.dates)
+        const weeksHl = resolve(sources.workingWeeks)
+        const supplementsHl = resolve(sources.supplements) ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
+        const svodSrc = resolve(sources.svod) ?? null
+        const copydanSrc = resolve(sources.copydan) ?? null
+        const royaltySrc = resolve(sources.royalty) ?? null
+        const ca = resolve(sources.collectiveAgreement) ?? null
         // Each value is a ||‑separated list of candidates tried in order by findPageForQuote.
         // Source quote first (most specific), then generic fallbacks so navigation always finds something.
         // Specific clause terms go FIRST — svodSrc/copydanSrc may be an overenskomst

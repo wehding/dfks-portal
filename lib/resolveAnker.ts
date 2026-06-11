@@ -223,6 +223,64 @@ export function bygFeedbackPayload(
   }
 }
 
+// ── buildNeedles — til brug i PDF-viewer ──────────────────────────────────
+
+/**
+ * Genererer søge-kandidater fra en AI-kilde-streng.
+ * Bruges i pdf-viewer-inner.tsx til span-matching.
+ * resolveAnker() bruges til pre-processing inden PDF-viewer modtager strengen.
+ */
+export function buildNeedles(quote: string): string[] {
+  const q = norm(quote)
+  const needles: string[] = []
+
+  // Slices (lang → kort)
+  if (q.length >= 100) needles.push(q.slice(0, 120))
+  if (q.length >= 60)  needles.push(q.slice(0, 80))
+  if (q.length >= 4)   needles.push(q.slice(0, 60))
+  if (q.length >= 20)  needles.push(q.slice(0, 40))
+  if (q.length >= 10)  needles.push(q.slice(0, 25))
+  if (q.length < 20)   needles.push(q.replace(/-/g, " ").replace(/\s+/g, " ").trim())
+  if (q.length < 80)   needles.push(q.replace(/[()]/g, "").replace(/\s+/g, " ").trim())
+
+  // Tal-varianter
+  const numRe = /(\d[\d.]*)(,(\d+))?/g
+  let m: RegExpExecArray | null
+  while ((m = numRe.exec(q)) !== null) {
+    const intPart = m[1], decPart = m[3], fullMatch = m[0]
+    const plainInt = intPart.replace(/\./g, "")
+    if (decPart !== undefined) {
+      needles.push(fullMatch)
+      needles.push(q.slice(m.index, m.index + fullMatch.length + 10).trimEnd().slice(0, 15))
+      needles.push(intPart + "." + decPart)
+    } else if (intPart.includes(".")) {
+      const parts = intPart.split(".")
+      if (parts[0].length <= 2 && parts[parts.length - 1].length <= 2) {
+        needles.push(intPart.replace(".", ","))
+      } else {
+        needles.push(intPart); needles.push(intPart + ",-"); needles.push(plainInt)
+      }
+    } else if (plainInt.length >= 4) {
+      const n = parseInt(plainInt, 10)
+      if (!isNaN(n)) {
+        const da = n.toLocaleString("da-DK")
+        needles.push(da); needles.push(da + ",-"); needles.push(plainInt)
+      }
+    }
+  }
+
+  // ISO-datoer → danske formater
+  const dateMatch = q.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (dateMatch) {
+    const months = ["","januar","februar","marts","april","maj","juni","juli","august","september","oktober","november","december"]
+    const day = parseInt(dateMatch[3], 10), month = parseInt(dateMatch[2], 10), year = dateMatch[1]
+    needles.push(`${day}. ${months[month]}`); needles.push(`${day}. ${months[month]} ${year}`)
+    needles.push(`${String(day).padStart(2,"0")}.${String(month).padStart(2,"0")}.${year}`)
+  }
+
+  return [...new Set(needles)].filter(n => n.length >= 3)
+}
+
 // ── Debug ─────────────────────────────────────────────────────────────────
 
 export function debugAnker(aiStreng: string, kontraktTekst: string): void {

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { norm } from "@/lib/resolveAnker"
+import { norm, buildNeedles as resolveNeedles } from "@/lib/resolveAnker"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -25,105 +25,13 @@ interface PdfViewerProps {
     pageNavigationHint?: string
 }
 
-// norm() importeret fra lib/resolveAnker.ts
+// norm() og buildNeedles importeret fra lib/resolveAnker.ts
 
 function buildNeedles(quote: string): string[] {
-    const q = norm(quote)
-    const needles: string[] = []
-
-    // 1. Full normalised quote in slices (most specific first)
-    // For section highlights (long passages), use longer slices
-    if (q.length >= 100) needles.push(q.slice(0, 120))
-    if (q.length >= 60)  needles.push(q.slice(0, 80))
-    if (q.length >= 4)   needles.push(q.slice(0, 60))
-    if (q.length >= 20)  needles.push(q.slice(0, 40))
-    if (q.length >= 10)  needles.push(q.slice(0, 25))
-    // For short quotes, also try without hyphen (PDF may split compound words)
-    if (q.length < 20) needles.push(q.replace(/-/g, " ").replace(/\s+/g, " ").trim())
-    // Also try without parentheses (PDF may render them differently)
-    if (q.length < 80) needles.push(q.replace(/[()]/g, "").replace(/\s+/g, " ").trim())
-
-    // 2. For every number in the quote, generate format variants generically
-    const numRe = /(\d[\d.]*)(,(\d+))?/g
-    let m: RegExpExecArray | null
-    while ((m = numRe.exec(q)) !== null) {
-        const intPart = m[1]
-        const decPart = m[3]
-        const fullMatch = m[0]
-        const plainInt = intPart.replace(/\./g, "")
-
-        if (decPart !== undefined) {
-            // Already Danish decimal (comma): "11,6"
-            needles.push(fullMatch)
-            const withUnit = q.slice(m.index, m.index + fullMatch.length + 10).trimEnd()
-            needles.push(withUnit.slice(0, 15))
-            needles.push(intPart + "." + decPart)
-        } else if (intPart.includes(".")) {
-            const dotParts = intPart.split(".")
-            const isDecimal = dotParts[0].length <= 2 && dotParts[dotParts.length - 1].length <= 2
-            if (isDecimal) {
-                // Small number with dot = decimal separator: "11.6" → "11,6"
-                const danish = intPart.replace(".", ",")
-                needles.push(danish)
-                const withUnit = q.slice(m.index, m.index + intPart.length + 10).trimEnd()
-                needles.push(withUnit.replace(".", ",").slice(0, 15))
-            } else {
-                // Dot-thousands: "14.637"
-                needles.push(intPart)
-                needles.push(intPart + ",-")
-                needles.push(plainInt)
-            }
-        } else if (plainInt.length >= 2) {
-            // Plain integer — only use as standalone needle if 4+ digits (avoids false matches on "39", "12" etc.)
-            const n = parseInt(plainInt, 10)
-            if (!isNaN(n)) {
-                const daThousands = n.toLocaleString("da-DK")
-                if (plainInt.length >= 4) {
-                    needles.push(daThousands)
-                    needles.push(daThousands + ",-")
-                    needles.push(plainInt)
-                }
-                // Short numbers always need context — rely on the full-quote slices at top
-            }
-        }
-    }
-
-    // 3. ISO date → Danish date formats
-    const dateMatch = q.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (dateMatch) {
-        const months = ["","januar","februar","marts","april","maj","juni","juli",
-                        "august","september","oktober","november","december"]
-        const day   = parseInt(dateMatch[3], 10)
-        const month = parseInt(dateMatch[2], 10)
-        const year  = dateMatch[1]
-        needles.push(`${day}. ${months[month]}`)
-        needles.push(`${day}. ${months[month]} ${year}`)
-        needles.push(`${String(day).padStart(2,"0")}.${String(month).padStart(2,"0")}.${year}`)
-        needles.push(`${day}/${month}/${year}`)
-    }
-
-    // 4. DD/MM/YYYY dates found anywhere in the string
-    const dmyAll: string[] = []
-    const dmyMatches = q.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{4})/g)
-    for (const m of dmyMatches) {
-        const day = m[1].padStart(2, "0")
-        const month = m[2].padStart(2, "0")
-        const year = m[3]
-        dmyAll.push(`${day}/${month}/${year}`)
-        dmyAll.push(`${day}.${month}.${year}`)
-    }
-    // Add context around first date for more specific matching
-    if (dmyAll.length > 0) {
-        const firstDateIdx = q.search(/\d{1,2}\/\d{1,2}\/\d{4}/)
-        if (firstDateIdx > 0) {
-            // Include a few words before the first date
-            needles.push(q.slice(Math.max(0, firstDateIdx - 8), firstDateIdx + 12).trim())
-        }
-        needles.push(dmyAll[0]) // first date as fallback
-    }
-
-    return [...new Set(needles)].filter((n) => n.length >= 3)
+    // Delegér til resolveAnker.buildNeedles (inkl. tal-prioritering og date-variants)
+    return resolveNeedles(quote)
 }
+
 
 async function findPageForQuote(pdfDoc: any, quote: string, numPages: number): Promise<number> {
     const needles = buildNeedles(quote)
