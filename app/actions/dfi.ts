@@ -198,9 +198,12 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
 
     const categoryLower = (film.Category || "").toLowerCase();
     const typeLower = (film.Type || "").toLowerCase();
+    const combined = categoryLower + " " + typeLower;
     let workType = "fiktion";
-    if (categoryLower.includes("dokumentar") || typeLower.includes("dokumentar")) workType = "dokumentar";
-    else if (typeLower.includes("serie") || typeLower.includes("tv-serie")) workType = "serie";
+    if (combined.includes("dokumentar") && combined.includes("serie")) workType = "serie"; // dokumentarserie
+    else if (combined.includes("dokumentar")) workType = "dokumentar";
+    else if (combined.includes("serie") || combined.includes("tv-")) workType = "serie";
+    else if (combined.includes("kort")) workType = "kortfilm";
 
     const directors = (film.PersonCredits || [])
       .filter((c: any) => c.TypeCode === "instr")

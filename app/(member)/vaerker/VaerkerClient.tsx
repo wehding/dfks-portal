@@ -109,8 +109,12 @@ export default function VaerkerClient({
         if (existing) {
           workId = existing.id;
         } else {
-          const typeLower = (film.Category || film.Type || "").toLowerCase();
-          const workType = typeLower.includes("dokumentar") ? "dokumentar" : typeLower.includes("serie") ? "serie" : "fiktion";
+          const combined = ((film.Category || "") + " " + (film.Type || "")).toLowerCase();
+          const workType = (combined.includes("dokumentar") && combined.includes("serie")) ? "serie"
+            : combined.includes("dokumentar") ? "dokumentar"
+            : (combined.includes("serie") || combined.includes("tv-")) ? "serie"
+            : combined.includes("kort") ? "kortfilm"
+            : "fiktion";
           const { data: newWork, error } = await supabase
             .from("works")
             .insert({
