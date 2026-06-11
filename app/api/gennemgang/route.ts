@@ -72,6 +72,7 @@ type Klassifikation = {
     kontraktsprog: "da" | "en" | "other"
     loen_type: "ugeloeen" | "dagsloen" | "fast_total" | "ukendt"
     loen_valuta: "DKK" | "USD" | "EUR" | "GBP" | "other"
+    produktionstype: "spillefilm" | "tvserie" | "dokumentar" | "kortfilm" | "ukendt"
 }
 
 // ── Trin 1: Klassificér kontrakten ──────────────────────────
@@ -110,7 +111,8 @@ Returnér JSON med disse felter:
   "producent_navn": "navn på produktionsselskab",
   "kontraktsprog": "da" ELLER "en" ELLER "other",
   "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" ELLER "ukendt",
-  "loen_valuta": "DKK" ELLER "USD" ELLER "EUR" ELLER "GBP" ELLER "other"
+  "loen_valuta": "DKK" ELLER "USD" ELLER "EUR" ELLER "GBP" ELLER "other",
+  "produktionstype": "spillefilm" ELLER "tvserie" ELLER "dokumentar" ELLER "kortfilm" ELLER "ukendt"
 }`,
             }],
         }),
@@ -128,6 +130,7 @@ Returnér JSON med disse felter:
         kontraktsprog: "da",
         loen_type: "ukendt",
         loen_valuta: "DKK",
+        produktionstype: "ukendt",
     }
 
     if (!response.ok) {
@@ -159,6 +162,7 @@ Returnér JSON med disse felter:
             kontraktsprog: p.kontraktsprog ?? "da",
             loen_type: p.loen_type ?? "ukendt",
             loen_valuta: p.loen_valuta ?? "DKK",
+            produktionstype: p.produktionstype ?? "ukendt",
         }
     } catch {
         console.warn("[gennemgang] Klassifikation JSON parse fejl")
@@ -226,6 +230,10 @@ og Producenten."
 🚫 ABSOLUT FORBUD: Lav INGEN lønberegning ved hybrid kontrakt.`
             : "✓ A-LØNSKONTRAKT — Beregn korrekt: feriepenge og pension betales OVENI lønnen. Brug udelukkende satser fra AKTUELLE SATSER nedenfor."
 
+    const royaltyRegel = ["spillefilm", "tvserie"].includes(klassifikation.produktionstype)
+        ? "⚠ ROYALTY PÅKRÆVET: Dette er en fiktionsproduktion. Tjek eksplicit om kontrakten nævner royalty. Hvis ikke — det SKAL kommenteres som et selvstændigt punkt."
+        : ""
+
     const overenskomstRegler = klassifikation.er_overenskomst
         ? "✓ OVERENSKOMSTDÆKKET — overenskomst-referencer er tilladt i snippets til producenten."
         : "🚫 IKKE OVERENSKOMSTDÆKKET — ABSOLUT FORBUD: Citer ALDRIG De4/FAF som bindende hjemmel i snippets til producenten. Brug 'branchepraksis' og 'standard i branchen' i stedet."
@@ -251,6 +259,7 @@ ${sprogRegel}
 ${loenTypeRegel}
 ${kontrakttypeRegler}
 ${overenskomstRegler}
+${royaltyRegel}
 Start feedbackmailen med: Kære ${fornavn},
 `.trim()
 }
