@@ -60,7 +60,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "pensionSupplement": "pensionssupplement i kr. som tal (number | null)",
   "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number | null)",
   "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string | null)",
-  "workingWeeks": "antal arbejdsuger som tal (number | null)",
+  "workingWeeks": "antal ARBEJDSUGER som tal (number | null). REGLER: (1) Hvis kontrakten angiver uger direkte — brug det tal. (2) Hvis kontrakten angiver klippedage eller arbejdsdage — divider med 5 og rund til én decimal (fx 35 klippedage = 7,0 uger). (3) Hvis kontrakten angiver måneder — multiplicer med 4,33. Returner altid et decimaltal, aldrig et dagstal.",
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
   "betaRate": "${BETA_RATE_RULE}",
 

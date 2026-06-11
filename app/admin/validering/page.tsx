@@ -645,6 +645,7 @@ export default function AdminValideringPage() {
                 const json = await resp.json()
                 if (!resp.ok) throw new Error(json.error)
                 if (json.data?._sources) setSources(normaliseSources(json.data._sources))
+                if (json.maskedText) setContractText(json.maskedText)
                 overwriteWithAi(json.data)
                 toast.success("Felter opdateret fra AI-udtræk")
             } catch (e: any) {
