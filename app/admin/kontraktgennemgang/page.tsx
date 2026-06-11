@@ -925,7 +925,7 @@ export default function KontraktGennemgangPage() {
                             onClick={async () => {
                                 const supabase = createClient()
                                 // Gem i DB
-                                const { data: saved } = await supabase
+                                const { data: saved, error: saveErr } = await supabase
                                     .from("case_learnings")
                                     .insert({
                                         org_id: orgId,
@@ -937,7 +937,7 @@ export default function KontraktGennemgangPage() {
                                     .select()
                                     .single()
 
-                                if (!saved) { toast.error("Kunne ikke gemme sagserfaring"); return }
+                                if (!saved || saveErr) { toast.error(`Kunne ikke gemme sagserfaring: ${saveErr?.message ?? "ukendt fejl"}`); return }
 
                                 // Embed i RAG
                                 fetch("/api/knowledge/upsert", {
