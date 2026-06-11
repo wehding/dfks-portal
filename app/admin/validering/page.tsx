@@ -774,14 +774,14 @@ export default function AdminValideringPage() {
         // Specific clause terms go FIRST — svodSrc/copydanSrc may be an overenskomst
         // reference from page 1, so we must find the actual clause text before falling back to it.
         const rightsPageSource: Record<string, string> = {
-            __svod__:    ["SVOD", "Create Denmark", "streaming", svodSrc].filter(Boolean).join("||"),
-            __copydan__: ["Copydan", "privatkopiering", "Copy-dan", copydanSrc].filter(Boolean).join("||"),
+            __svod__:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
+            __copydan__: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
             __royalty__: ["royalt", royaltySrc].filter(Boolean).join("||"),
             __collectiveAgreement__: [ca, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst"].filter(Boolean).join("||"),
         }
         const rightsHighlightSource: Record<string, string> = {
-            __svod__:    ["SVOD", "Create Denmark", "streaming", svodSrc].filter(Boolean).join("||"),
-            __copydan__: ["Copydan", "privatkopiering", copydanSrc].filter(Boolean).join("||"),
+            __svod__:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
+            __copydan__: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
             __royalty__: ["royalt", royaltySrc ? royaltySrc.toLowerCase().slice(0, 30) : null].filter(Boolean).join("||"),
             __collectiveAgreement__: [ca ? ca.toLowerCase().slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst"].filter(Boolean).join("||"),
         }
