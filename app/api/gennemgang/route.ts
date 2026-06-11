@@ -155,16 +155,16 @@ Hvis producenten IKKE er medlem af Producentforeningen:
 - DFKS anbefaler i dette tilfælde at alle væsentlige vilkår (løn, Copydan, SVOD, royalties, opsigelse, pension) aftales EKSPLICIT i selve kontrakten — ikke blot ved reference til overenskomsten
 
 Hvad du skal gøre:
-1. Tjek om det fremgår af kontrakten (eller konteksten) om producenten er ProF-член
-2. Hvis producenten IKKE er ProF-член: flag det som et vigtigt forhold og anbefal at alle rettigheder aftales eksplicit
-3. Hvis det er UKLART: nævn at DFKS bør verificere ProF-членsskab, da det har afgørende betydning for overenskomstens juridiske kraft
-4. Kendte ProF-члены (store produktionsselskaber som SF Film, Nordisk Film, DR, TV 2, Zentropa m.fl.) behøver normalt ikke nævnes — fokuser på ukendte eller mindre selskaber hvor tvivlen er reel
+1. Tjek om det fremgår af kontrakten (eller konteksten) om producenten er ProF-member
+2. Hvis producenten IKKE er ProF-member: flag det som et vigtigt forhold og anbefal at alle rettigheder aftales eksplicit
+3. Hvis det er UKLART: nævn at DFKS bør verificere ProF-membership, da det har afgørende betydning for overenskomstens juridiske kraft
+4. Kendte ProF-membre (store produktionsselskaber som SF Film, Nordisk Film, DR, TV 2, Zentropa m.fl.) behøver normalt ikke nævnes — fokuser på ukendte eller mindre selskaber hvor tvivlen er reel
 
 FAF-overenskomsten (dokumentar) og De4-overenskomsten (fiktion):
 - SKELNE MELLEM KONTRAKTTYPER er afgørende:
 
   A-LØN (lønmodtagerkontrakt):
-  - Overenskomsten gælder direkte hvis producenten er ProF-член
+  - Overenskomsten gælder direkte hvis producenten er ProF-member
   - Manglende reference til overenskomsten er kritisk
   - Kontrakten skal eksplicit referere overenskomsten
   - BETA-fond og helligdagsbetaling: For A-lønskontrakter under De4-fiktionsoverenskomsten SKAL du ALTID inkludere et info-punkt om BETA-fond og helligdagsbetaling i feedbackmailen. Disse beløb er reguleret i overenskomsten — hent de eksakte satser og beløb fra De4-lønoversigten i referencedokumenterne nedenfor. Producenten indbetaler helligdagsbetaling (1% af den ferieberettigede løn) til De4's Helligdagsforening og BETA-fond (0,5% af lønnen). Beregn beløbene ud fra kontraktens faktiske løn eller normallønnen i lønoversigten. Dette gælder KUN A-lønskontrakter — ikke leverandørkontrakter.
