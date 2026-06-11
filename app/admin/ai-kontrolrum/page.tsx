@@ -24,6 +24,7 @@ import {
     Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins,
 } from "lucide-react"
 import { toast } from "sonner"
+import NoteringGuide from "@/components/notering-guide"
 
 // ── Shared types ───────────────────────────────────────────────
 
@@ -319,9 +320,12 @@ function NoteringerTab() {
                 <p className="text-sm text-muted-foreground mt-1">
                     Noteringer injiceres i alle kontraktanalyser. <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
                 </p>
-                <Button size="sm" variant="outline" onClick={addNote}>
-                    <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj notering
-                </Button>
+                <div className="flex items-center gap-2">
+                    <NoteringGuide />
+                    <Button size="sm" variant="outline" onClick={addNote}>
+                        <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj notering
+                    </Button>
+                </div>
             </div>
 
             <div className="space-y-3">
