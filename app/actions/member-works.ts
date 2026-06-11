@@ -28,12 +28,11 @@ export async function addWorkForMember(params: {
   if (!rh) return { success: false, error: "Ugyldigt rettighedshaver-id" };
 
   const { data: orgRole } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", user.id)
-    .limit(1)
+    .from("rettighedshavere")
+    .select("org_affiliations(org_id)")
+    .eq("id", params.rightsHolderId)
     .single();
-  const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
+  const orgId = (orgRole?.org_affiliations as any)?.[0]?.org_id ?? DFKS_ORG_ID;
 
   // Find eksisterende værk
   let workId: string | null = null;
