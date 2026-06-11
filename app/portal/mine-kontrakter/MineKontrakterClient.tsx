@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2 } from "lucide-react";
-import { deleteMemberContract, getContractSignedUrl } from "@/app/actions/member-contracts";
+import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 
@@ -44,7 +44,15 @@ function getValidation(c: Contract): Validation {
   return v;
 }
 
-export default function MineKontrakterClient({ initialContracts }: { initialContracts: Contract[] }) {
+type MyWork = { id: string; title: string; year: number | null; type: string };
+
+export default function MineKontrakterClient({
+  initialContracts,
+  myWorks = [],
+}: {
+  initialContracts: Contract[];
+  myWorks?: MyWork[];
+}) {
   const [contracts, setContracts] = useState(initialContracts);
   const searchParams = useSearchParams();
   const [isUploading, setIsUploading] = useState(false);
@@ -56,6 +64,8 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [workSearch, setWorkSearch] = useState("");
+  const [linkingSaving, setLinkingSaving] = useState(false);
 
   const total = contracts.length;
   const godkendte = contracts.filter(c => c.status === "valideret").length;
@@ -91,6 +101,22 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
     const res = await getContractSignedUrl(contract.pdf_url);
     setViewUrl(res.url ?? null);
     setViewLoading(false);
+  }
+
+  async function handleLinkWork(workId: string | null) {
+    if (!selectedContract) return;
+    setLinkingSaving(true);
+    const res = await linkContractToWork(selectedContract.id, workId);
+    if (res.success) {
+      const linked = workId ? myWorks.find(w => w.id === workId) ?? null : null;
+      const updatedContract = { ...selectedContract, works: linked ? { id: linked.id, title: linked.title, year: linked.year } : null };
+      setSelectedContract(updatedContract as Contract);
+      setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract as Contract : c));
+      setMsg({ type: "success", text: workId ? `Koblet til "${linked?.title}"` : "Kobling fjernet" });
+    } else {
+      setMsg({ type: "error", text: res.error ?? "Fejl ved kobling" });
+    }
+    setLinkingSaving(false);
   }
 
   return (
@@ -243,6 +269,50 @@ export default function MineKontrakterClient({ initialContracts }: { initialCont
                   </div>
                 );
               })()}
+              {/* Work-kobling */}
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", marginBottom: "8px" }}>KOBLET VÆRK</div>
+                {selectedContract.works ? (
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", backgroundColor: "var(--surface-container-low, #f8f8f8)", borderRadius: "8px", border: "1px solid var(--outline-variant)" }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "13px", color: "var(--on-surface)" }}>{selectedContract.works.title}</div>
+                      {selectedContract.works.year && <div style={{ fontSize: "11px", color: "var(--on-surface-variant)" }}>{selectedContract.works.year}</div>}
+                    </div>
+                    <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", padding: "4px" }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ position: "relative", marginBottom: "8px" }}>
+                      <Search size={13} style={{ position: "absolute", left: "9px", top: "50%", transform: "translateY(-50%)", color: "var(--on-surface-variant)" }} />
+                      <input
+                        type="text"
+                        placeholder="Søg i dine værker..."
+                        value={workSearch}
+                        onChange={e => setWorkSearch(e.target.value)}
+                        style={{ width: "100%", padding: "8px 10px 8px 28px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", boxSizing: "border-box", backgroundColor: "var(--background, white)", color: "var(--on-surface)" }}
+                      />
+                    </div>
+                    <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {myWorks
+                        .filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase()))
+                        .map(w => (
+                          <button key={w.id} onClick={() => { handleLinkWork(w.id); setWorkSearch(""); }} disabled={linkingSaving}
+                            style={{ textAlign: "left", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", backgroundColor: "var(--surface-container-low, #f8f8f8)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface)" }}>{w.title}</span>
+                            <span style={{ fontSize: "11px", color: "var(--on-surface-variant)" }}>{w.year ?? ""}</span>
+                          </button>
+                        ))}
+                      {myWorks.filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase())).length === 0 && (
+                        <div style={{ fontSize: "13px", color: "var(--on-surface-variant)", fontStyle: "italic", padding: "8px" }}>Ingen værker fundet</div>
+                      )}
+                    </div>
+                    {linkingSaving && <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "6px" }}><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Gemmer...</div>}
+                  </div>
+                )}
+              </div>
+
               <button onClick={() => handleDelete(selectedContract.id)} style={{ marginTop: "auto", padding: "10px", borderRadius: "6px", border: "1px solid #fecaca", backgroundColor: "transparent", color: "#dc2626", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
                 <Trash2 size={14} /> Slet kontrakt
               </button>

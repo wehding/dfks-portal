@@ -101,6 +101,26 @@ export async function uploadMemberContract(formData: FormData) {
   return { success: true, contractId: contract.id, aiData };
 }
 
+export async function linkContractToWork(contractId: string, workId: string | null) {
+  const supabase = await createClient();
+  const db = createServiceClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).single();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil" };
+
+  const { error } = await db
+    .from("contracts")
+    .update({ work_id: workId })
+    .eq("id", contractId)
+    .eq("rights_holder_id", rh.id);
+
+  if (error) return { success: false, error: error.message };
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true };
+}
+
 export async function getContractSignedUrl(pdfUrl: string) {
   const db = createServiceClient();
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 300);

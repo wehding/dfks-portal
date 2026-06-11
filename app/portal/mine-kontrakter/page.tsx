@@ -25,9 +25,29 @@ export default async function MineKontrakterPage() {
         .order("created_at", { ascending: false })
     : { data: [] };
 
+  // Brugerens egne værker til work-kobling
+  const { data: myWorks } = rh
+    ? await db
+        .from("work_assignments")
+        .select("works(id, title, year, type)")
+        .eq("rights_holder_id", rh.id)
+    : { data: [] };
+
+  const uniqueWorks = Object.values(
+    Object.fromEntries(
+      (myWorks ?? [])
+        .map((a: any) => a.works)
+        .filter(Boolean)
+        .map((w: any) => [w.id, w])
+    )
+  ) as { id: string; title: string; year: number | null; type: string }[];
+
   return (
     <Suspense>
-      <MineKontrakterClient initialContracts={(contracts ?? []) as any} />
+      <MineKontrakterClient
+        initialContracts={(contracts ?? []) as any}
+        myWorks={uniqueWorks}
+      />
     </Suspense>
   );
 }
