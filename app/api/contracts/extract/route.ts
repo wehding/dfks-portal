@@ -66,7 +66,7 @@ Returner KUN JSON — ingen forklaringstekst.
 
   "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
   "copydan": "har kontrakten Copydan-forbehold eller lignende vederlagsbevarende klausul? Sæt true hvis kontrakten nævner ENTEN: Copydan, aftalelicens, eksemplarfremstilling, privatkopiering, kollektivt forvaltningsselskab, ophavsretslovens §§ 12-13, §§ 17-18, §§ 35-46a, 'vederlagsret for brug', 'bevarer en vederlagsret', eller tilsvarende formulering der bevarer rettigheder via kollektiv ordning. Sæt IKKE false blot fordi SVOD er overdraget — Copydan og SVOD er uafhængige rettigheder. (boolean)",
-  "royalty": "har kontrakten royalty? (boolean). REGLER: (1) Spillefilm (feature) og dokumentarfilm: true automatisk — royalty er standard. (2) TV-serier (tvSeries, docSeries): ALDRIG true automatisk — kun hvis dedikeret royalty-afsnit adskilt fra SVOD/streaming. (3) Royalty nævnt i Create Denmark/SVOD-klausulen tæller IKKE som royalty-klausul — sæt false.",
+  "royalty": "har kontrakten en INDIVIDUEL royalty-klausul? (boolean). REGLER: (1) ALDRIG true automatisk — kun hvis kontrakten eksplicit aftaler en individuel royaltybetaling i procent eller kr. til medarbejderen personligt. (2) Copydan-vederlagsret (kollektiv aftalelicens via §§ 13/17/35) tæller IKKE som royalty — det er Copydan-forbehold. (3) SVOD/Create Denmark-klausuler tæller IKKE. (4) Kun dedikerede royalty-afsnit med konkret procentangivelse eller beløb tæller.",
   "royaltyPercent": "royaltyprocent som tal (number | null)",
   "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
   "distribution": "distributionsplatforme kommasepareret (string | null)",
