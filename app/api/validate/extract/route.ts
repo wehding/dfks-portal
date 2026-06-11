@@ -91,10 +91,18 @@ export async function POST(req: NextRequest) {
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
-        const { data: fileData, error: dlErr } = await admin.storage.from("kontrakter").download(storagePath)
-        if (dlErr || !fileData) return NextResponse.json({ error: `Kunne ikke hente PDF: ${dlErr?.message}` }, { status: 500 })
-
-        const buffer = Buffer.from(await fileData.arrayBuffer())
+        // Brug signed URL + fetch i stedet for direkte download (mere robust)
+        const { data: signedData, error: signErr } = await admin.storage
+            .from("kontrakter")
+            .createSignedUrl(storagePath, 60)
+        if (signErr || !signedData?.signedUrl) {
+            return NextResponse.json({ error: `Kunne ikke oprette signed URL: ${signErr?.message}` }, { status: 500 })
+        }
+        const pdfResponse = await fetch(signedData.signedUrl)
+        if (!pdfResponse.ok) {
+            return NextResponse.json({ error: `Kunne ikke hente PDF: HTTP ${pdfResponse.status}` }, { status: 500 })
+        }
+        const buffer = Buffer.from(await pdfResponse.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
