@@ -490,6 +490,35 @@ export default function AdminValideringPage() {
 
             if (valError) throw new Error(valError.message)
 
+            // Auto-kobl employer fra extracted employerName hvis admin ikke har valgt manuelt
+            let resolvedEmployerId = selectedEmployerId
+            if (!resolvedEmployerId && extractedData.producerName) {
+                try {
+                    const supabaseAdmin = createClient()
+                    const employerName = extractedData.producerName as string
+                    let { data: existingEmployer } = await supabaseAdmin
+                        .from("employers")
+                        .select("id")
+                        .ilike("name", employerName)
+                        .single()
+
+                    if (!existingEmployer) {
+                        const { data: nyEmployer } = await supabaseAdmin
+                            .from("employers")
+                            .insert({ name: employerName })
+                            .select("id")
+                            .single()
+                        existingEmployer = nyEmployer
+                    }
+
+                    if (existingEmployer) {
+                        resolvedEmployerId = existingEmployer.id
+                    }
+                } catch (employerErr) {
+                    console.warn("[validering] Kunne ikke auto-oprette employer:", employerErr)
+                }
+            }
+
             // Opret moderselskab fra DFI hvis valgt
             let resolvedParentId = selectedParentId
             if (!resolvedParentId && selectedDfiParent) {
@@ -506,8 +535,8 @@ export default function AdminValideringPage() {
             }
 
             // Opdater employer med parent hvis valgt
-            if (selectedEmployerId && resolvedParentId) {
-                await createClient().from("employers").update({ parent_id: resolvedParentId }).eq("id", selectedEmployerId)
+            if (resolvedEmployerId && resolvedParentId) {
+                await createClient().from("employers").update({ parent_id: resolvedParentId }).eq("id", resolvedEmployerId)
             }
 
             const contractType = formData.contractType === "leverandør-ref" ? "leverandør" : (formData.contractType ?? undefined)
@@ -515,7 +544,7 @@ export default function AdminValideringPage() {
 
             await supabase.from("contracts").update({
                 status: "valideret",
-                ...(selectedEmployerId && { employer_id: selectedEmployerId }),
+                ...(resolvedEmployerId && { employer_id: resolvedEmployerId }),
                 ...(contractType && { type: contractType }),
                 ...(overenskomstVal !== undefined && { overenskomst: overenskomstVal }),
                 ...(selectedRhId && { rights_holder_id: selectedRhId }),
@@ -762,22 +791,33 @@ export default function AdminValideringPage() {
     if (reviewingContract) {
         const pdfUrl = localPdfUrl ?? reviewingContract.signedPdfUrl
 
-        // Pre-processér sources med resolveAnker() hvis kontrakttekst er tilgængelig
-        const resolve = (s: string | null | undefined): string | undefined => {
-            if (!s) return undefined
-            if (!contractText) return s
+        // Pre-processér sources med resolveAnker() + gem metadata til UI-indikatorer
+        const resolveWithMeta = (s: string | null | undefined) => {
+            if (!s) return { anker: undefined, erBeløb: false, forGenerisk: false }
+            if (!contractText) return { anker: s, erBeløb: false, forGenerisk: false }
             const r = resolveAnker(s, contractText)
-            return r.fundet ? r.anker : s
+            return {
+                anker: r.fundet ? r.anker : s,
+                erBeløb: r.erBeløb,
+                forGenerisk: r.fejltype === "for_generisk",
+            }
         }
+        const resolve = (s: string | null | undefined) => resolveWithMeta(s).anker
 
-        const salaryHl = resolve(sources.salary) ?? (formData.salary ? String(formData.salary) : undefined)
+        const salaryMeta = resolveWithMeta(sources.salary)
+        const svodMeta = resolveWithMeta(sources.svod)
+        const copydanMeta = resolveWithMeta(sources.copydan)
+        const royaltyMeta = resolveWithMeta(sources.royalty)
+        const caMeta = resolveWithMeta(sources.collectiveAgreement)
+
+        const salaryHl = salaryMeta.anker ?? (formData.salary ? String(formData.salary) : undefined)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
         const supplementsHl = resolve(sources.supplements) ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
-        const svodSrc = resolve(sources.svod) ?? null
-        const copydanSrc = resolve(sources.copydan) ?? null
-        const royaltySrc = resolve(sources.royalty) ?? null
-        const ca = resolve(sources.collectiveAgreement) ?? null
+        const svodSrc = svodMeta.anker ?? null
+        const copydanSrc = copydanMeta.anker ?? null
+        const royaltySrc = royaltyMeta.anker ?? null
+        const ca = caMeta.anker ?? null
         // Each value is a ||‑separated list of candidates tried in order by findPageForQuote.
         // Source quote first (most specific), then generic fallbacks so navigation always finds something.
         // Specific clause terms go FIRST — svodSrc/copydanSrc may be an overenskomst
@@ -1105,7 +1145,12 @@ export default function AdminValideringPage() {
                             </div>
                             <Separator />
                             <div className="grid gap-3 sm:grid-cols-2">
-                                <F label={<>{t("admin.validation.salary")}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
+                                <F label={<>
+                                    {t("admin.validation.salary")}
+                                    {salaryMeta.erBeløb && <span title="Forankret i beløb" className="ml-1 text-amber-500">💰</span>}
+                                    {salaryMeta.forGenerisk && <span title="Fandt flere steder — kan være forkert" className="ml-1 text-orange-500 text-[10px] font-semibold">⚠ generisk</span>}
+                                    <SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} />
+                                </>} locked={isLocked("salary")}>
                                     <Input type="number" value={String(formData.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
                                 </F>
                                 <F label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
@@ -1177,21 +1222,33 @@ export default function AdminValideringPage() {
                                 <div className="space-y-3">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">SVOD<SourceBtn quote={sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", sources.svod ?? sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
-                                            <p className="text-[10px] text-muted-foreground">Streaming on-demand rettighed</p>
+                                            <span className="text-sm flex items-center gap-1">
+                                                SVOD
+                                                {svodMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}
+                                                <SourceBtn quote={svodSrc ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", svodSrc)} />
+                                            </span>
+<p className="text-[10px] text-muted-foreground">Streaming on-demand rettighed</p>
                                         </div>
                                         <Switch checked={formData.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                     </div>
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <span className="text-sm">Copydan<SourceBtn quote={sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
+                                            <span className="text-sm flex items-center gap-1">
+                                                Copydan
+                                                {copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}
+                                                <SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} />
+                                            </span>
                                             <p className="text-[10px] text-muted-foreground">Copydan-vederlag inkluderet</p>
                                         </div>
                                         <Switch checked={formData.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="flex-1">
-                                            <span className="text-sm">Royalty<SourceBtn quote={sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", sources.royalty ?? sources.copydan ?? sources.collectiveAgreement ?? null)} /></span>
+                                            <span className="text-sm flex items-center gap-1">
+                                                Royalty
+                                                {royaltyMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}
+                                                <SourceBtn quote={royaltySrc ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", royaltySrc)} />
+                                            </span>
                                             <p className="text-[10px] text-muted-foreground">Løbende royaltybetaling</p>
                                         </div>
                                         <Input type="number" step="0.1" value={String(formData.royaltyPercent ?? "")} onChange={(e) => setField("royaltyPercent", e.target.value)} placeholder="%" className="w-20" />

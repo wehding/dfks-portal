@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { resolveAnker, bygFeedbackPayload } from "@/lib/resolveAnker"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -676,6 +677,13 @@ export default function KontraktGennemgangPage() {
                                                                         className="text-[11px] text-muted-foreground underline underline-offset-2"
                                                                         onClick={async () => {
                                                                             const supabase = createClient()
+                                                                            // Resolve anker for dette fund hvis citat er tilgængeligt
+                                                                            const ankerResultat = fp.citat && contractText
+                                                                                ? resolveAnker(fp.citat, contractText)
+                                                                                : null
+                                                                            const ankerPayload = ankerResultat
+                                                                                ? bygFeedbackPayload(ankerResultat, false, fundKorrektioner[fp.id] ?? undefined)
+                                                                                : {}
                                                                             await supabase.from("analysis_feedback").upsert({
                                                                                 analyse_id: analyseId,
                                                                                 fund_id: fp.id,
@@ -685,6 +693,7 @@ export default function KontraktGennemgangPage() {
                                                                                 godkendt: false,
                                                                                 korrektion_beskrivelse: fundKorrektioner[fp.id] ?? null,
                                                                                 org_id: orgId,
+                                                                                ...ankerPayload,
                                                                             }, { onConflict: "analyse_id,fund_id" })
                                                                             toast.success("Feedback gemt")
                                                                         }}
