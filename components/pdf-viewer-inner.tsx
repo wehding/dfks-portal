@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { norm } from "@/lib/resolveAnker"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -24,24 +25,7 @@ interface PdfViewerProps {
     pageNavigationHint?: string
 }
 
-function norm(s: string): string {
-    return s
-        .toLowerCase()
-        .replace(/\u00a0/g, " ")
-        .replace(/[\u2013\u2014]/g, "-")
-        .replace(/\u2212/g, "-")
-        .replace(/[\u201c\u201d\u2018\u2019\u0027\u2032]/g, "'")
-        .replace(/\u2009/g, " ")
-        .replace(/\u202f/g, " ")
-        .replace(/copy\s*-\s*dan/gi, "copydan")
-        // Normalize spaces within numbers: "1 7,6" → "17,6", "27 /10" → "27/10"
-        .replace(/(\d)\s+(\d)/g, "$1$2")
-        .replace(/(\d)\s*\/\s*(\d)/g, "$1/$2")
-        // Strip blank-field underscores (PDF forms: __14.637____________)
-        .replace(/_+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-}
+// norm() importeret fra lib/resolveAnker.ts
 
 function buildNeedles(quote: string): string[] {
     const q = norm(quote)
