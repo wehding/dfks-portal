@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { saveUploadedContract } from "@/app/actions/member-contracts";
 import { toast } from "sonner";
 
 const BUCKET = "kontrakter";
@@ -114,32 +115,22 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
         ? [...new Set(episodeCredits.filter(e => e.role).map(e => e.role))]
         : creditedRoles.filter(Boolean);
 
-      const { data: saved, error: dbErr } = await supabase.from("contracts").insert({
-        org_id: orgId,
-        rights_holder_id: rhRow.id,
-        type: "a-løn",
-        status: "kladde",
-        pdf_url: filePath,
-      }).select().single();
-
-      if (dbErr || !saved) { toast.error("Kunne ikke gemme kontrakten"); setSaving(false); return; }
-
-      await supabase.from("contract_validations").insert({
-        contract_id: saved.id,
-        org_id: orgId,
-        notes: JSON.stringify({
-          workTitle: title.trim(),
-          productionType: category || undefined,
-          creditedRoles: roles,
-          duration: duration ? Number(duration) : undefined,
-          premiereDate: premiereDate || undefined,
-          episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
-          submittedByMember: true,
-        }),
+      const res = await saveUploadedContract({
+        filePath,
+        orgId,
+        rhId: rhRow.id,
+        workTitle: title.trim(),
+        category,
+        roles,
+        duration: duration ? Number(duration) : undefined,
+        premiereDate: premiereDate || undefined,
+        episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
       });
 
+      if (!res.success) { toast.error(res.error ?? "Kunne ikke gemme kontrakten"); setSaving(false); return; }
+
       toast.success("Kontrakt indsendt til DFKS");
-      onUploaded(saved);
+      onUploaded(res.contract);
     } catch (e: any) {
       toast.error(e.message ?? "Fejl ved upload");
     } finally {

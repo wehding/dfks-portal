@@ -101,6 +101,51 @@ export async function uploadMemberContract(formData: FormData) {
   return { success: true, contractId: contract.id, aiData };
 }
 
+export async function saveUploadedContract(params: {
+  filePath: string;
+  orgId: string;
+  rhId: string;
+  workTitle: string;
+  category: string;
+  roles: string[];
+  duration?: number;
+  premiereDate?: string;
+  episodes?: { number: number; role: string }[];
+}) {
+  const db = createServiceClient();
+
+  const { data: saved, error: dbErr } = await db
+    .from("contracts")
+    .insert({
+      org_id: params.orgId,
+      rights_holder_id: params.rhId,
+      type: "a-løn",
+      status: "kladde",
+      pdf_url: params.filePath,
+    })
+    .select()
+    .single();
+
+  if (dbErr || !saved) return { success: false, error: dbErr?.message ?? "Kunne ikke gemme kontrakten" };
+
+  await db.from("contract_validations").insert({
+    contract_id: saved.id,
+    org_id: params.orgId,
+    notes: JSON.stringify({
+      workTitle: params.workTitle,
+      productionType: params.category || undefined,
+      creditedRoles: params.roles,
+      duration: params.duration,
+      premiereDate: params.premiereDate,
+      episodes: params.episodes,
+      submittedByMember: true,
+    }),
+  });
+
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true, contract: saved };
+}
+
 export async function linkContractToWork(contractId: string, workId: string | null) {
   const supabase = await createClient();
   const db = createServiceClient();
