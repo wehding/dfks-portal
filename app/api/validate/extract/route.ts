@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
         // Hent PDF fra Supabase Storage
         const admin = createAdmin(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!,
+            (process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY)!,
             { auth: { autoRefreshToken: false, persistSession: false } }
         )
 
