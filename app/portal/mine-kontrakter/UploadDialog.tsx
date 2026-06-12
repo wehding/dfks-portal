@@ -45,6 +45,43 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
 
   const isSeries = SERIES_CATEGORIES.includes(category);
 
+  // Hent varighed og kreditering fra det kendte værk
+  useEffect(() => {
+    if (!workId) return;
+    (async () => {
+      const supabase = createClient();
+
+      const { data: work } = await supabase
+        .from("works")
+        .select("duration_minutes")
+        .eq("id", workId)
+        .single();
+      if (work?.duration_minutes) {
+        setDuration(String(work.duration_minutes));
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: rh } = await supabase
+          .from("rettighedshavere")
+          .select("id")
+          .eq("user_id", user.id)
+          .single();
+        if (rh) {
+          const { data: assignment } = await supabase
+            .from("work_assignments")
+            .select("role")
+            .eq("work_id", workId)
+            .eq("rights_holder_id", rh.id)
+            .single();
+          if (assignment?.role) {
+            setCreditedRoles([assignment.role]);
+          }
+        }
+      }
+    })();
+  }, [workId]);
+
   const handleFile = useCallback((f: File) => {
     const allowed = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
     if (!allowed.includes(f.type)) { toast.error("Kun PDF og DOCX understøttes"); return; }
