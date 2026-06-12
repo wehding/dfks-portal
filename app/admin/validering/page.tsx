@@ -479,13 +479,17 @@ export default function AdminValideringPage() {
             const { error: valError } = await supabase.from("contract_validations").upsert({
                 contract_id: id,
                 org_id: ORG_ID,
-                holiday_pay_rate: extractedData.holidayPayRate ?? null,
-                beta_rate: extractedData.betaRate ?? null,
-                notes: extractedData.specialNotes ?? null,
-                extracted_data: extractedData,
-                validated_by: user?.id ?? null,
-                validated_at: new Date().toISOString(),
-                bruger_redigerede_felter: Array.from(brugerRedigerede),
+                // Eksisterende kolonner
+                holiday_pay_rate:               extractedData.holidayPayRate ?? null,
+                beta_rate:                      extractedData.betaRate ?? null,
+                has_overenskomst_incorporation: !!extractedData.collectiveAgreement,
+                has_credit_clause:              !!(extractedData.creditedRoles),
+                notes:                          extractedData.specialNotes ?? null,
+                // Udvidede kolonner (migration 20260612)
+                extracted_data:                 extractedData,
+                bruger_redigerede_felter:       Array.from(brugerRedigerede),
+                validated_by:                   user?.id ?? null,
+                validated_at:                   new Date().toISOString(),
             }, { onConflict: "contract_id" })
 
             if (valError) throw new Error(valError.message)
