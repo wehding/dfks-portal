@@ -6,7 +6,7 @@ import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 
-type Validation = { svod: boolean | null; copydan: boolean | null; royalty: boolean | null } | null;
+type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null } | null;
 type Contract = {
   id: string;
   type: string | null;
@@ -192,8 +192,8 @@ export default function MineKontrakterClient({
               <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
                 {val ? (
                   <>
-                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.svod ? "#18181b" : "#f4f4f5", color: val.svod ? "white" : "#71717a" }}>SVOD {val.svod ? "✓" : "✗"}</span>
-                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.copydan ? "#18181b" : "#f4f4f5", color: val.copydan ? "white" : "#71717a" }}>Copydan {val.copydan ? "✓" : "✗"}</span>
+                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>Overenskomst {val.has_overenskomst_incorporation ? "✓" : "✗"}</span>
+                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.has_credit_clause ? "#18181b" : "#f4f4f5", color: val.has_credit_clause ? "white" : "#71717a" }}>Kreditering {val.has_credit_clause ? "✓" : "✗"}</span>
                   </>
                 ) : <span style={{ fontSize: "12px", color: "var(--on-surface-variant)", fontStyle: "italic" }}>Afventer</span>}
               </div>
@@ -258,7 +258,7 @@ export default function MineKontrakterClient({
                   <div>
                     <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", marginBottom: "8px" }}>RETTIGHEDER</div>
                     <div style={{ display: "flex", gap: "6px" }}>
-                      {[{ key: "svod", label: "SVOD" }, { key: "copydan", label: "Copydan" }, { key: "royalty", label: "Royalty" }].map(r => {
+                      {[{ key: "has_overenskomst_incorporation", label: "Overenskomst" }, { key: "has_credit_clause", label: "Kreditering" }].map(r => {
                         const has = (val as any)[r.key] === true;
                         return <span key={r.key} style={{ fontSize: "12px", padding: "3px 10px", borderRadius: "99px", fontWeight: 600, backgroundColor: has ? "#18181b" : "#f4f4f5", color: has ? "white" : "#71717a" }}>{r.label} {has ? "✓" : "✗"}</span>;
                       })}
