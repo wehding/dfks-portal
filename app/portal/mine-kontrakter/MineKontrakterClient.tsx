@@ -5,6 +5,9 @@ import { FileText, Upload, X, Trash2, Search, Loader2 } from "lucide-react";
 import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null } | null;
 type Contract = {
@@ -22,18 +25,26 @@ type Contract = {
   contract_validations: Validation[] | Validation;
 };
 
-function statusBadge(status: string) {
-  const map: Record<string, { label: string; color: string; bg: string }> = {
-    kladde:    { label: "Afventer validering", color: "#92400e", bg: "#fef3c7" },
-    valideret: { label: "Godkendt",            color: "#166534", bg: "#dcfce7" },
-    arkiveret: { label: "Arkiveret",           color: "#71717a", bg: "#f4f4f5" },
-  };
-  const s = map[status] ?? { label: status, color: "#71717a", bg: "#f4f4f5" };
-  return <span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: s.bg, color: s.color }}>{s.label}</span>;
+const STATUS_MAP: Record<string, { label: string; bg: string; color: string }> = {
+  kladde:    { label: "Afventer validering", bg: "#fef3c7", color: "#92400e" },
+  valideret: { label: "Godkendt",            bg: "#dcfce7", color: "#166534" },
+  arkiveret: { label: "Arkiveret",           bg: "#f4f4f5", color: "#71717a" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_MAP[status] ?? { label: status, bg: "#f4f4f5", color: "#71717a" };
+  return (
+    <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full" style={{ backgroundColor: s.bg, color: s.color }}>
+      {s.label}
+    </span>
+  );
 }
 
 function overenskomstLabel(o: string | null) {
-  const map: Record<string, string> = { "de4-fiktion": "De4 Fiktion", "de4-dokumentar": "De4 Dok.", faf: "FAF", "faf-dokumentar": "FAF Dok.", ingen: "Ingen" };
+  const map: Record<string, string> = {
+    "de4-fiktion": "De4 Fiktion", "de4-dokumentar": "De4 Dok.",
+    faf: "FAF", "faf-dokumentar": "FAF Dok.", ingen: "Ingen",
+  };
   return o ? (map[o] ?? o) : "–";
 }
 
@@ -69,9 +80,9 @@ export default function MineKontrakterClient({
   const [workSearch, setWorkSearch] = useState("");
   const [linkingSaving, setLinkingSaving] = useState(false);
 
-  const total = contracts.length;
+  const total     = contracts.length;
   const godkendte = contracts.filter(c => c.status === "valideret").length;
-  const afventer = contracts.filter(c => c.status === "kladde").length;
+  const afventer  = contracts.filter(c => c.status === "kladde").length;
 
   const filtered = contracts.filter(c => {
     if (!search) return true;
@@ -122,90 +133,118 @@ export default function MineKontrakterClient({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+    <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+      <div className="flex items-start justify-between">
         <div>
-          <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 6px", color: "var(--on-surface)" }}>Mine Kontrakter</h1>
-          <p style={{ color: "var(--on-surface-variant)", margin: 0, fontSize: "14px" }}>Upload dine kontrakter — DFKS validerer dem herefter.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Mine Kontrakter</h1>
+          <p className="text-sm text-gray-500 mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
         </div>
-        <button onClick={() => setIsUploading(true)} style={{ padding: "10px 18px", borderRadius: "6px", border: "none", backgroundColor: "var(--on-surface)", color: "var(--surface, white)", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", fontSize: "13px" }}>
-          <Upload size={15} /> Upload kontrakt
-        </button>
+        <Button onClick={() => setIsUploading(true)} className="gap-2">
+          <Upload className="h-4 w-4" /> Upload kontrakt
+        </Button>
       </div>
 
       {/* Statistik */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+      <div className="grid grid-cols-3 gap-4">
         {[
-          { label: "Total", value: total },
-          { label: "Godkendte", value: godkendte },
+          { label: "Total",               value: total },
+          { label: "Godkendte",           value: godkendte },
           { label: "Afventer validering", value: afventer },
         ].map(s => (
-          <div key={s.label} style={{ backgroundColor: "var(--background, white)", border: "1px solid var(--outline-variant)", borderRadius: "8px", padding: "20px 24px" }}>
-            <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)", marginBottom: "8px" }}>{s.label}</div>
-            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--on-surface)" }}>{s.value}</div>
+          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-6 py-5">
+            <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
+            <p className="text-3xl font-bold text-gray-900">{s.value}</p>
           </div>
         ))}
       </div>
 
+      {/* Toast-besked */}
       {msg && (
-        <div style={{ padding: "12px 16px", borderRadius: "6px", fontSize: "14px", display: "flex", justifyContent: "space-between", backgroundColor: msg.type === "success" ? "#E6F4EA" : "#FCE8E6", color: msg.type === "success" ? "#137333" : "#C5221F" }}>
+        <div className={`flex items-center justify-between rounded-lg px-4 py-3 text-sm ${
+          msg.type === "success" ? "bg-[#E6F4EA] text-[#137333]" : "bg-[#FCE8E6] text-[#C5221F]"
+        }`}>
           {msg.text}
-          <button onClick={() => setMsg(null)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={14} /></button>
+          <button onClick={() => setMsg(null)} className="ml-4 shrink-0 opacity-70 hover:opacity-100">
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 
       {/* Tabel */}
-      <div style={{ backgroundColor: "var(--background, white)", border: "1px solid var(--outline-variant)", borderRadius: "8px", overflow: "hidden" }}>
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--outline-variant)" }}>
-          <div style={{ position: "relative", maxWidth: "300px" }}>
-            <Search size={14} style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "var(--on-surface-variant)" }} />
-            <input type="text" placeholder="Søg i kontrakter..." value={search} onChange={e => setSearch(e.target.value)} style={{ width: "100%", padding: "7px 12px 7px 30px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", backgroundColor: "var(--surface-container-low, #f8f8f8)", color: "var(--on-surface)" }} />
+      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+
+        {/* Søgefelt */}
+        <div className="px-5 py-3.5 border-b border-gray-100">
+          <div className="relative max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <Input
+              placeholder="Søg i kontrakter..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="pl-8 h-8 text-sm w-72"
+            />
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)" }}>
-          <div>Værk</div><div>Producent</div><div>Overenskomst</div><div>Rettigheder</div><div>Status</div><div />
+        {/* Kolonnehoveder */}
+        <div className="grid px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500"
+          style={{ gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px" }}>
+          <div>Værk</div>
+          <div>Producent</div>
+          <div>Overenskomst</div>
+          <div>Rettigheder</div>
+          <div>Status</div>
+          <div />
         </div>
 
+        {/* Rækker */}
         {filtered.length === 0 ? (
-          <div style={{ padding: "48px", textAlign: "center", color: "var(--on-surface-variant)" }}>
-            <FileText size={40} style={{ margin: "0 auto 12px", opacity: 0.4 }} />
-            <p style={{ margin: 0 }}>{contracts.length === 0 ? "Ingen kontrakter endnu. Klik 'Upload kontrakt' for at starte." : "Ingen resultater."}</p>
+          <div className="py-12 text-center text-sm text-gray-500">
+            <FileText className="mx-auto h-10 w-10 text-gray-300 mb-3" />
+            <p>{contracts.length === 0 ? "Ingen kontrakter endnu. Klik 'Upload kontrakt' for at starte." : "Ingen resultater."}</p>
           </div>
         ) : filtered.map(c => {
           const val = getValidation(c);
           return (
-            <div key={c.id} onClick={() => openContract(c)} style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--outline-variant)", cursor: "pointer", fontSize: "14px" }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = "var(--surface-container-low, #f8f8f8)")}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}
+            <div
+              key={c.id}
+              onClick={() => openContract(c)}
+              className="grid items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors text-sm"
+              style={{ gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px" }}
             >
               <div>
-                <div style={{ fontWeight: 600, color: "var(--on-surface)" }}>{c.works?.title ?? "Ikke koblet til værk"}</div>
-                {c.contract_date && <div style={{ fontSize: "12px", color: "var(--on-surface-variant)" }}>{c.contract_date.substring(0, 10)}</div>}
+                <div className="font-semibold text-gray-900">{c.works?.title ?? "Ikke koblet til værk"}</div>
+                {c.contract_date && <div className="text-xs text-gray-500 mt-0.5">{c.contract_date.substring(0, 10)}</div>}
               </div>
-              <div style={{ fontSize: "13px", color: "var(--on-surface-variant)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {c.employers?.name ?? "–"}
-              </div>
-              <div style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>{overenskomstLabel(c.overenskomst)}</div>
-              <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+              <div className="text-gray-500 truncate">{c.employers?.name ?? "–"}</div>
+              <div className="text-gray-500">{overenskomstLabel(c.overenskomst)}</div>
+              <div className="flex gap-1 flex-wrap">
                 {val ? (
                   <>
-                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>Overenskomst {val.has_overenskomst_incorporation ? "✓" : "✗"}</span>
-                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "99px", fontWeight: 600, backgroundColor: val.has_credit_clause ? "#18181b" : "#f4f4f5", color: val.has_credit_clause ? "white" : "#71717a" }}>Kreditering {val.has_credit_clause ? "✓" : "✗"}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>
+                      Overenskomst {val.has_overenskomst_incorporation ? "✓" : "✗"}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: val.has_credit_clause ? "#18181b" : "#f4f4f5", color: val.has_credit_clause ? "white" : "#71717a" }}>
+                      Kreditering {val.has_credit_clause ? "✓" : "✗"}
+                    </span>
                   </>
-                ) : <span style={{ fontSize: "12px", color: "var(--on-surface-variant)", fontStyle: "italic" }}>Afventer</span>}
+                ) : <span className="text-xs text-gray-400 italic">Afventer</span>}
               </div>
-              <div>{statusBadge(c.status)}</div>
-              <div onClick={e => { e.stopPropagation(); handleDelete(c.id); }} style={{ cursor: "pointer", color: "var(--on-surface-variant)", display: "flex", justifyContent: "center" }}>
-                <Trash2 size={15} />
+              <div><StatusBadge status={c.status} /></div>
+              <div
+                onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
+                className="flex justify-center text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+              >
+                <Trash2 className="h-4 w-4" />
               </div>
             </div>
           );
         })}
       </div>
 
+      {/* Upload-dialog */}
       {isUploading && (
         <UploadDialog
           workId={uploadWorkId}
@@ -219,103 +258,142 @@ export default function MineKontrakterClient({
         />
       )}
 
-      {/* Kontrakt-visning */}
+      {/* Kontrakt-detalje-overlay */}
       {selectedContract && (
-        <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }} onClick={e => { if (e.target === e.currentTarget) setSelectedContract(null); }}>
-          <div style={{ backgroundColor: "var(--background, white)", borderRadius: "12px", width: "100%", maxWidth: viewUrl ? "1100px" : "480px", maxHeight: "90vh", display: "flex", overflow: "hidden", border: "1px solid var(--outline-variant)" }}>
+        <div
+          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6"
+          onClick={e => { if (e.target === e.currentTarget) setSelectedContract(null); }}
+        >
+          <div className={`bg-white rounded-xl border border-gray-200 flex overflow-hidden max-h-[90vh] w-full ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
+
+            {/* PDF-viewer */}
             {viewUrl && (
-              <div style={{ flex: 1, backgroundColor: "#f0f2f5" }}>
-                <iframe src={`${viewUrl}#navpanes=0`} style={{ width: "100%", height: "100%", border: "none" }} title="Kontrakt" />
+              <div className="flex-1 bg-gray-100">
+                <iframe src={`${viewUrl}#navpanes=0`} className="w-full h-full border-0" title="Kontrakt" />
               </div>
             )}
-            <div style={{ width: viewUrl ? "360px" : "100%", padding: "28px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", flexShrink: 0 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h2 style={{ fontSize: "17px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>
-                  {selectedContract.works?.title ?? "Kontrakt"}
-                </h2>
-                <button onClick={() => setSelectedContract(null)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
+
+            {/* Sidebar */}
+            <div className={`${viewUrl ? "w-[360px]" : "w-full"} p-7 overflow-y-auto flex flex-col gap-4 shrink-0`}>
+
+              {/* Titel + luk */}
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold text-gray-900">{selectedContract.works?.title ?? "Kontrakt"}</h2>
+                <button onClick={() => setSelectedContract(null)} className="text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-              {viewLoading && <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--on-surface-variant)", fontSize: "13px" }}><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Henter dokument...</div>}
-              {statusBadge(selectedContract.status)}
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+
+              {viewLoading && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Henter dokument...
+                </div>
+              )}
+
+              <StatusBadge status={selectedContract.status} />
+
+              {/* Metadata-rækker */}
+              <div className="flex flex-col gap-2">
                 {[
-                  { label: "Producent", value: selectedContract.employers?.name },
+                  { label: "Producent",    value: selectedContract.employers?.name },
                   { label: "Overenskomst", value: overenskomstLabel(selectedContract.overenskomst) },
                   { label: "Kontrakttype", value: selectedContract.type },
-                  { label: "Kontraktdato", value: selectedContract.contract_date?.substring(0, 10) },
-                  { label: "Startdato", value: selectedContract.start_date?.substring(0, 10) },
-                  { label: "Slutdato", value: selectedContract.end_date?.substring(0, 10) },
+                  { label: "Kontraktdato",value: selectedContract.contract_date?.substring(0, 10) },
+                  { label: "Startdato",   value: selectedContract.start_date?.substring(0, 10) },
+                  { label: "Slutdato",    value: selectedContract.end_date?.substring(0, 10) },
                 ].filter(r => r.value).map(row => (
-                  <div key={row.label} style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", backgroundColor: "var(--surface-container-low, #f8f8f8)", borderRadius: "6px", fontSize: "13px" }}>
-                    <span style={{ color: "var(--on-surface-variant)" }}>{row.label}</span>
-                    <span style={{ fontWeight: 600, color: "var(--on-surface)" }}>{row.value}</span>
+                  <div key={row.label} className="flex justify-between text-sm bg-gray-50 rounded-md px-3 py-2">
+                    <span className="text-gray-500">{row.label}</span>
+                    <span className="font-medium text-gray-900">{row.value}</span>
                   </div>
                 ))}
               </div>
+
+              {/* Rettigheder */}
               {(() => {
                 const val = getValidation(selectedContract);
                 return val ? (
                   <div>
-                    <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", marginBottom: "8px" }}>RETTIGHEDER</div>
-                    <div style={{ display: "flex", gap: "6px" }}>
-                      {[{ key: "has_overenskomst_incorporation", label: "Overenskomst" }, { key: "has_credit_clause", label: "Kreditering" }].map(r => {
+                    <p className="text-xs font-medium text-gray-500 mb-2">Rettigheder</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {[
+                        { key: "has_overenskomst_incorporation", label: "Overenskomst" },
+                        { key: "has_credit_clause",              label: "Kreditering" },
+                      ].map(r => {
                         const has = (val as any)[r.key] === true;
-                        return <span key={r.key} style={{ fontSize: "12px", padding: "3px 10px", borderRadius: "99px", fontWeight: 600, backgroundColor: has ? "#18181b" : "#f4f4f5", color: has ? "white" : "#71717a" }}>{r.label} {has ? "✓" : "✗"}</span>;
+                        return (
+                          <span key={r.key} className="text-xs font-semibold px-2.5 py-0.5 rounded-full"
+                            style={{ backgroundColor: has ? "#18181b" : "#f4f4f5", color: has ? "white" : "#71717a" }}>
+                            {r.label} {has ? "✓" : "✗"}
+                          </span>
+                        );
                       })}
                     </div>
                   </div>
                 ) : (
-                  <div style={{ padding: "12px", backgroundColor: "#fef3c7", borderRadius: "8px", fontSize: "13px", color: "#92400e" }}>
+                  <div className="rounded-lg px-3 py-2.5 text-sm" style={{ backgroundColor: "#fef3c7", color: "#92400e" }}>
                     Afventer validering af DFKS — rettigheder vises når kontrakten er godkendt.
                   </div>
                 );
               })()}
-              {/* Work-kobling */}
+
+              {/* Werk-kobling */}
               <div>
-                <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", marginBottom: "8px" }}>KOBLET VÆRK</div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Koblet værk</p>
                 {selectedContract.works ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", backgroundColor: "var(--surface-container-low, #f8f8f8)", borderRadius: "8px", border: "1px solid var(--outline-variant)" }}>
+                  <div className="flex items-center justify-between bg-gray-50 rounded-lg border border-gray-200 px-3 py-2.5">
                     <div>
-                      <div style={{ fontWeight: 600, fontSize: "13px", color: "var(--on-surface)" }}>{selectedContract.works.title}</div>
-                      {selectedContract.works.year && <div style={{ fontSize: "11px", color: "var(--on-surface-variant)" }}>{selectedContract.works.year}</div>}
+                      <p className="text-sm font-medium text-gray-900">{selectedContract.works.title}</p>
+                      {selectedContract.works.year && <p className="text-xs text-gray-500">{selectedContract.works.year}</p>}
                     </div>
-                    <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)", padding: "4px" }}>
-                      <X size={14} />
+                    <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} className="text-gray-400 hover:text-gray-600 p-1">
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ) : (
-                  <div>
-                    <div style={{ position: "relative", marginBottom: "8px" }}>
-                      <Search size={13} style={{ position: "absolute", left: "9px", top: "50%", transform: "translateY(-50%)", color: "var(--on-surface-variant)" }} />
-                      <input
-                        type="text"
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400" />
+                      <Input
                         placeholder="Søg i dine værker..."
                         value={workSearch}
                         onChange={e => setWorkSearch(e.target.value)}
-                        style={{ width: "100%", padding: "8px 10px 8px 28px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", boxSizing: "border-box", backgroundColor: "var(--background, white)", color: "var(--on-surface)" }}
+                        className="pl-7 h-8 text-sm"
                       />
                     </div>
-                    <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <div className="max-h-40 overflow-y-auto flex flex-col gap-1">
                       {myWorks
                         .filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase()))
                         .map(w => (
-                          <button key={w.id} onClick={() => { handleLinkWork(w.id); setWorkSearch(""); }} disabled={linkingSaving}
-                            style={{ textAlign: "left", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", backgroundColor: "var(--surface-container-low, #f8f8f8)", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface)" }}>{w.title}</span>
-                            <span style={{ fontSize: "11px", color: "var(--on-surface-variant)" }}>{w.year ?? ""}</span>
+                          <button
+                            key={w.id}
+                            onClick={() => { handleLinkWork(w.id); setWorkSearch(""); }}
+                            disabled={linkingSaving}
+                            className="flex justify-between items-center text-left text-sm px-3 py-2 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors"
+                          >
+                            <span className="font-medium text-gray-900">{w.title}</span>
+                            <span className="text-xs text-gray-500">{w.year ?? ""}</span>
                           </button>
                         ))}
                       {myWorks.filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase())).length === 0 && (
-                        <div style={{ fontSize: "13px", color: "var(--on-surface-variant)", fontStyle: "italic", padding: "8px" }}>Ingen værker fundet</div>
+                        <p className="text-sm text-gray-400 italic px-2 py-1.5">Ingen værker fundet</p>
                       )}
                     </div>
-                    {linkingSaving && <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "6px" }}><Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> Gemmer...</div>}
+                    {linkingSaving && (
+                      <div className="flex items-center gap-1.5 text-xs text-gray-500">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Gemmer...
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              <button onClick={() => handleDelete(selectedContract.id)} style={{ marginTop: "auto", padding: "10px", borderRadius: "6px", border: "1px solid #fecaca", backgroundColor: "transparent", color: "#dc2626", fontSize: "13px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}>
-                <Trash2 size={14} /> Slet kontrakt
+              {/* Slet */}
+              <button
+                onClick={() => handleDelete(selectedContract.id)}
+                className="mt-auto flex items-center justify-center gap-1.5 text-sm text-red-600 border border-red-200 rounded-md px-4 py-2.5 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Slet kontrakt
               </button>
             </div>
           </div>
