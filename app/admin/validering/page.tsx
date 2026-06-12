@@ -738,6 +738,19 @@ export default function AdminValideringPage() {
             if (originalText) { try { setContractText(originalText) } catch { /* ok */ } }
             if (ed._sources) setSources(normaliseSources(ed._sources))
             overwriteWithAi(ed)
+
+            // Navnetjek — vis toast og tilføj til specialNotes ved afvigelse
+            if (data.navneTjek && data.navneTjek.status !== "match") {
+                const tjek = data.navneTjek
+                const besked = tjek.feedbackpunkt?.beskrivelse ?? `Navnetjek: ${tjek.status}`
+                if (tjek.status === "ikke-fundet") {
+                    toast.warning(`⚠ ${besked}`)
+                } else {
+                    toast.info(`ℹ ${besked}`)
+                }
+                setField("specialNotes", [formData.specialNotes, `Navnetjek: ${besked}`].filter(Boolean).join("\n"))
+            }
+
             toast.success("Felter opdateret fra AI-udtræk")
         } catch (e: any) { toast.error(`Udtræk fejlede: ${e.message}`) }
         setScreening(false)

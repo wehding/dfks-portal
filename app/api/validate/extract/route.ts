@@ -16,6 +16,7 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { getApiKey } from "@/lib/ai-key-store"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
+import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import {
     CONTRACT_TYPE_RULE, COLLECTIVE_AGREEMENT_RULE,
     COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE, IS_FREELANCE_CONTRACT_RULE,
@@ -147,7 +148,17 @@ export async function POST(req: NextRequest) {
         const extracted = JSON.parse(jsonMatch[0])
         if (extracted._sources) extracted._sources = normaliseSources(extracted._sources)
 
-        return NextResponse.json({ ok: true, data: extracted, maskedText: masked })
+        // Navnetjek mod DFKS-register (server-side, kun full_name)
+        let navneTjek = null
+        if (extracted.rightsHolderName) {
+            try {
+                navneTjek = await tjekNavn(extracted.rightsHolderName)
+            } catch (e) {
+                console.warn("[validate/extract] Navnetjek fejlede:", e)
+            }
+        }
+
+        return NextResponse.json({ ok: true, data: extracted, navneTjek, maskedText: masked })
     } catch (err: any) {
         console.error("[validate/extract]", err)
         return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })

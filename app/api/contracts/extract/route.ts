@@ -16,6 +16,7 @@ import { getApiKey } from "@/lib/ai-key-store"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { createClient } from "@supabase/supabase-js"
+import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
 import {
     CONTRACT_TYPE_RULE,
@@ -159,7 +160,18 @@ export async function POST(req: NextRequest) {
         if (extracted._sources && typeof extracted._sources === "object") {
             extracted._sources = normaliseSources(extracted._sources)
         }
-        return NextResponse.json({ ok: true, data: extracted })
+
+        // Navnetjek mod DFKS-register (server-side, kun full_name)
+        let navneTjek = null
+        if (extracted.rightsHolderName) {
+            try {
+                navneTjek = await tjekNavn(extracted.rightsHolderName)
+            } catch (e) {
+                console.warn("[contracts/extract] Navnetjek fejlede:", e)
+            }
+        }
+
+        return NextResponse.json({ ok: true, data: extracted, navneTjek })
 
     } catch (err: any) {
         console.error("Extract fejl:", err)
