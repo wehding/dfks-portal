@@ -125,9 +125,6 @@ export default function MineKontrakterClient({
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.05em", color: "var(--on-surface-variant)", marginBottom: "8px", textTransform: "uppercase" }}>
-            DFKS &gt; <span style={{ color: "var(--on-surface)" }}>MINE KONTRAKTER</span>
-          </div>
           <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 6px", color: "var(--on-surface)" }}>Mine Kontrakter</h1>
           <p style={{ color: "var(--on-surface-variant)", margin: 0, fontSize: "14px" }}>Upload dine kontrakter — DFKS validerer dem herefter.</p>
         </div>
@@ -139,13 +136,13 @@ export default function MineKontrakterClient({
       {/* Statistik */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
         {[
-          { label: "TOTAL", value: total, color: "var(--on-surface)" },
-          { label: "GODKENDTE", value: godkendte, color: "#16a34a" },
-          { label: "AFVENTER VALIDERING", value: afventer, color: "#d97706" },
+          { label: "Total", value: total },
+          { label: "Godkendte", value: godkendte },
+          { label: "Afventer validering", value: afventer },
         ].map(s => (
           <div key={s.label} style={{ backgroundColor: "var(--background, white)", border: "1px solid var(--outline-variant)", borderRadius: "8px", padding: "20px 24px" }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", color: "var(--on-surface-variant)", marginBottom: "8px" }}>{s.label}</div>
-            <div style={{ fontSize: "32px", fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)", marginBottom: "8px" }}>{s.label}</div>
+            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--on-surface)" }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -166,8 +163,8 @@ export default function MineKontrakterClient({
           </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em" }}>
-          <div>VÆRK</div><div>PRODUCENT</div><div>OVERENSKOMST</div><div>RETTIGHEDER</div><div>STATUS</div><div />
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1.5fr 1fr 1fr 0.8fr 40px", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)" }}>
+          <div>Værk</div><div>Producent</div><div>Overenskomst</div><div>Rettigheder</div><div>Status</div><div />
         </div>
 
         {filtered.length === 0 ? (

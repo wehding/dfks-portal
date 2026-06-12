@@ -2,8 +2,12 @@
 
 import React, { useState } from "react";
 import {
-  Film, Plus, Search, Loader2, X, RefreshCw, Filter, Trash2, Check,
+  Film, Plus, Search, Loader2, X, RefreshCw, Trash2, Check,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
@@ -274,9 +278,6 @@ export default function MineVaerkerClient({
       {/* Brødkrumme + header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <div style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "0.05em", color: "var(--on-surface-variant)", marginBottom: "8px", textTransform: "uppercase" }}>
-            DFKS &gt; <span style={{ color: "var(--on-surface)" }}>MINE VÆRKER</span>
-          </div>
           <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 6px", color: "var(--on-surface)" }}>Mine Værker</h1>
           <p style={{ color: "var(--on-surface-variant)", margin: 0, fontSize: "14px" }}>
             Dine registrerede film- og serieproduktioner og tilhørende rettigheder.
@@ -295,13 +296,13 @@ export default function MineVaerkerClient({
       {/* Statistik-kort */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
         {[
-          { label: "TOTAL VÆRKER", value: totalWorks, color: "var(--on-surface)" },
-          { label: "MED KONTRAKT", value: withContract, color: "#0c9488" },
-          { label: "MANGLER ÅRSTAL", value: missingYear, color: missingYear > 0 ? "#ba1a1a" : "#0c9488" },
+          { label: "Total værker", value: totalWorks },
+          { label: "Med kontrakt", value: withContract },
+          { label: "Mangler årstal", value: missingYear },
         ].map(s => (
           <div key={s.label} style={{ backgroundColor: "var(--surface-container-lowest)", border: "1px solid var(--outline-variant)", borderRadius: "8px", padding: "20px 24px" }}>
-            <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "0.06em", color: "var(--on-surface-variant)", marginBottom: "8px" }}>{s.label}</div>
-            <div style={{ fontSize: "32px", fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)", marginBottom: "8px" }}>{s.label}</div>
+            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--on-surface)" }}>{s.value}</div>
           </div>
         ))}
       </div>
@@ -329,14 +330,16 @@ export default function MineVaerkerClient({
                 <button onClick={() => setSelected([])} style={{ padding: "5px 12px", borderRadius: "4px", border: "1px solid var(--outline-variant)", backgroundColor: "transparent", fontSize: "12px", cursor: "pointer", color: "var(--on-surface-variant)" }}>Annuller</button>
               </>
             ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "var(--on-surface-variant)" }}><Filter size={14} /> Kategorier:</div>
-                {categories.map(cat => (
-                  <button key={cat} onClick={() => setCatFilter(cat)} style={{ padding: "5px 14px", borderRadius: "16px", border: catFilter === cat ? "1px solid var(--on-surface)" : "1px solid var(--outline-variant)", backgroundColor: catFilter === cat ? "var(--on-surface)" : "transparent", color: catFilter === cat ? "var(--surface)" : "var(--on-surface-variant)", fontSize: "12px", fontWeight: 500, cursor: "pointer" }}>
-                    {cat}
-                  </button>
-                ))}
-              </>
+              <Select value={catFilter} onValueChange={setCatFilter}>
+                <SelectTrigger className="w-[160px] h-8 text-sm">
+                  <SelectValue placeholder="Alle kategorier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map(cat => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
           <div style={{ position: "relative" }}>
@@ -346,15 +349,15 @@ export default function MineVaerkerClient({
         </div>
 
         {/* Tabel-header */}
-        <div style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "11px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.05em", userSelect: "none" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)", userSelect: "none" }}>
           <input type="checkbox" checked={selected.length === filtered.length && filtered.length > 0} onChange={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))} style={{ cursor: "pointer", width: "15px", height: "15px" }} />
-          <div onClick={() => handleSort("title")} style={{ cursor: "pointer" }}>VÆRKTITEL{sortArrow("title")}</div>
-          <div onClick={() => handleSort("year")} style={{ cursor: "pointer" }}>ÅR{sortArrow("year")}</div>
-          <div onClick={() => handleSort("type")} style={{ cursor: "pointer" }}>TYPE{sortArrow("type")}</div>
-          <div>ROLLE</div>
-          <div>AFSNIT</div>
-          <div>MEDKLIPPERE</div>
-          <div style={{ textAlign: "right" }}>KONTRAKT</div>
+          <div onClick={() => handleSort("title")} style={{ cursor: "pointer" }}>Værktitel{sortArrow("title")}</div>
+          <div onClick={() => handleSort("year")} style={{ cursor: "pointer" }}>År{sortArrow("year")}</div>
+          <div onClick={() => handleSort("type")} style={{ cursor: "pointer" }}>Type{sortArrow("type")}</div>
+          <div>Rolle</div>
+          <div>Afsnit</div>
+          <div>Medklippere</div>
+          <div style={{ textAlign: "right" }}>Kontrakt</div>
         </div>
 
         {/* Tabel-rækker */}
@@ -369,7 +372,7 @@ export default function MineVaerkerClient({
             if (!w) return null;
             const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
             return (
-              <div key={a.id} onClick={() => openEdit(a)} style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--outline-variant)", cursor: "pointer", transition: "background-color 0.15s" }}
+              <div key={a.id} onClick={() => openEdit(a)} style={{ display: "grid", gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--outline-variant)", cursor: "pointer", transition: "background-color 0.15s" }}
                 onMouseEnter={e => (e.currentTarget.style.backgroundColor = "var(--surface-container-low)")}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = "transparent")}
               >
@@ -378,15 +381,12 @@ export default function MineVaerkerClient({
                 </div>
                 {/* Plakat + titel */}
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <div style={{ width: "40px", height: "56px", borderRadius: "4px", overflow: "hidden", backgroundColor: "var(--surface-container-high)", flexShrink: 0, boxShadow: "0 1px 4px rgba(0,0,0,0.12)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                  <div style={{ width: "32px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {posterSrc ? (
-                      <>
+                      <div style={{ width: "32px", height: "44px", borderRadius: "3px", overflow: "hidden", flexShrink: 0, position: "relative" }}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={posterSrc} alt={w.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" />
-                        <div style={{ position: "absolute", bottom: 0, right: 0, background: (w.dfi_id && w.tmdb_id) ? "rgba(34,197,94,0.85)" : w.dfi_id ? "rgba(220,38,38,0.85)" : "rgba(14,165,233,0.85)", color: "white", fontSize: "6px", fontWeight: 700, padding: "1px 3px", borderTopLeftRadius: "3px" }}>
-                          {(w.dfi_id && w.tmdb_id) ? "DFI+TM" : w.dfi_id ? "DFI" : "TMDB"}
-                        </div>
-                      </>
+                      </div>
                     ) : (
                       <Film size={16} color="var(--outline)" />
                     )}
@@ -413,10 +413,11 @@ export default function MineVaerkerClient({
                 </div>
                 {/* Kontrakt */}
                 <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(a.contract_id ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true`); }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 600, color: a.contract_id ? "#16a34a" : "#dc2626", textDecoration: "underline", cursor: "pointer" }}>
-                    <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: a.contract_id ? "#16a34a" : "#dc2626", display: "inline-block" }} />
-                    {a.contract_id ? "OK" : "Mangler"}
-                  </span>
+                  {a.contract_id ? (
+                    <Badge variant="outline" className="text-xs border-gray-300 text-gray-600 cursor-pointer">OK</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">Mangler</Badge>
+                  )}
                 </div>
               </div>
             );
