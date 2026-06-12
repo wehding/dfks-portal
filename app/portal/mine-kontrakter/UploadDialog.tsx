@@ -5,6 +5,9 @@ import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { saveUploadedContract } from "@/app/actions/member-contracts";
 import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const BUCKET = "kontrakter";
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -29,19 +32,15 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  // AI screening
   const [screening, setScreening] = useState(false);
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
 
-  // Form felter — pre-udfyld med workTitle hvis vi kender værket
   const [title, setTitle] = useState(workTitle ?? "");
   const [category, setCategory] = useState("");
   const [creditedRoles, setCreditedRoles] = useState<string[]>(["Klipper"]);
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
   const [duration, setDuration] = useState("");
   const [premiereDate, setPremiereDate] = useState("");
-
-  // Gemme
   const [saving, setSaving] = useState(false);
 
   const isSeries = SERIES_CATEGORIES.includes(category);
@@ -54,24 +53,21 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
     else setPdfUrl(null);
   }, []);
 
-  // Auto-screen ved filvalg
   useEffect(() => {
     if (!file) return;
     let cancelled = false;
     setScreening(true);
     setAiFields(new Set());
-
     (async () => {
       try {
         const { extractTextFromFile, screenPortalContract } = await import("@/lib/ai");
         const { maskPersonalData } = await import("@/lib/mask-text");
         const rawText = await extractTextFromFile(file);
-        const text = maskPersonalData(rawText); // mask CPR, kontonumre, telefon mv. inden AI
+        const text = maskPersonalData(rawText);
         if (cancelled) return;
         const result = await screenPortalContract(text, ROLES);
         if (cancelled) return;
         const filled = new Set<string>();
-        // Overskriver ikke titlen hvis den allerede er sat fra et kendt værk
         if (result.title && !workTitle) { setTitle(result.title); filled.add("title"); }
         if (result.category && CATEGORY_LABELS[result.category]) { setCategory(result.category); filled.add("category"); }
         if (result.creditedRole) {
@@ -119,21 +115,15 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
         : creditedRoles.filter(Boolean);
 
       const res = await saveUploadedContract({
-        filePath,
-        orgId,
-        rhId: rhRow.id,
-        memberName: rhRow.full_name,
-        workTitle: title.trim(),
-        workId: workId,
-        category,
-        roles,
+        filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
+        workTitle: title.trim(), workId,
+        category, roles,
         duration: duration ? Number(duration) : undefined,
         premiereDate: premiereDate || undefined,
         episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
       });
 
       if (!res.success) { toast.error(res.error ?? "Kunne ikke gemme kontrakten"); setSaving(false); return; }
-
       toast.success("Kontrakt indsendt til DFKS");
       onUploaded(res.contract);
     } catch (e: any) {
@@ -143,31 +133,39 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
     }
   };
 
+  // Fælles select-stil (shadcn Select er overkill her — native select er tilstrækkeligt)
+  const selectCls = "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400";
+
   return (
-    <div style={{ position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.45)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ backgroundColor: "var(--background, white)", borderRadius: "12px", width: "100%", maxWidth: pdfUrl ? "1000px" : "560px", maxHeight: "92vh", display: "flex", overflow: "hidden", border: "1px solid var(--outline-variant)", transition: "max-width 0.3s ease" }}>
+    <div
+      className="fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-6"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className={`bg-white rounded-xl border border-gray-200 flex overflow-hidden max-h-[92vh] w-full transition-all duration-300 ${pdfUrl ? "max-w-4xl" : "max-w-lg"}`}>
 
         {/* PDF preview */}
         {pdfUrl && (
-          <div style={{ flex: 1, backgroundColor: "#f0f2f5", borderRight: "1px solid var(--outline-variant)", minWidth: 0 }}>
-            <iframe src={`${pdfUrl}#navpanes=0`} style={{ width: "100%", height: "100%", border: "none" }} title="Forhåndsvisning" />
+          <div className="flex-1 bg-gray-100 border-r border-gray-200 min-w-0">
+            <iframe src={`${pdfUrl}#navpanes=0`} className="w-full h-full border-0" title="Forhåndsvisning" />
           </div>
         )}
 
         {/* Formular */}
-        <div style={{ width: pdfUrl ? "420px" : "100%", padding: "28px", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", gap: "18px" }}>
+        <div className={`${pdfUrl ? "w-[420px]" : "w-full"} p-7 overflow-y-auto shrink-0 flex flex-col gap-5`}>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          {/* Header */}
+          <div className="flex items-start justify-between">
             <div>
-              <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Upload kontrakt</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Upload kontrakt</h2>
               {workTitle && (
-                <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", marginTop: "3px" }}>
-                  til <strong style={{ color: "var(--on-surface)" }}>{workTitle}</strong>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  til <strong className="text-gray-900">{workTitle}</strong>
                 </p>
               )}
             </div>
-            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
           {/* Drop zone */}
@@ -175,52 +173,74 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
-            style={{ border: `2px dashed ${isDragging ? "var(--on-surface)" : "var(--outline-variant)"}`, borderRadius: "10px", padding: "28px", textAlign: "center", backgroundColor: isDragging ? "var(--surface-container-low)" : "transparent", transition: "all 0.2s" }}
+            className={`rounded-lg border-2 border-dashed p-7 text-center transition-colors ${isDragging ? "border-gray-400 bg-gray-50" : "border-gray-200 hover:border-gray-300"}`}
           >
-            <Upload size={28} style={{ margin: "0 auto 10px", color: "var(--on-surface-variant)", opacity: 0.5 }} />
-            <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "0 0 8px" }}>Træk fil hertil eller</p>
-            <label style={{ cursor: "pointer" }}>
-              <input type="file" accept=".pdf,.doc,.docx" style={{ display: "none" }} onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
-              <span style={{ padding: "7px 18px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", fontWeight: 500, cursor: "pointer" }}>Vælg fil</span>
+            <Upload className="mx-auto h-7 w-7 text-gray-300 mb-2.5" />
+            <p className="text-sm text-gray-500 mb-2">Træk fil hertil eller</p>
+            <label className="cursor-pointer">
+              <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              <span className="text-sm font-medium px-4 py-1.5 rounded-md border border-gray-300 hover:bg-gray-50 transition-colors cursor-pointer">
+                Vælg fil
+              </span>
             </label>
-            <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", margin: "8px 0 0" }}>PDF eller DOCX</p>
+            <p className="text-xs text-gray-400 mt-2">PDF eller DOCX</p>
           </div>
 
           {/* Fil + screening-status */}
           {file && (
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px 14px", border: "1px solid var(--outline-variant)", borderRadius: "8px", backgroundColor: "var(--surface-container-low, #f8f8f8)" }}>
+            <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-3">
               {screening
-                ? <Loader2 size={16} style={{ flexShrink: 0, color: "#9333ea", animation: "spin 1s linear infinite" }} />
-                : <CheckCircle2 size={16} style={{ flexShrink: 0, color: "#16a34a" }} />
+                ? <Loader2 className="h-4 w-4 shrink-0 text-purple-600 animate-spin" />
+                : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
               }
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
-                {screening && <div style={{ fontSize: "12px", color: "#9333ea", marginTop: "2px", display: "flex", alignItems: "center", gap: "4px" }}><Sparkles size={11} /> Screener med Claude AI...</div>}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
+                {screening && (
+                  <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
+                    <Sparkles className="h-3 w-3" /> Screener med Claude AI...
+                  </p>
+                )}
               </div>
               {!screening && (
-                <button onClick={() => { setFile(null); setPdfUrl(null); setTitle(""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--on-surface-variant)" }}><X size={15} /></button>
+                <button
+                  onClick={() => { setFile(null); setPdfUrl(null); setTitle(workTitle ?? ""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
+                  className="text-gray-400 hover:text-gray-600 shrink-0"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               )}
             </div>
           )}
 
-          {/* Formularfelter — vises efter screening */}
+          {/* Formularfelter */}
           {file && !screening && (
-            <>
+            <div className="flex flex-col gap-4">
+
               {/* Titel */}
-              <div>
-                <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                  PRODUKTIONSTITEL {aiFields.has("title") && <Sparkles size={11} style={{ color: "#9333ea" }} />}
-                </label>
-                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Filmens eller seriens titel" style={{ width: "100%", padding: "9px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "14px", backgroundColor: aiFields.has("title") ? "#faf5ff" : "transparent", color: "var(--on-surface)", boxSizing: "border-box" }} />
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                  Produktionstitel
+                  {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                </Label>
+                <Input
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="Filmens eller seriens titel"
+                  className={aiFields.has("title") ? "bg-purple-50" : ""}
+                />
               </div>
 
               {/* Kategori */}
-              <div>
-                <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                  KATEGORI {aiFields.has("category") && <Sparkles size={11} style={{ color: "#9333ea" }} />}
-                </label>
-                <select value={category} onChange={e => setCategory(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "14px", backgroundColor: aiFields.has("category") ? "#faf5ff" : "var(--background, white)", color: "var(--on-surface)" }}>
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                  Kategori
+                  {aiFields.has("category") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                </Label>
+                <select
+                  value={category}
+                  onChange={e => setCategory(e.target.value)}
+                  className={`${selectCls} ${aiFields.has("category") ? "bg-purple-50" : ""}`}
+                >
                   <option value="">—</option>
                   {Object.entries(CATEGORY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
@@ -228,44 +248,73 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
 
               {/* Kreditering */}
               {!isSeries ? (
-                <div>
-                  <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                    KREDITERET FUNKTION {aiFields.has("creditedRole") && <Sparkles size={11} style={{ color: "#9333ea" }} />}
-                  </label>
+                <div className="space-y-1.5">
+                  <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                    Krediteret funktion
+                    {aiFields.has("creditedRole") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                  </Label>
                   {creditedRoles.map((role, idx) => (
-                    <div key={idx} style={{ display: "flex", gap: "8px", marginBottom: "6px" }}>
-                      <select value={role} onChange={e => setCreditedRoles(prev => prev.map((r, i) => i === idx ? e.target.value : r))} style={{ flex: 1, padding: "9px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "14px", backgroundColor: "var(--background, white)", color: "var(--on-surface)" }}>
+                    <div key={idx} className="flex gap-2 mb-1.5">
+                      <select
+                        value={role}
+                        onChange={e => setCreditedRoles(prev => prev.map((r, i) => i === idx ? e.target.value : r))}
+                        className={`${selectCls} flex-1`}
+                      >
                         <option value="">—</option>
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
                       {creditedRoles.length > 1 && (
-                        <button onClick={() => setCreditedRoles(prev => prev.filter((_, i) => i !== idx))} style={{ padding: "0 10px", border: "1px solid var(--outline-variant)", borderRadius: "6px", background: "none", cursor: "pointer", color: "var(--on-surface-variant)" }}><X size={14} /></button>
+                        <button
+                          onClick={() => setCreditedRoles(prev => prev.filter((_, i) => i !== idx))}
+                          className="px-2.5 rounded-md border border-gray-300 text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       )}
                     </div>
                   ))}
-                  <button onClick={() => setCreditedRoles(prev => [...prev, ""])} style={{ display: "flex", alignItems: "center", gap: "4px", background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--on-surface-variant)", padding: "4px 0" }}>
-                    <Plus size={13} /> Tilføj kreditering
+                  <button
+                    onClick={() => setCreditedRoles(prev => [...prev, ""])}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Tilføj kreditering
                   </button>
                 </div>
               ) : (
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 700, color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>AFSNIT & KREDITERING</label>
-                    <button onClick={() => setEpisodeCredits(prev => [...prev, { number: (prev.at(-1)?.number ?? 0) + 1, role: prev.at(-1)?.role ?? "Klipper" }])} style={{ display: "flex", alignItems: "center", gap: "4px", padding: "4px 10px", border: "1px solid var(--outline-variant)", borderRadius: "6px", background: "none", cursor: "pointer", fontSize: "12px" }}>
-                      <Plus size={12} /> Tilføj afsnit
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-medium text-gray-500">Afsnit og kreditering</Label>
+                    <button
+                      onClick={() => setEpisodeCredits(prev => [...prev, { number: (prev.at(-1)?.number ?? 0) + 1, role: prev.at(-1)?.role ?? "Klipper" }])}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50"
+                    >
+                      <Plus className="h-3 w-3" /> Tilføj afsnit
                     </button>
                   </div>
                   {episodeCredits.map((ec, idx) => (
-                    <div key={idx} style={{ display: "grid", gridTemplateColumns: "52px 1fr 32px", gap: "6px", marginBottom: "6px", alignItems: "center" }}>
-                      <div style={{ position: "relative" }}>
-                        <span style={{ position: "absolute", left: "8px", top: "50%", transform: "translateY(-50%)", fontSize: "11px", color: "var(--on-surface-variant)" }}>#</span>
-                        <input type="number" value={ec.number} min={1} onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x))} style={{ width: "100%", padding: "8px 4px 8px 20px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", boxSizing: "border-box" }} />
+                    <div key={idx} className="grid gap-1.5 mb-1.5 items-center" style={{ gridTemplateColumns: "52px 1fr 32px" }}>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">#</span>
+                        <input
+                          type="number" value={ec.number} min={1}
+                          onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x))}
+                          className="w-full pl-5 pr-2 py-2 rounded-md border border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-gray-400"
+                        />
                       </div>
-                      <select value={ec.role} onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, role: e.target.value } : x))} style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "13px", backgroundColor: "var(--background, white)", color: "var(--on-surface)" }}>
+                      <select
+                        value={ec.role}
+                        onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, role: e.target.value } : x))}
+                        className={selectCls}
+                      >
                         <option value="">—</option>
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
-                      <button onClick={() => setEpisodeCredits(prev => prev.filter((_, i) => i !== idx))} style={{ padding: "0", border: "none", background: "none", cursor: "pointer", color: "var(--on-surface-variant)" }}><X size={14} /></button>
+                      <button
+                        onClick={() => setEpisodeCredits(prev => prev.filter((_, i) => i !== idx))}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -273,42 +322,52 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
 
               {/* Varighed / premieredato */}
               {!isSeries && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                      VARIGHED (MIN) {aiFields.has("duration") && <Sparkles size={11} style={{ color: "#9333ea" }} />}
-                    </label>
-                    <input type="number" value={duration} onChange={e => setDuration(e.target.value)} placeholder="90" style={{ width: "100%", padding: "9px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "14px", boxSizing: "border-box" }} />
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                      Varighed (min)
+                      {aiFields.has("duration") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                    </Label>
+                    <Input
+                      type="number" value={duration}
+                      onChange={e => setDuration(e.target.value)}
+                      placeholder="90"
+                      className={aiFields.has("duration") ? "bg-purple-50" : ""}
+                    />
                   </div>
-                  <div>
-                    <label style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                      PREMIEREDATO {aiFields.has("premiereDate") && <Sparkles size={11} style={{ color: "#9333ea" }} />}
-                    </label>
-                    <input type="date" value={premiereDate} onChange={e => setPremiereDate(e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: "6px", border: "1px solid var(--outline-variant)", fontSize: "14px", boxSizing: "border-box" }} />
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                      Premieredato
+                      {aiFields.has("premiereDate") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                    </Label>
+                    <Input
+                      type="date" value={premiereDate}
+                      onChange={e => setPremiereDate(e.target.value)}
+                      className={aiFields.has("premiereDate") ? "bg-purple-50" : ""}
+                    />
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
 
-          {/* Gem-knap med progressbar */}
+          {/* Upload-knap */}
           {file && !screening && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div className="flex flex-col gap-2.5">
               {saving && (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", color: "var(--on-surface-variant)" }}>
-                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite", color: "var(--primary, #000)" }} />
-                    Uploader og gemmer kontrakt...
-                  </div>
-                  <div style={{ width: "100%", height: "4px", backgroundColor: "var(--surface-container-high, #e4e4e4)", borderRadius: "2px", overflow: "hidden" }}>
-                    <div style={{ height: "100%", backgroundColor: "var(--on-surface, #000)", animation: "upload-progress 8s ease-out forwards", borderRadius: "2px" }} />
+                <div className="space-y-2">
+                  <p className="flex items-center gap-2 text-sm text-gray-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploader og gemmer kontrakt...
+                  </p>
+                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gray-900 rounded-full" style={{ animation: "upload-progress 8s ease-out forwards" }} />
                   </div>
                   <style>{`@keyframes upload-progress{0%{width:0%}40%{width:55%}80%{width:85%}95%{width:93%}}`}</style>
                 </div>
               )}
-              <button onClick={handleSubmit} disabled={!canSubmit} style={{ padding: "12px 24px", borderRadius: "6px", border: "none", backgroundColor: canSubmit ? "var(--on-surface, #000)" : "var(--surface-container-high, #e4e4e4)", color: canSubmit ? "var(--surface, white)" : "var(--on-surface-variant)", fontWeight: 600, cursor: canSubmit ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", fontSize: "14px" }}>
-                <Upload size={15} /> Indsend til DFKS
-              </button>
+              <Button onClick={handleSubmit} disabled={!canSubmit} className="w-full gap-2">
+                <Upload className="h-4 w-4" /> Indsend til DFKS
+              </Button>
             </div>
           )}
         </div>
