@@ -71,7 +71,7 @@ export default function MineVaerkerPage() {
 
   if (!data) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "80px", color: "var(--on-surface-variant)" }}>
+      <div className="flex items-center justify-center py-20 text-sm text-gray-500">
         Henter dine værker...
       </div>
     );
