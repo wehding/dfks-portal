@@ -130,8 +130,8 @@ Brug et Lucide-ikon (`<Film size={16} />` eller `<FileText size={16} />`) i `tex
 ## Badges og status
 
 ```tsx
-// OK / bekræftet
-<Badge variant="outline" className="text-xs text-emerald-600 border-emerald-200">OK</Badge>
+// OK / bekræftet — matcher "Godkendt"-badge i kontrakter
+<span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#dcfce7", color: "#166534" }}>OK</span>
 
 // Advarsel / mangler (reminder — ikke fejl)
 <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Mangler</Badge>

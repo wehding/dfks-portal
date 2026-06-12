@@ -415,7 +415,7 @@ export default function MineVaerkerClient({
                 {/* Kontrakt */}
                 <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(contractedWorkIds.includes(w.id) ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}>
                   {contractedWorkIds.includes(w.id) ? (
-                    <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-200 cursor-pointer">OK</Badge>
+                    <span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#dcfce7", color: "#166534", cursor: "pointer" }}>OK</span>
                   ) : (
                     <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">Mangler</Badge>
                   )}
