@@ -123,6 +123,25 @@ export interface DbContractReview {
     ai_result: Record<string, unknown>
     reviewed_by: string | null
     reviewed_at: string
+    // Indbakke-felter (tilføjet 2026-06-12)
+    member_id: string | null
+    file_name: string | null
+    file_size_bytes: number | null
+    contract_type: string | null
+    production_type: string | null
+    distribution_channels: string[] | null
+    producer_name: string | null
+    producer_dfks_id: string | null
+    producer_dfi_id: string | null
+    producer_overenskomst_bound: boolean | null
+    focus_areas: string[] | null
+    notes: string | null
+    status: string
+    assigned_to: string | null
+    storage_path: string | null
+    ai_run_at: string | null
+    ai_language: string | null
+    updated_at: string | null
 }
 
 export interface DbAgreement {
