@@ -13,6 +13,7 @@ export default function MineVaerkerPage() {
     rightsHolderId: string | null;
     userName: string;
     dfiPersonId: number | null;
+    contractedWorkIds: string[];
   } | null>(null);
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export default function MineVaerkerPage() {
         .eq("user_id", user.id)
         .single();
 
-      if (!rh) { setData({ assignments: [], allAssignments: [], rightsHolderId: null, userName: "", dfiPersonId: null }); return; }
+      if (!rh) { setData({ assignments: [], allAssignments: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
 
       const { data: assignments } = await supabase
         .from("work_assignments")
@@ -45,12 +46,23 @@ export default function MineVaerkerPage() {
             .neq("rights_holder_id", rh.id)
         : { data: [] };
 
+      const { data: contractedWorkIds } = await supabase
+        .from("contracts")
+        .select("work_id")
+        .eq("rights_holder_id", rh.id)
+        .not("work_id", "is", null);
+
+      const contractedWorkIdSet = new Set(
+        (contractedWorkIds ?? []).map((c: any) => c.work_id)
+      );
+
       setData({
         assignments: assignments ?? [],
         allAssignments: allAssignments ?? [],
         rightsHolderId: rh.id,
         userName: rh.full_name ?? "",
         dfiPersonId: rh.dfi_person_id ?? null,
+        contractedWorkIds: [...contractedWorkIdSet],
       });
     }
 
@@ -72,6 +84,7 @@ export default function MineVaerkerPage() {
       rightsHolderId={data.rightsHolderId}
       userName={data.userName}
       dfiPersonId={data.dfiPersonId}
+      contractedWorkIds={data.contractedWorkIds}
     />
   );
 }
