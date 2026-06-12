@@ -129,21 +129,52 @@ Brug et Lucide-ikon (`<Film size={16} />` eller `<FileText size={16} />`) i `tex
 
 ## Badges og status
 
-```tsx
-// OK / bekræftet — matcher "Godkendt"-badge i kontrakter
-<span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#dcfce7", color: "#166534" }}>OK</span>
+To badge-mønstre bruges på tværs af portalen. Brug inline `<span>` (pill-stil) til status i tabeller og lister; brug shadcn `<Badge>` til tags og metadata.
 
-// Advarsel / mangler (reminder — ikke fejl)
+### Pill-badges (tabeller og lister)
+
+```tsx
+// Godkendt / OK — grøn
+<span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#dcfce7", color: "#166534" }}>
+  Godkendt
+</span>
+
+// Afventer / under behandling — gul/amber
+<span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#fef3c7", color: "#92400e" }}>
+  Afventer validering
+</span>
+
+// Neutral / arkiveret
+<span style={{ fontSize: "12px", fontWeight: 600, padding: "3px 10px", borderRadius: "99px", backgroundColor: "#f4f4f5", color: "#71717a" }}>
+  Arkiveret
+</span>
+```
+
+Farvekoder:
+
+| State | Baggrund | Tekst |
+|---|---|---|
+| Godkendt / OK | `#dcfce7` | `#166534` |
+| Afventer / advarsel | `#fef3c7` | `#92400e` |
+| Neutral / arkiveret | `#f4f4f5` | `#71717a` |
+
+### shadcn Badge (tags og metadata)
+
+```tsx
+// Reminder / mangler — brug amber, ikke rød (rød = egentlig fejl)
 <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Mangler</Badge>
 
-// Afsluttet / godkendt
-<Badge variant="outline" className="text-xs text-emerald-600 border-emerald-200">Afsluttet</Badge>
+// Aktiv
+<Badge className="text-xs bg-gray-900 text-white">Aktivt medlem</Badge>
 
-// Kritisk
+// Neutral info
+<Badge variant="outline" className="text-xs font-normal">Medlemsnr. 042</Badge>
+
+// Kritisk fejl
 <Badge variant="destructive" className="text-xs">Kritisk</Badge>
 ```
 
-**Rød er reserveret til egentlige fejl.** En "mangler"-state (fx manglende kontrakt) er amber, ikke rød.
+**Rød er reserveret til egentlige fejl.** "Mangler kontrakt" og lignende reminder-states bruger amber.
 
 ---
 
