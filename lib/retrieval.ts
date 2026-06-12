@@ -194,7 +194,8 @@ export async function hentKontekst(kontraktTekst: string, orgId?: string): Promi
                     if (!emb) return null
                     const dot = embedding.reduce((s, v, i) => s + v * (emb[i] ?? 0), 0)
                     const na = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0))
-                    const nb = Math.sqrt(emb.reduce((s: number, v: number) => s + v * v, 0))
+                    const embArray = Array.isArray(emb) ? emb : Object.values(emb)
+                    const nb = Math.sqrt(embArray.reduce((s: number, v: number) => s + v * v, 0))
                     return { ...c, similaritet: na && nb ? dot / (na * nb) : 0 }
                 })
                 .filter((c): c is NonNullable<typeof c> => c !== null && c.similaritet >= 0.5)

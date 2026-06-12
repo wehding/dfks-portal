@@ -21,7 +21,7 @@ import {
 import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
-    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins,
+    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins, Wand2, RotateCcw,
 } from "lucide-react"
 import { toast } from "sonner"
 import NoteringGuide from "@/components/notering-guide"
@@ -264,10 +264,22 @@ const PRIORITY_CONFIG: Record<string, { label: string; color: string; dot: strin
 }
 const PRIORITY_ORDER = ["altid", "baggrund"] as const
 
+type GeneretNotering = { titel: string; body: string }
+
 function NoteringerTab() {
+    const supabase = createClient()
+
+    // ── Eksisterende noteringer ───────────────────────────────
     const [notes, setNotes] = useState<LegalNote[]>([])
     const [loading, setLoading] = useState(true)
     const [editingId, setEditingId] = useState<string | null>(null)
+
+    // ── AI-editor state ───────────────────────────────────────
+    const [fritekst, setFritekst] = useState("")
+    const [aiPrioritet, setAiPrioritet] = useState<"altid" | "baggrund">("altid")
+    const [genererer, setGenererer] = useState(false)
+    const [generetNotering, setGeneretNotering] = useState<GeneretNotering | null>(null)
+    const [gemmerAi, setGemmerAi] = useState(false)
 
     useEffect(() => {
         fetch("/api/legal-notes").then(r => r.json())
@@ -312,107 +324,254 @@ function NoteringerTab() {
         } catch (e: any) { toast.error(e.message) }
     }
 
+    // ── AI-generering ─────────────────────────────────────────
+    const genererNotering = async () => {
+        if (!fritekst.trim()) return
+        setGenererer(true)
+        setGeneretNotering(null)
+        try {
+            const res = await fetch("/api/admin/generer-notering", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ fritekst, prioritet: aiPrioritet }),
+            })
+            if (!res.ok) throw new Error((await res.json()).error)
+            const data = await res.json()
+            setGeneretNotering(data)
+        } catch (e: any) { toast.error(e.message) }
+        finally { setGenererer(false) }
+    }
+
+    const gemAiNotering = async () => {
+        if (!generetNotering) return
+        setGemmerAi(true)
+        try {
+            const { data, error } = await supabase
+                .from("legal_notes")
+                .insert({
+                    title: generetNotering.titel,
+                    body: generetNotering.body,
+                    priority: aiPrioritet,
+                    active: true,
+                })
+                .select()
+                .single()
+            if (error) throw new Error(error.message)
+            setNotes(prev => [data as LegalNote, ...prev])
+            setGeneretNotering(null)
+            setFritekst("")
+            toast.success("Notering gemt")
+        } catch (e: any) { toast.error(e.message) }
+        finally { setGemmerAi(false) }
+    }
+
     if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-start justify-between">
-                <p className="text-sm text-muted-foreground mt-1">
-                    Noteringer injiceres i alle kontraktanalyser. <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
-                </p>
+        <div className="space-y-6">
+
+            {/* ── AI-noteringseditor ── */}
+            <div className="rounded-lg border p-4 space-y-4">
                 <div className="flex items-center gap-2">
-                    <NoteringGuide />
-                    <Button size="sm" variant="outline" onClick={addNote}>
-                        <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj notering
+                    <Wand2 className="h-4 w-4 text-muted-foreground" />
+                    <p className="text-sm font-medium">Opret ny notering</p>
+                </div>
+
+                <div className="space-y-1.5">
+                    <Label className="text-xs">Beskriv reglen med dine egne ord:</Label>
+                    <Textarea
+                        value={fritekst}
+                        onChange={e => setFritekst(e.target.value)}
+                        rows={4}
+                        placeholder="Beskriv reglen med dine egne ord — fx: Når en kontrakt er på engelsk og lovvalget er udenlandsk, skal vi altid bede om dansk ret..."
+                        className="text-sm resize-none"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        AI'en genererer en struktureret notering baseret på din beskrivelse. Du kan altid redigere inden du gemmer.
+                    </p>
+                </div>
+
+                <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <Label className="text-xs shrink-0">Prioritet:</Label>
+                        <Select value={aiPrioritet} onValueChange={v => setAiPrioritet(v as "altid" | "baggrund")}>
+                            <SelectTrigger className="h-7 text-xs w-32">
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="altid">Altid</SelectItem>
+                                <SelectItem value="baggrund">Baggrund</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </div>
+                    <Button
+                        size="sm"
+                        onClick={genererNotering}
+                        disabled={genererer || !fritekst.trim()}
+                        className="gap-1.5"
+                    >
+                        {genererer
+                            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Genererer notering...</>
+                            : <><Wand2 className="h-3.5 w-3.5" />Generér notering med AI →</>
+                        }
                     </Button>
                 </div>
+
+                {/* AI-forslag */}
+                {generetNotering && (
+                    <div className="rounded-md border border-dashed bg-muted/30 p-4 space-y-3">
+                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">AI foreslår</p>
+
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Titel:</Label>
+                            <input
+                                className="w-full text-sm bg-background border rounded px-3 py-1.5 outline-none ring-0 focus:ring-1 focus:ring-ring"
+                                value={generetNotering.titel}
+                                onChange={e => setGeneretNotering(n => n ? { ...n, titel: e.target.value } : n)}
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <Label className="text-xs">Body (rediger hvis nødvendigt):</Label>
+                            <Textarea
+                                value={generetNotering.body}
+                                onChange={e => setGeneretNotering(n => n ? { ...n, body: e.target.value } : n)}
+                                rows={7}
+                                className="text-sm font-mono"
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={genererNotering}
+                                disabled={genererer}
+                            >
+                                {genererer
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <RotateCcw className="h-3.5 w-3.5" />
+                                }
+                                Prøv igen
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={gemAiNotering}
+                                disabled={gemmerAi || !generetNotering.titel || !generetNotering.body}
+                                className="gap-1.5"
+                            >
+                                {gemmerAi
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <CheckCircle2 className="h-3.5 w-3.5" />
+                                }
+                                Gem notering
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </div>
 
-            <div className="space-y-3">
-                {notes.map(note => {
-                    const isEditing = editingId === note.id
-                    const pc = PRIORITY_CONFIG[note.priority] ?? PRIORITY_CONFIG.baggrund
-                    return (
-                        <div key={note.id} className="rounded-lg border">
-                            <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
-                                <div className="flex items-center gap-2 flex-1 min-w-0">
-                                    <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            {/* ── Eksisterende noteringer ── */}
+            <div className="space-y-4">
+                <div className="flex items-start justify-between">
+                    <p className="text-sm text-muted-foreground mt-1">
+                        Noteringer injiceres i alle kontraktanalyser. <em>Altid</em> kommenteres altid på, <em>Baggrund</em> bruges som kontekst.
+                    </p>
+                    <div className="flex items-center gap-2">
+                        <NoteringGuide />
+                        <Button size="sm" variant="outline" onClick={addNote}>
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />Tilføj notering
+                        </Button>
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    {notes.map(note => {
+                        const isEditing = editingId === note.id
+                        const pc = PRIORITY_CONFIG[note.priority] ?? PRIORITY_CONFIG.baggrund
+                        return (
+                            <div key={note.id} className="rounded-lg border">
+                                <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
+                                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                                        <BookOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                        {isEditing ? (
+                                            <input
+                                                className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
+                                                value={note.title}
+                                                onChange={e => updateLocal(note.id, { title: e.target.value })}
+                                            />
+                                        ) : (
+                                            <span className="text-sm font-medium truncate">{note.title}</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                        <button
+                                            type="button"
+                                            title="Skift type"
+                                            onClick={async () => {
+                                                const idx = PRIORITY_ORDER.indexOf(note.priority as any)
+                                                const next = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
+                                                updateLocal(note.id, { priority: next })
+                                                await apiPatch(note.id, { priority: next }).catch(e => toast.error(e.message))
+                                            }}
+                                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${pc.color}`}
+                                        >
+                                            <span className={`h-1.5 w-1.5 rounded-full ${pc.dot}`} />
+                                            {pc.label}
+                                        </button>
+                                        <span className="text-xs text-muted-foreground hidden sm:block">
+                                            {new Date(note.created_at).toLocaleDateString("da-DK")}
+                                        </span>
+                                        <Button
+                                            variant={isEditing ? "default" : "ghost"}
+                                            size="icon"
+                                            className="h-7 w-7"
+                                            title={isEditing ? "Gem" : "Rediger"}
+                                            onClick={() => isEditing ? saveNote(note) : setEditingId(note.id)}
+                                        >
+                                            {isEditing ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
+                                        </Button>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteNote(note.id)}>
+                                            <X className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+                                <div className="px-4 py-3 space-y-3">
                                     {isEditing ? (
-                                        <input
-                                            className="flex-1 text-sm font-medium bg-transparent border-0 outline-none ring-1 ring-border rounded px-2 py-0.5"
-                                            value={note.title}
-                                            onChange={e => updateLocal(note.id, { title: e.target.value })}
-                                        />
+                                        <>
+                                            <Textarea
+                                                value={note.body}
+                                                onChange={e => updateLocal(note.id, { body: e.target.value })}
+                                                rows={5}
+                                                className="text-sm font-mono"
+                                            />
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div className="space-y-1">
+                                                    <Label className="text-xs text-muted-foreground">Gyldig fra</Label>
+                                                    <Input type="date" className="h-7 text-xs" value={note.gyldig_fra ?? ""} onChange={e => updateLocal(note.id, { gyldig_fra: e.target.value || null })} />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <Label className="text-xs text-muted-foreground">Gyldig til</Label>
+                                                    <Input type="date" className="h-7 text-xs" value={note.gyldig_til ?? ""} onChange={e => updateLocal(note.id, { gyldig_til: e.target.value || null })} />
+                                                </div>
+                                            </div>
+                                        </>
                                     ) : (
-                                        <span className="text-sm font-medium truncate">{note.title}</span>
+                                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{note.body}</p>
                                     )}
                                 </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                        type="button"
-                                        title="Skift type"
-                                        onClick={async () => {
-                                            const idx = PRIORITY_ORDER.indexOf(note.priority as any)
-                                            const next = PRIORITY_ORDER[(idx + 1) % PRIORITY_ORDER.length]
-                                            updateLocal(note.id, { priority: next })
-                                            await apiPatch(note.id, { priority: next }).catch(e => toast.error(e.message))
-                                        }}
-                                        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium cursor-pointer transition-opacity hover:opacity-80 ${pc.color}`}
-                                    >
-                                        <span className={`h-1.5 w-1.5 rounded-full ${pc.dot}`} />
-                                        {pc.label}
-                                    </button>
-                                    <span className="text-xs text-muted-foreground hidden sm:block">
-                                        {new Date(note.created_at).toLocaleDateString("da-DK")}
-                                    </span>
-                                    <Button
-                                        variant={isEditing ? "default" : "ghost"}
-                                        size="icon"
-                                        className="h-7 w-7"
-                                        title={isEditing ? "Gem" : "Rediger"}
-                                        onClick={() => isEditing ? saveNote(note) : setEditingId(note.id)}
-                                    >
-                                        {isEditing ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Pencil className="h-3.5 w-3.5" />}
-                                    </Button>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => deleteNote(note.id)}>
-                                        <X className="h-3.5 w-3.5" />
-                                    </Button>
-                                </div>
                             </div>
-                            <div className="px-4 py-3 space-y-3">
-                                {isEditing ? (
-                                    <>
-                                        <Textarea
-                                            value={note.body}
-                                            onChange={e => updateLocal(note.id, { body: e.target.value })}
-                                            rows={5}
-                                            className="text-sm font-mono"
-                                        />
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                                <Label className="text-xs text-muted-foreground">Gyldig fra</Label>
-                                                <Input type="date" className="h-7 text-xs" value={note.gyldig_fra ?? ""} onChange={e => updateLocal(note.id, { gyldig_fra: e.target.value || null })} />
-                                            </div>
-                                            <div className="space-y-1">
-                                                <Label className="text-xs text-muted-foreground">Gyldig til</Label>
-                                                <Input type="date" className="h-7 text-xs" value={note.gyldig_til ?? ""} onChange={e => updateLocal(note.id, { gyldig_til: e.target.value || null })} />
-                                            </div>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{note.body}</p>
-                                )}
-                            </div>
-                        </div>
-                    )
-                })}
-            </div>
-
-            {notes.length === 0 && (
-                <div className="rounded-lg border border-dashed px-4 py-6 text-center">
-                    <p className="text-sm text-muted-foreground">Ingen noteringer. Klik "Tilføj notering" for at oprette en.</p>
+                        )
+                    })}
                 </div>
-            )}
+
+                {notes.length === 0 && (
+                    <div className="rounded-lg border border-dashed px-4 py-6 text-center">
+                        <p className="text-sm text-muted-foreground">Ingen noteringer. Brug editoren ovenfor eller klik "Tilføj notering".</p>
+                    </div>
+                )}
+            </div>
         </div>
     )
 }
