@@ -110,8 +110,8 @@ Returnér JSON med disse felter:
   "loen_enhed": "kr/uge" ELLER "kr/dag" eller null,
   "producent_navn": "navn på produktionsselskab",
   "kontraktsprog": "da" ELLER "en" ELLER "other",
-  "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" ELLER "ukendt",
-  "loen_valuta": "DKK" ELLER "USD" ELLER "EUR" ELLER "GBP" ELLER "other",
+  "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" (ved 'total fee', 'fixed fee', 'lump sum', 'flat fee', 'fast honorar', 'samlet honorar') ELLER "ukendt",
+  "loen_valuta": "DKK" ELLER "USD" (ved $) ELLER "EUR" (ved €) ELLER "GBP" (ved £) ELLER "other",
   "produktionstype": "spillefilm" ELLER "tvserie" ELLER "dokumentar" ELLER "kortfilm" ELLER "ukendt"
 }`,
             }],
@@ -200,7 +200,20 @@ function byggAbsolutteRegler(
         : "✓ Dansk kontrakt — skriv alt på dansk."
 
     const loenTypeRegel = klassifikation.loen_type === "fast_total"
-        ? `🚫 FAST TOTALBELØB — ABSOLUT FORBUD: Gang ALDRIG beløbet op per uge. ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} er det samlede honorar for hele perioden.`
+        ? `✓ FAST TOTALBELØB — følg disse regler:
+Beløbet er ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} for hele perioden.
+
+${klassifikation.loen_valuta !== "DKK"
+    ? `Valuta er ${klassifikation.loen_valuta} — beregn ALT i ${klassifikation.loen_valuta}.
+Omregn IKKE til DKK og brug INGEN brackets eller pladsholdere som [indsæt kurs].
+Nævn til sidst at medlemmet selv skal omregne via nationalbanken.dk.`
+    : "Valuta er DKK — beregn normalt."}
+
+Hvis antal uger er tilgængeligt i kontrakten: del totalbeløbet op per uge og sammenlign med De4-normallønnen.
+Hvis antal uger IKKE er tilgængeligt: oplys kun totalbeløbet og anbefal at få perioden præciseret.
+
+🚫 ABSOLUT FORBUDT: Brug aldrig brackets, pladsholdere eller ufærdige beregninger.
+Alle tal i analysen skal være konkrete udregnet tal — aldrig [beløb] eller [indsæt].`
         : klassifikation.loen_type === "ugeloeen"
         ? `✓ UGELØN — ${klassifikation.aftalt_loen} ${klassifikation.loen_valuta} per uge.`
         : "⚠ LØNTYPE UKLAR — undgå beregninger der forudsætter en specifik løntype."
@@ -493,6 +506,13 @@ export async function POST(req: NextRequest) {
             try {
                 klassifikation = await klassificerKontrakt(tekstTilKlassifikation, apiKey, safeModel)
                 console.log(`[gennemgang] Klassifikation: ${JSON.stringify(klassifikation)}`)
+                console.warn("[klassifikation debug]", JSON.stringify({
+                    loen_type: klassifikation.loen_type,
+                    loen_valuta: klassifikation.loen_valuta,
+                    aftalt_loen: klassifikation.aftalt_loen,
+                    kontraktsprog: klassifikation.kontraktsprog,
+                    kontrakttype: klassifikation.kontrakttype,
+                }))
             } catch (e) {
                 console.warn("[gennemgang] Klassifikation fejlede, fortsætter uden:", e)
             }
