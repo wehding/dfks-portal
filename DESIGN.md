@@ -130,8 +130,8 @@ Brug et Lucide-ikon (`<Film size={16} />` eller `<FileText size={16} />`) i `tex
 ## Badges og status
 
 ```tsx
-// Aktiv / OK
-<Badge variant="outline" className="text-xs border-gray-300 text-gray-600">OK</Badge>
+// OK / bekræftet
+<Badge variant="outline" className="text-xs text-emerald-600 border-emerald-200">OK</Badge>
 
 // Advarsel / mangler (reminder — ikke fejl)
 <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Mangler</Badge>
