@@ -171,8 +171,8 @@ export default function OnboardingClient({
                   width: "36px", height: "36px", borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: "16px",
-                  backgroundColor: step > s.id ? "var(--tertiary)" : step === s.id ? "var(--primary)" : "var(--surface-container-highest)",
-                  color: step >= s.id ? "var(--on-primary)" : "var(--on-surface-variant)",
+                  backgroundColor: step > s.id ? "#374151" : step === s.id ? "#111827" : "#F3F4F6",
+                  color: step >= s.id ? "#FFFFFF" : "#9CA3AF",
                   transition: "all 0.3s ease", fontWeight: 700,
                 }}>
                   {step > s.id ? <CheckCircle size={18} color="white" /> : s.icon}
@@ -183,8 +183,8 @@ export default function OnboardingClient({
               </div>
             ))}
           </div>
-          <div style={{ height: "4px", backgroundColor: "var(--surface-container-high)", borderRadius: "2px", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progress}%`, backgroundColor: "var(--primary)", borderRadius: "2px", transition: "width 0.4s ease" }} />
+          <div style={{ height: "4px", backgroundColor: "#E5E7EB", borderRadius: "2px", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progress}%`, backgroundColor: "#111827", borderRadius: "2px", transition: "width 0.4s ease" }} />
           </div>
         </div>
 
@@ -252,8 +252,8 @@ export default function OnboardingClient({
                   { label: "By", key: "city", placeholder: "København" },
                 ].map((f: any) => (
                   <div key={f.key} style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
-                    <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                      {f.label.toUpperCase()}
+                    <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                      {f.label}
                     </label>
                     <input
                       value={(formData as any)[f.key]}
@@ -265,8 +265,8 @@ export default function OnboardingClient({
                   </div>
                 ))}
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-surface-variant)", letterSpacing: "0.04em" }}>
-                    E-MAIL
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                    E-mail
                   </label>
                   <div style={{
                     width: "100%", padding: "10px 12px",
@@ -280,16 +280,16 @@ export default function OnboardingClient({
                 </div>
               </div>
 
-              <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "var(--secondary-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--secondary)" }}>
-                <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-secondary-container)" }}>🏦 Bankoplysninger (til udbetaling)</div>
+              <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "#F9FAFB", borderRadius: "8px", border: "1px solid #E5E7EB" }}>
+                <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-surface)" }}>🏦 Bankoplysninger (til udbetaling)</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                   {[
                     { label: "CPR-nummer", key: "cpr", placeholder: "DDMMÅÅ-XXXX" },
                     { label: "NemKonto / Kontonr.", key: "bank_account", placeholder: "Reg.nr. + kontonr." },
                   ].map((f) => (
                     <div key={f.key}>
-                      <label style={{ display: "block", fontSize: "12px", fontWeight: 700, marginBottom: "6px", color: "var(--on-secondary-container)", letterSpacing: "0.04em", opacity: 0.9 }}>
-                        {f.label.toUpperCase()}
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                        {f.label}
                       </label>
                       <input
                         value={(formData as any)[f.key]}
@@ -328,8 +328,7 @@ export default function OnboardingClient({
                 <button
                   onClick={handleManualDfiSearch}
                   disabled={isSearchingDfi}
-                  className="stitch-btn-secondary"
-                  style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center" }}
+                  style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
                 >
                   {isSearchingDfi ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}
                   Søg
@@ -350,8 +349,8 @@ export default function OnboardingClient({
               ) : dfiCredits.length > 0 ? (
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                    <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--on-surface-variant)" }}>
-                      FUNDET {dfiCredits.length} TITLER
+                    <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)" }}>
+                      Fundet {dfiCredits.length} titler
                     </div>
                     <button
                       onClick={() => {
@@ -360,8 +359,7 @@ export default function OnboardingClient({
                         dfiCredits.forEach((c) => { next[c.Id] = !allSelected; });
                         setSelectedDfiCredits(next);
                       }}
-                      className="stitch-btn-secondary"
-                      style={{ padding: "4px 8px", fontSize: "11px", minHeight: "auto" }}
+                      style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
                     >
                       {Object.values(selectedDfiCredits).every((v) => v) ? "Fravælg alle" : "Vælg alle"}
                     </button>
@@ -513,8 +511,7 @@ export default function OnboardingClient({
             <button
               onClick={() => setStep((s) => Math.max(1, s - 1))}
               disabled={step === 1}
-              className="stitch-btn-secondary"
-              style={{ padding: "10px 20px", fontSize: "14px", opacity: step === 1 ? 0.3 : 1 }}
+              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: step === 1 ? "default" : "pointer", opacity: step === 1 ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
             >
               <ArrowLeft size={16} /> Tilbage
             </button>
@@ -523,8 +520,7 @@ export default function OnboardingClient({
               <button
                 onClick={handleNextStep}
                 disabled={isSearchingDfi || isImportingDfi}
-                className="stitch-btn-primary"
-                style={{ padding: "10px 24px", fontSize: "14px", display: "flex", alignItems: "center", gap: "8px" }}
+                style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
               >
                 {isImportingDfi ? (
                   <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Importerer...</>
@@ -536,8 +532,7 @@ export default function OnboardingClient({
               <button
                 onClick={handleComplete}
                 disabled={isSaving}
-                className="stitch-btn-primary"
-                style={{ backgroundColor: "var(--tertiary)", color: "var(--on-tertiary)", padding: "12px 28px", fontSize: "15px" }}
+                style={{ padding: "12px 28px", fontSize: "15px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSaving ? 0.6 : 1 }}
               >
                 {isSaving ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle size={16} />}
                 {isSaving ? "Gemmer..." : "Kom i gang!"}
