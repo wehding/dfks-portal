@@ -9,7 +9,7 @@ import MineKontrakterClient from "./MineKontrakterClient";
 export default async function MineKontrakterPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  if (!user) redirect("/")
 
   const db = createServiceClient();
 
