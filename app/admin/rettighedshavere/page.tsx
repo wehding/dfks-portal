@@ -182,14 +182,14 @@ export default function RettighedshavereAdminPage() {
             {!loading && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {[
-                        { label: "I alt",            value: rows.length,    color: "text-foreground"    },
-                        { label: "Aktive medlemmer", value: memberCount,    color: "text-green-600"     },
-                        { label: "Ikke-medlemmer",   value: nonMemberCount, color: "text-muted-foreground" },
-                        { label: "Med portal-adgang",value: portalCount,    color: "text-blue-600"      },
+                        { label: "I alt",             value: rows.length    },
+                        { label: "Aktive medlemmer",  value: memberCount    },
+                        { label: "Ikke-medlemmer",    value: nonMemberCount },
+                        { label: "Med portal-adgang", value: portalCount    },
                     ].map(s => (
-                        <div key={s.label} className="rounded-lg border px-4 py-3 space-y-0.5">
-                            <p className="text-xs text-muted-foreground">{s.label}</p>
-                            <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
+                        <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-5 py-4">
+                            <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
+                            <p className="text-2xl font-bold text-gray-900 tabular-nums">{s.value}</p>
                         </div>
                     ))}
                 </div>
