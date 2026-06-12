@@ -259,8 +259,7 @@ export default function OnboardingClient({
                       value={(formData as any)[f.key]}
                       onChange={(e) => handleField(f.key, e.target.value)}
                       placeholder={f.placeholder}
-                      className="stitch-input"
-                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px" }}
+                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
                     />
                   </div>
                 ))}
@@ -295,8 +294,7 @@ export default function OnboardingClient({
                         value={(formData as any)[f.key]}
                         onChange={(e) => handleField(f.key, e.target.value)}
                         placeholder={f.placeholder}
-                        className="stitch-input"
-                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", backgroundColor: "var(--surface-container-lowest)" }}
+                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "#F9FAFB", color: "var(--on-surface)" }}
                       />
                     </div>
                   ))}
@@ -321,9 +319,8 @@ export default function OnboardingClient({
                   placeholder="Søg under et andet navn i DFI..."
                   value={dfiSearchQuery}
                   onChange={(e) => setDfiSearchQuery(e.target.value)}
-                  className="stitch-input"
                   onKeyDown={(e) => { if (e.key === "Enter") handleManualDfiSearch(); }}
-                  style={{ flex: 1, padding: "10px 12px", fontSize: "14px" }}
+                  style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
                 />
                 <button
                   onClick={handleManualDfiSearch}

@@ -441,15 +441,15 @@ export default function MineVaerkerClient({
             </div>
 
             <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
-              <input type="text" placeholder="Søg titel i DFI og TMDB..." value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSearch(); }} className="stitch-input" style={{ flex: 1, padding: "9px 12px", fontSize: "14px" }} />
-              <button onClick={handleSearch} disabled={isSearching} className="stitch-btn-secondary" style={{ padding: "9px 16px", display: "flex", gap: "6px", alignItems: "center" }}>
+              <input type="text" placeholder="Søg titel i DFI og TMDB..." value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={e => { if (e.key === "Enter") handleSearch(); }} style={{ flex: 1, padding: "9px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }} />
+              <button onClick={handleSearch} disabled={isSearching} style={{ padding: "9px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>
                 {isSearching ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={15} />} Søg
               </button>
             </div>
 
             <div style={{ marginBottom: "16px" }}>
               <label style={{ display: "block", fontSize: "11px", fontWeight: 700, marginBottom: "5px", color: "var(--on-surface-variant)", letterSpacing: "0.05em" }}>DIN ROLLE</label>
-              <select value={addRole} onChange={e => setAddRole(e.target.value)} className="stitch-input" style={{ padding: "9px 12px", fontSize: "14px", width: "100%" }}>
+              <select value={addRole} onChange={e => setAddRole(e.target.value)} style={{ padding: "9px 12px", fontSize: "14px", width: "100%", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "white", color: "var(--on-surface)" }}>
                 {["Klipper", "Klipperansvarlig", "Assistent-klipper", "Instruktør", "Producent", "Fotograf", "Andet"].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
@@ -500,7 +500,7 @@ export default function MineVaerkerClient({
                 <span style={{ fontSize: "13px", color: "var(--on-surface-variant)" }}>
                   Valgt: <strong style={{ color: "var(--primary)" }}>{pickedResult.Title || pickedResult.title || pickedResult.name}</strong>
                 </span>
-                <button onClick={handleAddWork} disabled={isSaving} className="stitch-btn-primary" style={{ padding: "10px 22px", display: "flex", gap: "6px", alignItems: "center" }}>
+                <button onClick={handleAddWork} disabled={isSaving} style={{ padding: "10px 22px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: isSaving ? "not-allowed" : "pointer", opacity: isSaving ? 0.6 : 1 }}>
                   {isSaving ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={15} />}
                   {isSaving ? "Tilføjer..." : "Tilføj til mine værker"}
                 </button>
@@ -523,8 +523,8 @@ export default function MineVaerkerClient({
               <form onSubmit={handleWizardSearch}>
                 <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", marginBottom: "16px" }}>Søg dit navn i DFI Filmdatabasen for at importere alle dine krediteringer.</p>
                 <div style={{ display: "flex", gap: "10px" }}>
-                  <input value={wizardQuery} onChange={e => setWizardQuery(e.target.value)} className="stitch-input" style={{ flex: 1, padding: "9px 12px", fontSize: "14px" }} placeholder="Fornavn Efternavn" />
-                  <button type="submit" disabled={wizardSearching} className="stitch-btn-primary" style={{ padding: "9px 18px", display: "flex", gap: "6px", alignItems: "center" }}>
+                  <input value={wizardQuery} onChange={e => setWizardQuery(e.target.value)} style={{ flex: 1, padding: "9px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }} placeholder="Fornavn Efternavn" />
+                  <button type="submit" disabled={wizardSearching} style={{ padding: "9px 18px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: wizardSearching ? "not-allowed" : "pointer", opacity: wizardSearching ? 0.6 : 1 }}>
                     {wizardSearching ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={15} />} Søg
                   </button>
                 </div>
@@ -559,7 +559,7 @@ export default function MineVaerkerClient({
                   <>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                       <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: 0 }}>Fandt {wizardCredits.length} titler. Vælg dem du vil importere:</p>
-                      <button onClick={() => { const all = Object.values(wizardSelected).every(v => v); const s: Record<number, boolean> = {}; wizardCredits.forEach(c => { s[c.Id] = !all; }); setWizardSelected(s); }} className="stitch-btn-secondary" style={{ padding: "4px 10px", fontSize: "11px", minHeight: "auto" }}>
+                      <button onClick={() => { const all = Object.values(wizardSelected).every(v => v); const s: Record<number, boolean> = {}; wizardCredits.forEach(c => { s[c.Id] = !all; }); setWizardSelected(s); }} style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>
                         {Object.values(wizardSelected).every(v => v) ? "Fravælg alle" : "Vælg alle"}
                       </button>
                     </div>
@@ -577,7 +577,7 @@ export default function MineVaerkerClient({
                       ))}
                     </div>
                     <div style={{ marginTop: "16px", display: "flex", justifyContent: "flex-end" }}>
-                      <button onClick={handleWizardImport} disabled={wizardImporting} className="stitch-btn-primary" style={{ padding: "11px 24px", display: "flex", gap: "8px", alignItems: "center" }}>
+                      <button onClick={handleWizardImport} disabled={wizardImporting} style={{ padding: "11px 24px", display: "flex", gap: "8px", alignItems: "center", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: wizardImporting ? "not-allowed" : "pointer", opacity: wizardImporting ? 0.6 : 1 }}>
                         {wizardImporting ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Check size={15} />}
                         {wizardImporting ? "Importerer..." : `Importer ${Object.values(wizardSelected).filter(Boolean).length} værker`}
                       </button>
@@ -600,13 +600,13 @@ export default function MineVaerkerClient({
             </div>
             <div style={{ marginBottom: "20px" }}>
               <label style={{ display: "block", fontSize: "11px", fontWeight: 700, marginBottom: "5px", color: "var(--on-surface-variant)", letterSpacing: "0.05em" }}>DIN ROLLE</label>
-              <select value={editRole} onChange={e => setEditRole(e.target.value)} className="stitch-input" style={{ padding: "9px 12px", fontSize: "14px", width: "100%" }}>
+              <select value={editRole} onChange={e => setEditRole(e.target.value)} style={{ padding: "9px 12px", fontSize: "14px", width: "100%", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "white", color: "var(--on-surface)" }}>
                 {["Klipper", "Klipperansvarlig", "Assistent-klipper", "Instruktør", "Producent", "Fotograf", "Andet"].map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
-              <button onClick={() => setEditAssignment(null)} className="stitch-btn-secondary" style={{ padding: "9px 18px" }}>Annuller</button>
-              <button onClick={handleSaveEdit} disabled={isSavingEdit} className="stitch-btn-primary" style={{ padding: "9px 22px", display: "flex", gap: "6px", alignItems: "center" }}>
+              <button onClick={() => setEditAssignment(null)} style={{ padding: "9px 18px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>Annuller</button>
+              <button onClick={handleSaveEdit} disabled={isSavingEdit} style={{ padding: "9px 22px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: isSavingEdit ? "not-allowed" : "pointer", opacity: isSavingEdit ? 0.6 : 1 }}>
                 {isSavingEdit ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : null} Gem
               </button>
             </div>

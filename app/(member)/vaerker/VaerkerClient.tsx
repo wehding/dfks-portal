@@ -217,8 +217,7 @@ export default function VaerkerClient({
         </div>
         <button
           onClick={() => setIsAddOpen(true)}
-          className="stitch-btn-primary"
-          style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 18px" }}
+          style={{ display: "flex", gap: "8px", alignItems: "center", padding: "10px 18px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: "pointer" }}
         >
           <Plus size={16} /> Tilføj værk
         </button>
@@ -256,8 +255,7 @@ export default function VaerkerClient({
           </p>
           <button
             onClick={() => setIsAddOpen(true)}
-            className="stitch-btn-primary"
-            style={{ display: "inline-flex", gap: "8px", alignItems: "center" }}
+            style={{ display: "inline-flex", gap: "8px", alignItems: "center", padding: "10px 18px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: "pointer" }}
           >
             <Plus size={16} /> Tilføj dit første værk
           </button>
@@ -342,14 +340,12 @@ export default function VaerkerClient({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSearch(); }}
-                className="stitch-input"
-                style={{ flex: 1, padding: "10px 12px", fontSize: "14px" }}
+                style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
               />
               <button
                 onClick={handleSearch}
                 disabled={isSearching}
-                className="stitch-btn-secondary"
-                style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center" }}
+                style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: isSearching ? "not-allowed" : "pointer", opacity: isSearching ? 0.6 : 1 }}
               >
                 {isSearching ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}
                 Søg
@@ -364,8 +360,7 @@ export default function VaerkerClient({
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
-                className="stitch-input"
-                style={{ padding: "10px 12px", fontSize: "14px", width: "100%" }}
+                style={{ padding: "10px 12px", fontSize: "14px", width: "100%", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "white", color: "var(--on-surface)" }}
               >
                 {["Klipper", "Klipperansvarlig", "Assistent-klipper", "Instruktør", "Producent", "Fotograf", "Andet"].map((r) => (
                   <option key={r} value={r}>{r}</option>
@@ -477,8 +472,7 @@ export default function VaerkerClient({
                 <button
                   onClick={handleAddWork}
                   disabled={isSaving}
-                  className="stitch-btn-primary"
-                  style={{ padding: "12px 24px", display: "flex", gap: "8px", alignItems: "center" }}
+                  style={{ padding: "12px 24px", display: "flex", gap: "8px", alignItems: "center", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", fontWeight: 600, cursor: isSaving ? "not-allowed" : "pointer", opacity: isSaving ? 0.6 : 1 }}
                 >
                   {isSaving ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={16} />}
                   {isSaving ? "Tilføjer..." : "Tilføj til mine værker"}
