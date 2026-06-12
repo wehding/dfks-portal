@@ -56,6 +56,8 @@ export default function MineKontrakterClient({
   const [contracts, setContracts] = useState(initialContracts);
   const searchParams = useSearchParams();
   const [isUploading, setIsUploading] = useState(false);
+  const uploadWorkId    = searchParams.get("workId") ?? undefined;
+  const uploadWorkTitle = searchParams.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
   useEffect(() => {
     if (searchParams.get("upload") === "true") setIsUploading(true);
   }, [searchParams]);
@@ -206,6 +208,8 @@ export default function MineKontrakterClient({
 
       {isUploading && (
         <UploadDialog
+          workId={uploadWorkId}
+          workTitle={uploadWorkTitle}
           onClose={() => setIsUploading(false)}
           onUploaded={(saved) => {
             setContracts(prev => [{ id: saved.id, type: saved.type, overenskomst: null, status: saved.status, contract_date: null, start_date: null, end_date: null, pdf_url: saved.pdf_url, created_at: saved.created_at, works: null, employers: null, contract_validations: null }, ...prev]);

@@ -20,9 +20,11 @@ const CATEGORY_LABELS: Record<string, string> = {
 type Props = {
   onClose: () => void;
   onUploaded: (contract: any) => void;
+  workId?: string;
+  workTitle?: string;
 };
 
-export default function UploadDialog({ onClose, onUploaded }: Props) {
+export default function UploadDialog({ onClose, onUploaded, workId, workTitle }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -31,8 +33,8 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
   const [screening, setScreening] = useState(false);
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
 
-  // Form felter
-  const [title, setTitle] = useState("");
+  // Form felter — pre-udfyld med workTitle hvis vi kender værket
+  const [title, setTitle] = useState(workTitle ?? "");
   const [category, setCategory] = useState("");
   const [creditedRoles, setCreditedRoles] = useState<string[]>(["Klipper"]);
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
@@ -69,7 +71,8 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
         const result = await screenPortalContract(text, ROLES);
         if (cancelled) return;
         const filled = new Set<string>();
-        if (result.title) { setTitle(result.title); filled.add("title"); }
+        // Overskriver ikke titlen hvis den allerede er sat fra et kendt værk
+        if (result.title && !workTitle) { setTitle(result.title); filled.add("title"); }
         if (result.category && CATEGORY_LABELS[result.category]) { setCategory(result.category); filled.add("category"); }
         if (result.creditedRole) {
           const match = ROLES.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase());
@@ -104,7 +107,7 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
       ).single();
       const orgId = orgRow?.org_id ?? DFKS_ORG_ID;
 
-      const { data: rhRow } = await supabase.from("rettighedshavere").select("id").eq("user_id", user.id).single();
+      const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
       if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); setSaving(false); return; }
 
       const filePath = `${orgId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
@@ -119,7 +122,9 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
         filePath,
         orgId,
         rhId: rhRow.id,
+        memberName: rhRow.full_name,
         workTitle: title.trim(),
+        workId: workId,
         category,
         roles,
         duration: duration ? Number(duration) : undefined,
@@ -153,8 +158,15 @@ export default function UploadDialog({ onClose, onUploaded }: Props) {
         {/* Formular */}
         <div style={{ width: pdfUrl ? "420px" : "100%", padding: "28px", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", gap: "18px" }}>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Upload Kontrakt</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <h2 style={{ fontSize: "18px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Upload kontrakt</h2>
+              {workTitle && (
+                <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", marginTop: "3px" }}>
+                  til <strong style={{ color: "var(--on-surface)" }}>{workTitle}</strong>
+                </p>
+              )}
+            </div>
             <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
           </div>
 

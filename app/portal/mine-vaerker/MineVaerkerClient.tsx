@@ -412,7 +412,7 @@ export default function MineVaerkerClient({
                   {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
                 </div>
                 {/* Kontrakt */}
-                <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(a.contract_id ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true`); }}>
+                <div style={{ textAlign: "right" }} onClick={e => { e.stopPropagation(); router.push(a.contract_id ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}>
                   {a.contract_id ? (
                     <Badge variant="outline" className="text-xs border-gray-300 text-gray-600 cursor-pointer">OK</Badge>
                   ) : (

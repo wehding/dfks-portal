@@ -105,7 +105,9 @@ export async function saveUploadedContract(params: {
   filePath: string;
   orgId: string;
   rhId: string;
+  memberName: string;
   workTitle: string;
+  workId?: string;
   category: string;
   roles: string[];
   duration?: number;
@@ -123,6 +125,7 @@ export async function saveUploadedContract(params: {
       status: "kladde",
       pdf_url: params.filePath,
       working_title: params.workTitle || null,
+      work_id: params.workId ?? null,
     })
     .select()
     .single();
@@ -133,7 +136,9 @@ export async function saveUploadedContract(params: {
     contract_id: saved.id,
     org_id: params.orgId,
     notes: JSON.stringify({
+      memberName: params.memberName,
       workTitle: params.workTitle,
+      workId: params.workId,
       productionType: params.category || undefined,
       creditedRoles: params.roles,
       duration: params.duration,
