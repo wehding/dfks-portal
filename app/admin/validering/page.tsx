@@ -547,7 +547,7 @@ export default function AdminValideringPage() {
                 ...(resolvedEmployerId && { employer_id: resolvedEmployerId }),
                 ...(contractType && { type: contractType }),
                 ...(overenskomstVal !== undefined && { overenskomst: overenskomstVal }),
-                ...(selectedRhId && { rights_holder_id: selectedRhId }),
+                ...(selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id && { rights_holder_id: selectedRhId }),
             }).eq("id", id)
 
             leaveReview()
