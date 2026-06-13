@@ -399,3 +399,4 @@ Opret altid en sidebranch før ændringer: `feat/...`, `fix/...` eller `refactor
 Push altid sidebranchen og lav Pull Request ind i master.
 Direkte push til master er ikke tilladt.
 Ved domæneændringer eller tvivl: spørg Martin før merge.
+Lav altid PRs mod `wehding/dfks-portal` som base repository — aldrig mod upstream.
