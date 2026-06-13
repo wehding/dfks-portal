@@ -54,6 +54,16 @@ export async function POST(req: NextRequest) {
             if (linkErr) throw new Error(linkErr.message)
 
             const newUserId = linkData.user.id
+            const { roles, role: singleRole } = body
+            const rolesToAssign: string[] = roles ?? (singleRole ? [singleRole] : [])
+
+            // Tildel staff-roller i user_org_roles
+            if (rolesToAssign.length > 0 && rhId === "__staff__") {
+                const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+                await admin.from("user_org_roles").insert(
+                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: DFKS_ORG_ID, role: r }))
+                )
+            }
 
             // Link user_id på rettighedshaver (kun hvis det er en reel rettighedshaver, ikke staff)
             if (rhId && rhId !== "__staff__") {
