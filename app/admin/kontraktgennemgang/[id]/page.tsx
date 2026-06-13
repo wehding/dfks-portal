@@ -213,12 +213,29 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .trim()
     }
 
-    const handleReanalyse = async () => {
+    const reanalyseFileRef = useRef<HTMLInputElement>(null)
+
+    const handleReanalyse = async (uploadedFile?: File) => {
         setReanalysing(true)
         try {
-            const resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST" })
+            let resp: Response
+            if (uploadedFile) {
+                // Tilstand B: send uploadet fil direkte
+                const fd = new FormData()
+                fd.append("file", uploadedFile)
+                resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST", body: fd })
+            } else {
+                // Tilstand A: hent fra storage
+                resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST" })
+            }
             if (!resp.ok) {
                 const e = await resp.json().catch(() => ({}))
+                // Filen mangler i storage — bed admin om at uploade den
+                if (e.missing_file) {
+                    reanalyseFileRef.current?.click()
+                    setReanalysing(false)
+                    return
+                }
                 throw new Error(e.error ?? "Analyse fejlede")
             }
             const json = await resp.json()
@@ -366,11 +383,23 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             className="gap-1.5 text-xs h-7"
                             disabled={reanalysing}
                             title="Kør ny AI-analyse"
-                            onClick={handleReanalyse}
+                            onClick={() => handleReanalyse()}
                         >
                             <RotateCcw className={`h-3.5 w-3.5 ${reanalysing ? "animate-spin" : ""}`} />
                             {reanalysing ? "Analyserer..." : "Kør ny analyse"}
                         </Button>
+                        {/* Skjult fil-input — trigges automatisk hvis storage_path mangler */}
+                        <input
+                            ref={reanalyseFileRef}
+                            type="file"
+                            accept=".pdf,.docx,.doc,.txt"
+                            className="hidden"
+                            onChange={e => {
+                                const f = e.target.files?.[0]
+                                if (f) handleReanalyse(f)
+                                e.target.value = ""
+                            }}
+                        />
                         {review.status !== "afsluttet" && (
                             <Button size="sm" className="gap-1.5 text-xs h-7" onClick={handleAfslut}>
                                 <CheckCircle2 className="h-3.5 w-3.5" />
