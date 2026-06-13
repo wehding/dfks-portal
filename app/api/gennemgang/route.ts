@@ -466,6 +466,9 @@ export async function POST(req: NextRequest) {
             "Ukendt"
 
         // ── Kontekstfelter fra portal-upload ──────────────────────
+        // Hvis kaldt fra /api/portal/submit: review er allerede gemt — opdater i stedet for at indsætte
+        const existingReviewId = formData.get("existingReviewId") as string | null
+
         const contractType        = formData.get("contractType")        as string | null
         const productionType      = formData.get("productionType")      as string | null
         const distributionRaw     = formData.get("distributionChannels") as string | null
@@ -942,41 +945,64 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 storagePath = null
             }
 
-            const insertPayload: Record<string, unknown> = {
-                org_id:          saveOrgId,
-                member_name:     memberName ?? null,
-                member_email:    portalEmail ?? null,
-                member_id:       portalUserId ?? null,
-                ai_result:       parsed,
-                reviewed_by:     portalUserId ?? null,
-                status:          "afventer",
-                file_name:       file.name,
-                file_size_bytes: file.size,
-                storage_path:    storagePath,
-                contract_type:   contractType ?? null,
-                production_type: productionType ?? null,
-                distribution_channels: distributionChannels.length ? distributionChannels : null,
-                producer_name:         producerName ?? null,
-                producer_dfks_id:      formData.get("producerDfksId") ?? null,
-                producer_dfi_id:       formData.get("producerDfiId")  ?? null,
-                producer_overenskomst_bound:
-                    producerOverenskomst === "true"  ? true :
-                    producerOverenskomst === "false" ? false : null,
-                focus_areas:  focusAreas.length ? focusAreas : null,
-                notes:        uploadNotes ?? null,
-                ai_language:  klassifikation?.kontraktsprog ?? null,
-                risk_level:      riskLevel,
-                should_escalate: shouldEscalate,
-            }
-            const { data: savedReview, error: insertError } = await admin
-                .from("contract_reviews")
-                .insert(insertPayload)
-                .select()
-                .single()
-            if (insertError) {
-                console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+            if (existingReviewId) {
+                // Kaldt fra /api/portal/submit — review allerede gemt, kun opdater AI-felter
+                const { error: updateErr } = await admin
+                    .from("contract_reviews")
+                    .update({
+                        ai_result:       parsed,
+                        ai_run_at:       new Date().toISOString(),
+                        ai_language:     klassifikation?.kontraktsprog ?? null,
+                        risk_level:      riskLevel,
+                        should_escalate: shouldEscalate,
+                        ai_status:       "klar",
+                        ...(storagePath ? { storage_path: storagePath } : {}),
+                    })
+                    .eq("id", existingReviewId)
+                if (updateErr) {
+                    console.error("[gennemgang] UPDATE contract_reviews fejl:", updateErr.message)
+                } else {
+                    console.log("[gennemgang] Opdateret review:", existingReviewId)
+                }
             } else {
-                console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
+                // Direkte kald (admin-siden) — indsæt ny række
+                const insertPayload: Record<string, unknown> = {
+                    org_id:          saveOrgId,
+                    member_name:     memberName ?? null,
+                    member_email:    portalEmail ?? null,
+                    member_id:       portalUserId ?? null,
+                    ai_result:       parsed,
+                    reviewed_by:     portalUserId ?? null,
+                    status:          "afventer",
+                    ai_status:       "klar",
+                    file_name:       file.name,
+                    file_size_bytes: file.size,
+                    storage_path:    storagePath,
+                    contract_type:   contractType ?? null,
+                    production_type: productionType ?? null,
+                    distribution_channels: distributionChannels.length ? distributionChannels : null,
+                    producer_name:         producerName ?? null,
+                    producer_dfks_id:      formData.get("producerDfksId") ?? null,
+                    producer_dfi_id:       formData.get("producerDfiId")  ?? null,
+                    producer_overenskomst_bound:
+                        producerOverenskomst === "true"  ? true :
+                        producerOverenskomst === "false" ? false : null,
+                    focus_areas:  focusAreas.length ? focusAreas : null,
+                    notes:        uploadNotes ?? null,
+                    ai_language:  klassifikation?.kontraktsprog ?? null,
+                    risk_level:      riskLevel,
+                    should_escalate: shouldEscalate,
+                }
+                const { data: savedReview, error: insertError } = await admin
+                    .from("contract_reviews")
+                    .insert(insertPayload)
+                    .select()
+                    .single()
+                if (insertError) {
+                    console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+                } else {
+                    console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
+                }
             }
         } catch (saveErr) {
             console.error("[gennemgang] Gem fejlede:", saveErr)

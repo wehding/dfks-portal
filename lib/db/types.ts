@@ -156,6 +156,7 @@ export interface DbContractReview {
     jurist_response_at: string | null
     risk_level: "LAV" | "MELLEM" | "HØJ" | null
     should_escalate: boolean | null
+    ai_status: "analyserer" | "klar" | "fejl"
 }
 
 export interface DbAgreement {
