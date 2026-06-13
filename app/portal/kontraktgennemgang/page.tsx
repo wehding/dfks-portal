@@ -1,13 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check } from "lucide-react"
+import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check, Clock, ChevronRight } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { formatDistanceToNow, format } from "date-fns"
+import { da } from "date-fns/locale"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { PageHeader } from "@/components/page-header"
+import { Separator } from "@/components/ui/separator"
 import type {
     ContractType,
     ProductionType,
@@ -15,6 +19,47 @@ import type {
     FocusArea,
     ProducerSelection,
 } from "@/lib/types"
+
+// ── Typer til sagslisten ─────────────────────────────────────
+
+type ActiveReview = {
+    id: string
+    file_name: string | null
+    producer_name: string | null
+    production_type: string | null
+    status: string
+    updated_at: string | null
+}
+
+type ArchivedReview = {
+    id: string
+    file_name: string | null
+    producer_name: string | null
+    production_type: string | null
+    updated_at: string | null
+}
+
+// ── Hjælpefunktioner ─────────────────────────────────────────
+
+const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
+    afventer:   { label: "Modtaget — afventer behandling", className: "bg-muted text-muted-foreground" },
+    behandling: { label: "Under behandling",               className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200" },
+}
+
+const PRODUCTION_LABELS: Record<string, string> = {
+    dokumentar: "Dokumentar", fiktion: "Fiktion / drama", reklame: "Reklame",
+    streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
+}
+
+function relativDato(iso: string | null) {
+    if (!iso) return "—"
+    return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: da })
+}
+
+function formatDato(iso: string | null) {
+    if (!iso) return "—"
+    return format(new Date(iso), "d. MMMM yyyy", { locale: da })
+}
 
 // ── Hjælpekomponent: Chip ────────────────────────────────────
 
@@ -273,6 +318,8 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
 // ── Hoved-komponent ──────────────────────────────────────────
 
 export default function PortalKontraktgennemgangPage() {
+    const router = useRouter()
+
     const [file, setFile] = useState<File | null>(null)
     const [dragOver, setDragOver] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -292,6 +339,11 @@ export default function PortalKontraktgennemgangPage() {
     const [memberId, setMemberId] = useState<string | null>(null)
     const [orgId, setOrgId] = useState<string>("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
 
+    // Sagslister
+    const [activeReviews, setActiveReviews] = useState<ActiveReview[]>([])
+    const [archivedReviews, setArchivedReviews] = useState<ArchivedReview[]>([])
+    const [reviewsLoading, setReviewsLoading] = useState(true)
+
     useEffect(() => {
         createClient().auth.getUser().then(({ data: { user } }) => {
             if (user) {
@@ -299,9 +351,32 @@ export default function PortalKontraktgennemgangPage() {
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
                 setOrgId(user.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+                loadReviews(user.id)
             }
         })
     }, [])
+
+    async function loadReviews(uid: string) {
+        setReviewsLoading(true)
+        const supabase = createClient()
+        const [activeRes, archiveRes] = await Promise.all([
+            supabase
+                .from("contract_reviews")
+                .select("id, file_name, producer_name, production_type, status, updated_at")
+                .eq("member_id", uid)
+                .in("status", ["afventer", "behandling"])
+                .order("updated_at", { ascending: false }),
+            supabase
+                .from("contract_reviews")
+                .select("id, file_name, producer_name, production_type, updated_at")
+                .eq("member_id", uid)
+                .eq("status", "afsluttet")
+                .order("updated_at", { ascending: false }),
+        ])
+        setActiveReviews((activeRes.data ?? []) as ActiveReview[])
+        setArchivedReviews((archiveRes.data ?? []) as ArchivedReview[])
+        setReviewsLoading(false)
+    }
 
     // ── Fil-håndtering ───────────────────────────────────────
 
@@ -389,6 +464,8 @@ export default function PortalKontraktgennemgangPage() {
             }
             // Gem sker server-side i /api/gennemgang med service role
             setSubmitted(true)
+            // Genindlæs sagslister
+            if (memberId) loadReviews(memberId)
         } catch (err: any) {
             toast.error(err.message ?? "Kunne ikke sende kontrakten — prøv igen")
         } finally {
@@ -407,31 +484,10 @@ export default function PortalKontraktgennemgangPage() {
         setSubmitted(false)
     }
 
-    // ── Bekræftelsesvisning ──────────────────────────────────
-
-    if (submitted) {
-        return (
-            <div className="space-y-6">
-                <PageHeader title="Kontraktgennemgang" subtitle="Send din kontrakt til juridisk gennemgang" />
-                <div className="max-w-xl rounded-xl border bg-card p-8 text-center space-y-4">
-                    <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
-                    <h2 className="text-xl font-semibold">Din kontrakt er modtaget</h2>
-                    <p className="text-muted-foreground text-sm leading-relaxed">
-                        Vi gennemgår den og vender tilbage til dig snarest.<br />
-                        Du får besked på din registrerede e-mail.
-                    </p>
-                    <Button variant="outline" onClick={reset} className="mt-2">
-                        Send en ny kontrakt
-                    </Button>
-                </div>
-            </div>
-        )
-    }
-
-    // ── Formular ─────────────────────────────────────────────
+    // ── Render ───────────────────────────────────────────────
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8">
             <PageHeader
                 title="Kontraktgennemgang"
                 subtitle="Upload din kontrakt og angiv kontekst, så vi kan give dig den bedste vurdering"
@@ -615,6 +671,109 @@ export default function PortalKontraktgennemgangPage() {
                     </div>
                 )}
             </form>
+
+            {/* ── Bekræftelse (inline efter submit) ── */}
+            {submitted && (
+                <div className="max-w-2xl rounded-xl border bg-emerald-50 dark:bg-emerald-950/20 p-6 flex items-start gap-4">
+                    <CheckCircle2 className="h-6 w-6 text-emerald-500 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                        <p className="font-semibold text-emerald-800 dark:text-emerald-300">Din kontrakt er modtaget</p>
+                        <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                            Vi gennemgår den og vender tilbage til dig snarest. Du får besked på din registrerede e-mail.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={reset}
+                            className="text-xs text-emerald-600 dark:text-emerald-400 underline underline-offset-2 mt-1"
+                        >
+                            Send en ny kontrakt
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Mine aktive sager ── */}
+            <div className="max-w-2xl space-y-3">
+                <div className="flex items-center gap-3">
+                    <Separator className="flex-1" />
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                        Mine aktive sager
+                    </span>
+                    <Separator className="flex-1" />
+                </div>
+
+                {reviewsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                        <Loader2 className="h-4 w-4 animate-spin" />Henter sager…
+                    </div>
+                ) : activeReviews.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">
+                        Du har ingen igangværende sager.
+                    </p>
+                ) : (
+                    <div className="rounded-lg border divide-y">
+                        {activeReviews.map(r => {
+                            const sc = STATUS_CONFIG[r.status] ?? STATUS_CONFIG.afventer
+                            return (
+                                <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium truncate">{r.file_name ?? "Ukendt fil"}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {r.producer_name ?? "—"}
+                                            {r.production_type && ` · ${PRODUCTION_LABELS[r.production_type] ?? r.production_type}`}
+                                        </p>
+                                    </div>
+                                    <div className="shrink-0 text-right space-y-1">
+                                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${sc.className}`}>
+                                            {sc.label}
+                                        </span>
+                                        <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
+                                            <Clock className="h-3 w-3" />{relativDato(r.updated_at)}
+                                        </p>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+            </div>
+
+            {/* ── Arkiv (kun hvis der er afsluttede sager) ── */}
+            {!reviewsLoading && archivedReviews.length > 0 && (
+                <div className="max-w-2xl space-y-3">
+                    <div className="flex items-center gap-3">
+                        <Separator className="flex-1" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                            Arkiv
+                        </span>
+                        <Separator className="flex-1" />
+                    </div>
+                    <div className="rounded-lg border divide-y">
+                        {archivedReviews.map(r => (
+                            <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">{r.file_name ?? "Ukendt fil"}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {r.producer_name ?? "—"}
+                                        {r.production_type && ` · ${PRODUCTION_LABELS[r.production_type] ?? r.production_type}`}
+                                        {r.updated_at && ` · Afsluttet ${formatDato(r.updated_at)}`}
+                                    </p>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="shrink-0 h-7 text-xs px-2.5"
+                                    onClick={() => router.push(`/portal/kontraktgennemgang/${r.id}`)}
+                                >
+                                    Se svar <ChevronRight className="h-3 w-3 ml-0.5" />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

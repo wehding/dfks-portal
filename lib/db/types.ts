@@ -142,6 +142,8 @@ export interface DbContractReview {
     ai_run_at: string | null
     ai_language: string | null
     updated_at: string | null
+    jurist_response: string | null
+    jurist_response_at: string | null
 }
 
 export interface DbAgreement {
