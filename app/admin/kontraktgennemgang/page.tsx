@@ -387,7 +387,7 @@ function Indbakke() {
                                                 {(() => {
                                                     const analysering = !r.ai_status || r.ai_status === "analyserer"
                                                     const stuck = analysering && r.created_at
-                                                        && (Date.now() - new Date(r.created_at).getTime()) > 10 * 60 * 1000
+                                                        && (Date.now() - new Date(r.created_at).getTime()) > 2 * 60 * 1000
                                                     if (stuck || r.ai_status === "fejl") {
                                                         return (
                                                             <button
