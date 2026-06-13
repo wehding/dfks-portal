@@ -173,17 +173,14 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .finally(() => setLoading(false))
     }, [id])
 
-    // Hent PDF fra storage hvis storage_path findes
+    // Hent PDF-URL via server-side route (omgår storage RLS)
     useEffect(() => {
-        if (!review?.storage_path) return
-        const supabase = createClient()
-        supabase.storage
-            .from("contract-reviews")
-            .createSignedUrl(review.storage_path, 3600)
-            .then(({ data }) => {
-                if (data?.signedUrl) setPdfObjectUrl(data.signedUrl)
-            })
-    }, [review?.storage_path])
+        if (!review?.storage_path || !id) return
+        fetch(`/api/admin/contracts/${id}/pdf`)
+            .then(r => r.ok ? r.json() : null)
+            .then(json => { if (json?.url) setPdfObjectUrl(json.url) })
+            .catch(() => { /* PDF ikke tilgængelig */ })
+    }, [review?.storage_path, id])
 
     useEffect(() => {
         if (!activeQuote || !docRef.current) return
