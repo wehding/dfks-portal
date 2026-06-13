@@ -386,13 +386,11 @@ function Indbakke() {
                                                 {/* AI-analysestatus */}
                                                 {(() => {
                                                     const analysering = !r.ai_status || r.ai_status === "analyserer"
-                                                    const stuck = analysering && r.created_at
-                                                        && (Date.now() - new Date(r.created_at).getTime()) > 2 * 60 * 1000
-                                                    if (stuck || r.ai_status === "fejl") {
+                                                    if (analysering || r.ai_status === "fejl") {
                                                         return (
                                                             <button
-                                                                title={stuck ? "Analyse hængt — klik for at genkøre" : "Analyse fejlede — klik for at genkøre"}
-                                                                className="text-amber-500 hover:text-amber-600 transition-colors"
+                                                                title={r.ai_status === "fejl" ? "Analyse fejlede — klik for at genkøre" : "Analyserer… klik for at genstarte"}
+                                                                className={`transition-colors ${r.ai_status === "fejl" ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-foreground"}`}
                                                                 onClick={async e => {
                                                                     e.stopPropagation()
                                                                     const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
@@ -400,15 +398,10 @@ function Indbakke() {
                                                                     else toast.error("Kunne ikke genstarte analyse")
                                                                 }}
                                                             >
-                                                                <RotateCcw className="h-3.5 w-3.5" />
+                                                                <RotateCcw className={`h-3.5 w-3.5 ${analysering && r.ai_status !== "fejl" ? "animate-spin" : ""}`} />
                                                             </button>
                                                         )
                                                     }
-                                                    if (analysering) return (
-                                                        <span title="AI analyserer…">
-                                                            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                        </span>
-                                                    )
                                                     if (r.ai_status === "klar") return (
                                                         <span title="Analyse klar" className="text-emerald-500">✅</span>
                                                     )
