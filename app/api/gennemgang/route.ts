@@ -918,6 +918,30 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.SUPABASE_SERVICE_ROLE_KEY!
             )
+
+            // ── Gem fil i Supabase Storage så re-analyse er mulig ──
+            // Filsti: {orgId}/{timestamp}_{filnavn}
+            let storagePath: string | null = null
+            try {
+                const ts = Date.now()
+                const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+                storagePath = `${saveOrgId}/${ts}_${safeName}`
+                const fileBuffer = Buffer.from(await file.arrayBuffer())
+                const { error: storageErr } = await admin.storage
+                    .from("contract-reviews")
+                    .upload(storagePath, fileBuffer, {
+                        contentType: file.type || "application/octet-stream",
+                        upsert: false,
+                    })
+                if (storageErr) {
+                    console.warn("[gennemgang] Storage upload fejlede (ikke kritisk):", storageErr.message)
+                    storagePath = null
+                }
+            } catch (storageEx) {
+                console.warn("[gennemgang] Storage upload exception (ikke kritisk):", storageEx)
+                storagePath = null
+            }
+
             const insertPayload: Record<string, unknown> = {
                 org_id:          saveOrgId,
                 member_name:     memberName ?? null,
@@ -928,6 +952,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 status:          "afventer",
                 file_name:       file.name,
                 file_size_bytes: file.size,
+                storage_path:    storagePath,
                 contract_type:   contractType ?? null,
                 production_type: productionType ?? null,
                 distribution_channels: distributionChannels.length ? distributionChannels : null,
@@ -951,7 +976,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             if (insertError) {
                 console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
             } else {
-                console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id)
+                console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
             }
         } catch (saveErr) {
             console.error("[gennemgang] Gem fejlede:", saveErr)

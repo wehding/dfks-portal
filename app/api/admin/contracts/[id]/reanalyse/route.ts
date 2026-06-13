@@ -63,9 +63,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { data, error } = await supabase
         .from("contract_reviews")
         .update({
-            ai_result: analysisData.result,
-            ai_run_at: new Date().toISOString(),
-            ai_language: analysisData.klassifikation?.kontraktsprog ?? "da",
+            ai_result:       analysisData.result,
+            ai_run_at:       new Date().toISOString(),
+            ai_language:     analysisData.klassifikation?.kontraktsprog ?? "da",
+            risk_level:      analysisData.risk_level ?? null,
+            should_escalate: analysisData.should_escalate ?? null,
         })
         .eq("id", id)
         .select()

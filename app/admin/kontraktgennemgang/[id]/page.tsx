@@ -214,10 +214,6 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     }
 
     const handleReanalyse = async () => {
-        if (!review?.storage_path) {
-            toast.error("Filen er ikke tilgængelig. Upload filen manuelt for at køre ny analyse.")
-            return
-        }
         setReanalysing(true)
         try {
             const resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST" })
@@ -368,8 +364,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             size="sm"
                             variant="outline"
                             className="gap-1.5 text-xs h-7"
-                            disabled={reanalysing || !review.storage_path}
-                            title={!review.storage_path ? "Filen er slettet (sagen er afsluttet)" : "Kør ny AI-analyse"}
+                            disabled={reanalysing}
+                            title="Kør ny AI-analyse"
                             onClick={handleReanalyse}
                         >
                             <RotateCcw className={`h-3.5 w-3.5 ${reanalysing ? "animate-spin" : ""}`} />
