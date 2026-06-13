@@ -25,6 +25,7 @@ import {
     UserCheck,
     FlaskConical,
     BrainCircuit,
+    ShieldCheck,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -172,6 +173,16 @@ export default function AdminLayout({
 
                 <SidebarFooter>
                     <SidebarMenu>
+                        {userRole === "superadmin" && (
+                            <SidebarMenuItem>
+                                <SidebarMenuButton asChild>
+                                    <Link href="/superadmin/organisationer">
+                                        <ShieldCheck className="h-4 w-4" />
+                                        <span>Superadmin</span>
+                                    </Link>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        )}
                         <SidebarMenuItem>
                             <SidebarMenuButton onClick={handleLogout}>
                                 <LogOut className="h-4 w-4" />
