@@ -750,17 +750,30 @@ anbefalinger og juridiske referencer — leveres på engelsk.
 
         let messageContent: any[]
         if (filename.endsWith(".pdf")) {
-            const base64 = buffer.toString("base64")
-            messageContent = [
-                {
-                    type: "document",
-                    source: { type: "base64", media_type: "application/pdf", data: base64 },
-                },
-                {
+            if (contractText.trim()) {
+                // PDF-tekst udtrukket — mask sensitiv data og send som tekst (GDPR)
+                const maskedText = maskSensitiveData(contractText)
+                console.log(`[gennemgang] PDF: bruger maskeret tekst (${maskedText.length} tegn)`)
+                messageContent = [{
                     type: "text",
-                    text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON som beskrevet i system prompt.`,
-                },
-            ]
+                    text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON:\n\n${maskedText.slice(0, 45000)}`,
+                }]
+            } else {
+                // Tekstudtræk fejlede (scannet PDF o.l.) — fallback til base64
+                // OBS: sensitiv data kan ikke maskes i dette tilfælde
+                console.warn("[gennemgang] PDF: tekstudtræk fejlede — sender base64 uden maskning")
+                const base64 = buffer.toString("base64")
+                messageContent = [
+                    {
+                        type: "document",
+                        source: { type: "base64", media_type: "application/pdf", data: base64 },
+                    },
+                    {
+                        type: "text",
+                        text: `${memberContext}Gennemgå denne foreløbige kontrakt og returner JSON som beskrevet i system prompt.`,
+                    },
+                ]
+            }
         } else {
             const maskedText = maskSensitiveData(contractText)
             messageContent = [{
