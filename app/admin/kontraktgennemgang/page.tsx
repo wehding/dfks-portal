@@ -384,17 +384,36 @@ function Indbakke() {
                                                     {statusCfg.label}
                                                 </span>
                                                 {/* AI-analysestatus */}
-                                                {(!r.ai_status || r.ai_status === "analyserer") && (
-                                                    <span title="AI analyserer…">
-                                                        <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                                                    </span>
-                                                )}
-                                                {r.ai_status === "klar" && (
-                                                    <span title="Analyse klar" className="text-emerald-500">✅</span>
-                                                )}
-                                                {r.ai_status === "fejl" && (
-                                                    <span title="Analyse fejlede" className="text-amber-500">⚠️</span>
-                                                )}
+                                                {(() => {
+                                                    const analysering = !r.ai_status || r.ai_status === "analyserer"
+                                                    const stuck = analysering && r.created_at
+                                                        && (Date.now() - new Date(r.created_at).getTime()) > 10 * 60 * 1000
+                                                    if (stuck || r.ai_status === "fejl") {
+                                                        return (
+                                                            <button
+                                                                title={stuck ? "Analyse hængt — klik for at genkøre" : "Analyse fejlede — klik for at genkøre"}
+                                                                className="text-amber-500 hover:text-amber-600 transition-colors"
+                                                                onClick={async e => {
+                                                                    e.stopPropagation()
+                                                                    const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
+                                                                    if (res.ok) { toast.success("Analyse genstartet"); fetchReviews() }
+                                                                    else toast.error("Kunne ikke genstarte analyse")
+                                                                }}
+                                                            >
+                                                                <RotateCcw className="h-3.5 w-3.5" />
+                                                            </button>
+                                                        )
+                                                    }
+                                                    if (analysering) return (
+                                                        <span title="AI analyserer…">
+                                                            <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                                                        </span>
+                                                    )
+                                                    if (r.ai_status === "klar") return (
+                                                        <span title="Analyse klar" className="text-emerald-500">✅</span>
+                                                    )
+                                                    return null
+                                                })()}
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-muted-foreground">

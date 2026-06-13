@@ -157,6 +157,7 @@ export interface DbContractReview {
     risk_level: "LAV" | "MELLEM" | "HØJ" | null
     should_escalate: boolean | null
     ai_status: "analyserer" | "klar" | "fejl"
+    created_at: string
 }
 
 export interface DbAgreement {
