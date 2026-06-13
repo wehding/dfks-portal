@@ -5,11 +5,18 @@ import { createClient as createAdminClient } from "@supabase/supabase-js"
 // GET /api/admin/contracts/[id]
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const sessionClient = await createClient()
+    const { data: { user } } = await sessionClient.auth.getUser()
     if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
 
-    const { data, error } = await supabase
+    // Service role — omgår RLS (admin-brugere er ikke i user_org_roles)
+    const admin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+
+    const { data, error } = await admin
         .from("contract_reviews")
         .select("*")
         .eq("id", id)
@@ -24,9 +31,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // Body: { status?: string, assignedTo?: string }
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const sessionClient = await createClient()
+    const { data: { user } } = await sessionClient.auth.getUser()
     if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
+
+    // Service role — omgår RLS
+    const admin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+    )
 
     const body = await req.json()
     const updates: Record<string, unknown> = {}
@@ -39,13 +53,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     // Hent nuværende kontrakt for at tjekke storage_path
-    const { data: existing } = await supabase
+    const { data: existing } = await admin
         .from("contract_reviews")
         .select("storage_path")
         .eq("id", id)
         .single()
 
-    const { data, error } = await supabase
+    const { data, error } = await admin
         .from("contract_reviews")
         .update(updates)
         .eq("id", id)
@@ -65,7 +79,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
                 .from("contract-reviews")
                 .remove([existing.storage_path])
 
-            await supabase
+            await admin
                 .from("contract_reviews")
                 .update({ storage_path: null })
                 .eq("id", id)

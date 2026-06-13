@@ -444,9 +444,17 @@ export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData()
         const file       = formData.get("file")       as File | null
-        const memberName = formData.get("memberName") as string | null
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
+
+        // Hent brugerens navn fra Auth som fallback hvis FormData-feltet mangler
+        const supabaseSession = await createClient()
+        const { data: { user: sessionUser } } = await supabaseSession.auth.getUser()
+        const memberName: string | null =
+            (formData.get("memberName") as string | null) ||
+            sessionUser?.user_metadata?.full_name ||
+            sessionUser?.email?.split("@")[0] ||
+            null
 
         // ── Kontekstfelter fra portal-upload ──────────────────────
         const contractType        = formData.get("contractType")        as string | null
