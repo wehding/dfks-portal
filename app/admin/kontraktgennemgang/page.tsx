@@ -394,8 +394,13 @@ function Indbakke() {
                                                                 onClick={async e => {
                                                                     e.stopPropagation()
                                                                     const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
-                                                                    if (res.ok) { toast.success("Analyse genstartet"); fetchReviews() }
-                                                                    else toast.error("Kunne ikke genstarte analyse")
+                                                                    if (res.ok) { toast.success("Analyse genstartet"); fetchReviews(); return }
+                                                                    const json = await res.json().catch(() => ({}))
+                                                                    if (json.missing_file) {
+                                                                        toast.error("Filen mangler i storage — åbn sagen og upload filen manuelt")
+                                                                    } else {
+                                                                        toast.error(json.error ?? "Kunne ikke genstarte analyse")
+                                                                    }
                                                                 }}
                                                             >
                                                                 <RotateCcw className={`h-3.5 w-3.5 ${analysering && r.ai_status !== "fejl" ? "animate-spin" : ""}`} />
