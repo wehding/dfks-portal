@@ -104,8 +104,17 @@ export default function AdminLayout({
             setPendingCount(count ?? 0)
         }
 
-        supabase.auth.getUser().then(({ data: { user } }) => {
-            setUserRole(user?.user_metadata?.role ?? "admin")
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+            if (!user) return
+            // Slå rolle op i user_org_roles — ikke user_metadata (kan være forældet)
+            const { data: roles } = await supabase
+                .from("user_org_roles")
+                .select("role")
+                .eq("user_id", user.id)
+            const roleList = (roles ?? []).map(r => r.role)
+            const primary = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
+                .find(r => roleList.includes(r)) ?? "viewer"
+            setUserRole(primary)
             fetchCount()
         })
 
