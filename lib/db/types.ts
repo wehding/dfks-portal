@@ -8,6 +8,16 @@ export interface DbOrganisation {
     logo_url: string | null
     features: string[]
     created_at: string
+    updated_at: string
+    cvr: string
+    contact_name: string
+    contact_email: string
+    plan: "basis" | "pro" | "enterprise"
+    max_users: number
+    module_contracts: boolean
+    module_streaming: boolean
+    module_archive: boolean
+    active: boolean
 }
 
 export interface DbUserOrgRole {
