@@ -447,14 +447,14 @@ export async function POST(req: NextRequest) {
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
-        // Hent brugerens navn fra Auth som fallback hvis FormData-feltet mangler
+        // Hent brugerens navn fra Auth — fallback: full_name → email-prefix → "Ukendt"
         const supabaseSession = await createClient()
         const { data: { user: sessionUser } } = await supabaseSession.auth.getUser()
-        const memberName: string | null =
+        const memberName: string =
             (formData.get("memberName") as string | null) ||
             sessionUser?.user_metadata?.full_name ||
             sessionUser?.email?.split("@")[0] ||
-            null
+            "Ukendt"
 
         // ── Kontekstfelter fra portal-upload ──────────────────────
         const contractType        = formData.get("contractType")        as string | null

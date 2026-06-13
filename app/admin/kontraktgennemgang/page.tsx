@@ -357,7 +357,10 @@ function Indbakke() {
                                                 size="sm"
                                                 variant="outline"
                                                 className="h-6 text-[11px] px-2.5"
-                                                onClick={() => router.push(`/admin/kontraktgennemgang/${r.id}`)}
+                                                onClick={() => {
+                                                    console.log("[Åbn] r.id:", r.id, "review:", r)
+                                                    router.push(`/admin/kontraktgennemgang/${r.id}`)
+                                                }}
                                             >
                                                 Åbn
                                                 <ChevronRight className="h-3 w-3 ml-0.5" />
