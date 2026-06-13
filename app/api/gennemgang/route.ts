@@ -448,6 +448,45 @@ export async function POST(req: NextRequest) {
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
+        // ── Kontekstfelter fra portal-upload ──────────────────────
+        const contractType        = formData.get("contractType")        as string | null
+        const productionType      = formData.get("productionType")      as string | null
+        const distributionRaw     = formData.get("distributionChannels") as string | null
+        const producerName        = formData.get("producerName")        as string | null
+        const producerOverenskomst = formData.get("producerOverenskomst") as string | null
+        const focusAreasRaw       = formData.get("focusAreas")          as string | null
+        const uploadNotes         = formData.get("notes")               as string | null
+
+        let distributionChannels: string[] = []
+        try { distributionChannels = distributionRaw ? JSON.parse(distributionRaw) : [] } catch { /* ignorér */ }
+        let focusAreas: string[] = []
+        try { focusAreas = focusAreasRaw ? JSON.parse(focusAreasRaw) : [] } catch { /* ignorér */ }
+
+        const overenskomstStatus =
+            producerOverenskomst === "true"  ? "Ja (registreret i DFKS-database)" :
+            producerOverenskomst === "false" ? "Nej (registreret i DFKS-database)" :
+            "Ukendt"
+
+        const contextBlock = (contractType || productionType || producerName) ? `
+KONTRAKTTYPE: ${contractType ?? "ukendt"}
+PRODUKTIONSTYPE: ${productionType ?? "ukendt"}
+DISTRIBUTIONSKANALER: ${distributionChannels.length ? distributionChannels.join(", ") : "ukendt"}
+PRODUCER: ${producerName ?? "ukendt"}
+PRODUCER OVERENSKOMSTBUNDET: ${overenskomstStatus}
+${focusAreas.length > 0 ? `FOKUSOMRÅDER: ${focusAreas.join(", ")}` : ""}
+${uploadNotes ? `SÆRLIGE BEMÆRKNINGER: ${uploadNotes}` : ""}
+
+Anvend ovenstående til at:
+1. Vælge korrekt overenskomst baseret på produktionstype og ansættelsesform
+2. Vurdere producerens forpligtelser baseret på overenskomststatus
+3. Vurdere streaming- og genvisningsklausuler i lyset af de angivne distributionskanaler
+4. Prioritere feedback inden for de angivne fokusområder
+5. Kalibrere hvad der er "standard" vs. "kritisk" for denne kontrakttype
+
+VIGTIGT: Hvis kontraktteksten er på engelsk, skal hele dit svar — inkl. feedback,
+anbefalinger og juridiske referencer — leveres på engelsk.
+` : ""
+
         if (!file) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
         }
@@ -705,9 +744,9 @@ export async function POST(req: NextRequest) {
         activeSystemPrompt += "\n\n" + MAIL_FORMAT_PROMPT
 
         // ── Trin 2: Analyser og skriv mail ────────────────────────
-        const memberContext = memberName
-            ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n`
-            : ""
+        const memberContext =
+            (memberName ? `Kontrakten er indsendt af DFKS-medlemmet: ${memberName}\n\n` : "") +
+            (contextBlock ? `${contextBlock}\n\n` : "")
 
         let messageContent: any[]
         if (filename.endsWith(".pdf")) {

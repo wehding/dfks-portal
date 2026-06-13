@@ -1,3 +1,49 @@
+// ── Kontraktgennemgang (portal) ─────────────────────────────
+
+export type ContractType = "ansaettelse" | "freelance" | "ukendt"
+
+export type ProductionType =
+    | "dokumentar"
+    | "fiktion"
+    | "reklame"
+    | "streaming"
+    | "shortform"
+    | "ukendt"
+
+export type DistributionChannel =
+    | "biograf"
+    | "tv_lineaer"
+    | "streaming_svod"
+    | "streaming_avod"
+    | "festival"
+    | "internationalt_salg"
+    | "ukendt"
+
+export type FocusArea =
+    | "vederlag"
+    | "streaming"
+    | "arbejdstid"
+    | "rettigheder"
+    | "opsigelse"
+    | "konkurrence"
+
+export interface ProducerSelection {
+    name: string
+    dfksId?: string
+    dfiId?: string
+    isOverenskomstBound?: boolean
+    source: "dfks" | "dfi" | "manual"
+}
+
+export interface ContractUploadContext {
+    contractType: ContractType
+    productionType: ProductionType
+    distributionChannels: DistributionChannel[]
+    producer: ProducerSelection
+    focusAreas: FocusArea[]
+    notes?: string
+}
+
 // ── Core Enums ──────────────────────────────────────────────
 
 export type Category =

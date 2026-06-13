@@ -3,7 +3,7 @@
 import Link from "next/link"
 import Image from "next/image"
 import { usePathname } from "next/navigation"
-import { Film, FileText, Wallet, LogOut, Info, UserCircle, Layers } from "lucide-react"
+import { Film, FileText, Wallet, LogOut, Info, UserCircle, Layers, ScanSearch } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
@@ -51,6 +51,11 @@ export default function PortalLayout({
             label: "Aftalelicens",
             href: "/portal/aftalelicens",
             icon: Layers,
+        },
+        {
+            label: "Kontraktgennemgang",
+            href: "/portal/kontraktgennemgang",
+            icon: ScanSearch,
         },
         {
             label: "Min profil",
