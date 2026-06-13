@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -162,6 +162,22 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
+    async function handleResetOnboarding(rh: RettighedshaverWithAffiliation) {
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "reset-onboarding", rhId: rh.id }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            toast.success(`Onboarding nulstillet for ${rh.full_name}`)
+            setRows(prev => prev.map(r => r.id === rh.id ? { ...r, onboarding_completed: false } : r))
+        } catch (e: any) {
+            toast.error(e.message ?? "Fejl")
+        }
+    }
+
     const memberCount    = rows.filter(rh => orgId && getAffiliation(rh, orgId)?.is_member).length
     const nonMemberCount = rows.filter(rh => orgId && !getAffiliation(rh, orgId)?.is_member).length
     const portalCount    = rows.filter(rh => rh.user_id).length
@@ -221,6 +237,7 @@ export default function RettighedshavereAdminPage() {
                             <TableHead>Medlemsnr.</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Portal</TableHead>
+                            <TableHead>Onboarding</TableHead>
                             <TableHead className="w-12"></TableHead>
                         </TableRow>
                     </TableHeader>
@@ -249,6 +266,13 @@ export default function RettighedshavereAdminPage() {
                                             : <span className="text-xs text-muted-foreground">Ingen adgang</span>}
                                     </TableCell>
                                     <TableCell>
+                                        {!hasLogin
+                                            ? <span className="text-xs text-muted-foreground">—</span>
+                                            : rh.onboarding_completed
+                                                ? <Badge className="bg-emerald-600 text-white text-xs gap-1">✓ Gennemført</Badge>
+                                                : <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Ikke påbegyndt</Badge>}
+                                    </TableCell>
+                                    <TableCell>
                                         <DropdownMenu>
                                             <DropdownMenuTrigger asChild>
                                                 <Button variant="ghost" size="icon" className="h-7 w-7">
@@ -273,6 +297,14 @@ export default function RettighedshavereAdminPage() {
                                                 {hasLogin && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reset" }); setPortalLink(null) }}>
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
+                                                    </DropdownMenuItem>
+                                                )}
+                                                {hasLogin && rh.onboarding_completed && (
+                                                    <DropdownMenuItem
+                                                        className="text-amber-600 focus:text-amber-600"
+                                                        onClick={() => handleResetOnboarding(rh)}
+                                                    >
+                                                        <RotateCcw className="h-3.5 w-3.5 mr-2" />Nulstil onboarding
                                                     </DropdownMenuItem>
                                                 )}
                                             </DropdownMenuContent>

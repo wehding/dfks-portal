@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { useI18n } from "@/lib/i18n"
@@ -19,6 +20,29 @@ export default function LoginPage() {
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
     const isDev = process.env.NODE_ENV === "development"
+    const [resettingOnboarding, setResettingOnboarding] = useState(false)
+
+    const handleResetOnboarding = async () => {
+        if (!email) {
+            toast.error("Indtast en e-mailadresse i feltet ovenfor")
+            return
+        }
+        setResettingOnboarding(true)
+        try {
+            const res = await fetch("/api/dev/reset-onboarding", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email }),
+            })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error)
+            toast.success(data.message)
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Ukendt fejl")
+        } finally {
+            setResettingOnboarding(false)
+        }
+    }
 
     const handleDevLogin = async (type: "member" | "admin") => {
         setLoading(true)
@@ -153,6 +177,15 @@ export default function LoginPage() {
                                     🔑 Admin (udfyld pw)
                                 </Button>
                             </div>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="w-full text-xs text-muted-foreground"
+                                onClick={handleResetOnboarding}
+                                disabled={resettingOnboarding}
+                            >
+                                {resettingOnboarding ? "Nulstiller…" : "↺ Nulstil onboarding (e-mail ovenfor)"}
+                            </Button>
                         </div>
                     )}
 

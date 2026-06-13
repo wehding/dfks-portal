@@ -389,3 +389,13 @@ Spørg Martin. Han har dyb domæneviden om den danske filmindustri og ved præci
 - Domæneviden (royaltysatser, kontrakttyper, lovgivning)
 - "Rør ikke"-regler under Arkitekturbeslutninger
 - Modulernes formål og adskillelse
+
+---
+
+## Git-samarbejde
+
+Arbejd aldrig direkte på master.
+Opret altid en sidebranch før ændringer: `feat/...`, `fix/...` eller `refactor/...`.
+Push altid sidebranchen og lav Pull Request ind i master.
+Direkte push til master er ikke tilladt.
+Ved domæneændringer eller tvivl: spørg Martin før merge.
