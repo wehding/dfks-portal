@@ -319,9 +319,18 @@ Returner KUN gyldig JSON uden markdown-backticks:
     "tekst": "string (den komplette mailbody med ===GUL START===/===GUL SLUT=== markering)"
   },
   "samlet_vurdering": "godkendt|forbehold|kritisk",
+  "risk_level": "LAV|MELLEM|HØJ",
+  "should_escalate": true,
   "prioriterede_forhandlingspunkter": ["string"],
   "prioriterede_mail_sektioner": ["number or null — svarende til nummereret afsnit i mailen"]
 }
+
+risk_level-logik:
+- LAV: ingen kritiske punkter, ingen alvorlige overenskomstbrud
+- MELLEM: et eller flere advarsels-punkter, men intet kritisk
+- HØJ: mindst ét kritisk punkt ELLER royalty under minimumsats ELLER manglende pension/feriepenge
+
+should_escalate: sæt til true hvis risk_level er HØJ og sagen bør behandles af senior-jurist.
 
 DANSK FILMBRANCHE — VIGTIG BAGGRUNDSVIDEN:
 
@@ -867,6 +876,37 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             }
         }
 
+        // ── Udtræk og rens risikovurdering ───────────────────────
+        // AI returnerer risk_level/should_escalate som strukturerede felter i JSON.
+        // Som fallback: map samlet_vurdering → risk_level.
+        // Rens desuden mailteksten for eventuel fri-tekst-risikovurdering som AI
+        // kan have skrevet ind — den hører kun hjemme i admin-UI'et, ikke i mailen.
+
+        const VALID_RISK = ["LAV", "MELLEM", "HØJ"] as const
+        type RiskLevel = typeof VALID_RISK[number]
+
+        const rawRisk = String(parsed.risk_level ?? "").toUpperCase().trim()
+        const riskLevel: RiskLevel | null = VALID_RISK.includes(rawRisk as RiskLevel)
+            ? (rawRisk as RiskLevel)
+            : parsed.samlet_vurdering === "kritisk" ? "HØJ"
+            : parsed.samlet_vurdering === "forbehold" ? "MELLEM"
+            : parsed.samlet_vurdering === "godkendt" ? "LAV"
+            : null
+
+        const shouldEscalate: boolean =
+            typeof parsed.should_escalate === "boolean" ? parsed.should_escalate
+            : riskLevel === "HØJ"
+
+        // Rens mailtekst for "Overordnet vurdering"-linjer AI kan skrive som fritekst
+        if (parsed.feedbackmail?.tekst) {
+            parsed.feedbackmail.tekst = parsed.feedbackmail.tekst
+                .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
+                .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
+                .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim()
+        }
+
         // ── Gem i contract_reviews (service role — omgår RLS) ────
         const portalOrgId  = formData.get("orgId")         as string | null
         const portalEmail  = formData.get("memberEmail")   as string | null
@@ -900,6 +940,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 focus_areas:  focusAreas.length ? focusAreas : null,
                 notes:        uploadNotes ?? null,
                 ai_language:  klassifikation?.kontraktsprog ?? null,
+                risk_level:      riskLevel,
+                should_escalate: shouldEscalate,
             }
             const { data: savedReview, error: insertError } = await admin
                 .from("contract_reviews")
@@ -919,6 +961,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             result: parsed,
             contractText: returnText,
             klassifikation,
+            risk_level: riskLevel,
+            should_escalate: shouldEscalate,
         })
 
     } catch (err: any) {

@@ -131,6 +131,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [review, setReview] = useState<DbContractReview | null>(null)
     const [loading, setLoading] = useState(true)
     const [result, setResult] = useState<ReviewResult | null>(null)
+    const [riskLevel, setRiskLevel] = useState<"LAV" | "MELLEM" | "HØJ" | null>(null)
+    const [shouldEscalate, setShouldEscalate] = useState<boolean | null>(null)
     const [contractText, setContractText] = useState("")
     const [mailText, setMailText] = useState("")
     const [mailSubject, setMailSubject] = useState("")
@@ -158,6 +160,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .then(json => {
                 const r = json.data as DbContractReview
                 setReview(r)
+                if (r?.risk_level) setRiskLevel(r.risk_level)
+                if (r?.should_escalate != null) setShouldEscalate(r.should_escalate)
                 if (r?.ai_result && Object.keys(r.ai_result).length > 0) {
                     const res = r.ai_result as unknown as ReviewResult
                     setResult(res)
@@ -187,7 +191,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     }, [activeQuote])
 
-    const updateReview = async (updates: { status?: string; assignedTo?: string }) => {
+    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string }) => {
         const resp = await fetch(`/api/admin/contracts/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -197,6 +201,16 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         const json = await resp.json()
         setReview(json.data)
         toast.success("Opdateret")
+    }
+
+    // Rens mailtekst for eventuelle risikovurderingslinjer inden afsendelse
+    function cleanMailText(text: string): string {
+        return text
+            .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
+            .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
+            .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
     }
 
     const handleReanalyse = async () => {
@@ -216,6 +230,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             setResult(res)
             setMailText(res.feedbackmail?.tekst ?? "")
             setMailSubject(res.feedbackmail?.emne ?? "")
+            if (json.data.risk_level) setRiskLevel(json.data.risk_level)
+            if (json.data.should_escalate != null) setShouldEscalate(json.data.should_escalate)
             setReview(json.data)
             setContractText(json.contractText ?? "")
             toast.success("Ny analyse fuldført")
@@ -233,8 +249,9 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     }
 
     const handleOpenMail = () => {
+        const cleanedText = cleanMailText(mailText)
         const to = review?.member_email ? encodeURIComponent(review.member_email) : ""
-        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(mailText)}`
+        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(cleanedText)}`
     }
 
     // ── Afslut og sæt status ──────────────────────────────────
@@ -403,6 +420,22 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             </Badge>
                         )}
                     </div>
+                    {/* Risikovurderingsbanner — vises kun når risk_level er sat */}
+                    {riskLevel && (
+                        <div className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b shrink-0 ${
+                            riskLevel === "HØJ"
+                                ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800"
+                                : riskLevel === "MELLEM"
+                                ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                        }`}>
+                            <span>{riskLevel === "HØJ" ? "🔴" : riskLevel === "MELLEM" ? "🟡" : "🟢"}</span>
+                            <span>Risikoniveau: {riskLevel}</span>
+                            {shouldEscalate && (
+                                <span className="ml-1 font-semibold">— Skal eskaleres: JA</span>
+                            )}
+                        </div>
+                    )}
                     <div className="flex-1 overflow-y-auto divide-y">
                         {!result ? (
                             <div className="px-4 py-8 text-center text-xs text-muted-foreground">
@@ -552,7 +585,12 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-300 shrink-0" />
                             Kopiér til producent
                         </Button>
-                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => { handleOpenMail(); if (review.status !== "afsluttet") updateReview({ status: "afsluttet" }) }}>
+                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => {
+                            handleOpenMail()
+                            // Gem jurist_response (renset tekst uden risikovurdering) + sæt status
+                            const cleanedText = cleanMailText(mailText)
+                            updateReview({ status: "afsluttet", jurist_response: cleanedText })
+                        }}>
                             <Send className="h-3.5 w-3.5" />
                             Send og afslut
                         </Button>
