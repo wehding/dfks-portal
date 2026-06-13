@@ -1,12 +1,25 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { createClient as createAdminClient } from "@supabase/supabase-js"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
 export async function GET(req: NextRequest) {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    // Auth-tjek via session-klienten
+    const sessionClient = await createClient()
+    const { data: { user } } = await sessionClient.auth.getUser()
     if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
+    const role = user.user_metadata?.role
+    if (!["superadmin", "admin", "org-admin", "jurist"].includes(role)) {
+        return NextResponse.json({ error: "Mangler admin-rettigheder" }, { status: 403 })
+    }
+
+    // Service role omgår RLS — admin-rute, ingen bruger-data-lækage
+    const supabase = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+    )
 
     const url = new URL(req.url)
     const queue = url.searchParams.get("queue") ?? "all"
