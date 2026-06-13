@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 
 function getAdmin() {
     return createAdminClient(
@@ -16,12 +17,8 @@ function getAdmin() {
 
 export async function GET(req: NextRequest) {
     const supabase = await createServerClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-    const role = user.user_metadata?.role
-    if (!["superadmin", "admin", "org-admin"].includes(role)) {
-        return NextResponse.json({ error: "Mangler admin-rettigheder" }, { status: 403 })
-    }
+    const caller = await assertAdminRole(supabase)
+    if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     const admin = getAdmin()
     const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 })
@@ -47,11 +44,8 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
     const supabase = await createServerClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-    if (!["superadmin", "admin"].includes(user.user_metadata?.role)) {
-        return NextResponse.json({ error: "Mangler superadmin/admin rettigheder" }, { status: 403 })
-    }
+    const patchCaller = await assertAdminRole(supabase, SUPERADMIN_ROLES)
+    if (!patchCaller) return NextResponse.json({ error: "Mangler superadmin/admin rettigheder" }, { status: 403 })
 
     const { userId, role } = await req.json()
     const admin = getAdmin()

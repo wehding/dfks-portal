@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 
 function getAdmin() {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -26,14 +27,10 @@ function getAdmin() {
 
 export async function POST(req: NextRequest) {
     try {
-        // Kun admins må kalde denne route
+        // Kun admins må kalde denne route — tjek user_org_roles, ikke user_metadata
         const supabase = await createServerClient()
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-        const role = user.user_metadata?.role
-        if (!["superadmin", "admin", "org-admin"].includes(role)) {
-            return NextResponse.json({ error: "Mangler admin-rettigheder" }, { status: 403 })
-        }
+        const caller = await assertAdminRole(supabase)
+        if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
         const body = await req.json()
         const admin = getAdmin()

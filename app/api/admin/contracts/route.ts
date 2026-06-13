@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { assertAdminRole } from "@/lib/supabase/assert-admin"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
 export async function GET(req: NextRequest) {
-    // Auth-tjek via session-klienten
     const sessionClient = await createClient()
-    const { data: { user } } = await sessionClient.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-    const role = user.user_metadata?.role
-    if (!["superadmin", "admin", "org-admin", "jurist"].includes(role)) {
-        return NextResponse.json({ error: "Mangler admin-rettigheder" }, { status: 403 })
-    }
+    const caller = await assertAdminRole(sessionClient)
+    if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     // Service role omgår RLS — admin-rute, ingen bruger-data-lækage
     const supabase = createAdminClient(
@@ -38,7 +34,7 @@ export async function GET(req: NextRequest) {
 
     if (queue === "mine") {
         query = query
-            .eq("assigned_to", user.id)
+            .eq("assigned_to", caller.userId)
             .in("status", ["afventer", "behandling"])
     }
 
