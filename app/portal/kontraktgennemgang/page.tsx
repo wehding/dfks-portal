@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
-import { saveReview } from "@/lib/db/gennemgang"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -290,6 +289,7 @@ export default function PortalKontraktgennemgangPage() {
     const [submitted, setSubmitted] = useState(false)
     const [memberName, setMemberName] = useState<string | null>(null)
     const [memberEmail, setMemberEmail] = useState<string | null>(null)
+    const [memberId, setMemberId] = useState<string | null>(null)
     const [orgId, setOrgId] = useState<string>("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
 
     useEffect(() => {
@@ -297,6 +297,7 @@ export default function PortalKontraktgennemgangPage() {
             if (user) {
                 setMemberName(user.user_metadata?.full_name ?? null)
                 setMemberEmail(user.email ?? null)
+                setMemberId(user.id)
                 setOrgId(user.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
             }
         })
@@ -364,7 +365,10 @@ export default function PortalKontraktgennemgangPage() {
 
         const fd = new FormData()
         fd.append("file", file!)
-        if (memberName) fd.append("memberName", memberName)
+        if (memberName)  fd.append("memberName",  memberName)
+        if (memberEmail) fd.append("memberEmail", memberEmail)
+        if (memberId)    fd.append("memberId",    memberId)
+        fd.append("orgId", orgId)
         fd.append("contractType", contractType!)
         fd.append("productionType", productionType!)
         fd.append("distributionChannels", JSON.stringify(distributionChannels))
@@ -383,28 +387,7 @@ export default function PortalKontraktgennemgangPage() {
                 const err = await res.json().catch(() => ({ error: "Ukendt fejl" }))
                 throw new Error(err.error ?? "Serverfejl")
             }
-            const data = await res.json()
-
-            // Gem i contract_reviews så admin kan se den i indbakken
-            await saveReview({
-                org_id: orgId,
-                member_name: memberName,
-                member_email: memberEmail,
-                ai_result: data.result ?? {},
-                file_name: file!.name,
-                file_size_bytes: file!.size,
-                contract_type: contractType ?? undefined,
-                production_type: productionType ?? undefined,
-                distribution_channels: distributionChannels,
-                producer_name: producer!.name,
-                producer_dfks_id: producer!.dfksId,
-                producer_dfi_id: producer!.dfiId,
-                producer_overenskomst_bound: producer!.isOverenskomstBound,
-                focus_areas: focusAreas.length ? focusAreas : undefined,
-                notes: notes.trim() || undefined,
-                ai_language: data.klassifikation?.kontraktsprog ?? undefined,
-            })
-
+            // Gem sker server-side i /api/gennemgang med service role
             setSubmitted(true)
         } catch (err: any) {
             toast.error(err.message ?? "Kunne ikke sende kontrakten — prøv igen")

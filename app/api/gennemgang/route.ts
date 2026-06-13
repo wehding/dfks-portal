@@ -859,10 +859,58 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             }
         }
 
+        // ── Gem i contract_reviews (service role — omgår RLS) ────
+        const portalOrgId  = formData.get("orgId")         as string | null
+        const portalEmail  = formData.get("memberEmail")   as string | null
+        const portalUserId = formData.get("memberId")      as string | null
+        const saveOrgId    = portalOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+
+        try {
+            const admin = createAdminClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.SUPABASE_SERVICE_ROLE_KEY!
+            )
+            const insertPayload: Record<string, unknown> = {
+                org_id:          saveOrgId,
+                member_name:     memberName ?? null,
+                member_email:    portalEmail ?? null,
+                member_id:       portalUserId ?? null,
+                ai_result:       parsed,
+                reviewed_by:     portalUserId ?? null,
+                status:          "afventer",
+                file_name:       file.name,
+                file_size_bytes: file.size,
+                contract_type:   contractType ?? null,
+                production_type: productionType ?? null,
+                distribution_channels: distributionChannels.length ? distributionChannels : null,
+                producer_name:         producerName ?? null,
+                producer_dfks_id:      formData.get("producerDfksId") ?? null,
+                producer_dfi_id:       formData.get("producerDfiId")  ?? null,
+                producer_overenskomst_bound:
+                    producerOverenskomst === "true"  ? true :
+                    producerOverenskomst === "false" ? false : null,
+                focus_areas:  focusAreas.length ? focusAreas : null,
+                notes:        uploadNotes ?? null,
+                ai_language:  klassifikation?.kontraktsprog ?? null,
+            }
+            const { data: savedReview, error: insertError } = await admin
+                .from("contract_reviews")
+                .insert(insertPayload)
+                .select()
+                .single()
+            if (insertError) {
+                console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+            } else {
+                console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id)
+            }
+        } catch (saveErr) {
+            console.error("[gennemgang] Gem fejlede:", saveErr)
+        }
+
         return NextResponse.json({
             result: parsed,
             contractText: returnText,
-            klassifikation,  // sendes med til UI — kan vises som debug-info
+            klassifikation,
         })
 
     } catch (err: any) {
