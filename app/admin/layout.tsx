@@ -87,6 +87,7 @@ export default function AdminLayout({
     const pathname = usePathname()
     const router = useRouter()
     const [userRole, setUserRole] = useState<string>("admin")
+    const [isSuperadmin, setIsSuperadmin] = useState<boolean>(false)
     const [pendingCount, setPendingCount] = useState<number>(0)
 
     useEffect(() => {
@@ -115,6 +116,7 @@ export default function AdminLayout({
             const primary = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
                 .find(r => roleList.includes(r)) ?? "viewer"
             setUserRole(primary)
+            setIsSuperadmin(roleList.includes("superadmin"))
             fetchCount()
         })
 
@@ -182,7 +184,7 @@ export default function AdminLayout({
 
                 <SidebarFooter>
                     <SidebarMenu>
-                        {userRole === "superadmin" && (
+                        {isSuperadmin && (
                             <SidebarMenuItem>
                                 <SidebarMenuButton asChild>
                                     <Link href="/superadmin/organisationer">

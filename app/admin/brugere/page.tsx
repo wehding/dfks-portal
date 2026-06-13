@@ -23,26 +23,18 @@ import {
 
 // ── Typer ─────────────────────────────────────────────────
 
-type StaffUser = {
+type User = {
     id: string
+    rh_id: string | null
     email: string | null
     full_name: string
     roles: string[]
+    org_roles: string[]
+    is_rettighedshaver: boolean
+    onboarding_completed: boolean | null
     banned: boolean
     last_sign_in: string | null
     created_at: string
-}
-
-type PortalUser = {
-    id: string
-    rh_id: string
-    email: string | null
-    full_name: string
-    roles: ["portal"]
-    banned: boolean
-    last_sign_in: string | null
-    created_at: string
-    onboarding_completed: boolean
 }
 
 type Rettighedshaver = {
@@ -54,12 +46,12 @@ type Rettighedshaver = {
 // ── Rolle-konfiguration ───────────────────────────────────
 
 const ROLE_CONFIG: Record<string, { label: string; color: string }> = {
-    superadmin: { label: "Superadmin", color: "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300" },
-    admin:      { label: "Admin",      color: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300" },
-    "org-admin":{ label: "Org-admin",  color: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
-    jurist:     { label: "Jurist",     color: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
-    viewer:     { label: "Læser",      color: "bg-muted text-muted-foreground" },
-    portal:     { label: "Portal",     color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
+    superadmin:       { label: "Superadmin",      color: "bg-purple-100 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300" },
+    admin:            { label: "Admin",            color: "bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300" },
+    "org-admin":      { label: "Org-admin",        color: "bg-sky-100 text-sky-800 dark:bg-sky-950/40 dark:text-sky-300" },
+    jurist:           { label: "Jurist",           color: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" },
+    viewer:           { label: "Læser",            color: "bg-muted text-muted-foreground" },
+    rettighedshaver:  { label: "Rettighedshaver",  color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
 }
 
 const STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
@@ -99,7 +91,6 @@ function StatusBadge({ lastSignIn, banned }: { lastSignIn: string | null; banned
     )
 }
 
-// Simpel toggle-knap der erstatter Checkbox (shadcn/ui checkbox er ikke installeret)
 function RoleToggle({ role, selected, onToggle }: { role: string; selected: boolean; onToggle: () => void }) {
     const cfg = ROLE_CONFIG[role] ?? ROLE_CONFIG.viewer
     return (
@@ -124,20 +115,19 @@ function RoleToggle({ role, selected, onToggle }: { role: string; selected: bool
 
 // ── Tabs ──────────────────────────────────────────────────
 
-type Tab = "alle" | "admins" | "jurister" | "portal"
+type Tab = "alle" | "admins" | "jurister" | "rettighedshavere"
 
 const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
-    { key: "alle",     label: "Alle",     icon: Users     },
-    { key: "admins",   label: "Admins",   icon: UserCog   },
-    { key: "jurister", label: "Jurister", icon: Scale     },
-    { key: "portal",   label: "Portal",   icon: UserCheck },
+    { key: "alle",              label: "Alle",              icon: Users     },
+    { key: "admins",            label: "Admins",            icon: UserCog   },
+    { key: "jurister",          label: "Jurister",          icon: Scale     },
+    { key: "rettighedshavere",  label: "Rettighedshavere",  icon: UserCheck },
 ]
 
 // ── Hovedkomponent ────────────────────────────────────────
 
 export default function AdminBrugerePage() {
-    const [staff, setStaff] = useState<StaffUser[]>([])
-    const [portal, setPortal] = useState<PortalUser[]>([])
+    const [users, setUsers] = useState<User[]>([])
     const [loading, setLoading] = useState(true)
     const [tab, setTab] = useState<Tab>("alle")
     const [search, setSearch] = useState("")
@@ -155,17 +145,17 @@ export default function AdminBrugerePage() {
     const [inviteLink, setInviteLink] = useState<string | null>(null)
 
     // Rediger roller dialog
-    const [editUser, setEditUser] = useState<StaffUser | null>(null)
+    const [editUser, setEditUser] = useState<User | null>(null)
     const [editRoles, setEditRoles] = useState<string[]>([])
     const [editLoading, setEditLoading] = useState(false)
 
     // Nulstil password
-    const [resetUser, setResetUser] = useState<(StaffUser | PortalUser) | null>(null)
+    const [resetUser, setResetUser] = useState<User | null>(null)
     const [resetLink, setResetLink] = useState<string | null>(null)
     const [resetLoading, setResetLoading] = useState(false)
 
-    // Deaktiver / genaktiver (bruger Dialog i stedet for AlertDialog)
-    const [toggleUser, setToggleUser] = useState<(StaffUser | PortalUser) | null>(null)
+    // Deaktiver / genaktiver
+    const [toggleUser, setToggleUser] = useState<User | null>(null)
     const [toggleLoading, setToggleLoading] = useState(false)
 
     useEffect(() => { load() }, [])
@@ -175,34 +165,39 @@ export default function AdminBrugerePage() {
         const res = await fetch("/api/admin/users")
         const json = await res.json()
         if (res.ok) {
-            setStaff(json.staff ?? [])
-            setPortal(json.portal ?? [])
+            // Brug merged users hvis tilgængeligt, ellers bagudkompatibel sammensætning
+            if (json.users) {
+                setUsers(json.users)
+            } else {
+                const staff = (json.staff ?? []).map((u: any) => ({ ...u, org_roles: u.roles, is_rettighedshaver: false, rh_id: null, onboarding_completed: null }))
+                const portal = (json.portal ?? []).map((u: any) => ({ ...u, org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }))
+                setUsers([...staff, ...portal])
+            }
         } else {
             toast.error(json.error ?? "Kunne ikke hente brugere")
         }
         setLoading(false)
     }
 
-    const allUsers = useMemo<(StaffUser | PortalUser)[]>(() => {
+    const filtered = useMemo<User[]>(() => {
         const s = search.toLowerCase()
-        const match = (u: StaffUser | PortalUser) =>
+        const match = (u: User) =>
             !s || u.full_name.toLowerCase().includes(s) || (u.email ?? "").toLowerCase().includes(s)
         switch (tab) {
-            case "admins":   return staff.filter(u => u.roles.some(r => ["admin", "org-admin", "superadmin"].includes(r)) && match(u))
-            case "jurister": return staff.filter(u => u.roles.includes("jurist") && match(u))
-            case "portal":   return portal.filter(match)
-            default:         return [...staff, ...portal].filter(match)
+            case "admins":           return users.filter(u => u.org_roles.some(r => ["admin", "org-admin", "superadmin"].includes(r)) && match(u))
+            case "jurister":         return users.filter(u => u.org_roles.includes("jurist") && match(u))
+            case "rettighedshavere": return users.filter(u => u.is_rettighedshaver && match(u))
+            default:                 return users.filter(match)
         }
-    }, [staff, portal, tab, search])
+    }, [users, tab, search])
 
     const counts = useMemo(() => ({
-        alle:     staff.length + portal.length,
-        admins:   staff.filter(u => u.roles.some(r => ["admin", "org-admin", "superadmin"].includes(r))).length,
-        jurister: staff.filter(u => u.roles.includes("jurist")).length,
-        portal:   portal.length,
-    }), [staff, portal])
+        alle:             users.length,
+        admins:           users.filter(u => u.org_roles.some(r => ["admin", "org-admin", "superadmin"].includes(r))).length,
+        jurister:         users.filter(u => u.org_roles.includes("jurist")).length,
+        rettighedshavere: users.filter(u => u.is_rettighedshaver).length,
+    }), [users])
 
-    // Søg i rettighedshavere ved indtastning
     useEffect(() => {
         if (!inviteIsPortal || inviteRhSearch.length < 2) {
             setInviteRhResults([])
@@ -266,7 +261,7 @@ export default function AdminBrugerePage() {
             const json = await res.json()
             if (!res.ok) throw new Error(json.error)
             toast.success("Roller opdateret")
-            setStaff(prev => prev.map(u => u.id === editUser.id ? { ...u, roles: editRoles } : u))
+            await load()
             setEditUser(null)
         } catch (e: any) {
             toast.error(e.message ?? "Fejl")
@@ -334,11 +329,11 @@ export default function AdminBrugerePage() {
         <div className="space-y-6">
             <PageHeader
                 title="Brugere"
-                subtitle="Administrer stab, jurister og portalbrugere"
+                subtitle="Administrer stab, jurister og rettighedshavere"
                 actions={
                     <div className="flex gap-2">
                         <Button size="sm" variant="outline" onClick={() => openInvite(true)}>
-                            <Plus className="h-4 w-4 mr-1" />Ny portalbruger
+                            <Plus className="h-4 w-4 mr-1" />Ny rettighedshaver
                         </Button>
                         <Button size="sm" onClick={() => openInvite(false)}>
                             <Plus className="h-4 w-4 mr-1" />Inviter stab
@@ -403,13 +398,13 @@ export default function AdminBrugerePage() {
                                     <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
                                 </TableCell>
                             </TableRow>
-                        ) : allUsers.length === 0 ? (
+                        ) : filtered.length === 0 ? (
                             <TableRow>
                                 <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
                                     Ingen brugere fundet
                                 </TableCell>
                             </TableRow>
-                        ) : allUsers.map(u => (
+                        ) : filtered.map(u => (
                             <TableRow key={u.id} className={u.banned ? "opacity-50" : ""}>
                                 <TableCell className="font-medium">{u.full_name}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.email ?? "—"}</TableCell>
@@ -430,10 +425,10 @@ export default function AdminBrugerePage() {
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
-                                            {!u.roles.includes("portal") && (
+                                            {u.org_roles.length > 0 && (
                                                 <DropdownMenuItem onClick={() => {
-                                                    setEditUser(u as StaffUser)
-                                                    setEditRoles((u as StaffUser).roles.slice())
+                                                    setEditUser(u)
+                                                    setEditRoles(u.org_roles.slice())
                                                 }}>
                                                     <Pencil className="h-3.5 w-3.5 mr-2" />Skift rolle(r)
                                                 </DropdownMenuItem>
