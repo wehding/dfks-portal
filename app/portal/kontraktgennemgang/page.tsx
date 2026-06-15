@@ -457,14 +457,15 @@ export default function PortalKontraktgennemgangPage() {
         if (notes.trim()) fd.append("notes", notes.trim())
 
         try {
-            const res = await fetch("/api/gennemgang", { method: "POST", body: fd })
+            // Brug /api/portal/submit — gemmer straks og kører AI asynkront
+            // Brugeren venter IKKE på analysen
+            const res = await fetch("/api/portal/submit", { method: "POST", body: fd })
             if (!res.ok) {
                 const err = await res.json().catch(() => ({ error: "Ukendt fejl" }))
                 throw new Error(err.error ?? "Serverfejl")
             }
-            // Gem sker server-side i /api/gennemgang med service role
             setSubmitted(true)
-            // Genindlæs sagslister
+            // Opdater sagsliste i baggrunden
             if (memberId) loadReviews(memberId)
         } catch (err: any) {
             toast.error(err.message ?? "Kunne ikke sende kontrakten — prøv igen")
@@ -663,7 +664,7 @@ export default function PortalKontraktgennemgangPage() {
                             size="lg"
                         >
                             {submitting ? (
-                                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Analyserer kontrakt…</>
+                                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Sender…</>
                             ) : (
                                 "Send til gennemgang"
                             )}

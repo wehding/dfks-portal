@@ -59,43 +59,49 @@ export async function GET(req: NextRequest) {
         rolesMap.set(row.user_id, existing)
     }
 
-    // Staff-brugere: har mindst én rolle i user_org_roles
-    const staff = Array.from(rolesMap.entries())
-        .map(([userId, roles]) => {
-            const u = authMap.get(userId)
-            return {
-                id: userId,
-                email: u?.email ?? null,
-                full_name: u?.user_metadata?.full_name ?? u?.email ?? "—",
-                roles,
-                banned: u?.banned_until ? new Date(u.banned_until) > new Date() : false,
-                last_sign_in: u?.last_sign_in_at ?? null,
-                created_at: u?.created_at ?? "",
-            }
-        })
-
-    // Portal-brugere: rettighedshavere med user_id
+    // Rettighedshavere med user_id — bruges til at berige staff-entries
     const { data: rh } = await admin
         .from("rettighedshavere")
         .select("id, full_name, email, user_id, onboarding_completed")
         .not("user_id", "is", null)
 
-    const portal = (rh ?? []).map(r => {
-        const u = r.user_id ? authMap.get(r.user_id) : null
+    const rhByUserId = new Map((rh ?? []).map(r => [r.user_id!, r]))
+
+    // Saml alle kendte user_ids: staff + rettighedshavere
+    const allUserIds = new Set([
+        ...Array.from(rolesMap.keys()),
+        ...(rh ?? []).map(r => r.user_id!),
+    ])
+
+    // Én post per bruger — kombiner roller fra user_org_roles og rettighedshavere
+    const users = Array.from(allUserIds).map(userId => {
+        const u = authMap.get(userId)
+        const orgRoleList = rolesMap.get(userId) ?? []
+        const rhEntry = rhByUserId.get(userId)
+
+        const roles = [...orgRoleList]
+        if (rhEntry) roles.push("rettighedshaver")
+
         return {
-            id: r.user_id!,
-            rh_id: r.id,
-            email: r.email ?? u?.email ?? null,
-            full_name: r.full_name,
-            roles: ["portal"],
+            id: userId,
+            rh_id: rhEntry?.id ?? null,
+            email: rhEntry?.email ?? u?.email ?? null,
+            full_name: rhEntry?.full_name ?? u?.user_metadata?.full_name ?? u?.email ?? "—",
+            roles,
+            org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
+            is_rettighedshaver: !!rhEntry,
+            onboarding_completed: rhEntry?.onboarding_completed ?? null,
             banned: u?.banned_until ? new Date(u.banned_until) > new Date() : false,
             last_sign_in: u?.last_sign_in_at ?? null,
             created_at: u?.created_at ?? "",
-            onboarding_completed: r.onboarding_completed,
         }
     })
 
-    return NextResponse.json({ staff, portal })
+    // Bagudkompatibilitet: returner også staff/portal for eksisterende forbrugere
+    const staff = users.filter(u => u.org_roles.length > 0)
+    const portal = users.filter(u => u.is_rettighedshaver && u.org_roles.length === 0)
+
+    return NextResponse.json({ users, staff, portal })
 }
 
 export async function PATCH(req: NextRequest) {

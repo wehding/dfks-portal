@@ -196,7 +196,7 @@ function byggAbsolutteRegler(
         : "[ikke fundet i kontrakt]"
 
     const sprogRegel = klassifikation.kontraktsprog === "en"
-        ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er markeret med ===GUL START=== og ===GUL SLUT=== skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
+        ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er indpakket i <mark style=\"background-color:#fef08a\"> og </mark> skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
         : "✓ Dansk kontrakt — skriv alt på dansk."
 
     const loenTypeRegel = klassifikation.loen_type === "fast_total"
@@ -316,12 +316,21 @@ Returner KUN gyldig JSON uden markdown-backticks:
   ],
   "feedbackmail": {
     "emne": "string",
-    "tekst": "string (den komplette mailbody med ===GUL START===/===GUL SLUT=== markering)"
+    "tekst": "string (den komplette mailbody — gule producent-afsnit indpakkes i <mark style=\"background-color:#fef08a\"> og </mark>)"
   },
   "samlet_vurdering": "godkendt|forbehold|kritisk",
+  "risk_level": "LAV|MELLEM|HØJ",
+  "should_escalate": true,
   "prioriterede_forhandlingspunkter": ["string"],
   "prioriterede_mail_sektioner": ["number or null — svarende til nummereret afsnit i mailen"]
 }
+
+risk_level-logik:
+- LAV: ingen kritiske punkter, ingen alvorlige overenskomstbrud
+- MELLEM: et eller flere advarsels-punkter, men intet kritisk
+- HØJ: mindst ét kritisk punkt ELLER royalty under minimumsats ELLER manglende pension/feriepenge
+
+should_escalate: sæt til true hvis risk_level er HØJ og sagen bør behandles af senior-jurist.
 
 DANSK FILMBRANCHE — VIGTIG BAGGRUNDSVIDEN:
 
@@ -457,6 +466,9 @@ export async function POST(req: NextRequest) {
             "Ukendt"
 
         // ── Kontekstfelter fra portal-upload ──────────────────────
+        // Hvis kaldt fra /api/portal/submit: review er allerede gemt — opdater i stedet for at indsætte
+        const existingReviewId = formData.get("existingReviewId") as string | null
+
         const contractType        = formData.get("contractType")        as string | null
         const productionType      = formData.get("productionType")      as string | null
         const distributionRaw     = formData.get("distributionChannels") as string | null
@@ -867,6 +879,37 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             }
         }
 
+        // ── Udtræk og rens risikovurdering ───────────────────────
+        // AI returnerer risk_level/should_escalate som strukturerede felter i JSON.
+        // Som fallback: map samlet_vurdering → risk_level.
+        // Rens desuden mailteksten for eventuel fri-tekst-risikovurdering som AI
+        // kan have skrevet ind — den hører kun hjemme i admin-UI'et, ikke i mailen.
+
+        const VALID_RISK = ["LAV", "MELLEM", "HØJ"] as const
+        type RiskLevel = typeof VALID_RISK[number]
+
+        const rawRisk = String(parsed.risk_level ?? "").toUpperCase().trim()
+        const riskLevel: RiskLevel | null = VALID_RISK.includes(rawRisk as RiskLevel)
+            ? (rawRisk as RiskLevel)
+            : parsed.samlet_vurdering === "kritisk" ? "HØJ"
+            : parsed.samlet_vurdering === "forbehold" ? "MELLEM"
+            : parsed.samlet_vurdering === "godkendt" ? "LAV"
+            : null
+
+        const shouldEscalate: boolean =
+            typeof parsed.should_escalate === "boolean" ? parsed.should_escalate
+            : riskLevel === "HØJ"
+
+        // Rens mailtekst for "Overordnet vurdering"-linjer AI kan skrive som fritekst
+        if (parsed.feedbackmail?.tekst) {
+            parsed.feedbackmail.tekst = parsed.feedbackmail.tekst
+                .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
+                .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
+                .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim()
+        }
+
         // ── Gem i contract_reviews (service role — omgår RLS) ────
         const portalOrgId  = formData.get("orgId")         as string | null
         const portalEmail  = formData.get("memberEmail")   as string | null
@@ -878,38 +921,88 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
                 process.env.SUPABASE_SERVICE_ROLE_KEY!
             )
-            const insertPayload: Record<string, unknown> = {
-                org_id:          saveOrgId,
-                member_name:     memberName ?? null,
-                member_email:    portalEmail ?? null,
-                member_id:       portalUserId ?? null,
-                ai_result:       parsed,
-                reviewed_by:     portalUserId ?? null,
-                status:          "afventer",
-                file_name:       file.name,
-                file_size_bytes: file.size,
-                contract_type:   contractType ?? null,
-                production_type: productionType ?? null,
-                distribution_channels: distributionChannels.length ? distributionChannels : null,
-                producer_name:         producerName ?? null,
-                producer_dfks_id:      formData.get("producerDfksId") ?? null,
-                producer_dfi_id:       formData.get("producerDfiId")  ?? null,
-                producer_overenskomst_bound:
-                    producerOverenskomst === "true"  ? true :
-                    producerOverenskomst === "false" ? false : null,
-                focus_areas:  focusAreas.length ? focusAreas : null,
-                notes:        uploadNotes ?? null,
-                ai_language:  klassifikation?.kontraktsprog ?? null,
+
+            // ── Gem fil i Supabase Storage så re-analyse er mulig ──
+            // Filsti: {orgId}/{timestamp}_{filnavn}
+            let storagePath: string | null = null
+            try {
+                const ts = Date.now()
+                const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+                storagePath = `${saveOrgId}/${ts}_${safeName}`
+                const fileBuffer = Buffer.from(await file.arrayBuffer())
+                const { error: storageErr } = await admin.storage
+                    .from("contract-reviews")
+                    .upload(storagePath, fileBuffer, {
+                        contentType: file.type || "application/octet-stream",
+                        upsert: false,
+                    })
+                if (storageErr) {
+                    console.warn("[gennemgang] Storage upload fejlede (ikke kritisk):", storageErr.message)
+                    storagePath = null
+                }
+            } catch (storageEx) {
+                console.warn("[gennemgang] Storage upload exception (ikke kritisk):", storageEx)
+                storagePath = null
             }
-            const { data: savedReview, error: insertError } = await admin
-                .from("contract_reviews")
-                .insert(insertPayload)
-                .select()
-                .single()
-            if (insertError) {
-                console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+
+            if (existingReviewId) {
+                // Kaldt fra /api/portal/submit — review allerede gemt, kun opdater AI-felter
+                const { error: updateErr } = await admin
+                    .from("contract_reviews")
+                    .update({
+                        ai_result:       parsed,
+                        ai_run_at:       new Date().toISOString(),
+                        ai_language:     klassifikation?.kontraktsprog ?? null,
+                        risk_level:      riskLevel,
+                        should_escalate: shouldEscalate,
+                        ai_status:       "klar",
+                        ...(storagePath ? { storage_path: storagePath } : {}),
+                    })
+                    .eq("id", existingReviewId)
+                if (updateErr) {
+                    console.error("[gennemgang] UPDATE contract_reviews fejl:", updateErr.message)
+                } else {
+                    console.log("[gennemgang] Opdateret review:", existingReviewId)
+                }
             } else {
-                console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id)
+                // Direkte kald (admin-siden) — indsæt ny række
+                const insertPayload: Record<string, unknown> = {
+                    org_id:          saveOrgId,
+                    member_name:     memberName ?? null,
+                    member_email:    portalEmail ?? null,
+                    member_id:       portalUserId ?? null,
+                    ai_result:       parsed,
+                    reviewed_by:     portalUserId ?? null,
+                    status:          "afventer",
+                    ai_status:       "klar",
+                    file_name:       file.name,
+                    file_size_bytes: file.size,
+                    storage_path:    storagePath,
+                    contract_type:   contractType ?? null,
+                    production_type: productionType ?? null,
+                    distribution_channels: distributionChannels.length ? distributionChannels : null,
+                    producer_name:         producerName ?? null,
+                    producer_dfks_id:      formData.get("producerDfksId") ?? null,
+                    producer_dfi_id:       formData.get("producerDfiId")  ?? null,
+                    producer_overenskomst_bound:
+                        producerOverenskomst === "true"  ? true :
+                        producerOverenskomst === "false" ? false : null,
+                    focus_areas:  focusAreas.length ? focusAreas : null,
+                    notes:        uploadNotes ?? null,
+                    ai_language:  klassifikation?.kontraktsprog ?? null,
+                    risk_level:      riskLevel,
+                    should_escalate: shouldEscalate,
+                }
+                const { data: savedReview, error: insertError } = await admin
+                    .from("contract_reviews")
+                    .insert(insertPayload)
+                    .select()
+                    .single()
+                if (insertError) {
+                    console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+                } else {
+                    console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
+                }
             }
         } catch (saveErr) {
             console.error("[gennemgang] Gem fejlede:", saveErr)
@@ -919,6 +1012,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             result: parsed,
             contractText: returnText,
             klassifikation,
+            risk_level: riskLevel,
+            should_escalate: shouldEscalate,
         })
 
     } catch (err: any) {
