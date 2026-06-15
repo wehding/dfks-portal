@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { analyserKontrakt } from "@/lib/analyse"
 
 // POST /api/admin/contracts/[id]/reanalyse
 //
@@ -19,7 +20,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    // Hent review — brug service role så RLS ikke blokerer
     const { data: review } = await adminSupabase
         .from("contract_reviews")
         .select("*")
@@ -28,24 +28,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (!review) return NextResponse.json({ error: "Ikke fundet" }, { status: 404 })
 
-    // Afgør om kaldets content-type indeholder en uploadet fil
     const contentType = req.headers.get("content-type") ?? ""
     const hasUpload = contentType.includes("multipart/form-data")
 
-    let fileBlob: Blob
+    let fileBuffer: Buffer
     let fileName: string
 
     if (hasUpload) {
-        // Tilstand B: fil uploadet direkte i requesten
         const uploadForm = await req.formData()
         const uploaded = uploadForm.get("file") as File | null
         if (!uploaded) {
             return NextResponse.json({ error: "Ingen fil i upload" }, { status: 400 })
         }
-        fileBlob = uploaded
+        fileBuffer = Buffer.from(await uploaded.arrayBuffer())
         fileName = uploaded.name
     } else {
-        // Tilstand A: hent fra storage
         if (!review.storage_path) {
             return NextResponse.json({
                 error: "Filen er ikke gemt i systemet. Brug knappen 'Upload fil til re-analyse'.",
@@ -58,48 +55,63 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (downloadError || !fileData) {
             return NextResponse.json({ error: "Kunne ikke hente fil fra storage" }, { status: 500 })
         }
-        fileBlob = fileData
+        fileBuffer = Buffer.from(await fileData.arrayBuffer())
         fileName = review.file_name ?? "kontrakt.pdf"
     }
 
-    // Byg FormData og kald /api/gennemgang
-    const formData = new FormData()
-    formData.append("file", new File([fileBlob], fileName))
-    if (review.member_name)    formData.append("memberName",    review.member_name)
-    if (review.contract_type)  formData.append("contractType",  review.contract_type)
-    if (review.production_type) formData.append("productionType", review.production_type)
-    if (review.producer_name)  formData.append("producerName",  review.producer_name)
-    if (review.focus_areas?.length) formData.append("focusAreas", review.focus_areas.join(","))
-    if (review.notes)          formData.append("notes",         review.notes)
-    // Bevar org/member-kontekst
-    formData.append("orgId",   review.org_id)
-    if (review.member_id)      formData.append("memberId",      review.member_id)
-    if (review.member_email)   formData.append("memberEmail",   review.member_email)
-
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? `https://${req.headers.get("host")}`
-    const analysisResp = await fetch(`${baseUrl}/api/gennemgang`, {
-        method: "POST",
-        body: formData,
-    })
-
-    if (!analysisResp.ok) {
-        const err = await analysisResp.json().catch(() => ({}))
-        return NextResponse.json({ error: err.error ?? "Analyse fejlede" }, { status: 500 })
+    // Kald analyserKontrakt direkte — ingen intern fetch
+    let analysisResult
+    try {
+        analysisResult = await analyserKontrakt({
+            fileBuffer,
+            fileName,
+            memberName:    review.member_name    ?? undefined,
+            contractType:  review.contract_type  ?? undefined,
+            productionType: review.production_type ?? undefined,
+            producerName:  review.producer_name  ?? undefined,
+            focusAreas:    review.focus_areas    ?? undefined,
+            notes:         review.notes          ?? undefined,
+            orgId:         review.org_id,
+            memberId:      review.member_id      ?? undefined,
+            memberEmail:   review.member_email   ?? undefined,
+        })
+    } catch (err: any) {
+        return NextResponse.json({ error: err.message ?? "Analyse fejlede" }, { status: 500 })
     }
 
-    const analysisData = await analysisResp.json()
+    const { result: parsed, contractText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
-    // Gem nyt resultat (service role — omgår RLS)
+    // Gem ny fil i storage ved upload-tilstand
+    let newStoragePath: string | null = null
+    if (hasUpload) {
+        try {
+            const ts = Date.now()
+            const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
+            newStoragePath = `${review.org_id}/${ts}_${safeName}`
+            const { error: storageErr } = await adminSupabase.storage
+                .from("contract-reviews")
+                .upload(newStoragePath, fileBuffer, {
+                    contentType: "application/octet-stream",
+                    upsert: false,
+                })
+            if (storageErr) {
+                console.warn("[reanalyse] Storage upload fejlede (ikke kritisk):", storageErr.message)
+                newStoragePath = null
+            }
+        } catch (storageEx) {
+            console.warn("[reanalyse] Storage upload exception (ikke kritisk):", storageEx)
+        }
+    }
+
     const { data, error } = await adminSupabase
         .from("contract_reviews")
         .update({
-            ai_result:       analysisData.result,
+            ai_result:       parsed,
             ai_run_at:       new Date().toISOString(),
-            ai_language:     analysisData.klassifikation?.kontraktsprog ?? "da",
-            risk_level:      analysisData.risk_level ?? null,
-            should_escalate: analysisData.should_escalate ?? null,
-            // Opdater storage_path hvis gennemgang gemte filen (ved upload-tilstand)
-            ...(analysisData.storage_path ? { storage_path: analysisData.storage_path } : {}),
+            ai_language:     klassifikation?.kontraktsprog ?? null,
+            risk_level:      riskLevel,
+            should_escalate: shouldEscalate,
+            ...(newStoragePath ? { storage_path: newStoragePath } : {}),
         })
         .eq("id", id)
         .select()
@@ -107,5 +119,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ data, contractText: analysisData.contractText })
+    return NextResponse.json({ data, contractText })
 }
