@@ -115,16 +115,26 @@ function normaliserGul(text: string): string {
         .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
 }
 
+function toGmailHtml(text: string): string {
+    const normalized = normaliserGul(text)
+    return normalized.replace(
+        /<mark[^>]*>([\s\S]*?)<\/mark>/g,
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0"><tr>' +
+        '<td bgcolor="#fef08a" style="padding:6px 10px;border-radius:3px">$1</td>' +
+        "</tr></table>"
+    )
+}
+
 async function copyAsRichText(rawText: string): Promise<void> {
-    const html = normaliserGul(rawText)
-    const htmlMedLinebreaks = html.replace(/\n/g, "<br/>")
+    const gmailHtml = toGmailHtml(rawText).replace(/\n/g, "<br/>")
+    const plainText = normaliserGul(rawText).replace(/<[^>]+>/g, "")
 
     // Forsøg 1: Modern Clipboard API
     if (typeof ClipboardItem !== "undefined") {
         try {
-            const fullHtml = `<html><body>${htmlMedLinebreaks}</body></html>`
+            const fullHtml = `<html><body>${gmailHtml}</body></html>`
             const blob = new Blob([fullHtml], { type: "text/html" })
-            const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
+            const plain = new Blob([plainText], { type: "text/plain" })
             await navigator.clipboard.write([
                 new ClipboardItem({ "text/html": blob, "text/plain": plain })
             ])
@@ -132,9 +142,9 @@ async function copyAsRichText(rawText: string): Promise<void> {
         } catch { /* fortsæt til fallback */ }
     }
 
-    // Forsøg 2: execCommand — mere universelt understøttet for rich text
+    // Forsøg 2: execCommand
     const div = document.createElement("div")
-    div.innerHTML = htmlMedLinebreaks
+    div.innerHTML = gmailHtml
     div.style.cssText = "position:fixed;opacity:0;pointer-events:none"
     document.body.appendChild(div)
     try {
@@ -300,11 +310,11 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        // Wrap i mark-tags så Gmail bevarer den gule farve
-        const gulHtml = gul.split("\n\n").map(p =>
-            `<mark style="background-color:#fef08a">${p.replace(/\n/g, "<br/>")}</mark>`
-        ).join("<br/><br/>")
-        await copyAsRichText(gulHtml)
+        // Wrap i <mark> — toGmailHtml i copyAsRichText konverterer til bgcolor-tabel
+        const gulMedMark = gul.split("\n\n").map(p =>
+            `<mark style="background-color:#fef08a">${p}</mark>`
+        ).join("\n\n")
+        await copyAsRichText(gulMedMark)
         toast.success("Producent-tekst kopieret")
     }
 
