@@ -65,15 +65,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         analysisResult = await analyserKontrakt({
             fileBuffer,
             fileName,
-            memberName:    review.member_name    ?? undefined,
-            contractType:  review.contract_type  ?? undefined,
-            productionType: review.production_type ?? undefined,
-            producerName:  review.producer_name  ?? undefined,
-            focusAreas:    review.focus_areas    ?? undefined,
-            notes:         review.notes          ?? undefined,
-            orgId:         review.org_id,
-            memberId:      review.member_id      ?? undefined,
-            memberEmail:   review.member_email   ?? undefined,
+            memberName:           review.member_name    ?? undefined,
+            contractType:         review.contract_type  ?? undefined,
+            productionType:       review.production_type ?? undefined,
+            distributionChannels: review.distribution_channels ?? undefined,
+            producerName:         review.producer_name  ?? undefined,
+            producerOverenskomst: review.producer_overenskomst_bound === true  ? "true"
+                                : review.producer_overenskomst_bound === false ? "false"
+                                : undefined,
+            focusAreas:           review.focus_areas    ?? undefined,
+            notes:                review.notes          ?? undefined,
+            orgId:                review.org_id,
+            memberId:             review.member_id      ?? undefined,
+            memberEmail:          review.member_email   ?? undefined,
         })
     } catch (err: any) {
         return NextResponse.json({ error: err.message ?? "Analyse fejlede" }, { status: 500 })
