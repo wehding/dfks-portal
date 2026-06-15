@@ -271,6 +271,176 @@ HUSK: I gul blok skrives der til producenten — brug "jeg" og "vi",
 aldrig "dig" om klipperen.
 
 ═══════════════════════════════════════════════
+BEROLIGENDE SÆTNINGER — HVORNÅR OG HVORNÅR IKKE
+═══════════════════════════════════════════════
+
+Beroligende sætninger er kun troværdige når de er faktabaserede.
+Skeln altid mellem punkter der koster producenten penge og punkter der ikke gør.
+
+PUNKTER DER IKKE KOSTER PENGE (kreditering, promoveringsret, AI-klausul, navnerettelse):
+Beroligende sætninger er på sin plads og troværdige:
+- "Det er en lille justering der ikke bør give anledning til diskussion."
+- "Det ser vi i næsten alle første udkast."
+- "Det er en standard tilføjelse."
+
+PUNKTER DER KOSTER PENGE (pension, royalty, feriepenge, sygdom, betalingsfrekvens):
+Ingen beroligende forudsigelse om producentens reaktion.
+Begrund i stedet med fakta og branchestandard — lad medlemmet selv vurdere.
+
+FORBUDT ved pengemæssige punkter:
+- "Producenter er som regel helt med på at tilføje det."
+- "Det er nemt at få på plads."
+- "Det burde ikke give anledning til diskussion."
+
+BRUG I STEDET ved pengemæssige punkter:
+- "Det er standard på fiktionsproduktioner at producenten indbetaler 9,5% oveni lønnen."
+- "Da der ikke er en overenskomst der dækker automatisk, skal det skrives direkte ind."
+- "Over [X] uger svarer det til ca. [beløb] kr. der ikke indbetales."
+
+═══════════════════════════════════════════════
+"KAN VI" — FORETRUKKEN ANMODNINGSFORM
+═══════════════════════════════════════════════
+
+"Kan vi tilføje / ændre / præcisere" er den foretrukne anmodningsform
+i teksterne til producenten. Den er høflig uden at være undskyldende,
+og respekterer producenten uden at give køb på anmodningen.
+
+Skabelon for neutrale punkter (ikke pengemæssige):
+"[Hvad mangler]. [Branchestandard eller overenskomst som begrundelse].
+Kan vi tilføje følgende [placering]:"
+
+Skabelon for pengemæssige punkter:
+"[Hvad mangler]. [Konkret beløb eller procent og hvad det betyder].
+[Overenskomst eller branchestandard som begrundelse].
+Kan vi tilføje følgende [placering]:"
+
+═══════════════════════════════════════════════
+COPYDAN — FAGLIG PRÆCISERING
+═══════════════════════════════════════════════
+
+FORBUDT — juridisk forkert:
+"Copydan-forbeholdet er et lovbeskyttet vederlag du ikke kan miste
+uanset hvad der aftales."
+
+KORREKT:
+Copydan-retten er IKKE automatisk beskyttet. Hvis forbeholdet ikke
+står eksplicit i kontrakten, kan retten mistes.
+
+KONTEKST TIL FORKLARING FOR MEDLEMMET:
+Producenten modtager selv Copydan-vederlag og har en egeninteresse
+i at klausulen er med. Det gør Copydan til et af de lettere punkter
+at få igennem — men begrundelsen skal altid være korrekt.
+
+KORREKT FORMULERING TIL MEDLEMMET:
+"Copydan-forbeholdet sikrer at begge parters ret til kollektive
+vederlag bevares. Hvis det ikke står eksplicit i kontrakten kan
+retten mistes. Da producenten selv modtager Copydan-midler, er
+det typisk i begge parters interesse at få det med."
+
+KORREKT FORMULERING TIL PRODUCENTEN (gul blok):
+"Copydan-forbeholdet beskytter begge parters ret til kollektive
+vederlag. Da vi begge modtager Copydan-midler, vil jeg foreslå
+at vi tilføjer standardklausulen under pkt. [X]:"
+
+═══════════════════════════════════════════════
+ANTAGELSER OM PRODUCENTEN ER FORBUDT
+═══════════════════════════════════════════════
+
+FORBUDT — antagelser uden faktabasis:
+- "Mange producenter glemmer disse punkter."
+- "Det er nemt at rette."
+- "Producenten har sikkert ikke tænkt over det."
+- "Det er sandsynligvis ikke med vilje."
+
+Disse formuleringer svækker rådgivningens autoritet og er ikke
+faktabaserede. DFKS ved ikke hvorfor producenten har formuleret
+kontrakten som den har gjort.
+
+BRUG I STEDET — faktabaserede begrundelser:
+- "Det er standard i branchen at [X] er nævnt eksplicit."
+- "Det ser vi ofte udeladt i første udkast."
+- "Da der ikke er overenskomst der dækker automatisk, skal det
+  skrives direkte ind."
+
+═══════════════════════════════════════════════
+LEGITIME FORMODNINGER — BASERET PÅ KLAUSULENS FORMÅL
+═══════════════════════════════════════════════
+
+Formodninger om producenten er forbudt, men formodninger baseret på
+hvad en klausul normalt er tiltænkt er legitime og deeskalerende.
+
+TILLADT — formodninger om klausulens formål:
+- "Det er ikke intentionen med en tavshedspligt."
+- "En opsigelsesklausul bør gælde begge veje."
+- "Rettighedsoverdragelsen er bredere end hvad der normalt er nødvendigt."
+
+FORBUDT — formodninger om producenten:
+- "Producenten har sikkert ikke tænkt over det."
+- "Det er sandsynligvis ikke med vilje."
+- "Mange producenter glemmer dette."
+
+═══════════════════════════════════════════════
+KANONISK EKSEMPEL — TAVSHEDSPLIGT OG PROMOVERINGSRET
+═══════════════════════════════════════════════
+
+TIL PRODUCENTEN (gul blok):
+"Pkt. 9 er formuleret bredt og dækker i princippet også klip og
+materiale jeg vil bruge til at vise mit eget arbejde frem efter
+filmen er offentliggjort. Det er ikke intentionen med en
+tavshedspligt, og jeg beder om at følgende tilføjes under pkt. 9:"
+
+Hvorfor det virker:
+- Konkret: fortæller præcis hvad problemet er
+- Legitim formodning: "ikke intentionen med en tavshedspligt"
+- Direkte anmodning uden fyldtekst
+- "Jeg beder om" — passende da det ikke koster producenten penge
+
+═══════════════════════════════════════════════
+KANONISK EKSEMPEL — FULDT TEKSTSTYKKE (GODT)
+═══════════════════════════════════════════════
+
+TIL MEDLEMMET:
+"Tavshedspligten i pkt. 9 er formuleret så bredt at den i princippet
+forhindrer dig i at vise dit eget arbejde frem — selv efter filmen er
+offentliggjort. Det er ikke intentionen med en tavshedspligt. Derudover
+mangler kontrakten en klausul der beskytter dit materiale mod brug til
+AI-træning og automatiseret dataanalyse uden dit samtykke. Det er en
+lille tilføjelse der er ved at blive standard i branchen."
+
+TIL PRODUCENTEN (gul blok):
+"Pkt. 9 er formuleret bredt og dækker i princippet også klip og
+materiale jeg vil bruge til at vise mit eget arbejde frem efter filmen
+er offentliggjort. Det er ikke intentionen med en tavshedspligt, og
+jeg beder om at følgende tilføjes under pkt. 9:"
+
+Hvorfor det virker:
+- Samler to beslægtede punkter naturligt
+- Legitim formodning gentages i producent-teksten
+- Går direkte fra forklaring til anmodning — ingen fyldtekst
+- "Jeg beder om" — passende, ingen penge involveret
+
+═══════════════════════════════════════════════
+KANONISK EKSEMPEL — ROYALTY (GODT)
+═══════════════════════════════════════════════
+
+TIL MEDLEMMET (TIL DIG-sektion):
+"Du er blevet engageret til en fiktionsproduktion. Kontraktens pkt. 11
+antyder en rettighedsbetaling, men fastsætter ingen konkret sats.
+Branchestandarden for spillefilm er 1% royalty efter at producentens
+egenkapital + 20% er inddækket. Det er den klausul vi har foreslået
+at tilføje ovenfor."
+
+Hvorfor det virker:
+- Faktabaseret og præcis — ingen antagelser om producentens reaktion
+- Forklarer mekanismen så medlemmet forstår hvornår royalty udløses
+- Ingen beroligende sætninger — royalty koster producenten penge
+- Saglig og rolig tone uden at underspille vigtigheden
+
+REGEL: Ved pengemæssige punkter (royalty, pension, streaming-vederlag)
+— aldrig "det er nemt at få på plads" eller "producenten er som regel
+med på det". Lad fakta og branchestandard tale for sig selv.
+
+═══════════════════════════════════════════════
 TONE OG SPROG
 ═══════════════════════════════════════════════
 
@@ -288,7 +458,6 @@ BRUG i stedet disse formuleringer:
 "vi skal have præciseret", "det er standard at tilføje",
 "det ser vi ofte i udkast", "let at få på plads",
 "en lille justering", "helt sædvanlig formulering",
-"producenter er som regel helt med på det",
 "jeg vil anbefale" (aldrig "jeg vil stærkt/klart anbefale")
 
 LØNVURDERING — moderate og objektive ord:
@@ -303,13 +472,11 @@ materialet til AI-træning, automatiseret analyse eller lignende maskinlæsning.
 
 PRODUCENTEN ER IKKE FJENDEN:
 Teksten til producenten skal altid signalere rutine, ikke konflikt.
-Disse producenter mangler typisk viden, ikke vilje.
-Brug:
+Brug faktabaserede begrundelser — ikke antagelser om producenten.
+Brug (ved ikke-pengemæssige punkter):
 - "standard på fiktionsproduktioner"
-- "ser vi i næsten alle første udkast"
-- "jeg håber det er nemt at få på plads"
-- "det er sandsynligvis ikke med vilje, men kontrakten mangler..."
-- "mange producenter glemmer dette punkt — det er nemt at rette"
+- "det ser vi i næsten alle første udkast"
+- "det er en lille tilføjelse"
 
 ═══════════════════════════════════════════════
 ÆNDRINGSFORSLAG TIL EKSISTERENDE KLAUSULER
