@@ -133,22 +133,77 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
-    const parts = text.split(GUL_RE)
-    return parts.map((part, i) => {
-        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
-        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
-        if (isLegacy || isNew) {
-            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
-            return (
-                <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">
-                    {inner}
-                </mark>
-            )
-        }
-        return <span key={i}>{part}</span>
-    })
+function stripHtml(text: string): string {
+    return text.replace(/<[^>]+>/g, "")
+}
+
+/** Normaliser legacy [GUL]-formater til <mark> */
+function normaliserGul(text: string): string {
+    return text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+}
+
+/**
+ * Konverter <mark>-tags til Gmail-kompatibel tabel-celle med bgcolor.
+ * Gmail stripper inline style-attributter men respekterer bgcolor på <td>.
+ */
+function toGmailHtml(text: string): string {
+    const normalized = normaliserGul(text)
+    return normalized.replace(
+        /<mark[^>]*>([\s\S]*?)<\/mark>/g,
+        '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0"><tr>' +
+        '<td bgcolor="#fef08a" style="padding:6px 10px;border-radius:3px">$1</td>' +
+        "</tr></table>"
+    )
+}
+
+async function copyAsRichText(rawText: string): Promise<void> {
+    const gmailHtml = toGmailHtml(rawText).replace(/\n/g, "<br/>")
+    const plainText = stripHtml(normaliserGul(rawText))
+
+    // Forsøg 1: Modern Clipboard API (text/html + text/plain)
+    if (typeof ClipboardItem !== "undefined") {
+        try {
+            const fullHtml = `<html><body>${gmailHtml}</body></html>`
+            const blob = new Blob([fullHtml], { type: "text/html" })
+            const plain = new Blob([plainText], { type: "text/plain" })
+            await navigator.clipboard.write([
+                new ClipboardItem({ "text/html": blob, "text/plain": plain })
+            ])
+            return
+        } catch { /* fortsæt til fallback */ }
+    }
+
+    // Forsøg 2: execCommand — mere universelt understøttet for rich text
+    const div = document.createElement("div")
+    div.innerHTML = gmailHtml
+    div.style.cssText = "position:fixed;opacity:0;pointer-events:none"
+    document.body.appendChild(div)
+    try {
+        const sel = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(div)
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        document.execCommand("copy")
+        sel?.removeAllRanges()
+    } finally {
+        document.body.removeChild(div)
+    }
+}
+
+function renderMailWithHighlights(text: string): React.ReactNode {
+    // Normaliser alle gul-formater til <mark> og render som HTML
+    const normalized = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+    return (
+        <span
+            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
+            className="whitespace-pre-wrap"
+        />
+    )
 }
 
 function removeMailSection(text: string, sectionNum: number): string {
@@ -168,6 +223,10 @@ function removeMailSection(text: string, sectionNum: number): string {
 }
 
 function extractGulText(text: string): string {
+    // Ny format: <mark ...>...</mark>
+    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
+    if (htmlMatches.length) return htmlMatches.join("\n\n")
+    // Legacy formater
     const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
     const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
     return [...legacyMatches, ...newMatches].join("\n\n")
@@ -600,19 +659,21 @@ function ManuelGennemgang() {
     const handleOpenMail = () => {
         const to = memberEmail ? encodeURIComponent(memberEmail) : ""
         const subject = encodeURIComponent(mailSubject)
-        const body = encodeURIComponent(mailText)
+        // mailto: understøtter ikke HTML — strip tags
+        const body = encodeURIComponent(stripHtml(mailText))
         window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
     }
 
-    const handleCopyMail = () => {
-        navigator.clipboard.writeText(mailText)
+    const handleCopyMail = async () => {
+        await copyAsRichText(mailText)
         toast.success("Mail kopieret til udklipsholder")
     }
 
-    const handleCopyGul = () => {
+    const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        navigator.clipboard.writeText(gul)
+        // Gul-tekst kopieres som ren tekst — ingen markup til producenten
+        await navigator.clipboard.writeText(gul)
         toast.success("Producent-tekst kopieret (kun gule afsnit)")
     }
 
