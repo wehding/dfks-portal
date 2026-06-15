@@ -76,7 +76,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (review.member_id)      formData.append("memberId",      review.member_id)
     if (review.member_email)   formData.append("memberEmail",   review.member_email)
 
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? `https://${req.headers.get("host")}`
+    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null)
+        ?? `https://${req.headers.get("host")}`
     const analysisResp = await fetch(`${baseUrl}/api/gennemgang`, {
         method: "POST",
         body: formData,
