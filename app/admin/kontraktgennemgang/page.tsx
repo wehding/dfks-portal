@@ -133,22 +133,17 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
-    const parts = text.split(GUL_RE)
-    return parts.map((part, i) => {
-        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
-        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
-        if (isLegacy || isNew) {
-            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
-            return (
-                <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">
-                    {inner}
-                </mark>
-            )
-        }
-        return <span key={i}>{part}</span>
-    })
+function renderMailWithHighlights(text: string): React.ReactNode {
+    // Normaliser alle gul-formater til <mark> og render som HTML
+    const normalized = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+    return (
+        <span
+            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
+            className="whitespace-pre-wrap"
+        />
+    )
 }
 
 function removeMailSection(text: string, sectionNum: number): string {
@@ -168,6 +163,10 @@ function removeMailSection(text: string, sectionNum: number): string {
 }
 
 function extractGulText(text: string): string {
+    // Ny format: <mark ...>...</mark>
+    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
+    if (htmlMatches.length) return htmlMatches.join("\n\n")
+    // Legacy formater
     const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
     const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
     return [...legacyMatches, ...newMatches].join("\n\n")
