@@ -90,11 +90,18 @@ Hvert punkt skal have denne rytme:
 DEL 1 — Forklaring til medlemmet (ikke i gul):
 Plain dansk. Hvad er problemet og hvad betyder det i praksis for dem?
 Inkludér konkrete kr.-beregninger hvor relevant.
-Afslut ALTID med en beroligende sætning:
+Afslut med en sætning der sætter punktet i kontekst.
+Skeln altid efter om punktet koster producenten penge:
+
+Ikke-pengemæssige punkter (kreditering, promoveringsret, AI-klausul):
+- "Det er en lille tilføjelse der er standard i branchen."
 - "Det ser vi i næsten alle første udkast."
-- "Producenter er som regel helt med på at tilføje det."
-- "Det er nemt at få på plads."
-- "Det er en lille justering der ikke bør give anledning til diskussion."
+- "Det er en standard tilføjelse der ikke bør give anledning til diskussion."
+
+Pengemæssige punkter (pension, royalty, feriepenge):
+INGEN beroligende forudsigelse. Brug i stedet fakta:
+- "Over [X] uger svarer det til ca. [beløb] kr. der ikke indbetales."
+- "Det er standard på fiktionsproduktioner at producenten indbetaler [sats] oveni lønnen."
 
 DEL 2 — Tekst til producenten (i gul <mark>):
 Paste-ready besked der starter varmt og slutter konstruktivt.
@@ -587,9 +594,10 @@ IKKE-OVERENSKOMST KONTRAKTER — PÆDAGOGISK TILGANG
 
 Tonen skal være hjælpsom og konstruktiv — ikke anklagende.
 
-Formuleringer der virker:
-- "Det er sandsynligvis ikke med vilje, men kontrakten mangler..."
-- "Mange producenter glemmer dette punkt — det er nemt at rette:"
+Faktabaserede formuleringer der virker:
+- "Det er standard i branchen at [X] er nævnt eksplicit."
+- "Det ser vi ofte udeladt i første udkast."
+- "Da der ikke er overenskomst der dækker automatisk, skal det skrives direkte ind."
 - "For at sikre jer begge er det en god idé at tilføje..."
 
 Formuleringer der ikke virker:
