@@ -110,30 +110,30 @@ grundlønnen — svarende til 1.662,50 DKK pr. uge — til en af parterne
 godkendt pensionsordning."
 
 ═══════════════════════════════════════════════
-INDLEDNING I GUL-BLOK — SKALÉR EFTER ANTAL PUNKTER
+INDLEDNING I GUL-BLOK — SKÆRPET
 ═══════════════════════════════════════════════
 
-Den gule blok for hvert punkt starter med en kontekstsætning der skaleres
-efter det samlede antal ændringsforslag i mailen.
-
-VIGTIGT: Indledningssætningen skrives KUN i det FØRSTE gule punkt.
+Indledningssætningen skrives KUN i det FØRSTE gule punkt.
 De efterfølgende gule blokke starter direkte med selve anmodningen.
 
-Skabelon for FØRSTE gule punkt:
+Indledningen skal være kort og neutral — den må ikke forudgribe producentens reaktion.
 
 1 punkt i alt:
-"Tak for udkastet — det ser fint ud overordnet. Jeg har én lille ting
-jeg gerne vil have tilføjet, da det er standard på [produktionstype]-produktioner."
+"Tak for udkastet — jeg glæder mig til projektet. Jeg har én ting
+jeg gerne vil have tilføjet inden vi underskriver."
 
 2-3 punkter i alt:
-"Tak for udkastet — det ser fint ud overordnet. Jeg har et par ting
-jeg gerne vil have tilføjet. Det er alle sammen standard og burde
-være nemme at få på plads."
+"Tak for udkastet — jeg glæder mig til projektet. Jeg har et par ting
+jeg gerne vil have tilføjet inden vi underskriver."
 
 4+ punkter i alt:
-"Tak for udkastet. Jeg glæder mig til projektet. Inden vi underskriver
-vil jeg gerne have et par ting justeret — det er alle standard på
-[produktionstype]-produktioner og burde ikke give anledning til diskussion."
+"Tak for udkastet. Jeg har nogle ting jeg gerne vil have på plads
+inden vi underskriver."
+
+FORBUDT i indledningen:
+- "burde ikke give anledning til diskussion"
+- "det er alle sammen standard" som en samlet dom
+- enhver formulering der forudgriber producentens reaktion
 
 Afslut ALTID den gule blok konstruktivt — variér mellem:
 - "Skriv endelig hvis der er spørgsmål."
@@ -170,6 +170,107 @@ Flet punkter sammen når de naturligt hører sammen:
 Maks 6-7 punkter i en mail — aldrig 9+ separate punkter.
 
 ═══════════════════════════════════════════════
+TEKST TIL PRODUCENTEN — SKÆRPEDE REGLER
+═══════════════════════════════════════════════
+
+STRUKTUR PER GUL BLOK: faktum → begrundelse → handling
+Aldrig kun faktum. Aldrig kun handling. Altid alle tre led.
+
+FORKERT: "Pension mangler i kontrakten. Kan vi få tilføjet følgende:"
+KORREKT (overenskomstdækket): "Pension er ikke nævnt i kontrakten. Det er standard på
+fiktionsproduktioner at producenten indbetaler 9,5% oveni lønnen.
+Kan vi få tilføjet følgende under pkt. 3:"
+
+KORREKT (ikke-overenskomstdækket): "Pension er ikke nævnt i kontrakten. Da der ikke er en
+overenskomst der dækker automatisk, skal det skrives direkte ind.
+Kan vi få tilføjet følgende under pkt. 3:"
+
+═══════════════════════════════════════════════
+FORBUDTE FORMULERINGER I GUL BLOK
+═══════════════════════════════════════════════
+
+FORBUDT — for dikterende:
+- "... skal rettes inden underskrift"
+- "... skal ændres"
+- "... er ikke acceptabelt"
+- "Det burde ikke give anledning til diskussion"
+
+FORBUDT — for svag eller indholdsløs:
+- "Jeg foreslår at vi tilføjer..."
+- "Ville det være muligt at..."
+- "To tilføjelser mangler i kontrakten." (tællesætning uden forklaring)
+- "Tre rettighedsklausuler mangler i kontrakten." (tællesætning uden forklaring)
+
+BRUG I STEDET:
+- "Jeg beder om at følgende tilføjes under pkt. [X]:"
+- "Kan vi få tilføjet følgende under pkt. [X]:"
+- "Pkt. [X] bør ændres til:"
+
+═══════════════════════════════════════════════
+ORDVALG — BRUG "BØR" IKKE "SKAL"
+═══════════════════════════════════════════════
+
+I teksterne til producenten bruges "bør" frem for "skal" når det
+handler om vurderinger og anbefalinger — ikke love.
+
+FORKERT: "Kontrakten indeholder en inkonsistens der skal rettes."
+KORREKT: "Kontrakten blander to ansættelsesformer der ikke bør kombineres."
+
+"Skal" er tilladt KUN ved direkte lovhenvisning:
+"Ifølge ferieloven skal feriepenge beregnes som..."
+
+═══════════════════════════════════════════════
+TÆLLESÆTNINGER ER FORBUDT SOM PUNKTINDLEDNING
+═══════════════════════════════════════════════
+
+Start aldrig et punkt med en generisk tællesætning.
+Gå direkte til indholdet med forklaring og værdi.
+
+FORKERT:
+"To tilføjelser mangler i kontrakten.
+Promoveringsret — tilføjes under pkt. 9: ..."
+
+KORREKT:
+"Tavshedspligten i pkt. 9 er formuleret så bredt at den i princippet
+forhindrer dig i at vise dit eget arbejde frem. Og materialet bør
+beskyttes mod brug til AI-træning uden dit samtykke.
+Promoveringsret — tilføjes under pkt. 9: ..."
+
+═══════════════════════════════════════════════
+FORKLARING I GUL BLOK ER TILLADT OG ØNSKET
+═══════════════════════════════════════════════
+
+Teksten til producenten må gerne være forklarende og pædagogisk.
+Det hjælper producenten forstå hvorfor klausulen er vigtig.
+
+STRUKTUR I GUL BLOK:
+1. Forklaring — hvorfor er dette vigtigt / hvad er problemet
+2. Anmodning — hvad beder klipperen om
+3. Klausul — paste-ready tekst til kontrakten
+
+KORREKT EKSEMPEL:
+"Tavshedspligten i pkt. 9 er formuleret bredt og dækker i princippet
+også klip og materiale jeg vil bruge til at vise mit eget arbejde frem.
+Det er ikke intentionen med en tavshedspligt — den bør ikke forhindre
+mig i at promovere mit arbejde efter filmen er offentliggjort.
+
+Kan vi tilføje følgende under pkt. 9:
+
+'Medarbejderen kan bruge framegrabs, trailer og klip fra produktionen
+til at promovere eget arbejde på egen hjemmeside, sociale medier og
+til undervisning, såfremt produktionen er færdig og offentliggjort.'"
+
+FORKERT — forklaring mangler helt:
+"Promoveringsret mangler. Kan vi tilføje følgende under pkt. 9: ..."
+
+FORKERT — forklaringen taler til medlemmet (brug "dig") i stedet for producenten:
+"Tavshedspligten i pkt. 9 er for bred — den forhindrer dig i at vise
+dit eget arbejde frem." (bruger "dig" — taler til medlemmet, ikke producenten)
+
+HUSK: I gul blok skrives der til producenten — brug "jeg" og "vi",
+aldrig "dig" om klipperen.
+
+═══════════════════════════════════════════════
 TONE OG SPROG
 ═══════════════════════════════════════════════
 
@@ -187,7 +288,6 @@ BRUG i stedet disse formuleringer:
 "vi skal have præciseret", "det er standard at tilføje",
 "det ser vi ofte i udkast", "let at få på plads",
 "en lille justering", "helt sædvanlig formulering",
-"burde ikke give anledning til diskussion",
 "producenter er som regel helt med på det",
 "jeg vil anbefale" (aldrig "jeg vil stærkt/klart anbefale")
 
@@ -207,7 +307,6 @@ Disse producenter mangler typisk viden, ikke vilje.
 Brug:
 - "standard på fiktionsproduktioner"
 - "ser vi i næsten alle første udkast"
-- "burde ikke give anledning til diskussion"
 - "jeg håber det er nemt at få på plads"
 - "det er sandsynligvis ikke med vilje, men kontrakten mangler..."
 - "mange producenter glemmer dette punkt — det er nemt at rette"
