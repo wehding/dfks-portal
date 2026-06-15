@@ -133,6 +133,23 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
+async function copyAsRichText(html: string): Promise<void> {
+    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
+    try {
+        const blob = new Blob([fullHtml], { type: "text/html" })
+        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
+        await navigator.clipboard.write([
+            new ClipboardItem({ "text/html": blob, "text/plain": plain })
+        ])
+    } catch {
+        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
+    }
+}
+
+function stripHtml(text: string): string {
+    return text.replace(/<[^>]+>/g, "")
+}
+
 function renderMailWithHighlights(text: string): React.ReactNode {
     // Normaliser alle gul-formater til <mark> og render som HTML
     const normalized = text
@@ -599,19 +616,21 @@ function ManuelGennemgang() {
     const handleOpenMail = () => {
         const to = memberEmail ? encodeURIComponent(memberEmail) : ""
         const subject = encodeURIComponent(mailSubject)
-        const body = encodeURIComponent(mailText)
+        // mailto: understøtter ikke HTML — strip tags
+        const body = encodeURIComponent(stripHtml(mailText))
         window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
     }
 
-    const handleCopyMail = () => {
-        navigator.clipboard.writeText(mailText)
+    const handleCopyMail = async () => {
+        await copyAsRichText(mailText)
         toast.success("Mail kopieret til udklipsholder")
     }
 
-    const handleCopyGul = () => {
+    const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        navigator.clipboard.writeText(gul)
+        // Gul-tekst kopieres som ren tekst — ingen markup til producenten
+        await navigator.clipboard.writeText(gul)
         toast.success("Producent-tekst kopieret (kun gule afsnit)")
     }
 

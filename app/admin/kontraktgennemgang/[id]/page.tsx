@@ -222,6 +222,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     // Rens mailtekst for eventuelle risikovurderingslinjer inden afsendelse
     function cleanMailText(text: string): string {
         return text
+            .replace(/<[^>]+>/g, "")           // strip HTML-tags (mark, br, osv.)
             .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
             .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
             .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
