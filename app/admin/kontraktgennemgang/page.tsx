@@ -133,21 +133,50 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-async function copyAsRichText(html: string): Promise<void> {
-    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
-    try {
-        const blob = new Blob([fullHtml], { type: "text/html" })
-        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
-        await navigator.clipboard.write([
-            new ClipboardItem({ "text/html": blob, "text/plain": plain })
-        ])
-    } catch {
-        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
-    }
+function normaliserGul(text: string): string {
+    // Konverter alle gul-formater til <mark> så clipboard og mailto er konsistent
+    return text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
 }
 
 function stripHtml(text: string): string {
     return text.replace(/<[^>]+>/g, "")
+}
+
+async function copyAsRichText(rawText: string): Promise<void> {
+    const html = normaliserGul(rawText)
+    const htmlMedLinebreaks = html.replace(/\n/g, "<br/>")
+
+    // Forsøg 1: Modern Clipboard API (text/html + text/plain)
+    if (typeof ClipboardItem !== "undefined") {
+        try {
+            const fullHtml = `<html><body>${htmlMedLinebreaks}</body></html>`
+            const blob = new Blob([fullHtml], { type: "text/html" })
+            const plain = new Blob([stripHtml(html)], { type: "text/plain" })
+            await navigator.clipboard.write([
+                new ClipboardItem({ "text/html": blob, "text/plain": plain })
+            ])
+            return
+        } catch { /* fortsæt til fallback */ }
+    }
+
+    // Forsøg 2: execCommand — mere universelt understøttet for rich text
+    const div = document.createElement("div")
+    div.innerHTML = htmlMedLinebreaks
+    div.style.cssText = "position:fixed;opacity:0;pointer-events:none"
+    document.body.appendChild(div)
+    try {
+        const sel = window.getSelection()
+        const range = document.createRange()
+        range.selectNodeContents(div)
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        document.execCommand("copy")
+        sel?.removeAllRanges()
+    } finally {
+        document.body.removeChild(div)
+    }
 }
 
 function renderMailWithHighlights(text: string): React.ReactNode {
