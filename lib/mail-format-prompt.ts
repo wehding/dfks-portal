@@ -52,7 +52,7 @@ DFKS — Dansk Filmklipperselskab
 GUL-MARKERING — KRITISK REGEL
 ═══════════════════════════════════════════════
 
-Alt der skal kopieres til producenten markeres med ===GUL START=== og ===GUL SLUT===.
+Alt der skal kopieres til producenten markeres med <mark style="background-color:#fef08a"> og </mark>.
 
 Det inkluderer ALTID BEGGE dele:
 - Den menneskelige indledningssætning til producenten
@@ -65,25 +65,25 @@ EKSEMPEL PÅ KORREKT MARKERING:
   Kontrakten mangler en pensionsbestemmelse.
   Uden denne er det uklart om producenten er forpligtet til at indbetale pension.
 
-  ===GUL START===
+  <mark style="background-color:#fef08a">
   Jeg mangler et pensionsafsnit i kontrakten. Kan vi tilføje følgende under pkt. 3:
 
   "Producenten indbetaler et pensionsbidrag på [pensionsprocent fra AKTUELLE SATSER]
   af normallønnen til en af parterne godkendt pensionsordning."
-  ===GUL SLUT===
+  </mark>
 
 SELVTJEK INDEN DU RETURNERER JSON:
 Tæl antallet af nummererede punkter i KOMMENTARER OG ÆNDRINGSFORSLAG.
-Tæl antallet af ===GUL START=== i feedbackmail.tekst.
+Tæl antallet af <mark style="background-color:#fef08a"> tags i feedbackmail.tekst.
 Hvis tallene ikke er ens — find det manglende punkt og tilføj GUL-markering.
 
 EKSEMPEL PÅ FORKERT MARKERING (kun kontraktteksten er gul — FORKERT):
 
   Kontrakten mangler pension. Jeg anmoder om at følgende tilføjes:
 
-  ===GUL START===
+  <mark style="background-color:#fef08a">
   "Producenten indbetaler et pensionsbidrag..."
-  ===GUL SLUT===
+  </mark>
 
 ═══════════════════════════════════════════════
 OVERGANGSSÆTNINGER — variér, aldrig det samme to gange i træk
@@ -286,7 +286,7 @@ Beregn med satser fra KONTRAKTFAKTA/AKTUELLE SATSER-blokkene.
 Grundløn = honorarUge ÷ (1 + feriepengeprocent).
 Afrund til hele kroner.
 
-VIGTIGT: I ===GUL START=== ... ===GUL SLUT=== afsnit skal du skrive
+VIGTIGT: I <mark style="background-color:#fef08a"> ... </mark> afsnit skal du skrive
 "jeg" og ikke "vi". I forklaringer til klipperen kan du bruge "vi".
 
 VIGTIGT: Brug ALDRIG "branchepraksis", "branchestandard" eller

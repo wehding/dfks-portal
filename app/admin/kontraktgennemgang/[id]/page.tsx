@@ -85,24 +85,43 @@ const VERDICT_CONFIG = {
     kritisk:   { label: "✗ Kritisk",        class: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800" },
 }
 
-function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
-    const parts = text.split(GUL_RE)
-    return parts.map((part, i) => {
-        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
-        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
-        if (isLegacy || isNew) {
-            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
-            return <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">{inner}</mark>
-        }
-        return <span key={i}>{part}</span>
-    })
+function renderMailWithHighlights(text: string): React.ReactNode {
+    // Ny format: <mark style="background-color:#fef08a">...</mark>
+    // Legacy: [GUL]...[/GUL] og ===GUL START===...===GUL SLUT===
+    const normalized = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+    return (
+        <span
+            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
+            className="whitespace-pre-wrap"
+        />
+    )
 }
 
 function extractGulText(text: string): string {
+    // Ny format
+    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
+    if (htmlMatches.length) return htmlMatches.join("\n\n")
+    // Legacy
     const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
     const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
     return [...legacyMatches, ...newMatches].join("\n\n")
+}
+
+async function copyAsRichText(html: string): Promise<void> {
+    // Konverter newlines til <br> og wrap i html-body
+    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
+    try {
+        const blob = new Blob([fullHtml], { type: "text/html" })
+        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
+        await navigator.clipboard.write([
+            new ClipboardItem({ "text/html": blob, "text/plain": plain })
+        ])
+    } catch {
+        // Fallback: kopier som plain text
+        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
+    }
 }
 
 function highlightText(text: string, quotes: string[], activeQuote: string | null): string {
@@ -251,10 +270,14 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         setReanalysing(false)
     }
 
-    const handleCopyGul = () => {
+    const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        navigator.clipboard.writeText(gul)
+        // Wrap i mark-tags så Gmail bevarer den gule farve
+        const gulHtml = gul.split("\n\n").map(p =>
+            `<mark style="background-color:#fef08a">${p.replace(/\n/g, "<br/>")}</mark>`
+        ).join("<br/><br/>")
+        await copyAsRichText(gulHtml)
         toast.success("Producent-tekst kopieret")
     }
 
@@ -581,7 +604,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             >
                                 {mailEditMode ? <><Eye className="h-3 w-3" /> Vis</> : <><Pencil className="h-3 w-3" /> Rediger</>}
                             </button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={() => { navigator.clipboard.writeText(mailText); toast.success("Mail kopieret") }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={async () => { await copyAsRichText(mailText); toast.success("Mail kopieret") }}>
                                 <Copy className="h-3 w-3" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Åbn i mailprogram" onClick={handleOpenMail}>

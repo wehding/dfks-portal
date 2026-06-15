@@ -196,7 +196,7 @@ function byggAbsolutteRegler(
         : "[ikke fundet i kontrakt]"
 
     const sprogRegel = klassifikation.kontraktsprog === "en"
-        ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er markeret med ===GUL START=== og ===GUL SLUT=== skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
+        ? "🌐 ENGELSK KONTRAKT: Mailen til medlemmet skrives på DANSK som normalt. KUN de tekststykker der er indpakket i <mark style=\"background-color:#fef08a\"> og </mark> skrives på ENGELSK — både den menneskelige indledningssætning og kontraktteksten der foreslås. TIL DIG-sektionen skrives på dansk."
         : "✓ Dansk kontrakt — skriv alt på dansk."
 
     const loenTypeRegel = klassifikation.loen_type === "fast_total"
@@ -316,7 +316,7 @@ Returner KUN gyldig JSON uden markdown-backticks:
   ],
   "feedbackmail": {
     "emne": "string",
-    "tekst": "string (den komplette mailbody med ===GUL START===/===GUL SLUT=== markering)"
+    "tekst": "string (den komplette mailbody — gule producent-afsnit indpakkes i <mark style=\"background-color:#fef08a\"> og </mark>)"
   },
   "samlet_vurdering": "godkendt|forbehold|kritisk",
   "risk_level": "LAV|MELLEM|HØJ",
