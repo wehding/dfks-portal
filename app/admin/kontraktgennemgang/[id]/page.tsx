@@ -85,24 +85,23 @@ const VERDICT_CONFIG = {
     kritisk:   { label: "✗ Kritisk",        class: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800" },
 }
 
-function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
-    const parts = text.split(GUL_RE)
-    return parts.map((part, i) => {
-        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
-        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
-        if (isLegacy || isNew) {
-            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
-            return <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">{inner}</mark>
-        }
-        return <span key={i}>{part}</span>
-    })
+function renderMailWithHighlights(text: string): React.ReactNode {
+    // Normaliser legacy tokens til span — ny kode outputter span direkte
+    const html = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/\n/g, "<br/>")
+    return <span dangerouslySetInnerHTML={{ __html: html }} className="whitespace-pre-wrap" />
 }
 
 function extractGulText(text: string): string {
-    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
-    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
-    return [...legacyMatches, ...newMatches].join("\n\n")
+    // Span-format (nyt)
+    const spanMatches = [...text.matchAll(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1].trim())
+    if (spanMatches.length) return spanMatches.join("\n\n")
+    // Legacy tokens
+    const legacy = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const gul = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    return [...legacy, ...gul].join("\n\n")
 }
 
 function highlightText(text: string, quotes: string[], activeQuote: string | null): string {
@@ -225,16 +224,27 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         setReanalysing(false)
     }
 
-    const handleCopyGul = () => {
+    const copyRichText = async (html: string) => {
+        const plain = html.replace(/<[^>]+>/g, "")
+        try {
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([`<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })])
+        } catch { await navigator.clipboard.writeText(plain) }
+    }
+
+    const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        navigator.clipboard.writeText(gul)
+        await copyRichText(gul)
         toast.success("Producent-tekst kopieret")
     }
 
     const handleOpenMail = () => {
+        const plain = mailText.replace(/<[^>]+>/g, "")
         const to = review?.member_email ? encodeURIComponent(review.member_email) : ""
-        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(mailText)}`
+        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(plain)}`
     }
 
     // ── Afslut og sæt status ──────────────────────────────────
@@ -526,7 +536,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             >
                                 {mailEditMode ? <><Eye className="h-3 w-3" /> Vis</> : <><Pencil className="h-3 w-3" /> Rediger</>}
                             </button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={() => { navigator.clipboard.writeText(mailText); toast.success("Mail kopieret") }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={async () => { await copyRichText(mailText); toast.success("Mail kopieret") }}>
                                 <Copy className="h-3 w-3" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Åbn i mailprogram" onClick={handleOpenMail}>

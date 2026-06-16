@@ -133,22 +133,12 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-function renderMailWithHighlights(text: string): React.ReactNode[] {
-    const GUL_RE = /(\[GUL\][\s\S]*?\[\/GUL\]|===GUL START===[\s\S]*?===GUL SLUT===)/g
-    const parts = text.split(GUL_RE)
-    return parts.map((part, i) => {
-        const isLegacy = part.startsWith("[GUL]") && part.endsWith("[/GUL]")
-        const isNew = part.startsWith("===GUL START===") && part.endsWith("===GUL SLUT===")
-        if (isLegacy || isNew) {
-            const inner = isLegacy ? part.slice(5, -6) : part.slice(15, -14)
-            return (
-                <mark key={i} className="bg-yellow-200 dark:bg-yellow-700/50 text-foreground rounded-sm px-0.5">
-                    {inner}
-                </mark>
-            )
-        }
-        return <span key={i}>{part}</span>
-    })
+function renderMailWithHighlights(text: string): React.ReactNode {
+    const html = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/\n/g, "<br/>")
+    return <span dangerouslySetInnerHTML={{ __html: html }} className="whitespace-pre-wrap" />
 }
 
 function removeMailSection(text: string, sectionNum: number): string {
@@ -168,9 +158,11 @@ function removeMailSection(text: string, sectionNum: number): string {
 }
 
 function extractGulText(text: string): string {
-    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
-    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
-    return [...legacyMatches, ...newMatches].join("\n\n")
+    const spanMatches = [...text.matchAll(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1].trim())
+    if (spanMatches.length) return spanMatches.join("\n\n")
+    const legacy = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const gul = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    return [...legacy, ...gul].join("\n\n")
 }
 
 // ── Indbakke-komponent ────────────────────────────────────────
@@ -539,15 +531,28 @@ function ManuelGennemgang() {
         window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
     }
 
-    const handleCopyMail = () => {
-        navigator.clipboard.writeText(mailText)
+    const handleCopyMail = async () => {
+        const html = mailText.replace(/\n/g, "<br/>")
+        const plain = mailText.replace(/<[^>]+>/g, "")
+        try {
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([`<html><body>${html}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })])
+        } catch { await navigator.clipboard.writeText(plain) }
         toast.success("Mail kopieret til udklipsholder")
     }
 
-    const handleCopyGul = () => {
+    const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        navigator.clipboard.writeText(gul)
+        const plain = gul.replace(/<[^>]+>/g, "")
+        try {
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([`<html><body>${gul.replace(/\n/g, "<br/>")}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })])
+        } catch { await navigator.clipboard.writeText(plain) }
         toast.success("Producent-tekst kopieret (kun gule afsnit)")
     }
 

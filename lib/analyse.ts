@@ -22,7 +22,8 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 import { COMPLIANCE_EXTRACT_PROMPT } from "@/lib/compliance-extract-prompt"
 import { MAIL_GENERATION_PROMPT } from "@/lib/mail-generation-prompt"
-import type { ComplianceExtract } from "@/lib/compliance-types"
+import { VOICE_EXAMPLES_DEFAULT } from "@/lib/voice-examples"
+import type { ComplianceExtract, CompliancePoint } from "@/lib/compliance-types"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -89,6 +90,48 @@ async function callAnthropic(params: {
 
     const data = await response.json()
     return data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? ""
+}
+
+const GUL_SPAN = `style="background-color:#fef08a"`
+
+/**
+ * Lægger <span style="background-color:#fef08a"> programmatisk omkring
+ * proposed_text_da i den genererede mailtekst.
+ *
+ * Span-tagget preserverer gul baggrund når teksten kopieres ind i
+ * Gmail compose via ClipboardItem (text/html). Mere robust end at
+ * bede modellen indsætte markup selv.
+ *
+ * Logger advarsel hvis proposed_text ikke findes (no-paraphrase brudt).
+ */
+export function applyGulTokens(mailText: string, points: CompliancePoint[]): string {
+    let result = mailText
+    for (const point of points) {
+        if (!point.requires_producer_text) continue
+        const rawText = point.proposed_text_da?.trim()
+        if (!rawText) continue
+
+        const wrap = (inner: string) =>
+            `<span ${GUL_SPAN}>${inner}</span>`
+
+        // Forsøg 1: med anførselstegn (foretrukket — model bør cite ordret)
+        const withQuotes = `"${rawText}"`
+        let idx = result.indexOf(withQuotes)
+        if (idx !== -1) {
+            result = result.slice(0, idx) + wrap(withQuotes) + result.slice(idx + withQuotes.length)
+            continue
+        }
+
+        // Forsøg 2: uden anførselstegn
+        idx = result.indexOf(rawText)
+        if (idx !== -1) {
+            result = result.slice(0, idx) + wrap(rawText) + result.slice(idx + rawText.length)
+            continue
+        }
+
+        console.warn(`[gul] proposed_text for '${point.point_id}' ikke fundet — no-paraphrase muligvis brudt`)
+    }
+    return result
 }
 
 function parseJson(raw: string, logTag: string): any {
