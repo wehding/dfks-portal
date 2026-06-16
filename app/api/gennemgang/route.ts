@@ -1,11 +1,7 @@
 /**
  * app/api/gennemgang/route.ts
  *
- * Tre-trins kontraktgennemgang — kernelogik i lib/analyse.ts:
- *   Trin 1 — Klassifikation
- *   Trin 2 — Compliance-udtræk (struktureret JSON)
- *   Trin 3 — Mailgenerering (naturlig prosa fra stemme-eksempler)
- *
+ * To-trins kontraktgennemgang — kernelogik i lib/analyse.ts.
  * Denne route: FormData-parsing, storage-upload og DB-persistering.
  */
 
@@ -22,6 +18,7 @@ export async function POST(req: NextRequest) {
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
+        // Hent brugerens navn fra Auth — fallback: full_name → email-prefix → "Ukendt"
         const supabaseSession = await createClient()
         const { data: { user: sessionUser } } = await supabaseSession.auth.getUser()
         const memberName: string =
@@ -57,7 +54,6 @@ export async function POST(req: NextRequest) {
         const { data: { user } } = await supabaseSession.auth.getUser()
         const resolvedOrgId = portalOrgId ?? user?.user_metadata?.org_id ?? saveOrgId
 
-        // ── Tre-trins analyse ─────────────────────────────────
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
@@ -87,14 +83,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: msg }, { status })
         }
 
-        const {
-            result: parsed,
-            contractText: returnText,
-            klassifikation,
-            compliance_extract,
-            risk_level: riskLevel,
-            should_escalate: shouldEscalate,
-        } = analysisResult
+        const { result: parsed, contractText: returnText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
         // ── Gem fil i Supabase Storage ────────────────────────
         const admin = createAdminClient(
@@ -114,26 +103,34 @@ export async function POST(req: NextRequest) {
                     upsert: false,
                 })
             if (storageErr) {
-                console.warn("[gennemgang] Storage upload fejlede:", storageErr.message)
+                console.warn("[gennemgang] Storage upload fejlede (ikke kritisk):", storageErr.message)
                 storagePath = null
             }
         } catch (storageEx) {
-            console.warn("[gennemgang] Storage upload exception:", storageEx)
+            console.warn("[gennemgang] Storage upload exception (ikke kritisk):", storageEx)
+            storagePath = null
         }
 
         // ── Gem i contract_reviews ────────────────────────────
         try {
             if (existingReviewId) {
-                await admin.from("contract_reviews").update({
-                    ai_result:          parsed,
-                    ai_run_at:          new Date().toISOString(),
-                    ai_language:        klassifikation?.kontraktsprog ?? null,
-                    risk_level:         riskLevel,
-                    should_escalate:    shouldEscalate,
-                    ai_status:          "klar",
-                    compliance_extract: compliance_extract ?? null,
-                    ...(storagePath ? { storage_path: storagePath } : {}),
-                }).eq("id", existingReviewId)
+                const { error: updateErr } = await admin
+                    .from("contract_reviews")
+                    .update({
+                        ai_result:       parsed,
+                        ai_run_at:       new Date().toISOString(),
+                        ai_language:     klassifikation?.kontraktsprog ?? null,
+                        risk_level:      riskLevel,
+                        should_escalate: shouldEscalate,
+                        ai_status:       "klar",
+                        ...(storagePath ? { storage_path: storagePath } : {}),
+                    })
+                    .eq("id", existingReviewId)
+                if (updateErr) {
+                    console.error("[gennemgang] UPDATE contract_reviews fejl:", updateErr.message)
+                } else {
+                    console.log("[gennemgang] Opdateret review:", existingReviewId)
+                }
             } else {
                 const insertPayload: Record<string, unknown> = {
                     org_id:          saveOrgId,
@@ -159,16 +156,18 @@ export async function POST(req: NextRequest) {
                     focus_areas:  focusAreas.length ? focusAreas : null,
                     notes:        uploadNotes ?? null,
                     ai_language:  klassifikation?.kontraktsprog ?? null,
-                    risk_level:         riskLevel,
-                    should_escalate:    shouldEscalate,
-                    compliance_extract: compliance_extract ?? null,
+                    risk_level:      riskLevel,
+                    should_escalate: shouldEscalate,
                 }
                 const { data: savedReview, error: insertError } = await admin
-                    .from("contract_reviews").insert(insertPayload).select().single()
+                    .from("contract_reviews")
+                    .insert(insertPayload)
+                    .select()
+                    .single()
                 if (insertError) {
-                    console.error("[gennemgang] INSERT fejl:", JSON.stringify(insertError, null, 2))
+                    console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
                 } else {
-                    console.log("[gennemgang] Gemt:", savedReview?.id, "storage:", storagePath)
+                    console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
                 }
             }
         } catch (saveErr) {
@@ -179,7 +178,6 @@ export async function POST(req: NextRequest) {
             result: parsed,
             contractText: returnText,
             klassifikation,
-            compliance_extract,
             risk_level: riskLevel,
             should_escalate: shouldEscalate,
         })

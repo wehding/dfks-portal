@@ -25,6 +25,7 @@ import {
     UserCheck,
     FlaskConical,
     BrainCircuit,
+    ShieldCheck,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -86,6 +87,7 @@ export default function AdminLayout({
     const pathname = usePathname()
     const router = useRouter()
     const [userRole, setUserRole] = useState<string>("admin")
+    const [isSuperadmin, setIsSuperadmin] = useState<boolean>(false)
     const [pendingCount, setPendingCount] = useState<number>(0)
 
     useEffect(() => {
@@ -103,8 +105,18 @@ export default function AdminLayout({
             setPendingCount(count ?? 0)
         }
 
-        supabase.auth.getUser().then(({ data: { user } }) => {
-            setUserRole(user?.user_metadata?.role ?? "admin")
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+            if (!user) return
+            // Slå rolle op i user_org_roles — ikke user_metadata (kan være forældet)
+            const { data: roles } = await supabase
+                .from("user_org_roles")
+                .select("role")
+                .eq("user_id", user.id)
+            const roleList = (roles ?? []).map(r => r.role)
+            const primary = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
+                .find(r => roleList.includes(r)) ?? "viewer"
+            setUserRole(primary)
+            setIsSuperadmin(roleList.includes("superadmin"))
             fetchCount()
         })
 
@@ -172,6 +184,16 @@ export default function AdminLayout({
 
                 <SidebarFooter>
                     <SidebarMenu>
+                        {isSuperadmin && (
+                            <SidebarMenuItem>
+                                <SidebarMenuButton asChild>
+                                    <Link href="/superadmin/organisationer">
+                                        <ShieldCheck className="h-4 w-4" />
+                                        <span>Superadmin</span>
+                                    </Link>
+                                </SidebarMenuButton>
+                            </SidebarMenuItem>
+                        )}
                         <SidebarMenuItem>
                             <SidebarMenuButton onClick={handleLogout}>
                                 <LogOut className="h-4 w-4" />

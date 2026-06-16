@@ -8,13 +8,13 @@ import { analyserKontrakt } from "@/lib/analyse"
 // To tilstande:
 //   A) Ingen body / JSON body → henter fil fra storage (storage_path skal eksistere)
 //   B) multipart/form-data med "file" felt → bruger den uploadede fil direkte
+//      (bruges til sager der mangler storage_path)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
 
-    // Brug service role så RLS ikke blokerer
     const adminSupabase = createAdminClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -37,7 +37,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (hasUpload) {
         const uploadForm = await req.formData()
         const uploaded = uploadForm.get("file") as File | null
-        if (!uploaded) return NextResponse.json({ error: "Ingen fil i upload" }, { status: 400 })
+        if (!uploaded) {
+            return NextResponse.json({ error: "Ingen fil i upload" }, { status: 400 })
+        }
         fileBuffer = Buffer.from(await uploaded.arrayBuffer())
         fileName = uploaded.name
     } else {
@@ -63,32 +65,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         analysisResult = await analyserKontrakt({
             fileBuffer,
             fileName,
-            memberName:           review.member_name            ?? undefined,
-            contractType:         review.contract_type          ?? undefined,
-            productionType:       review.production_type        ?? undefined,
-            distributionChannels: review.distribution_channels  ?? undefined,
-            producerName:         review.producer_name          ?? undefined,
+            memberName:           review.member_name    ?? undefined,
+            contractType:         review.contract_type  ?? undefined,
+            productionType:       review.production_type ?? undefined,
+            distributionChannels: review.distribution_channels ?? undefined,
+            producerName:         review.producer_name  ?? undefined,
             producerOverenskomst: review.producer_overenskomst_bound === true  ? "true"
                                 : review.producer_overenskomst_bound === false ? "false"
                                 : undefined,
-            focusAreas:           review.focus_areas            ?? undefined,
-            notes:                review.notes                  ?? undefined,
+            focusAreas:           review.focus_areas    ?? undefined,
+            notes:                review.notes          ?? undefined,
             orgId:                review.org_id,
-            memberId:             review.member_id              ?? undefined,
-            memberEmail:          review.member_email           ?? undefined,
+            memberId:             review.member_id      ?? undefined,
+            memberEmail:          review.member_email   ?? undefined,
         })
     } catch (err: any) {
         return NextResponse.json({ error: err.message ?? "Analyse fejlede" }, { status: 500 })
     }
 
-    const {
-        result: parsed,
-        contractText,
-        klassifikation,
-        compliance_extract,
-        risk_level: riskLevel,
-        should_escalate: shouldEscalate,
-    } = analysisResult
+    const { result: parsed, contractText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
     // Gem ny fil i storage ved upload-tilstand
     let newStoragePath: string | null = null
@@ -99,25 +94,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             newStoragePath = `${review.org_id}/${ts}_${safeName}`
             const { error: storageErr } = await adminSupabase.storage
                 .from("contract-reviews")
-                .upload(newStoragePath, fileBuffer, { contentType: "application/octet-stream", upsert: false })
+                .upload(newStoragePath, fileBuffer, {
+                    contentType: "application/octet-stream",
+                    upsert: false,
+                })
             if (storageErr) {
-                console.warn("[reanalyse] Storage upload fejlede:", storageErr.message)
+                console.warn("[reanalyse] Storage upload fejlede (ikke kritisk):", storageErr.message)
                 newStoragePath = null
             }
-        } catch (e) {
-            console.warn("[reanalyse] Storage upload exception:", e)
+        } catch (storageEx) {
+            console.warn("[reanalyse] Storage upload exception (ikke kritisk):", storageEx)
         }
     }
 
     const { data, error } = await adminSupabase
         .from("contract_reviews")
         .update({
-            ai_result:          parsed,
-            ai_run_at:          new Date().toISOString(),
-            ai_language:        klassifikation?.kontraktsprog ?? null,
-            risk_level:         riskLevel,
-            should_escalate:    shouldEscalate,
-            compliance_extract: compliance_extract ?? null,
+            ai_result:       parsed,
+            ai_run_at:       new Date().toISOString(),
+            ai_language:     klassifikation?.kontraktsprog ?? null,
+            risk_level:      riskLevel,
+            should_escalate: shouldEscalate,
             ...(newStoragePath ? { storage_path: newStoragePath } : {}),
         })
         .eq("id", id)

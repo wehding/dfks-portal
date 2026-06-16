@@ -8,6 +8,16 @@ export interface DbOrganisation {
     logo_url: string | null
     features: string[]
     created_at: string
+    updated_at: string
+    cvr: string
+    contact_name: string
+    contact_email: string
+    plan: "basis" | "pro" | "enterprise"
+    max_users: number
+    module_contracts: boolean
+    module_streaming: boolean
+    module_archive: boolean
+    active: boolean
 }
 
 export interface DbUserOrgRole {
@@ -142,7 +152,12 @@ export interface DbContractReview {
     ai_run_at: string | null
     ai_language: string | null
     updated_at: string | null
-    compliance_extract: Record<string, unknown> | null
+    jurist_response: string | null
+    jurist_response_at: string | null
+    risk_level: "LAV" | "MELLEM" | "HØJ" | null
+    should_escalate: boolean | null
+    ai_status: "analyserer" | "klar" | "fejl"
+    created_at: string
 }
 
 export interface DbAgreement {

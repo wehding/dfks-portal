@@ -65,12 +65,30 @@ export async function middleware(req: NextRequest) {
     const isProtected =
         pathname.startsWith("/admin") ||
         pathname.startsWith("/portal") ||
+        pathname.startsWith("/superadmin") ||
         pathname.startsWith("/onboarding") ||
         pathname.startsWith("/vaerker")
     if (isProtected && !user) {
         const url = req.nextUrl.clone()
         url.pathname = "/"
         return NextResponse.redirect(url)
+    }
+
+    // /superadmin/* kræver superadmin-rolle fra user_org_roles
+    if (pathname.startsWith("/superadmin") && user) {
+        const { data: roleRow } = await supabase
+            .from("user_org_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .eq("role", "superadmin")
+            .limit(1)
+            .single()
+
+        if (!roleRow) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/admin"
+            return NextResponse.redirect(url)
+        }
     }
 
     return supabaseResponse

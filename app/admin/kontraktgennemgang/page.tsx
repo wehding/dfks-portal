@@ -14,7 +14,7 @@ import {
     CheckCircle2, AlertTriangle, Info, ChevronRight,
     MessageSquare, Archive, X, Send, Pencil, Eye, BookMarked,
     ThumbsUp, ThumbsDown, Star, Inbox, Search, Filter,
-    Clock, User, FileText, ChevronDown, RotateCcw,
+    Clock, User, FileText, ChevronDown, RotateCcw, Loader2,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -208,6 +208,40 @@ function Indbakke() {
 
     useEffect(() => { fetchReviews() }, [fetchReviews])
 
+    // ── Supabase Realtime — lyt på INSERT og UPDATE ───────────
+    useEffect(() => {
+        const supabase = createClient()
+        const channel = supabase
+            .channel("contract_reviews_changes")
+            .on(
+                "postgres_changes",
+                { event: "INSERT", schema: "public", table: "contract_reviews" },
+                (payload) => {
+                    setReviews(prev => {
+                        // Undgå dubletter
+                        if (prev.some(r => r.id === (payload.new as DbContractReview).id)) return prev
+                        return [payload.new as DbContractReview, ...prev]
+                    })
+                    setTotalCount(c => c + 1)
+                }
+            )
+            .on(
+                "postgres_changes",
+                { event: "UPDATE", schema: "public", table: "contract_reviews" },
+                (payload) => {
+                    setReviews(prev =>
+                        prev.map(r => r.id === (payload.new as DbContractReview).id
+                            ? payload.new as DbContractReview
+                            : r
+                        )
+                    )
+                }
+            )
+            .subscribe()
+
+        return () => { supabase.removeChannel(channel) }
+    }, []) // Ét kanal for hele komponentens levetid
+
     const mineCount = reviews.filter(r => r.status !== "afsluttet").length
 
     return (
@@ -346,9 +380,40 @@ function Indbakke() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3">
-                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusCfg.class}`}>
-                                                {statusCfg.label}
-                                            </span>
+                                            <div className="flex items-center gap-1.5">
+                                                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusCfg.class}`}>
+                                                    {statusCfg.label}
+                                                </span>
+                                                {/* AI-analysestatus */}
+                                                {(() => {
+                                                    const analysering = !r.ai_status || r.ai_status === "analyserer"
+                                                    if (analysering || r.ai_status === "fejl") {
+                                                        return (
+                                                            <button
+                                                                title={r.ai_status === "fejl" ? "Analyse fejlede — klik for at genkøre" : "Analyserer… klik for at genstarte"}
+                                                                className={`transition-colors ${r.ai_status === "fejl" ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-foreground"}`}
+                                                                onClick={async e => {
+                                                                    e.stopPropagation()
+                                                                    const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
+                                                                    if (res.ok) { toast.success("Analyse genstartet"); fetchReviews(); return }
+                                                                    const json = await res.json().catch(() => ({}))
+                                                                    if (json.missing_file) {
+                                                                        toast.error("Filen mangler i storage — åbn sagen og upload filen manuelt")
+                                                                    } else {
+                                                                        toast.error(json.error ?? "Kunne ikke genstarte analyse")
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <RotateCcw className={`h-3.5 w-3.5 ${analysering && r.ai_status !== "fejl" ? "animate-spin" : ""}`} />
+                                                            </button>
+                                                        )
+                                                    }
+                                                    if (r.ai_status === "klar") return (
+                                                        <span title="Analyse klar" className="text-emerald-500">✅</span>
+                                                    )
+                                                    return null
+                                                })()}
+                                            </div>
                                         </td>
                                         <td className="px-4 py-3 text-muted-foreground">
                                             {r.assigned_to ? "Tildelt" : "Ikke tildelt"}

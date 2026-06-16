@@ -1,20 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Upload, X, FileText, CheckCircle2, Check, Loader2 } from "lucide-react"
-import {
-    Chip,
-    SegmentedControl,
-    ProducerCombobox,
-    PRODUCTION_TYPES,
-    DISTRIBUTION_CHANNELS,
-} from "@/components/contract-intake-fields"
+import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check, Clock, ChevronRight } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { formatDistanceToNow, format } from "date-fns"
+import { da } from "date-fns/locale"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { PageHeader } from "@/components/page-header"
+import { Separator } from "@/components/ui/separator"
 import type {
     ContractType,
     ProductionType,
@@ -23,7 +20,261 @@ import type {
     ProducerSelection,
 } from "@/lib/types"
 
-// Delte komponenter importeres fra components/contract-intake-fields.tsx
+// ── Typer til sagslisten ─────────────────────────────────────
+
+type ActiveReview = {
+    id: string
+    file_name: string | null
+    producer_name: string | null
+    production_type: string | null
+    status: string
+    updated_at: string | null
+}
+
+type ArchivedReview = {
+    id: string
+    file_name: string | null
+    producer_name: string | null
+    production_type: string | null
+    updated_at: string | null
+}
+
+// ── Hjælpefunktioner ─────────────────────────────────────────
+
+const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
+    afventer:   { label: "Modtaget — afventer behandling", className: "bg-muted text-muted-foreground" },
+    behandling: { label: "Under behandling",               className: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200" },
+}
+
+const PRODUCTION_LABELS: Record<string, string> = {
+    dokumentar: "Dokumentar", fiktion: "Fiktion / drama", reklame: "Reklame",
+    streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
+}
+
+function relativDato(iso: string | null) {
+    if (!iso) return "—"
+    return formatDistanceToNow(new Date(iso), { addSuffix: true, locale: da })
+}
+
+function formatDato(iso: string | null) {
+    if (!iso) return "—"
+    return format(new Date(iso), "d. MMMM yyyy", { locale: da })
+}
+
+// ── Hjælpekomponent: Chip ────────────────────────────────────
+
+function Chip({
+    label,
+    selected,
+    onClick,
+    color = "default",
+}: {
+    label: string
+    selected: boolean
+    onClick: () => void
+    color?: "default" | "amber"
+}) {
+    const base = "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium cursor-pointer transition-all select-none"
+    const active =
+        color === "amber"
+            ? "border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-200"
+            : "border-primary bg-primary text-primary-foreground"
+    const inactive = "border-muted-foreground/25 bg-transparent text-muted-foreground hover:border-foreground/50 hover:text-foreground"
+    return (
+        <button type="button" onClick={onClick} className={`${base} ${selected ? active : inactive}`}>
+            {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+            {label}
+        </button>
+    )
+}
+
+// ── Hjælpekomponent: Segmented control ──────────────────────
+
+function SegmentedControl<T extends string>({
+    options,
+    value,
+    onChange,
+}: {
+    options: { value: T; label: string }[]
+    value: T | null
+    onChange: (v: T) => void
+}) {
+    return (
+        <div className="flex rounded-lg border overflow-hidden">
+            {options.map((opt, i) => (
+                <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => onChange(opt.value)}
+                    className={[
+                        "flex-1 px-3 py-2 text-sm font-medium transition-colors",
+                        i > 0 && "border-l",
+                        value === opt.value
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-transparent text-muted-foreground hover:bg-muted",
+                    ].filter(Boolean).join(" ")}
+                >
+                    {opt.label}
+                </button>
+            ))}
+        </div>
+    )
+}
+
+// ── Producentfelt: combobox med DFKS + DFI søgning ──────────
+
+interface ProducerHit { id: string; name: string; isOverenskomstBound?: boolean; source: "dfks" | "dfi" }
+
+function ProducerCombobox({
+    value,
+    onChange,
+}: {
+    value: ProducerSelection | null
+    onChange: (v: ProducerSelection) => void
+}) {
+    const [query, setQuery] = useState(value?.name ?? "")
+    const [open, setOpen] = useState(false)
+    const [dfksHits, setDfksHits] = useState<ProducerHit[]>([])
+    const [dfiHits, setDfiHits] = useState<ProducerHit[]>([])
+    const [loading, setLoading] = useState(false)
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const containerRef = useRef<HTMLDivElement>(null)
+
+    // Luk dropdown ved klik udenfor
+    useEffect(() => {
+        function onClickOutside(e: MouseEvent) {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setOpen(false)
+            }
+        }
+        document.addEventListener("mousedown", onClickOutside)
+        return () => document.removeEventListener("mousedown", onClickOutside)
+    }, [])
+
+    function search(q: string) {
+        if (timerRef.current) clearTimeout(timerRef.current)
+        if (q.length < 2) { setDfksHits([]); setDfiHits([]); setOpen(false); return }
+        timerRef.current = setTimeout(async () => {
+            setLoading(true)
+            try {
+                const [dfksRes, dfiRes] = await Promise.allSettled([
+                    fetch(`/api/producers/search?q=${encodeURIComponent(q)}`).then(r => r.json()),
+                    fetch(`/api/dfi/search?q=${encodeURIComponent(q)}`).then(r => r.json()),
+                ])
+                setDfksHits(
+                    dfksRes.status === "fulfilled"
+                        ? (dfksRes.value.results ?? []).map((r: any) => ({ ...r, source: "dfks" as const }))
+                        : []
+                )
+                setDfiHits(
+                    dfiRes.status === "fulfilled"
+                        ? (dfiRes.value.results ?? []).map((r: any) => ({ ...r, source: "dfi" as const }))
+                        : []
+                )
+                setOpen(true)
+            } finally {
+                setLoading(false)
+            }
+        }, 300)
+    }
+
+    function select(hit: ProducerHit) {
+        setQuery(hit.name)
+        setOpen(false)
+        onChange({
+            name: hit.name,
+            dfksId: hit.source === "dfks" ? hit.id : undefined,
+            dfiId: hit.source === "dfi" ? hit.id : undefined,
+            isOverenskomstBound: hit.isOverenskomstBound,
+            source: hit.source,
+        })
+    }
+
+    function confirmManual() {
+        if (!query.trim()) return
+        setOpen(false)
+        onChange({ name: query.trim(), source: "manual" })
+    }
+
+    const hasResults = dfksHits.length > 0 || dfiHits.length > 0
+
+    return (
+        <div ref={containerRef} className="relative">
+            <div className="relative">
+                <input
+                    type="text"
+                    value={query}
+                    onChange={e => { setQuery(e.target.value); search(e.target.value) }}
+                    onFocus={() => query.length >= 2 && setOpen(true)}
+                    placeholder="Søg produktionsselskab..."
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pr-8"
+                />
+                {loading
+                    ? <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-muted-foreground" />
+                    : <ChevronDown className="absolute right-2.5 top-2.5 h-4 w-4 text-muted-foreground" />}
+            </div>
+
+            {open && (
+                <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md max-h-72 overflow-y-auto">
+                    {!hasResults ? (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">
+                            Ingen match — fortsæt med det du har skrevet
+                        </div>
+                    ) : (
+                        <>
+                            {dfksHits.length > 0 && (
+                                <>
+                                    <div className="px-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Fra DFKS</div>
+                                    {dfksHits.map(h => (
+                                        <button
+                                            key={h.id}
+                                            type="button"
+                                            onClick={() => select(h)}
+                                            className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted text-left"
+                                        >
+                                            <span className="flex-1">{h.name}</span>
+                                            {h.isOverenskomstBound && (
+                                                <span className="shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 font-medium dark:bg-emerald-950 dark:text-emerald-300">
+                                                    Overenskomst
+                                                </span>
+                                            )}
+                                        </button>
+                                    ))}
+                                </>
+                            )}
+                            {dfiHits.length > 0 && (
+                                <>
+                                    <div className={`px-3 pt-2 pb-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide ${dfksHits.length > 0 ? "border-t" : ""}`}>Fra DFI</div>
+                                    {dfiHits.map(h => (
+                                        <button
+                                            key={h.id}
+                                            type="button"
+                                            onClick={() => select(h)}
+                                            className="flex w-full items-center px-3 py-2 text-sm hover:bg-muted text-left"
+                                        >
+                                            {h.name}
+                                        </button>
+                                    ))}
+                                </>
+                            )}
+                        </>
+                    )}
+                    {query.trim().length >= 2 && (
+                        <div className="border-t px-3 py-2">
+                            <button
+                                type="button"
+                                onClick={confirmManual}
+                                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                            >
+                                Brug &quot;{query.trim()}&quot; som fritekst
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
 
 // ── Formatering ──────────────────────────────────────────────
 
@@ -34,7 +285,24 @@ function formatBytes(bytes: number) {
 
 // ── Konstanter ───────────────────────────────────────────────
 
-// PRODUCTION_TYPES og DISTRIBUTION_CHANNELS importeres fra components/contract-intake-fields.tsx
+const PRODUCTION_TYPES: { value: ProductionType; label: string }[] = [
+    { value: "dokumentar",  label: "Dokumentar" },
+    { value: "fiktion",     label: "Fiktion / drama" },
+    { value: "reklame",     label: "Reklame / branded content" },
+    { value: "streaming",   label: "Streaming-original" },
+    { value: "shortform",   label: "Short-form / online" },
+    { value: "ukendt",      label: "Ved ikke" },
+]
+
+const DISTRIBUTION_CHANNELS: { value: DistributionChannel; label: string }[] = [
+    { value: "biograf",              label: "Biograf" },
+    { value: "tv_lineaer",           label: "TV (lineær)" },
+    { value: "streaming_svod",       label: "Streaming (SVOD)" },
+    { value: "streaming_avod",       label: "Streaming (AVOD/gratis)" },
+    { value: "festival",             label: "Festival" },
+    { value: "internationalt_salg",  label: "Internationale salg" },
+    { value: "ukendt",               label: "Ved ikke" },
+]
 
 const FOCUS_AREAS: { value: FocusArea; label: string }[] = [
     { value: "vederlag",    label: "Vederlag / royalties" },
@@ -50,6 +318,8 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
 // ── Hoved-komponent ──────────────────────────────────────────
 
 export default function PortalKontraktgennemgangPage() {
+    const router = useRouter()
+
     const [file, setFile] = useState<File | null>(null)
     const [dragOver, setDragOver] = useState(false)
     const fileInputRef = useRef<HTMLInputElement>(null)
@@ -69,6 +339,11 @@ export default function PortalKontraktgennemgangPage() {
     const [memberId, setMemberId] = useState<string | null>(null)
     const [orgId, setOrgId] = useState<string>("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
 
+    // Sagslister
+    const [activeReviews, setActiveReviews] = useState<ActiveReview[]>([])
+    const [archivedReviews, setArchivedReviews] = useState<ArchivedReview[]>([])
+    const [reviewsLoading, setReviewsLoading] = useState(true)
+
     useEffect(() => {
         createClient().auth.getUser().then(({ data: { user } }) => {
             if (user) {
@@ -76,9 +351,32 @@ export default function PortalKontraktgennemgangPage() {
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
                 setOrgId(user.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+                loadReviews(user.id)
             }
         })
     }, [])
+
+    async function loadReviews(uid: string) {
+        setReviewsLoading(true)
+        const supabase = createClient()
+        const [activeRes, archiveRes] = await Promise.all([
+            supabase
+                .from("contract_reviews")
+                .select("id, file_name, producer_name, production_type, status, updated_at")
+                .eq("member_id", uid)
+                .in("status", ["afventer", "behandling"])
+                .order("updated_at", { ascending: false }),
+            supabase
+                .from("contract_reviews")
+                .select("id, file_name, producer_name, production_type, updated_at")
+                .eq("member_id", uid)
+                .eq("status", "afsluttet")
+                .order("updated_at", { ascending: false }),
+        ])
+        setActiveReviews((activeRes.data ?? []) as ActiveReview[])
+        setArchivedReviews((archiveRes.data ?? []) as ArchivedReview[])
+        setReviewsLoading(false)
+    }
 
     // ── Fil-håndtering ───────────────────────────────────────
 
@@ -159,13 +457,16 @@ export default function PortalKontraktgennemgangPage() {
         if (notes.trim()) fd.append("notes", notes.trim())
 
         try {
-            const res = await fetch("/api/gennemgang", { method: "POST", body: fd })
+            // Brug /api/portal/submit — gemmer straks og kører AI asynkront
+            // Brugeren venter IKKE på analysen
+            const res = await fetch("/api/portal/submit", { method: "POST", body: fd })
             if (!res.ok) {
                 const err = await res.json().catch(() => ({ error: "Ukendt fejl" }))
                 throw new Error(err.error ?? "Serverfejl")
             }
-            // Gem sker server-side i /api/gennemgang med service role
             setSubmitted(true)
+            // Opdater sagsliste i baggrunden
+            if (memberId) loadReviews(memberId)
         } catch (err: any) {
             toast.error(err.message ?? "Kunne ikke sende kontrakten — prøv igen")
         } finally {
@@ -184,31 +485,10 @@ export default function PortalKontraktgennemgangPage() {
         setSubmitted(false)
     }
 
-    // ── Bekræftelsesvisning ──────────────────────────────────
-
-    if (submitted) {
-        return (
-            <div className="space-y-6">
-                <PageHeader title="Kontraktgennemgang" subtitle="Send din kontrakt til juridisk gennemgang" />
-                <div className="max-w-xl rounded-xl border bg-card p-8 text-center space-y-4">
-                    <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
-                    <h2 className="text-xl font-semibold">Din kontrakt er modtaget</h2>
-                    <p className="text-muted-foreground text-sm leading-relaxed">
-                        Vi gennemgår den og vender tilbage til dig snarest.<br />
-                        Du får besked på din registrerede e-mail.
-                    </p>
-                    <Button variant="outline" onClick={reset} className="mt-2">
-                        Send en ny kontrakt
-                    </Button>
-                </div>
-            </div>
-        )
-    }
-
-    // ── Formular ─────────────────────────────────────────────
+    // ── Render ───────────────────────────────────────────────
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8">
             <PageHeader
                 title="Kontraktgennemgang"
                 subtitle="Upload din kontrakt og angiv kontekst, så vi kan give dig den bedste vurdering"
@@ -384,7 +664,7 @@ export default function PortalKontraktgennemgangPage() {
                             size="lg"
                         >
                             {submitting ? (
-                                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Analyserer kontrakt…</>
+                                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Sender…</>
                             ) : (
                                 "Send til gennemgang"
                             )}
@@ -392,6 +672,109 @@ export default function PortalKontraktgennemgangPage() {
                     </div>
                 )}
             </form>
+
+            {/* ── Bekræftelse (inline efter submit) ── */}
+            {submitted && (
+                <div className="max-w-2xl rounded-xl border bg-emerald-50 dark:bg-emerald-950/20 p-6 flex items-start gap-4">
+                    <CheckCircle2 className="h-6 w-6 text-emerald-500 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                        <p className="font-semibold text-emerald-800 dark:text-emerald-300">Din kontrakt er modtaget</p>
+                        <p className="text-sm text-emerald-700 dark:text-emerald-400">
+                            Vi gennemgår den og vender tilbage til dig snarest. Du får besked på din registrerede e-mail.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={reset}
+                            className="text-xs text-emerald-600 dark:text-emerald-400 underline underline-offset-2 mt-1"
+                        >
+                            Send en ny kontrakt
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Mine aktive sager ── */}
+            <div className="max-w-2xl space-y-3">
+                <div className="flex items-center gap-3">
+                    <Separator className="flex-1" />
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                        Mine aktive sager
+                    </span>
+                    <Separator className="flex-1" />
+                </div>
+
+                {reviewsLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                        <Loader2 className="h-4 w-4 animate-spin" />Henter sager…
+                    </div>
+                ) : activeReviews.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-2">
+                        Du har ingen igangværende sager.
+                    </p>
+                ) : (
+                    <div className="rounded-lg border divide-y">
+                        {activeReviews.map(r => {
+                            const sc = STATUS_CONFIG[r.status] ?? STATUS_CONFIG.afventer
+                            return (
+                                <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                                    <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium truncate">{r.file_name ?? "Ukendt fil"}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {r.producer_name ?? "—"}
+                                            {r.production_type && ` · ${PRODUCTION_LABELS[r.production_type] ?? r.production_type}`}
+                                        </p>
+                                    </div>
+                                    <div className="shrink-0 text-right space-y-1">
+                                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${sc.className}`}>
+                                            {sc.label}
+                                        </span>
+                                        <p className="text-xs text-muted-foreground flex items-center justify-end gap-1">
+                                            <Clock className="h-3 w-3" />{relativDato(r.updated_at)}
+                                        </p>
+                                    </div>
+                                </div>
+                            )
+                        })}
+                    </div>
+                )}
+            </div>
+
+            {/* ── Arkiv (kun hvis der er afsluttede sager) ── */}
+            {!reviewsLoading && archivedReviews.length > 0 && (
+                <div className="max-w-2xl space-y-3">
+                    <div className="flex items-center gap-3">
+                        <Separator className="flex-1" />
+                        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                            Arkiv
+                        </span>
+                        <Separator className="flex-1" />
+                    </div>
+                    <div className="rounded-lg border divide-y">
+                        {archivedReviews.map(r => (
+                            <div key={r.id} className="flex items-center gap-3 px-4 py-3">
+                                <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium truncate">{r.file_name ?? "Ukendt fil"}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {r.producer_name ?? "—"}
+                                        {r.production_type && ` · ${PRODUCTION_LABELS[r.production_type] ?? r.production_type}`}
+                                        {r.updated_at && ` · Afsluttet ${formatDato(r.updated_at)}`}
+                                    </p>
+                                </div>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="shrink-0 h-7 text-xs px-2.5"
+                                    onClick={() => router.push(`/portal/kontraktgennemgang/${r.id}`)}
+                                >
+                                    Se svar <ChevronRight className="h-3 w-3 ml-0.5" />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

@@ -86,22 +86,42 @@ const VERDICT_CONFIG = {
 }
 
 function renderMailWithHighlights(text: string): React.ReactNode {
-    // Normaliser legacy tokens til span — ny kode outputter span direkte
-    const html = text
-        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
-        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
-        .replace(/\n/g, "<br/>")
-    return <span dangerouslySetInnerHTML={{ __html: html }} className="whitespace-pre-wrap" />
+    // Ny format: <mark style="background-color:#fef08a">...</mark>
+    // Legacy: [GUL]...[/GUL] og ===GUL START===...===GUL SLUT===
+    const normalized = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+    return (
+        <span
+            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
+            className="whitespace-pre-wrap"
+        />
+    )
 }
 
 function extractGulText(text: string): string {
-    // Span-format (nyt)
-    const spanMatches = [...text.matchAll(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1].trim())
-    if (spanMatches.length) return spanMatches.join("\n\n")
-    // Legacy tokens
-    const legacy = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
-    const gul = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
-    return [...legacy, ...gul].join("\n\n")
+    // Ny format
+    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
+    if (htmlMatches.length) return htmlMatches.join("\n\n")
+    // Legacy
+    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    return [...legacyMatches, ...newMatches].join("\n\n")
+}
+
+async function copyAsRichText(html: string): Promise<void> {
+    // Konverter newlines til <br> og wrap i html-body
+    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
+    try {
+        const blob = new Blob([fullHtml], { type: "text/html" })
+        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
+        await navigator.clipboard.write([
+            new ClipboardItem({ "text/html": blob, "text/plain": plain })
+        ])
+    } catch {
+        // Fallback: kopier som plain text
+        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
+    }
 }
 
 function highlightText(text: string, quotes: string[], activeQuote: string | null): string {
@@ -130,6 +150,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [review, setReview] = useState<DbContractReview | null>(null)
     const [loading, setLoading] = useState(true)
     const [result, setResult] = useState<ReviewResult | null>(null)
+    const [riskLevel, setRiskLevel] = useState<"LAV" | "MELLEM" | "HØJ" | null>(null)
+    const [shouldEscalate, setShouldEscalate] = useState<boolean | null>(null)
     const [contractText, setContractText] = useState("")
     const [mailText, setMailText] = useState("")
     const [mailSubject, setMailSubject] = useState("")
@@ -157,6 +179,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .then(json => {
                 const r = json.data as DbContractReview
                 setReview(r)
+                if (r?.risk_level) setRiskLevel(r.risk_level)
+                if (r?.should_escalate != null) setShouldEscalate(r.should_escalate)
                 if (r?.ai_result && Object.keys(r.ai_result).length > 0) {
                     const res = r.ai_result as unknown as ReviewResult
                     setResult(res)
@@ -168,17 +192,14 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .finally(() => setLoading(false))
     }, [id])
 
-    // Hent PDF fra storage hvis storage_path findes
+    // Hent PDF-URL via server-side route (omgår storage RLS)
     useEffect(() => {
-        if (!review?.storage_path) return
-        const supabase = createClient()
-        supabase.storage
-            .from("contract-reviews")
-            .createSignedUrl(review.storage_path, 3600)
-            .then(({ data }) => {
-                if (data?.signedUrl) setPdfObjectUrl(data.signedUrl)
-            })
-    }, [review?.storage_path])
+        if (!review?.storage_path || !id) return
+        fetch(`/api/admin/contracts/${id}/pdf`)
+            .then(r => r.ok ? r.json() : null)
+            .then(json => { if (json?.url) setPdfObjectUrl(json.url) })
+            .catch(() => { /* PDF ikke tilgængelig */ })
+    }, [review?.storage_path, id])
 
     useEffect(() => {
         if (!activeQuote || !docRef.current) return
@@ -186,7 +207,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     }, [activeQuote])
 
-    const updateReview = async (updates: { status?: string; assignedTo?: string }) => {
+    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string }) => {
         const resp = await fetch(`/api/admin/contracts/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -198,16 +219,39 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         toast.success("Opdateret")
     }
 
-    const handleReanalyse = async () => {
-        if (!review?.storage_path) {
-            toast.error("Filen er ikke tilgængelig. Upload filen manuelt for at køre ny analyse.")
-            return
-        }
+    // Rens mailtekst for eventuelle risikovurderingslinjer inden afsendelse
+    function cleanMailText(text: string): string {
+        return text
+            .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
+            .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
+            .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim()
+    }
+
+    const reanalyseFileRef = useRef<HTMLInputElement>(null)
+
+    const handleReanalyse = async (uploadedFile?: File) => {
         setReanalysing(true)
         try {
-            const resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST" })
+            let resp: Response
+            if (uploadedFile) {
+                // Tilstand B: send uploadet fil direkte
+                const fd = new FormData()
+                fd.append("file", uploadedFile)
+                resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST", body: fd })
+            } else {
+                // Tilstand A: hent fra storage
+                resp = await fetch(`/api/admin/contracts/${id}/reanalyse`, { method: "POST" })
+            }
             if (!resp.ok) {
                 const e = await resp.json().catch(() => ({}))
+                // Filen mangler i storage — bed admin om at uploade den
+                if (e.missing_file) {
+                    reanalyseFileRef.current?.click()
+                    setReanalysing(false)
+                    return
+                }
                 throw new Error(e.error ?? "Analyse fejlede")
             }
             const json = await resp.json()
@@ -215,6 +259,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             setResult(res)
             setMailText(res.feedbackmail?.tekst ?? "")
             setMailSubject(res.feedbackmail?.emne ?? "")
+            if (json.data.risk_level) setRiskLevel(json.data.risk_level)
+            if (json.data.should_escalate != null) setShouldEscalate(json.data.should_escalate)
             setReview(json.data)
             setContractText(json.contractText ?? "")
             toast.success("Ny analyse fuldført")
@@ -224,27 +270,21 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         setReanalysing(false)
     }
 
-    const copyRichText = async (html: string) => {
-        const plain = html.replace(/<[^>]+>/g, "")
-        try {
-            await navigator.clipboard.write([new ClipboardItem({
-                "text/html": new Blob([`<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`], { type: "text/html" }),
-                "text/plain": new Blob([plain], { type: "text/plain" }),
-            })])
-        } catch { await navigator.clipboard.writeText(plain) }
-    }
-
     const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        await copyRichText(gul)
+        // Wrap i mark-tags så Gmail bevarer den gule farve
+        const gulHtml = gul.split("\n\n").map(p =>
+            `<mark style="background-color:#fef08a">${p.replace(/\n/g, "<br/>")}</mark>`
+        ).join("<br/><br/>")
+        await copyAsRichText(gulHtml)
         toast.success("Producent-tekst kopieret")
     }
 
     const handleOpenMail = () => {
-        const plain = mailText.replace(/<[^>]+>/g, "")
+        const cleanedText = cleanMailText(mailText)
         const to = review?.member_email ? encodeURIComponent(review.member_email) : ""
-        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(plain)}`
+        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(cleanedText)}`
     }
 
     // ── Afslut og sæt status ──────────────────────────────────
@@ -361,13 +401,25 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             size="sm"
                             variant="outline"
                             className="gap-1.5 text-xs h-7"
-                            disabled={reanalysing || !review.storage_path}
-                            title={!review.storage_path ? "Filen er slettet (sagen er afsluttet)" : "Kør ny AI-analyse"}
-                            onClick={handleReanalyse}
+                            disabled={reanalysing}
+                            title="Kør ny AI-analyse"
+                            onClick={() => handleReanalyse()}
                         >
                             <RotateCcw className={`h-3.5 w-3.5 ${reanalysing ? "animate-spin" : ""}`} />
                             {reanalysing ? "Analyserer..." : "Kør ny analyse"}
                         </Button>
+                        {/* Skjult fil-input — trigges automatisk hvis storage_path mangler */}
+                        <input
+                            ref={reanalyseFileRef}
+                            type="file"
+                            accept=".pdf,.docx,.doc,.txt"
+                            className="hidden"
+                            onChange={e => {
+                                const f = e.target.files?.[0]
+                                if (f) handleReanalyse(f)
+                                e.target.value = ""
+                            }}
+                        />
                         {review.status !== "afsluttet" && (
                             <Button size="sm" className="gap-1.5 text-xs h-7" onClick={handleAfslut}>
                                 <CheckCircle2 className="h-3.5 w-3.5" />
@@ -413,6 +465,22 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             </Badge>
                         )}
                     </div>
+                    {/* Risikovurderingsbanner — vises kun når risk_level er sat */}
+                    {riskLevel && (
+                        <div className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b shrink-0 ${
+                            riskLevel === "HØJ"
+                                ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800"
+                                : riskLevel === "MELLEM"
+                                ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                                : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800"
+                        }`}>
+                            <span>{riskLevel === "HØJ" ? "🔴" : riskLevel === "MELLEM" ? "🟡" : "🟢"}</span>
+                            <span>Risikoniveau: {riskLevel}</span>
+                            {shouldEscalate && (
+                                <span className="ml-1 font-semibold">— Skal eskaleres: JA</span>
+                            )}
+                        </div>
+                    )}
                     <div className="flex-1 overflow-y-auto divide-y">
                         {!result ? (
                             <div className="px-4 py-8 text-center text-xs text-muted-foreground">
@@ -536,7 +604,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             >
                                 {mailEditMode ? <><Eye className="h-3 w-3" /> Vis</> : <><Pencil className="h-3 w-3" /> Rediger</>}
                             </button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={async () => { await copyRichText(mailText); toast.success("Mail kopieret") }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={async () => { await copyAsRichText(mailText); toast.success("Mail kopieret") }}>
                                 <Copy className="h-3 w-3" />
                             </Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Åbn i mailprogram" onClick={handleOpenMail}>
@@ -562,7 +630,12 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-300 shrink-0" />
                             Kopiér til producent
                         </Button>
-                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => { handleOpenMail(); if (review.status !== "afsluttet") updateReview({ status: "afsluttet" }) }}>
+                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => {
+                            handleOpenMail()
+                            // Gem jurist_response (renset tekst uden risikovurdering) + sæt status
+                            const cleanedText = cleanMailText(mailText)
+                            updateReview({ status: "afsluttet", jurist_response: cleanedText })
+                        }}>
                             <Send className="h-3.5 w-3.5" />
                             Send og afslut
                         </Button>

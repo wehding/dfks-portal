@@ -42,6 +42,16 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: "email og rhId er påkrævet" }, { status: 400 })
             }
 
+            // Tjek max_users-grænse for org
+            const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const [{ count: userCount }, { data: org }] = await Promise.all([
+                admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", DFKS_ORG_ID),
+                admin.from("organisations").select("max_users").eq("id", DFKS_ORG_ID).single(),
+            ])
+            if (org && org.max_users !== -1 && (userCount ?? 0) >= org.max_users) {
+                return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
+            }
+
             // Generer invite-link
             const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
                 type: "invite",
@@ -54,6 +64,15 @@ export async function POST(req: NextRequest) {
             if (linkErr) throw new Error(linkErr.message)
 
             const newUserId = linkData.user.id
+            const { roles, role: singleRole } = body
+            const rolesToAssign: string[] = roles ?? (singleRole ? [singleRole] : [])
+
+            // Tildel staff-roller i user_org_roles
+            if (rolesToAssign.length > 0 && rhId === "__staff__") {
+                await admin.from("user_org_roles").insert(
+                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: DFKS_ORG_ID, role: r }))
+                )
+            }
 
             // Link user_id på rettighedshaver (kun hvis det er en reel rettighedshaver, ikke staff)
             if (rhId && rhId !== "__staff__") {
