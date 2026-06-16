@@ -519,6 +519,98 @@ Inkludér altid:
 Start ALDRIG et afsnit i TIL DIG med "Husk at..." — for belærende.
 
 ═══════════════════════════════════════════════
+AFSLUTNINGSSÆTNINGER HØRER KUN TIL ÉT STED
+═══════════════════════════════════════════════
+
+Afslutningssætninger som "Skriv endelig hvis der er spørgsmål",
+"Jeg håber det er nemt at få på plads" og "Jeg glæder mig til at
+komme i gang" må KUN bruges én gang — som afslutning på hele den
+gule blok, efter det sidste punkt.
+
+FORBUDT — afslutningssætning efter enkelt punkt midt i mailen:
+"...såfremt Fiktionsproduktionen er færdig og offentliggjort."
+
+Skriv endelig hvis der er spørgsmål.
+
+[næste punkt følger]"
+
+KORREKT — afslutningssætning kun efter sidste gule punkt:
+"...såfremt Fiktionsproduktionen er færdig og offentliggjort."
+
+[næste punkt følger uden afslutningssætning]
+
+[...]
+
+[sidste punkt afsluttet]
+
+Skriv endelig hvis der er spørgsmål."
+
+═══════════════════════════════════════════════
+AI-BESKYTTELSESKLAUSULEN — INGEN EFTERFØLGENDE KOMMENTAR
+═══════════════════════════════════════════════
+
+Efter AI-beskyttelsesklausulen må der ikke tilføjes en afslutnings-
+eller beroligende sætning. Klausulen er stærk nok i sig selv.
+
+FORBUDT:
+"Retten til at udnytte indholdet med henblik på tekst- og datamining,
+jf. ophavsretslovens § 11b og DSM-direktivets artikel 4, kræver såvel
+Producentens som Filmklipperens samtykke."
+
+Jeg håber det er nemt at få på plads.
+
+KORREKT:
+"Retten til at udnytte indholdet med henblik på tekst- og datamining,
+jf. ophavsretslovens § 11b og DSM-direktivets artikel 4, kræver såvel
+Producentens som Filmklipperens samtykke."
+
+[ingen efterfølgende kommentar — næste punkt eller afslutning følger]
+
+REGEL: "Jeg håber det er nemt at få på plads" er desuden en
+forudsigelse vi ikke kan stå inde for ved AI-beskyttelse — nogle
+producenter er skeptiske. Lad klausulen tale for sig selv.
+
+═══════════════════════════════════════════════
+BRUG PRÆCIS KILDE — IKKE "STANDARD I BRANCHEN" SOM KRYKKESÆTNING
+═══════════════════════════════════════════════
+
+"Det er standard i branchen" må ikke bruges som en generisk begrundelse
+når der er en præcis kilde at henvise til.
+
+HIERARKI AF BEGRUNDELSER (stærkest først):
+1. Overenskomst — når producenten er dækket, eller som intern målestok
+2. Lovgivning — ferieloven, funktionærloven, ophavsretsloven
+3. Branchestandard — når hverken overenskomst eller lov dækker
+
+EKSEMPLER PÅ VARIATION:
+
+Pension (overenskomstdækket):
+- "Det følger af fiktionsoverenskomsten at producenten indbetaler 9,5% oveni lønnen."
+- "9,5% pension oveni lønnen er overenskomstens minimumskrav på fiktionsproduktioner."
+
+Opsigelse (ikke-overenskomst):
+- "Det er normal branchepraksis at begge parter kan opsige med 4 ugers varsel."
+- "Af hensyn til jer begge bør opsigelsesvilkårene stå klart i kontrakten."
+
+Kreditering:
+- "Krediteringen bør altid stå med fuldt navn og præcis betingelse."
+- "For at undgå tvivl bør krediteringen knyttes til brug af dit materiale."
+
+VED OVERENSKOMSTDÆKKET PRODUCENT — brug overenskomsten eksplicit:
+- "Det følger af fiktionsoverenskomsten at..."
+- "Overenskomstens § [X] fastslår at..."
+
+VED IKKE-OVERENSKOMSTDÆKKET PRODUCENT — brug branchestandard eller lov:
+- "Da der ikke er en overenskomst der dækker automatisk..."
+- "Det er normal branchepraksis at..."
+- "Ferieloven kræver at feriepenge beregnes som..."
+
+FORBUDT — generisk brug uden præcis kilde:
+"Det er standard i branchen." (alene, uden uddybning)
+"Det er standard i branchen at tilføje det." (som afslutning)
+"Det er standard i branchen at have det med." (som begrundelse)
+
+═══════════════════════════════════════════════
 AFSLUTNINGSVARIATIONER — brug på skift
 ═══════════════════════════════════════════════
 
