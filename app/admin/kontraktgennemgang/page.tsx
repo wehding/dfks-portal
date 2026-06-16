@@ -37,6 +37,15 @@ import { saveReview } from "@/lib/db/gennemgang"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
 import type { DbContractReview } from "@/lib/db/types"
+import type { ContractType, ProductionType, DistributionChannel, ProducerSelection } from "@/lib/types"
+import {
+    Chip,
+    SegmentedControl,
+    ProducerCombobox,
+    CONTRACT_TYPE_OPTIONS,
+    PRODUCTION_TYPES,
+    DISTRIBUTION_CHANNELS,
+} from "@/components/contract-intake-fields"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -375,6 +384,11 @@ function ManuelGennemgang() {
     const [file, setFile] = useState<File | null>(null)
     const [memberName, setMemberName] = useState("")
     const [memberEmail, setMemberEmail] = useState("")
+    const [contractType, setContractType] = useState<ContractType | null>(null)
+    const [productionType, setProductionType] = useState<ProductionType | null>(null)
+    const [distributionChannels, setDistributionChannels] = useState<DistributionChannel[]>([])
+    const [producer, setProducer] = useState<ProducerSelection | null>(null)
+    const [notes, setNotes] = useState("")
     const [analyzing, setAnalyzing] = useState(false)
     const [result, setResult] = useState<ReviewResult | null>(null)
     const [contractText, setContractText] = useState("")
@@ -440,6 +454,11 @@ function ManuelGennemgang() {
         setContractText("")
         setActiveQuote(null)
         setActiveFpId(null)
+        setContractType(null)
+        setProductionType(null)
+        setDistributionChannels([])
+        setProducer(null)
+        setNotes("")
     }
 
     const handleAnalyze = async () => {
@@ -450,6 +469,14 @@ function ManuelGennemgang() {
             const payload = new FormData()
             payload.append("file", file)
             if (memberName) payload.append("memberName", memberName)
+            if (contractType) payload.append("contractType", contractType)
+            if (productionType) payload.append("productionType", productionType)
+            if (distributionChannels.length) payload.append("distributionChannels", JSON.stringify(distributionChannels))
+            if (producer?.name) payload.append("producerName", producer.name)
+            if (producer?.dfksId) payload.append("producerDfksId", producer.dfksId)
+            if (producer?.dfiId) payload.append("producerDfiId", producer.dfiId)
+            if (producer?.isOverenskomstBound !== undefined) payload.append("producerOverenskomst", String(producer.isOverenskomstBound))
+            if (notes.trim()) payload.append("notes", notes.trim())
             const resp = await fetch("/api/gennemgang", { method: "POST", body: payload })
             if (!resp.ok) {
                 const e = await resp.json().catch(() => ({}))
@@ -602,6 +629,79 @@ function ManuelGennemgang() {
                             <p className="text-xs text-muted-foreground mt-1">PDF · DOCX · DOC · TXT</p>
                         </>
                     )}
+                </div>
+
+                {/* Valgfri kontekst — alle felter er frivillige for juristen */}
+                <div className="space-y-4 rounded-lg border border-dashed p-4">
+                    <p className="text-xs text-muted-foreground font-medium">Kontekst til AI (valgfri — giver bedre analyse)</p>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Ansættelsesform</Label>
+                        <SegmentedControl<ContractType>
+                            options={CONTRACT_TYPE_OPTIONS}
+                            value={contractType}
+                            onChange={setContractType}
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Produktionstype</Label>
+                        <div className="flex flex-wrap gap-2">
+                            {PRODUCTION_TYPES.map(opt => (
+                                <Chip
+                                    key={opt.value}
+                                    label={opt.label}
+                                    selected={productionType === opt.value}
+                                    onClick={() => setProductionType(p => p === opt.value ? null : opt.value)}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Distributionskanaler</Label>
+                        <div className="flex flex-wrap gap-2">
+                            {DISTRIBUTION_CHANNELS.map(opt => (
+                                <Chip
+                                    key={opt.value}
+                                    label={opt.label}
+                                    selected={distributionChannels.includes(opt.value)}
+                                    onClick={() => setDistributionChannels(prev =>
+                                        prev.includes(opt.value)
+                                            ? prev.filter(c => c !== opt.value)
+                                            : [...prev, opt.value]
+                                    )}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Producent</Label>
+                        <ProducerCombobox value={producer} onChange={setProducer} />
+                        {producer && (
+                            <p className="text-xs text-muted-foreground">
+                                {producer.name}
+                                {producer.isOverenskomstBound === true && " · ✓ Overenskomstbundet"}
+                                {producer.isOverenskomstBound === false && " · ✗ Ikke overenskomstbundet"}
+                                {producer.source === "manual" && " · (fritekst)"}
+                            </p>
+                        )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Bemærkning til AI</Label>
+                        <Textarea
+                            value={notes}
+                            onChange={e => setNotes(e.target.value.slice(0, 1000))}
+                            placeholder="Særlige forhold, hvad juristen allerede ved om sagen..."
+                            rows={2}
+                            className="text-sm resize-none"
+                        />
+                        {notes.length > 800 && (
+                            <p className="text-xs text-muted-foreground text-right">{notes.length}/1000</p>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex items-start gap-2 rounded-lg border border-muted bg-muted/30 px-4 py-3">
