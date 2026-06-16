@@ -5,6 +5,7 @@ export type ContractType = "ansaettelse" | "freelance" | "ukendt"
 export type ProductionType =
     | "dokumentar"
     | "fiktion"
+    | "tv_program"
     | "reklame"
     | "streaming"
     | "shortform"

@@ -37,6 +37,15 @@ import { saveReview } from "@/lib/db/gennemgang"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
 import type { DbContractReview } from "@/lib/db/types"
+import type { ContractType, ProductionType, DistributionChannel, ProducerSelection } from "@/lib/types"
+import {
+    Chip,
+    SegmentedControl,
+    ProducerCombobox,
+    CONTRACT_TYPE_OPTIONS,
+    PRODUCTION_TYPES,
+    DISTRIBUTION_CHANNELS,
+} from "@/components/contract-intake-fields"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -133,77 +142,12 @@ function buildMailText(mail: FeedbackMail): string {
     return mail.tekst ?? ""
 }
 
-function stripHtml(text: string): string {
-    return text.replace(/<[^>]+>/g, "")
-}
-
-/** Normaliser legacy [GUL]-formater til <mark> */
-function normaliserGul(text: string): string {
-    return text
-        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
-        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
-}
-
-/**
- * Konverter <mark>-tags til Gmail-kompatibel tabel-celle med bgcolor.
- * Gmail stripper inline style-attributter men respekterer bgcolor på <td>.
- */
-function toGmailHtml(text: string): string {
-    const normalized = normaliserGul(text)
-    return normalized.replace(
-        /<mark[^>]*>([\s\S]*?)<\/mark>/g,
-        '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0"><tr>' +
-        '<td bgcolor="#fef08a" style="padding:6px 10px;border-radius:3px">$1</td>' +
-        "</tr></table>"
-    )
-}
-
-async function copyAsRichText(rawText: string): Promise<void> {
-    const gmailHtml = toGmailHtml(rawText).replace(/\n/g, "<br/>")
-    const plainText = stripHtml(normaliserGul(rawText))
-
-    // Forsøg 1: Modern Clipboard API (text/html + text/plain)
-    if (typeof ClipboardItem !== "undefined") {
-        try {
-            const fullHtml = `<html><body>${gmailHtml}</body></html>`
-            const blob = new Blob([fullHtml], { type: "text/html" })
-            const plain = new Blob([plainText], { type: "text/plain" })
-            await navigator.clipboard.write([
-                new ClipboardItem({ "text/html": blob, "text/plain": plain })
-            ])
-            return
-        } catch { /* fortsæt til fallback */ }
-    }
-
-    // Forsøg 2: execCommand — mere universelt understøttet for rich text
-    const div = document.createElement("div")
-    div.innerHTML = gmailHtml
-    div.style.cssText = "position:fixed;opacity:0;pointer-events:none"
-    document.body.appendChild(div)
-    try {
-        const sel = window.getSelection()
-        const range = document.createRange()
-        range.selectNodeContents(div)
-        sel?.removeAllRanges()
-        sel?.addRange(range)
-        document.execCommand("copy")
-        sel?.removeAllRanges()
-    } finally {
-        document.body.removeChild(div)
-    }
-}
-
 function renderMailWithHighlights(text: string): React.ReactNode {
-    // Normaliser alle gul-formater til <mark> og render som HTML
-    const normalized = text
-        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
-        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
-    return (
-        <span
-            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
-            className="whitespace-pre-wrap"
-        />
-    )
+    const html = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/\n/g, "<br/>")
+    return <span dangerouslySetInnerHTML={{ __html: html }} className="whitespace-pre-wrap" />
 }
 
 function removeMailSection(text: string, sectionNum: number): string {
@@ -223,13 +167,11 @@ function removeMailSection(text: string, sectionNum: number): string {
 }
 
 function extractGulText(text: string): string {
-    // Ny format: <mark ...>...</mark>
-    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
-    if (htmlMatches.length) return htmlMatches.join("\n\n")
-    // Legacy formater
-    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
-    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
-    return [...legacyMatches, ...newMatches].join("\n\n")
+    const spanMatches = [...text.matchAll(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1].trim())
+    if (spanMatches.length) return spanMatches.join("\n\n")
+    const legacy = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const gul = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    return [...legacy, ...gul].join("\n\n")
 }
 
 // ── Indbakke-komponent ────────────────────────────────────────
@@ -507,6 +449,11 @@ function ManuelGennemgang() {
     const [file, setFile] = useState<File | null>(null)
     const [memberName, setMemberName] = useState("")
     const [memberEmail, setMemberEmail] = useState("")
+    const [contractType, setContractType] = useState<ContractType | null>(null)
+    const [productionType, setProductionType] = useState<ProductionType | null>(null)
+    const [distributionChannels, setDistributionChannels] = useState<DistributionChannel[]>([])
+    const [producer, setProducer] = useState<ProducerSelection | null>(null)
+    const [notes, setNotes] = useState("")
     const [analyzing, setAnalyzing] = useState(false)
     const [result, setResult] = useState<ReviewResult | null>(null)
     const [contractText, setContractText] = useState("")
@@ -572,6 +519,11 @@ function ManuelGennemgang() {
         setContractText("")
         setActiveQuote(null)
         setActiveFpId(null)
+        setContractType(null)
+        setProductionType(null)
+        setDistributionChannels([])
+        setProducer(null)
+        setNotes("")
     }
 
     const handleAnalyze = async () => {
@@ -582,6 +534,14 @@ function ManuelGennemgang() {
             const payload = new FormData()
             payload.append("file", file)
             if (memberName) payload.append("memberName", memberName)
+            if (contractType) payload.append("contractType", contractType)
+            if (productionType) payload.append("productionType", productionType)
+            if (distributionChannels.length) payload.append("distributionChannels", JSON.stringify(distributionChannels))
+            if (producer?.name) payload.append("producerName", producer.name)
+            if (producer?.dfksId) payload.append("producerDfksId", producer.dfksId)
+            if (producer?.dfiId) payload.append("producerDfiId", producer.dfiId)
+            if (producer?.isOverenskomstBound !== undefined) payload.append("producerOverenskomst", String(producer.isOverenskomstBound))
+            if (notes.trim()) payload.append("notes", notes.trim())
             const resp = await fetch("/api/gennemgang", { method: "POST", body: payload })
             if (!resp.ok) {
                 const e = await resp.json().catch(() => ({}))
@@ -659,21 +619,32 @@ function ManuelGennemgang() {
     const handleOpenMail = () => {
         const to = memberEmail ? encodeURIComponent(memberEmail) : ""
         const subject = encodeURIComponent(mailSubject)
-        // mailto: understøtter ikke HTML — strip tags
-        const body = encodeURIComponent(stripHtml(mailText))
+        const body = encodeURIComponent(mailText)
         window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
     }
 
     const handleCopyMail = async () => {
-        await copyAsRichText(mailText)
+        const html = mailText.replace(/\n/g, "<br/>")
+        const plain = mailText.replace(/<[^>]+>/g, "")
+        try {
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([`<html><body>${html}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })])
+        } catch { await navigator.clipboard.writeText(plain) }
         toast.success("Mail kopieret til udklipsholder")
     }
 
     const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        // Gul-tekst kopieres som ren tekst — ingen markup til producenten
-        await navigator.clipboard.writeText(gul)
+        const plain = gul.replace(/<[^>]+>/g, "")
+        try {
+            await navigator.clipboard.write([new ClipboardItem({
+                "text/html": new Blob([`<html><body>${gul.replace(/\n/g, "<br/>")}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })])
+        } catch { await navigator.clipboard.writeText(plain) }
         toast.success("Producent-tekst kopieret (kun gule afsnit)")
     }
 
@@ -723,6 +694,79 @@ function ManuelGennemgang() {
                             <p className="text-xs text-muted-foreground mt-1">PDF · DOCX · DOC · TXT</p>
                         </>
                     )}
+                </div>
+
+                {/* Valgfri kontekst — alle felter er frivillige for juristen */}
+                <div className="space-y-4 rounded-lg border border-dashed p-4">
+                    <p className="text-xs text-muted-foreground font-medium">Kontekst til AI (valgfri — giver bedre analyse)</p>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Ansættelsesform</Label>
+                        <SegmentedControl<ContractType>
+                            options={CONTRACT_TYPE_OPTIONS}
+                            value={contractType}
+                            onChange={setContractType}
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Produktionstype</Label>
+                        <div className="flex flex-wrap gap-2">
+                            {PRODUCTION_TYPES.map(opt => (
+                                <Chip
+                                    key={opt.value}
+                                    label={opt.label}
+                                    selected={productionType === opt.value}
+                                    onClick={() => setProductionType(p => p === opt.value ? null : opt.value)}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Distributionskanaler</Label>
+                        <div className="flex flex-wrap gap-2">
+                            {DISTRIBUTION_CHANNELS.map(opt => (
+                                <Chip
+                                    key={opt.value}
+                                    label={opt.label}
+                                    selected={distributionChannels.includes(opt.value)}
+                                    onClick={() => setDistributionChannels(prev =>
+                                        prev.includes(opt.value)
+                                            ? prev.filter(c => c !== opt.value)
+                                            : [...prev, opt.value]
+                                    )}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Producent</Label>
+                        <ProducerCombobox value={producer} onChange={setProducer} />
+                        {producer && (
+                            <p className="text-xs text-muted-foreground">
+                                {producer.name}
+                                {producer.isOverenskomstBound === true && " · ✓ Overenskomstbundet"}
+                                {producer.isOverenskomstBound === false && " · ✗ Ikke overenskomstbundet"}
+                                {producer.source === "manual" && " · (fritekst)"}
+                            </p>
+                        )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <Label className="text-xs">Bemærkning til AI</Label>
+                        <Textarea
+                            value={notes}
+                            onChange={e => setNotes(e.target.value.slice(0, 1000))}
+                            placeholder="Særlige forhold, hvad juristen allerede ved om sagen..."
+                            rows={2}
+                            className="text-sm resize-none"
+                        />
+                        {notes.length > 800 && (
+                            <p className="text-xs text-muted-foreground text-right">{notes.length}/1000</p>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex items-start gap-2 rounded-lg border border-muted bg-muted/30 px-4 py-3">
