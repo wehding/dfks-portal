@@ -89,6 +89,19 @@ MEKANISKE REGLER — følg præcist:
    FORKERT: "Filmklipperen ønsker at tilføje..."
    KORREKT:  "Jeg vil gerne have tilføjet..."
 
+10. SEKRETARIATKONTAKT — ALDRIG SOM FØRSTE KONTAKT
+    Членmet har allerede kontaktet DFKS ved at indsende kontrakten til gennemgang.
+    Formulér ALDRIG anbefalinger som om kontakten endnu ikke er etableret.
+
+    FORBUDT: "Vi anbefaler at du kontakter sekretariatet inden du går videre"
+    FORBUDT: "Tag kontakt til sekretariatet for vejledning"
+    FORBUDT: "Skriv til os inden du underskriver"
+
+    Brug i stedet — fortsættelse af eksisterende sag:
+    "Vi ser nærmere på dette, hvis du vil have det med i vores tilbagemelding."
+    "Skriv endelig hvis du vil have os til at tage det op med producenten."
+    "Vi følger op på dette når vi hører fra dig."
+
 9. SAGLIG TONE — INGEN KONFRONTERENDE VURDERINGER
    Argumentationen i GUL-blokken foreslår og begrunder — den dømmer ikke.
    Undgå formuleringer der negativt vurderer producentens adfærd.
