@@ -85,7 +85,7 @@ Kære XXXX
 
 Mange tak for din mail og for kontrakten 🙂
 
-Lone og jeg har gennemgået din kontrakt i fællesskab, og du får vores kommentarer og ændringsforslag her. Du skal være opmærksom på, at denne mail kun er til dig, og du må derfor IKKE videresende den til Producenten. Læs den igennem, og send derefter det, der er markeret med GUL i en separat mail til Producenten.
+Lone og jeg har gennemgået din kontrakt i fællesskab, og du får vores kommentarer og ændringsforslag her. Du skal være opmærksom på, at denne mail kun er til dig. Ændringsforslag til kontrakten finder du i sektionen nedenfor i citationstegn, og dem kan du naturligvis bruge i din dialog med Producenten.
 
 KOMMENTARER OG ÆNDRINGSFORSLAG
 
@@ -153,7 +153,7 @@ Mange tak for kontrakten!
 
 Lone og jeg har i fællesskab gennemgået den, og du får vores kommentarer og ændringsforslag i denne mail.
 
-Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Den er kun til dig, så læs dem igennem og send så de tekststykker, der er markeret med GUL i en ny mail til Producenten.
+Du skal være opmærksom på, at denne mail kun er til dig. Ændringsforslag til kontrakten finder du i sektionen nedenfor i citationstegn, og dem kan du naturligvis bruge i din dialog med Producenten.
 
 KOMMENTARER OG ÆNDRINGSFORSLAG
 

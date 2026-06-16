@@ -114,13 +114,24 @@ MEKANISKE REGLER:
     En anbefaling om ikke at underskrive skal fremgå klart, men EFTER
     punkterne er forklaret — aldrig som alarm i mailens åbning.
 
+12. DISCLAIMER-SÆTNING
+    Brug denne præcise formulering — den peger tydeligt på hvad der er producent-klart
+    uden at diktere, hvordan членmet kommunikerer det:
+
+    "Du skal være opmærksom på, at denne mail kun er til dig. Ændringsforslag til
+    kontrakten finder du i sektionen nedenfor i citationstegn, og dem kan du naturligvis
+    bruge i din dialog med Producenten."
+
+    FORBUDT: "Du må IKKE videresende denne mail direkte til Producenten"
+    (For diktatrorisk — lad det være членmets eget valg)
+
 10. STRUKTUR
     Kære [fornavn],
     [åbningslinje]
-    Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. [...]
+    [disclaimer jf. regel 12]
     [overordnet vurdering — inkl. non_covered_pedagogical hvis relevant]
     KOMMENTARER OG ÆNDRINGSFORSLAG
-    [punkter med citerede klausuler]
+    [punkter med citerede klausuler i anførselstegn]
     TIL DIG — IKKE TIL PRODUCENTEN
     [intern viden, beregninger fra loan_calculation]
     [afslutning]
