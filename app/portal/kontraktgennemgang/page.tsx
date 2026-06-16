@@ -288,6 +288,7 @@ function formatBytes(bytes: number) {
 const PRODUCTION_TYPES: { value: ProductionType; label: string }[] = [
     { value: "dokumentar",  label: "Dokumentar" },
     { value: "fiktion",     label: "Fiktion / drama" },
+    { value: "tv_program",  label: "TV-program" },
     { value: "reklame",     label: "Reklame / branded content" },
     { value: "streaming",   label: "Streaming-original" },
     { value: "shortform",   label: "Short-form / online" },
