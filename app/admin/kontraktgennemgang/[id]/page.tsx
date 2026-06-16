@@ -109,54 +109,18 @@ function extractGulText(text: string): string {
     return [...legacyMatches, ...newMatches].join("\n\n")
 }
 
-function normaliserGul(text: string): string {
-    return text
-        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
-        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
-}
-
-function toGmailHtml(text: string): string {
-    const normalized = normaliserGul(text)
-    return normalized.replace(
-        /<mark[^>]*>([\s\S]*?)<\/mark>/g,
-        '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0"><tr>' +
-        '<td bgcolor="#fef08a" style="padding:6px 10px;border-radius:3px">$1</td>' +
-        "</tr></table>"
-    )
-}
-
-async function copyAsRichText(rawText: string): Promise<void> {
-    const gmailHtml = toGmailHtml(rawText).replace(/\n/g, "<br/>")
-    const plainText = normaliserGul(rawText).replace(/<[^>]+>/g, "")
-
-    // Forsøg 1: Modern Clipboard API
-    if (typeof ClipboardItem !== "undefined") {
-        try {
-            const fullHtml = `<html><body>${gmailHtml}</body></html>`
-            const blob = new Blob([fullHtml], { type: "text/html" })
-            const plain = new Blob([plainText], { type: "text/plain" })
-            await navigator.clipboard.write([
-                new ClipboardItem({ "text/html": blob, "text/plain": plain })
-            ])
-            return
-        } catch { /* fortsæt til fallback */ }
-    }
-
-    // Forsøg 2: execCommand
-    const div = document.createElement("div")
-    div.innerHTML = gmailHtml
-    div.style.cssText = "position:fixed;opacity:0;pointer-events:none"
-    document.body.appendChild(div)
+async function copyAsRichText(html: string): Promise<void> {
+    // Konverter newlines til <br> og wrap i html-body
+    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
     try {
-        const sel = window.getSelection()
-        const range = document.createRange()
-        range.selectNodeContents(div)
-        sel?.removeAllRanges()
-        sel?.addRange(range)
-        document.execCommand("copy")
-        sel?.removeAllRanges()
-    } finally {
-        document.body.removeChild(div)
+        const blob = new Blob([fullHtml], { type: "text/html" })
+        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
+        await navigator.clipboard.write([
+            new ClipboardItem({ "text/html": blob, "text/plain": plain })
+        ])
+    } catch {
+        // Fallback: kopier som plain text
+        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
     }
 }
 
@@ -258,7 +222,6 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     // Rens mailtekst for eventuelle risikovurderingslinjer inden afsendelse
     function cleanMailText(text: string): string {
         return text
-            .replace(/<[^>]+>/g, "")           // strip HTML-tags (mark, br, osv.)
             .replace(/Overordnet vurdering\s*:.*?(JA|NEJ|LAV|MELLEM|HØJ)[^\n]*/gi, "")
             .replace(/Risikoniveau\s*:?\s*(LAV|MELLEM|HØJ)[^\n]*/gi, "")
             .replace(/Skal eskaleres\s*:?\s*(JA|NEJ)[^\n]*/gi, "")
@@ -310,11 +273,11 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const handleCopyGul = async () => {
         const gul = extractGulText(mailText)
         if (!gul) { toast.error("Ingen gul-markeret tekst fundet"); return }
-        // Wrap i <mark> — toGmailHtml i copyAsRichText konverterer til bgcolor-tabel
-        const gulMedMark = gul.split("\n\n").map(p =>
-            `<mark style="background-color:#fef08a">${p}</mark>`
-        ).join("\n\n")
-        await copyAsRichText(gulMedMark)
+        // Wrap i mark-tags så Gmail bevarer den gule farve
+        const gulHtml = gul.split("\n\n").map(p =>
+            `<mark style="background-color:#fef08a">${p.replace(/\n/g, "<br/>")}</mark>`
+        ).join("<br/><br/>")
+        await copyAsRichText(gulHtml)
         toast.success("Producent-tekst kopieret")
     }
 
