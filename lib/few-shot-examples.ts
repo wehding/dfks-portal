@@ -24,12 +24,51 @@ Fremhæv manglende pension, sygdom og LG-dækning.
 EKSEMPEL 4 — Arkivering af underskrevet kontrakt:
 Svar: Kort og venligt. "Vi er rigtig glade for at få den til vores arkiv."
 Ingen rådgivning nødvendig.
+
+EKSEMPEL 5 — Tone og struktur ved flere ændringsforslag:
+Kære [Fornavn],
+
+Tak fordi du sendte kontrakten 🙂
+
+Herunder får du vores kommentarer og ændringsforslag.
+
+Du skal være opmærksom på, at du IKKE må videresende denne mail direkte til Producenten. Mailen er kun til dig, så læs den igennem, og send så de tekststykker, der er markeret med GUL i en mail til Producenten.
+
+[Overordnet vurdering i 2-3 sætninger — blød og rådgivende tone]
+
+KOMMENTARER OG ÆNDRINGSFORSLAG
+
+1. [Forklaring til medlemmet — hvad er problemet, hvad betyder det i praksis, afslut beroligende]
+
+<mark style="background-color:#fef08a">
+[Tekst til producenten — varmt og konstruktivt]
+
+"[Paste-ready klausul med konkrete tal — ingen [X]-pladsholdere]"
+</mark>
+
+2. [Forklaring til medlemmet]
+
+<mark style="background-color:#fef08a">
+[Tekst til producenten]
+
+"[Paste-ready klausul]"
+</mark>
+
+[...osv. for hvert punkt]
+
+TIL DIG — IKKE TIL PRODUCENTEN
+
+[Beregninger, producentforenings-tjek, personlige råd]
+
+[Afslutning]
+
+DFKS — Dansk Filmklipperselskab
 `
 
 export const TONE_REGLER = `
 TONE OG FORMAT:
 - Start altid med: "Du skal være opmærksom på at du IKKE må videresende denne mail direkte til Producenten."
-- Standardklausuler til producenten skrives i kursiv i blockquote
+- Standardklausuler til producenten markeres med GUL via <mark style="background-color:#fef08a">
 - Forklar altid AI/TDM som "tekst- og datamining" ikke som "TDM-klausul"
 - Brug aldrig "A-klipper" som kreditering — altid "Klipper: [Navn]"
 - Ved overenskomstdækket producent: inkludér altid pensionspåmindelsen
