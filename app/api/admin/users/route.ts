@@ -91,6 +91,8 @@ export async function GET(req: NextRequest) {
             org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
+            phone: u?.user_metadata?.phone ?? null,
+            title: u?.user_metadata?.title ?? null,
             banned: u?.banned_until ? new Date(u.banned_until) > new Date() : false,
             last_sign_in: u?.last_sign_in_at ?? null,
             created_at: u?.created_at ?? "",

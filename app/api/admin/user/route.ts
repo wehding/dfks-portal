@@ -37,10 +37,16 @@ export async function POST(req: NextRequest) {
 
         // ── Invite: opret ny bruger ──────────────────────────────
         if (body.action === "invite") {
-            const { email, name, rhId } = body
+            const { email, name, rhId, role: inviteRole, phone, title } = body
             if (!email || !rhId) {
                 return NextResponse.json({ error: "email og rhId er påkrævet" }, { status: 400 })
             }
+
+            const isStaff = rhId === "__staff__"
+            const userRole = isStaff ? (inviteRole ?? "admin") : "member"
+            const redirectTo = isStaff
+                ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
+                : `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`
 
             // Tjek max_users-grænse for org
             const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
@@ -57,8 +63,13 @@ export async function POST(req: NextRequest) {
                 type: "invite",
                 email,
                 options: {
-                    data: { full_name: name, role: "member" },
-                    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`,
+                    data: {
+                        full_name: name || email,
+                        role: userRole,
+                        ...(phone ? { phone } : {}),
+                        ...(title ? { title } : {}),
+                    },
+                    redirectTo,
                 },
             })
             if (linkErr) throw new Error(linkErr.message)
