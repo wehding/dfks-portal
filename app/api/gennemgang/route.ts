@@ -125,12 +125,13 @@ export async function POST(req: NextRequest) {
         try {
             if (existingReviewId) {
                 await admin.from("contract_reviews").update({
-                    ai_result:       parsed,
-                    ai_run_at:       new Date().toISOString(),
-                    ai_language:     klassifikation?.kontraktsprog ?? null,
-                    risk_level:      riskLevel,
-                    should_escalate: shouldEscalate,
-                    ai_status:       "klar",
+                    ai_result:          parsed,
+                    ai_run_at:          new Date().toISOString(),
+                    ai_language:        klassifikation?.kontraktsprog ?? null,
+                    risk_level:         riskLevel,
+                    should_escalate:    shouldEscalate,
+                    ai_status:          "klar",
+                    compliance_extract: compliance_extract ?? null,
                     ...(storagePath ? { storage_path: storagePath } : {}),
                 }).eq("id", existingReviewId)
             } else {
@@ -158,8 +159,9 @@ export async function POST(req: NextRequest) {
                     focus_areas:  focusAreas.length ? focusAreas : null,
                     notes:        uploadNotes ?? null,
                     ai_language:  klassifikation?.kontraktsprog ?? null,
-                    risk_level:      riskLevel,
-                    should_escalate: shouldEscalate,
+                    risk_level:         riskLevel,
+                    should_escalate:    shouldEscalate,
+                    compliance_extract: compliance_extract ?? null,
                 }
                 const { data: savedReview, error: insertError } = await admin
                     .from("contract_reviews").insert(insertPayload).select().single()

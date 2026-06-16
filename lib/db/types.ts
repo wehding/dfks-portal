@@ -142,6 +142,7 @@ export interface DbContractReview {
     ai_run_at: string | null
     ai_language: string | null
     updated_at: string | null
+    compliance_extract: Record<string, unknown> | null
 }
 
 export interface DbAgreement {
