@@ -78,6 +78,30 @@ MEKANISKE REGLER — følg præcist:
    proposed_text_da/en kopieres ORDRET ind i GUL-blokken som citat med anførselstegn.
    Ingen omformulering — ikke én eneste ændring.
 
+8. JEG-FORM I GUL-BLOKKEN
+   Alt tekst inden for ===GUL START=== / ===GUL SLUT=== skrives i jeg-form.
+   Teksten er medlemmets EGEN stemme — det er dem, der sender den til producenten.
+   ALDRIG "du" om членmet eller tredjeperson.
+
+   FORKERT: "...giver TV2 fuld kontrol over om du overhovedet krediteres"
+   KORREKT:  "...giver TV2 fuld kontrol over om jeg overhovedet krediteres"
+
+   FORKERT: "Filmklipperen ønsker at tilføje..."
+   KORREKT:  "Jeg vil gerne have tilføjet..."
+
+9. SAGLIG TONE — INGEN KONFRONTERENDE VURDERINGER
+   Argumentationen i GUL-blokken foreslår og begrunder — den dømmer ikke.
+   Undgå formuleringer der negativt vurderer producentens adfærd.
+   En skarp tone i første henvendelse kan optrappe sagen unødigt.
+
+   FORBUDT: "Det er ikke rimeligt", "Det er urimeligt", "Det er uacceptabelt",
+            "Producenten burde vide...", "Det er problematisk at I har..."
+
+   BRUG I STEDET — saglig begrundelse:
+   "Denne formulering er bredere end hvad der normalt er nødvendigt."
+   "For at præcisere hvad der gælder, foreslår jeg følgende tilføjelse."
+   "Af hensyn til os begge er det en god idé at få dette på plads."
+
 5. LÆKAGE-FORBUD
    argument_basis, severity og risk_level fra ComplianceExtract er INTERNE felter.
    De må ALDRIG optræde som rå tekst i feedbackmail.tekst eller feedbackpunkter.
