@@ -32,6 +32,8 @@ type User = {
     org_roles: string[]
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
+    phone: string | null
+    title: string | null
     banned: boolean
     last_sign_in: string | null
     created_at: string
@@ -136,6 +138,8 @@ export default function AdminBrugerePage() {
     const [inviteOpen, setInviteOpen] = useState(false)
     const [inviteEmail, setInviteEmail] = useState("")
     const [inviteName, setInviteName] = useState("")
+    const [invitePhone, setInvitePhone] = useState("")
+    const [inviteTitle, setInviteTitle] = useState("")
     const [inviteRoles, setInviteRoles] = useState<string[]>(["jurist"])
     const [inviteIsPortal, setInviteIsPortal] = useState(false)
     const [inviteRhSearch, setInviteRhSearch] = useState("")
@@ -236,6 +240,8 @@ export default function AdminBrugerePage() {
                     rhId: inviteIsPortal ? inviteRhSelected!.id : "__staff__",
                     roles: inviteIsPortal ? [] : inviteRoles,
                     role: inviteIsPortal ? "member" : inviteRoles[0],
+                    phone: invitePhone.trim() || undefined,
+                    title: inviteTitle.trim() || undefined,
                 }),
             })
             const json = await res.json()
@@ -316,6 +322,8 @@ export default function AdminBrugerePage() {
     function openInvite(forPortal = false) {
         setInviteEmail("")
         setInviteName("")
+        setInvitePhone("")
+        setInviteTitle("")
         setInviteRoles(["jurist"])
         setInviteIsPortal(forPortal)
         setInviteRhSearch("")
@@ -385,6 +393,8 @@ export default function AdminBrugerePage() {
                         <TableRow>
                             <TableHead>Navn</TableHead>
                             <TableHead>E-mail</TableHead>
+                            <TableHead>Telefon</TableHead>
+                            <TableHead>Titel</TableHead>
                             <TableHead>Rolle(r)</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Sidst logget ind</TableHead>
@@ -408,6 +418,8 @@ export default function AdminBrugerePage() {
                             <TableRow key={u.id} className={u.banned ? "opacity-50" : ""}>
                                 <TableCell className="font-medium">{u.full_name}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.email ?? "—"}</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">{u.phone ?? "—"}</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">{u.title ?? "—"}</TableCell>
                                 <TableCell><RoleChips roles={u.roles} /></TableCell>
                                 <TableCell>
                                     <StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} />
@@ -502,6 +514,25 @@ export default function AdminBrugerePage() {
                                     placeholder="navn@dfks.dk"
                                 />
                             </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                    <Label>Telefon</Label>
+                                    <Input
+                                        type="tel"
+                                        value={invitePhone}
+                                        onChange={e => setInvitePhone(e.target.value)}
+                                        placeholder="+45 12 34 56 78"
+                                    />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Titel / funktion</Label>
+                                    <Input
+                                        value={inviteTitle}
+                                        onChange={e => setInviteTitle(e.target.value)}
+                                        placeholder="f.eks. Jurist"
+                                    />
+                                </div>
+                            </div>
 
                             {inviteIsPortal ? (
                                 <div className="space-y-1.5">
@@ -561,6 +592,14 @@ export default function AdminBrugerePage() {
                                             />
                                         ))}
                                     </div>
+                                    {inviteRoles.length === 1 && (
+                                        <p className="text-xs text-muted-foreground pt-0.5">
+                                            {inviteRoles[0] === "admin" && "Fuld adgang til alle admin-funktioner"}
+                                            {inviteRoles[0] === "org-admin" && "Administrerer brugere og indstillinger for org"}
+                                            {inviteRoles[0] === "jurist" && "Kan behandle og besvare kontraktgennemgange"}
+                                            {inviteRoles[0] === "viewer" && "Læseadgang — kan ikke redigere"}
+                                        </p>
+                                    )}
                                 </div>
                             )}
                         </div>
