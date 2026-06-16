@@ -464,8 +464,8 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         complianceExtract = parseJson(rawCompliance, "compliance") as ComplianceExtract
         console.log("[analyse] Compliance:", JSON.stringify({
             risk_level: complianceExtract.risk_level,
-            clauses: complianceExtract.required_clauses?.length,
-            issues: complianceExtract.flagged_issues?.length,
+            points: complianceExtract.points?.length,
+            non_covered: complianceExtract.non_covered_pedagogical,
         }))
     } catch (e) {
         console.warn("[analyse] Compliance-udtræk fejlede, fortsætter uden:", e)
