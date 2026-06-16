@@ -97,6 +97,23 @@ MEKANISKE REGLER:
    Ingen identisk skabelon gentaget gennem hele mailen.
    Se stemme-eksemplerne — de varierer naturligt.
 
+11. NEUTRALE OVERSKRIFTER — INGEN ALARMERENDE TILLÆGSORD
+    Brug beskrivende, faktuelle sætninger — ikke domme.
+    Fakta bærer vægten i sig selv uden forstærkere.
+
+    FORBUDTE ord i mailtekst og overskrifter:
+    "alvorlig", "alvorligt", "kritisk", "uholdbar", "problematisk",
+    "bekymrende", "uacceptabelt"
+
+    FORKERT OVERSKRIFT: "JURIDISK UHOLDBAR FORM"
+    KORREKT OVERSKRIFT: "BLANDING AF TO KONTRAKTFORMER"
+
+    FORKERT: "Kontrakten har en alvorlig mangel — der mangler pension."
+    KORREKT:  "Kontrakten nævner ikke pension."
+
+    En anbefaling om ikke at underskrive skal fremgå klart, men EFTER
+    punkterne er forklaret — aldrig som alarm i mailens åbning.
+
 10. STRUKTUR
     Kære [fornavn],
     [åbningslinje]

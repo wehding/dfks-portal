@@ -192,6 +192,51 @@ Periode: 1. juli – 31. december 2026
     return result
 }
 
+// ── Niveau 1: Deterministiske mønster-tjek på mailtekst ──────
+// Kør disse mod enhver genereret mail for at fange regression.
+
+export const MAIL_BLOCKLIST = [
+    // Forstærkende/alarmerende ord (punkt 11)
+    /\balvorlig\b/i,
+    /\balvorligt\b/i,
+    /\bkritisk\b/i,
+    /\buholdbar\b/i,
+    // Konfronterende vurderinger (punkt 9)
+    /det er ikke rimeligt/i,
+    /det er urimeligt/i,
+    /det er uacceptabelt/i,
+]
+
+export const MAIL_MAX_ONE = [
+    // Må højst forekomme én gang (punkt 6)
+    /anbefaler.*ikke underskriver?/i,
+    /må ikke videresendes/i,
+]
+
+export const MAIL_FORBIDDEN_COMBOS = [
+    // Forbudte kombinationer (punkt 10)
+    { a: /kontakt sekretariatet/i, b: /inden du går videre/i },
+]
+
+export function checkMailNiveau1(mailText: string): string[] {
+    const errors: string[] = []
+
+    for (const re of MAIL_BLOCKLIST) {
+        if (re.test(mailText)) errors.push(`Blocklist-match: ${re}`)
+    }
+
+    for (const re of MAIL_MAX_ONE) {
+        const matches = mailText.match(new RegExp(re.source, "gi")) ?? []
+        if (matches.length > 1) errors.push(`Gentages ${matches.length}x (max 1): ${re}`)
+    }
+
+    for (const { a, b } of MAIL_FORBIDDEN_COMBOS) {
+        if (a.test(mailText) && b.test(mailText)) errors.push(`Forbudt kombination: ${a} + ${b}`)
+    }
+
+    return errors
+}
+
 // ── Kør alle tests ────────────────────────────────────────────
 
 async function main() {

@@ -122,7 +122,8 @@ POINTS DER SKAL IDENTIFICERES:
 
 10. HYBRID KONTRAKT (point_id: "hybrid_kontrakt", severity: HØJ)
     requires_producer_text: true
-    argument_basis: "Kontrakten blander A-løns- og leverandørterminologi (f.eks. 'Medarbejder'/'grundløn' i pkt. 1-10 men 'Leverandøren'/'faktura' i pkt. 11). Juridisk uholdbar form — skaber usikkerhed om skat, pension og LG-dækning."
+    title: "Blanding af to kontraktformer" (ALDRIG "Juridisk uholdbar form" — neutral beskrivelse)
+    argument_basis: "Kontrakten blander A-løns- og leverandørterminologi (f.eks. 'Medarbejder'/'grundløn' i pkt. 1-10 men 'Leverandøren'/'faktura' i pkt. 11). Skaber usikkerhed om skat, pension og LG-dækning — brug aldrig 'uholdbar' i mailtekst."
     proposed_text_da: null (ingen standardklausul — mailen skal anbefale at kontraktformen rettes)
     member_only_note: "Kontrakten er juridisk uholdbar i sin nuværende form. Anbefalet at ikke underskrive inden kontraktformen er afklaret — kontakt sekretariatet."
 

@@ -604,6 +604,14 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         parsed.should_escalate = shouldEscalate
     }
 
+    // Programmatisk GUL-markering — koden lægger spans på, ikke modellen
+    if (parsed.feedbackmail?.tekst && complianceExtract?.points?.length) {
+        parsed.feedbackmail.tekst = applyGulTokens(
+            parsed.feedbackmail.tekst,
+            complianceExtract.points
+        )
+    }
+
     // Rens mailtekst for lækede interne felter
     if (parsed.feedbackmail?.tekst) {
         parsed.feedbackmail.tekst = parsed.feedbackmail.tekst
