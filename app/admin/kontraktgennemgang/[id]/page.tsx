@@ -73,6 +73,26 @@ const TYPE_CONFIG = {
     info:     { color: "text-muted-foreground", icon: Info },
 }
 
+const PRODUCTION_TYPE_LABELS: Record<string, string> = {
+    dokumentar: "Dokumentar",
+    fiktion:    "Fiktion / drama",
+    tv_program: "TV-program",
+    reklame:    "Reklame",
+    streaming:  "Streaming",
+    shortform:  "Short-form",
+    ukendt:     "Ukendt",
+}
+
+const DISTRIBUTION_LABELS: Record<string, string> = {
+    biograf:             "Biograf",
+    tv_lineaer:          "TV (lineær)",
+    streaming_svod:      "Streaming (SVOD)",
+    streaming_avod:      "Streaming (AVOD)",
+    festival:            "Festival",
+    internationalt_salg: "Internationalt salg",
+    ukendt:              "Ukendt",
+}
+
 const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
     afventer:   { label: "Afventer",         class: "bg-muted text-muted-foreground border-border" },
     behandling: { label: "Under behandling", class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
@@ -349,11 +369,11 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                     </div>
                     <div>
                         <p className="text-muted-foreground mb-0.5">Produktionstype</p>
-                        <p className="font-medium capitalize">{review.production_type ?? "—"}</p>
+                        <p className="font-medium">{review.production_type ? (PRODUCTION_TYPE_LABELS[review.production_type] ?? review.production_type) : "—"}</p>
                     </div>
                     <div>
                         <p className="text-muted-foreground mb-0.5">Distribution</p>
-                        <p className="font-medium">{review.distribution_channels?.join(" · ") || "—"}</p>
+                        <p className="font-medium">{review.distribution_channels?.map(c => DISTRIBUTION_LABELS[c] ?? c).join(" · ") || "—"}</p>
                     </div>
                     <div>
                         <p className="text-muted-foreground mb-0.5">Producer</p>
