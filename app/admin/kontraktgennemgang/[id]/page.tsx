@@ -106,41 +106,48 @@ const VERDICT_CONFIG = {
 }
 
 function renderMailWithHighlights(text: string): React.ReactNode {
-    // Ny format: <mark style="background-color:#fef08a">...</mark>
-    // Legacy: [GUL]...[/GUL] og ===GUL START===...===GUL SLUT===
-    const normalized = text
-        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<mark style="background-color:#fef08a">$1</mark>')
-        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<mark style="background-color:#fef08a">$1</mark>')
+    // Normaliser alle GUL-formater til <span> — spans bevares ved paste i Gmail
+    const html = text
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/<mark[^>]*>([\s\S]*?)<\/mark>/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/\n/g, "<br/>")
     return (
         <span
-            dangerouslySetInnerHTML={{ __html: normalized.replace(/\n/g, "<br/>") }}
+            dangerouslySetInnerHTML={{ __html: html }}
             className="whitespace-pre-wrap"
         />
     )
 }
 
 function extractGulText(text: string): string {
-    // Ny format
-    const htmlMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
-    if (htmlMatches.length) return htmlMatches.join("\n\n")
-    // Legacy
-    const legacyMatches = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
-    const newMatches = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
-    return [...legacyMatches, ...newMatches].join("\n\n")
+    // Span-format (nyt)
+    const spanMatches = [...text.matchAll(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g)].map(m => m[1].trim())
+    if (spanMatches.length) return spanMatches.join("\n\n")
+    // Mark-format
+    const markMatches = [...text.matchAll(/<mark[^>]*>([\s\S]*?)<\/mark>/g)].map(m => m[1].trim())
+    if (markMatches.length) return markMatches.join("\n\n")
+    // Legacy tokens
+    const legacy = [...text.matchAll(/\[GUL\]([\s\S]*?)\[\/GUL\]/g)].map(m => m[1].trim())
+    const gul = [...text.matchAll(/===GUL START===([\s\S]*?)===GUL SLUT===/g)].map(m => m[1].trim())
+    return [...legacy, ...gul].join("\n\n")
 }
 
-async function copyAsRichText(html: string): Promise<void> {
-    // Konverter newlines til <br> og wrap i html-body
-    const fullHtml = `<html><body>${html.replace(/\n/g, "<br/>")}</body></html>`
+async function copyAsRichText(rawHtml: string): Promise<void> {
+    // Normaliser <mark> til <span> så spans bevares ved paste i Gmail compose
+    const html = rawHtml
+        .replace(/<mark[^>]*>([\s\S]*?)<\/mark>/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/\n/g, "<br/>")
+    const plain = rawHtml.replace(/<[^>]+>/g, "")
     try {
-        const blob = new Blob([fullHtml], { type: "text/html" })
-        const plain = new Blob([html.replace(/<[^>]+>/g, "")], { type: "text/plain" })
         await navigator.clipboard.write([
-            new ClipboardItem({ "text/html": blob, "text/plain": plain })
+            new ClipboardItem({
+                "text/html": new Blob([`<html><body>${html}</body></html>`], { type: "text/html" }),
+                "text/plain": new Blob([plain], { type: "text/plain" }),
+            })
         ])
     } catch {
-        // Fallback: kopier som plain text
-        await navigator.clipboard.writeText(html.replace(/<[^>]+>/g, ""))
+        await navigator.clipboard.writeText(plain)
     }
 }
 
