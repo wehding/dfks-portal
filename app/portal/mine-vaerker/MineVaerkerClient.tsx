@@ -349,7 +349,7 @@ export default function MineVaerkerClient({
               className="h-9 w-full pl-8 text-sm md:w-56"
             />
           </div>
-          <div className="grid grid-cols-[1fr_auto] gap-2 md:hidden">
+          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
             <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
               <SelectContent>
@@ -366,7 +366,7 @@ export default function MineVaerkerClient({
 
         {/* Kolonnehoveder */}
         <div
-          className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none md:grid"
+          className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none lg:grid"
           style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
         >
           <input
@@ -399,7 +399,7 @@ export default function MineVaerkerClient({
             <React.Fragment key={a.id}>
             <div
               onClick={() => openEdit(a)}
-              className="hidden items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors md:grid"
+              className="hidden items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
               <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }}>
@@ -447,7 +447,7 @@ export default function MineVaerkerClient({
             <div
               key={`${a.id}-mobile`}
               onClick={() => openEdit(a)}
-              className="border-b border-gray-100 px-4 py-4 transition-colors active:bg-gray-50 md:hidden"
+              className="border-b border-gray-100 px-4 py-4 transition-colors active:bg-gray-50 lg:hidden"
             >
               <div className="flex gap-3">
                 <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }} className="pt-1">

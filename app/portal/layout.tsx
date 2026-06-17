@@ -124,7 +124,7 @@ export default function PortalLayout({
                 </SidebarFooter>
             </Sidebar>
 
-            <SidebarInset>
+            <SidebarInset className="min-w-0 overflow-x-hidden">
                 <header className="flex h-12 items-center gap-2 border-b px-4">
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="h-4" />
