@@ -96,6 +96,16 @@ const VERDICT_CONFIG = {
     kritisk:   { label: "✗ Kritisk", class: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800" },
 }
 
+const PRODUCTION_TYPE_LABELS: Record<string, string> = {
+    dokumentar: "Dokumentar",
+    fiktion:    "Fiktion / drama",
+    tv_program: "TV-program",
+    reklame:    "Reklame",
+    streaming:  "Streaming",
+    shortform:  "Short-form",
+    ukendt:     "Ukendt",
+}
+
 const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
     afventer:  { label: "Ikke tildelt",     class: "bg-muted text-muted-foreground border-border" },
     behandling:{ label: "Under behandling", class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
@@ -363,8 +373,8 @@ function Indbakke() {
                                         </td>
                                         <td className="px-4 py-3">
                                             {r.production_type ? (
-                                                <span className="capitalize rounded-full bg-muted px-2 py-0.5">
-                                                    {r.production_type}
+                                                <span className="rounded-full bg-muted px-2 py-0.5">
+                                                    {PRODUCTION_TYPE_LABELS[r.production_type] ?? r.production_type}
                                                 </span>
                                             ) : "—"}
                                         </td>
@@ -387,11 +397,19 @@ function Indbakke() {
                                                 {/* AI-analysestatus */}
                                                 {(() => {
                                                     const analysering = !r.ai_status || r.ai_status === "analyserer"
-                                                    if (analysering || r.ai_status === "fejl") {
+                                                    if (analysering && r.ai_status !== "fejl") {
+                                                        return (
+                                                            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">
+                                                                <RotateCcw className="h-3 w-3 animate-spin" />
+                                                                Analyserer…
+                                                            </span>
+                                                        )
+                                                    }
+                                                    if (r.ai_status === "fejl") {
                                                         return (
                                                             <button
-                                                                title={r.ai_status === "fejl" ? "Analyse fejlede — klik for at genkøre" : "Analyserer… klik for at genstarte"}
-                                                                className={`transition-colors ${r.ai_status === "fejl" ? "text-amber-500 hover:text-amber-600" : "text-muted-foreground hover:text-foreground"}`}
+                                                                title="Analyse fejlede — klik for at genkøre"
+                                                                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
                                                                 onClick={async e => {
                                                                     e.stopPropagation()
                                                                     const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
@@ -404,7 +422,8 @@ function Indbakke() {
                                                                     }
                                                                 }}
                                                             >
-                                                                <RotateCcw className={`h-3.5 w-3.5 ${analysering && r.ai_status !== "fejl" ? "animate-spin" : ""}`} />
+                                                                <RotateCcw className="h-3 w-3" />
+                                                                Fejlede — genkør
                                                             </button>
                                                         )
                                                     }
