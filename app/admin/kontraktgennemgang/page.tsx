@@ -195,6 +195,7 @@ function Indbakke() {
     const [statusFilter, setStatusFilter] = useState<string[]>([])
     const [productionTypeFilter, setProductionTypeFilter] = useState<string[]>([])
     const [search, setSearch] = useState("")
+    const [reanalysingIds, setReanalysingIds] = useState<Set<string>>(new Set())
 
     const fetchReviews = useCallback(async () => {
         setLoading(true)
@@ -405,25 +406,33 @@ function Indbakke() {
                                                             </span>
                                                         )
                                                     }
-                                                    if (r.ai_status === "fejl") {
+                                                    if (r.ai_status === "fejl" || (r.ai_status !== "klar" && reanalysingIds.has(r.id))) {
+                                                        const isReanalysing = reanalysingIds.has(r.id)
                                                         return (
                                                             <button
-                                                                title="Analyse fejlede — klik for at genkøre"
-                                                                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
+                                                                disabled={isReanalysing}
+                                                                title={isReanalysing ? "Analyserer…" : "Analyse fejlede — klik for at genkøre"}
+                                                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                                                                    isReanalysing
+                                                                        ? "bg-blue-50 text-blue-600 border-blue-200 cursor-wait dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800"
+                                                                        : "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
+                                                                }`}
                                                                 onClick={async e => {
                                                                     e.stopPropagation()
+                                                                    setReanalysingIds(prev => new Set([...prev, r.id]))
                                                                     const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
-                                                                    if (res.ok) { toast.success("Analyse genstartet"); fetchReviews(); return }
+                                                                    setReanalysingIds(prev => { const n = new Set(prev); n.delete(r.id); return n })
+                                                                    if (res.ok) { toast.success("Analyse fuldført"); fetchReviews(); return }
                                                                     const json = await res.json().catch(() => ({}))
                                                                     if (json.missing_file) {
-                                                                        toast.error("Filen mangler i storage — åbn sagen og upload filen manuelt")
+                                                                        toast.error("Filen mangler — åbn sagen og upload manuelt")
                                                                     } else {
                                                                         toast.error(json.error ?? "Kunne ikke genstarte analyse")
                                                                     }
                                                                 }}
                                                             >
-                                                                <RotateCcw className="h-3 w-3" />
-                                                                Fejlede — genkør
+                                                                <RotateCcw className={`h-3 w-3 ${isReanalysing ? "animate-spin" : ""}`} />
+                                                                {isReanalysing ? "Analyserer…" : "Fejlede — genkør"}
                                                             </button>
                                                         )
                                                     }
