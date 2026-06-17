@@ -115,6 +115,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             ai_language:     klassifikation?.kontraktsprog ?? null,
             risk_level:      riskLevel,
             should_escalate: shouldEscalate,
+            ai_status:       "klar",
             ...(newStoragePath ? { storage_path: newStoragePath } : {}),
         })
         .eq("id", id)
