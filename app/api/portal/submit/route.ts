@@ -43,13 +43,19 @@ export async function POST(req: NextRequest) {
     const file = formData.get("file") as File | null
     if (!file) return NextResponse.json({ error: "Ingen fil" }, { status: 400 })
 
-    const memberName    = formData.get("memberName")    as string | null
-    const memberEmail   = formData.get("memberEmail")   as string | null
-    const contractType  = formData.get("contractType")  as string | null
-    const productionType = formData.get("productionType") as string | null
-    const producerName  = formData.get("producerName")  as string | null
-    const focusAreasRaw = formData.get("focusAreas")    as string | null
-    const notes         = formData.get("notes")          as string | null
+    const memberName         = formData.get("memberName")          as string | null
+    const memberEmail        = formData.get("memberEmail")         as string | null
+    const contractType       = formData.get("contractType")        as string | null
+    const productionType     = formData.get("productionType")      as string | null
+    const producerName       = formData.get("producerName")        as string | null
+    const producerOverenskomst = formData.get("producerOverenskomst") as string | null
+    const distributionRaw    = formData.get("distributionChannels") as string | null
+    const focusAreasRaw      = formData.get("focusAreas")          as string | null
+    const notes              = formData.get("notes")               as string | null
+
+    const distributionChannels: string[] = distributionRaw
+        ? (distributionRaw.startsWith("[") ? JSON.parse(distributionRaw) : distributionRaw.split(",").filter(Boolean))
+        : []
 
     const focusAreas = focusAreasRaw
         ? (focusAreasRaw.startsWith("[") ? JSON.parse(focusAreasRaw) : focusAreasRaw.split(",").filter(Boolean))
@@ -90,11 +96,15 @@ export async function POST(req: NextRequest) {
             file_name:       file.name,
             file_size_bytes: file.size,
             storage_path:    storagePath,
-            contract_type:   contractType ?? null,
-            production_type: productionType ?? null,
-            producer_name:   producerName ?? null,
-            focus_areas:     focusAreas.length ? focusAreas : null,
-            notes:           notes ?? null,
+            contract_type:               contractType ?? null,
+            production_type:             productionType ?? null,
+            distribution_channels:       distributionChannels.length ? distributionChannels : null,
+            producer_name:               producerName ?? null,
+            producer_overenskomst_bound: producerOverenskomst === "true"  ? true
+                                       : producerOverenskomst === "false" ? false
+                                       : null,
+            focus_areas:                 focusAreas.length ? focusAreas : null,
+            notes:                       notes ?? null,
         })
         .select("id")
         .single()
@@ -135,11 +145,13 @@ export async function POST(req: NextRequest) {
             fd.append("memberId",      capturedUser.id)
             if (memberEmail)   fd.append("memberEmail",   memberEmail)
             if (memberName)    fd.append("memberName",    memberName)
-            if (contractType)  fd.append("contractType",  contractType)
-            if (productionType) fd.append("productionType", productionType)
-            if (producerName)  fd.append("producerName",  producerName)
-            if (focusAreas.length) fd.append("focusAreas", JSON.stringify(focusAreas))
-            if (notes)         fd.append("notes",         notes)
+            if (contractType)               fd.append("contractType",         contractType)
+            if (productionType)             fd.append("productionType",        productionType)
+            if (distributionChannels.length) fd.append("distributionChannels", JSON.stringify(distributionChannels))
+            if (producerName)               fd.append("producerName",          producerName)
+            if (producerOverenskomst)       fd.append("producerOverenskomst",  producerOverenskomst)
+            if (focusAreas.length)          fd.append("focusAreas",            JSON.stringify(focusAreas))
+            if (notes)                      fd.append("notes",                 notes)
             // Marker at filen allerede er gemt — gennemgang skal ikke gemme på ny
             fd.append("existingReviewId", reviewId)
 
