@@ -1,0 +1,40 @@
+#!/bin/sh
+
+protected_branch="master"
+current_branch="$(git symbolic-ref --quiet --short HEAD)"
+
+if [ "$current_branch" = "$protected_branch" ]; then
+  cat <<'MSG'
+
+Push stoppet.
+
+Du står på master. Direkte push til master er ikke tilladt i DFKS Portal.
+
+Gør i stedet:
+  git checkout -b feat/kort-navn
+  git push origin feat/kort-navn
+
+Opret derefter en Pull Request fra sidebranchen til master.
+
+MSG
+  exit 1
+fi
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  case "$remote_ref" in
+    refs/heads/master)
+      cat <<'MSG'
+
+Push stoppet.
+
+Du forsøger at pushe til origin/master. Det skal gå via Pull Request.
+
+MSG
+      exit 1
+      ;;
+  esac
+done
+
+exit 0
+
