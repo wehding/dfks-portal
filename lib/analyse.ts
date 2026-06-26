@@ -10,7 +10,6 @@ import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
-import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { hentKontekst } from "@/lib/retrieval"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
@@ -515,9 +514,12 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         throw new Error("PDF-analyse kræver Anthropic som AI-udbyder. Skift i Stamdata → Indstillinger, eller upload som DOCX/TXT.")
     }
 
-    // ── Hent reference docs ───────────────────────────────────
-    const supabase = await createClient()
-    const { data: refDocs } = await supabase
+    // ── Hent reference docs (brug admin-klient — ingen cookie-kontekst nødvendig) ──
+    const supabaseAdmin = createAdminClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    const { data: refDocs } = await supabaseAdmin
         .from("reference_docs")
         .select("doc_subtype, file_name, title, content_text, owner")
         .eq("archived", false)
