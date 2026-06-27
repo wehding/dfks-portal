@@ -70,9 +70,9 @@ const selectCls = "w-full rounded-md border border-gray-300 bg-white px-3 py-2 t
 // Modal-wrapper
 function Modal({ onClose, maxWidth = "max-w-xl", children }: { onClose: () => void; maxWidth?: string; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6"
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-6"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`bg-white rounded-xl border border-gray-200 w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-7`}>
+      <div className={`bg-white rounded-xl border border-gray-200 w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-4 sm:p-7`}>
         {children}
       </div>
     </div>
@@ -370,31 +370,31 @@ export default function MineVaerkerClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">{t("works.title")}</h1>
           <p className="text-sm text-gray-500 mt-1">{t("works.registeredSubtitle")}</p>
         </div>
-        <div className="flex gap-2.5">
-          <Button variant="outline" onClick={openWizard} className="gap-2">
+        <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+          <Button variant="outline" onClick={openWizard} className="w-full gap-2 sm:w-auto">
             <RefreshCw className="h-4 w-4" /> {t("works.importFromDfi")}
           </Button>
-          <Button onClick={() => setIsAdding(true)} className="gap-2">
+          <Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
             <Plus className="h-4 w-4" /> {t("works.addWork")}
           </Button>
         </div>
       </div>
 
       {/* Statistik */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         {[
           { label: t("works.totalWorks"),  value: totalWorks },
           { label: t("works.withContract"),  value: withContract },
           { label: t("works.missingContract"), value: missingContract },
         ].map(s => (
-          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-6 py-5">
+          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
             <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
-            <p className="text-3xl font-bold text-gray-900">{s.value}</p>
+            <p className="text-2xl font-bold text-gray-900 sm:text-3xl">{s.value}</p>
           </div>
         ))}
       </div>
@@ -415,39 +415,52 @@ export default function MineVaerkerClient({
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="flex flex-col px-4 py-3.5 border-b border-gray-100 gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:flex-wrap md:w-auto md:items-center">
             {selected.length > 0 ? (
               <>
                 <span className="text-sm font-semibold text-red-700">{selected.length} {t("works.selected")}</span>
-                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="gap-1.5 h-7 text-xs">
+                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 w-full gap-1.5 text-xs sm:w-auto">
                   <Trash2 className="h-3.5 w-3.5" /> {t("works.removeSelected")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-7 text-xs">{t("common.cancel")}</Button>
+                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 w-full text-xs sm:w-auto">{t("common.cancel")}</Button>
               </>
             ) : (
               <Select value={catFilter} onValueChange={setCatFilter}>
-                <SelectTrigger className="w-[160px] h-8 text-sm"><SelectValue placeholder={t("works.allCategories")} /></SelectTrigger>
+                <SelectTrigger className="h-9 w-full text-sm sm:w-[160px]"><SelectValue placeholder={t("works.allCategories")} /></SelectTrigger>
                 <SelectContent>
                   {categories.map(cat => <SelectItem key={cat.value} value={cat.value}>{locale === "da" ? cat.da : cat.en}</SelectItem>)}
                 </SelectContent>
               </Select>
             )}
           </div>
-          <div className="relative">
+          <div className="relative w-full md:w-auto">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
             <Input
               placeholder={t("works.searchPlaceholder")}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm w-56"
+              className="h-9 w-full pl-8 text-sm md:w-56"
             />
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
+            <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
+              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="title">Værktitel</SelectItem>
+                <SelectItem value="year">År</SelectItem>
+                <SelectItem value="type">Type</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+              {sortDir === "asc" ? "A-Z" : "Z-A"}
+            </Button>
           </div>
         </div>
 
         {/* Kolonnehoveder */}
         <div
-          className="grid px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none"
+          className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none lg:grid"
           style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
         >
           <input
@@ -477,10 +490,10 @@ export default function MineVaerkerClient({
           const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
           const hasContract = contractedWorkIds.includes(w.id);
           return (
+            <React.Fragment key={a.id}>
             <div
-              key={a.id}
               onClick={() => openEdit(a)}
-              className="grid items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
+              className="hidden items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
               <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }}>
@@ -525,6 +538,66 @@ export default function MineVaerkerClient({
                 )}
               </div>
             </div>
+            <div
+              key={`${a.id}-mobile`}
+              onClick={() => openEdit(a)}
+              className="border-b border-gray-100 px-4 py-4 transition-colors active:bg-gray-50 lg:hidden"
+            >
+              <div className="flex gap-3">
+                <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }} className="pt-1">
+                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => {}} className="cursor-pointer w-4 h-4" />
+                </div>
+                <div className="w-10 shrink-0 flex items-start justify-center">
+                  {posterSrc ? (
+                    <div className="h-14 w-10 overflow-hidden rounded">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={posterSrc} alt={w.title} className="h-full w-full object-cover" loading="lazy" />
+                    </div>
+                  ) : (
+                    <div className="flex h-14 w-10 items-center justify-center rounded bg-gray-50">
+                      <Film className="h-4 w-4 text-gray-300" />
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                      <p className="mt-1 text-xs text-gray-500">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
+                    </div>
+                    <div
+                      className="shrink-0"
+                      onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                    >
+                      {hasContract ? (
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                      ) : (
+                        <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">{t("works.contractMissing")}</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <p className="font-medium text-gray-400">Rolle</p>
+                      <p className="mt-0.5 text-gray-700">{a.role ?? "–"}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-400">{t("works.episodes")}</p>
+                      <p className="mt-0.5 text-gray-700">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <p className="font-medium text-xs text-gray-400">{t("works.coEditors")}</p>
+                    <p className="mt-0.5 text-xs text-gray-700 line-clamp-2">
+                      {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            </React.Fragment>
           );
         })}
 
@@ -542,14 +615,14 @@ export default function MineVaerkerClient({
             <button onClick={() => setIsAdding(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
           </div>
 
-          <div className="flex gap-2 mb-4">
+          <div className="flex flex-col gap-2 mb-4 sm:flex-row">
             <Input
               placeholder={t("works.addSearchPlaceholder")}
               value={addQuery}
               onChange={e => setAddQuery(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") handleSearch(); }}
             />
-            <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="gap-1.5 shrink-0">
+            <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
               {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
             </Button>
           </div>
@@ -587,9 +660,9 @@ export default function MineVaerkerClient({
           )}
 
           {(dfiResults.length > 0 || tmdbResults.length > 0) && (
-            <div className="grid grid-cols-2 gap-5 mb-4">
+            <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
               {[
-                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (f: any) => f.Id, isSelected: (f: any) => pickedResult?.Id === f.Id && pickedSource === "dfi", onSelect: (f: any) => { setPickedResult(f); setPickedSource("dfi"); }, getTitle: (f: any) => f.Title, getMeta: (f: any) => `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`, getPoster: (_: any) => null },
+                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (f: any) => f.Id, isSelected: (f: any) => pickedResult?.Id === f.Id && pickedSource === "dfi", onSelect: (f: any) => { setPickedResult(f); setPickedSource("dfi"); }, getTitle: (f: any) => f.Title, getMeta: (f: any) => `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`, getPoster: () => null },
                 { label: `TMDB (${tmdbResults.length})`, items: tmdbResults, getKey: (i: any) => i.id, isSelected: (i: any) => pickedResult?.id === i.id && pickedSource === "tmdb", onSelect: (i: any) => { setPickedResult(i); setPickedSource("tmdb"); }, getTitle: (i: any) => i.title || i.name, getMeta: (i: any) => `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)}`, getPoster: (i: any) => i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null },
               ].map(col => (
                 <div key={col.label}>
@@ -622,11 +695,11 @@ export default function MineVaerkerClient({
           )}
 
           {pickedResult && (
-            <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+            <div className="pt-4 border-t border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-gray-500">
                 {t("works.chosen")}: <strong className="text-gray-900">{pickedResult.Title || pickedResult.title || pickedResult.name}</strong>
               </p>
-              <Button onClick={handleAddWork} disabled={isSaving} className="gap-2">
+              <Button onClick={handleAddWork} disabled={isSaving} className="w-full gap-2 sm:w-auto">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 {isSaving ? t("works.adding") : t("works.addToMyWorks")}
               </Button>
@@ -646,9 +719,9 @@ export default function MineVaerkerClient({
           {wizardStep === "search" && (
             <form onSubmit={handleWizardSearch} className="space-y-4">
               <p className="text-sm text-gray-500">{t("works.dfiIntro")}</p>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Input value={wizardQuery} onChange={e => setWizardQuery(e.target.value)} placeholder={t("works.namePlaceholder")} />
-                <Button type="submit" disabled={wizardSearching} className="gap-1.5 shrink-0">
+                <Button type="submit" disabled={wizardSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
                   {wizardSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
                 </Button>
               </div>
@@ -683,11 +756,11 @@ export default function MineVaerkerClient({
                 <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{wizardError}</div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-gray-500">{t("works.foundTitles").replace("{count}", String(wizardCredits.length))}</p>
                     <button
                       onClick={() => { const all = Object.values(wizardSelected).every(v => v); const s: Record<number, boolean> = {}; wizardCredits.forEach(c => { s[c.Id] = !all; }); setWizardSelected(s); }}
-                      className="text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600"
+                      className="w-full text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600 sm:w-auto"
                     >
                       {Object.values(wizardSelected).every(v => v) ? t("works.deselectAll") : t("works.selectAll")}
                     </button>
@@ -714,7 +787,7 @@ export default function MineVaerkerClient({
                     ))}
                   </div>
                   <div className="flex justify-end mt-4">
-                    <Button onClick={handleWizardImport} disabled={wizardImporting} className="gap-2">
+                    <Button onClick={handleWizardImport} disabled={wizardImporting} className="w-full gap-2 sm:w-auto">
                       {wizardImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                       {wizardImporting ? t("works.importing") : t("works.importCount").replace("{count}", String(Object.values(wizardSelected).filter(Boolean).length))}
                     </Button>
@@ -739,7 +812,7 @@ export default function MineVaerkerClient({
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-          <div className="flex justify-end gap-2.5">
+          <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
             <Button variant="outline" onClick={() => setEditAssignment(null)}>{t("common.cancel")}</Button>
             <Button onClick={handleSaveEdit} disabled={isSavingEdit} className="gap-2">
               {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />} {t("common.save")}
