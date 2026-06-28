@@ -33,7 +33,7 @@ export default function MineVaerkerPage() {
 
       const { data: assignments } = await supabase
         .from("work_assignments")
-        .select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, dfi_id, tmdb_id, poster_url, description)")
+        .select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false });
 
