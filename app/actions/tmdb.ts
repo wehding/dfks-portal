@@ -1,5 +1,25 @@
 "use server";
 
+type TMDBSearchItem = {
+  media_type?: string;
+  poster_path?: string | null;
+  release_date?: string | null;
+  first_air_date?: string | null;
+};
+
+type TMDBCrewMember = {
+  job?: string;
+  name?: string;
+};
+
+type TMDBSearchResponse = {
+  results?: TMDBSearchItem[];
+};
+
+type TMDBCreditsResponse = {
+  crew?: TMDBCrewMember[];
+};
+
 function tmdbFetch(endpointPath: string) {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) throw new Error("TMDB_API_KEY mangler");
@@ -20,14 +40,20 @@ export async function searchTMDB(query: string) {
   try {
     const res = await tmdbFetch(`/search/multi?query=${encodeURIComponent(query)}&language=da-DK`);
     if (!res.ok) throw new Error(`TMDB API status ${res.status}`);
-    const data = await res.json();
-    return (data.results || []).filter(
-      (item: any) => item.media_type === "movie" || item.media_type === "tv"
-    );
+    const data = await res.json() as TMDBSearchResponse;
+    return (data.results || [])
+      .filter(item => item.media_type === "movie" || item.media_type === "tv")
+      .sort((a, b) => yearFromTmdbItem(b) - yearFromTmdbItem(a));
   } catch (err) {
     console.error("TMDB search error:", err);
     return [];
   }
+}
+
+function yearFromTmdbItem(item: TMDBSearchItem) {
+  const date = item.release_date || item.first_air_date || "";
+  const year = Number.parseInt(date.substring(0, 4), 10);
+  return Number.isFinite(year) ? year : 0;
 }
 
 export async function searchTMDBPerson(name: string) {
@@ -54,9 +80,9 @@ export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
     }
 
     const details = await detailRes.json();
-    let crew: any[] = [];
+    let crew: TMDBCrewMember[] = [];
     if (creditsRes.ok) {
-      const creditsData = await creditsRes.json();
+      const creditsData = await creditsRes.json() as TMDBCreditsResponse;
       crew = creditsData.crew || [];
     }
 
@@ -69,7 +95,45 @@ export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
         editors: crew.filter((c) => c.job === "Editor" || c.job === "Edit").map((c) => c.name),
       },
     };
-  } catch (err: any) {
-    return { success: false, error: err.message || "Kunne ikke hente detaljer fra TMDB" };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente detaljer fra TMDB" };
+  }
+}
+
+export async function findTMDBPoster(title: string, year?: number | null) {
+  if (!process.env.TMDB_API_KEY || !title.trim()) return null;
+
+  const encodedTitle = encodeURIComponent(title.trim());
+  const movieYear = year ? `&year=${year}` : "";
+  const tvYear = year ? `&first_air_date_year=${year}` : "";
+
+  try {
+    const [movieRes, tvRes] = await Promise.all([
+      tmdbFetch(`/search/movie?query=${encodedTitle}${movieYear}&language=da-DK`).catch(() => null),
+      tmdbFetch(`/search/tv?query=${encodedTitle}${tvYear}&language=da-DK`).catch(() => null),
+    ]);
+
+    const results: TMDBSearchItem[] = [];
+    if (movieRes?.ok) {
+      const data = await movieRes.json() as TMDBSearchResponse;
+      results.push(...(data.results ?? []));
+    }
+    if (tvRes?.ok) {
+      const data = await tvRes.json() as TMDBSearchResponse;
+      results.push(...(data.results ?? []));
+    }
+
+    const withPoster = results.filter(item => item.poster_path);
+    if (!withPoster.length) return null;
+    if (!year) return withPoster[0].poster_path as string;
+
+    const exactYear = withPoster.find(item => {
+      const date = typeof item.release_date === "string" ? item.release_date : item.first_air_date;
+      return typeof date === "string" && date.startsWith(String(year));
+    });
+    return (exactYear ?? withPoster[0]).poster_path as string;
+  } catch (err) {
+    console.error("TMDB poster lookup error:", err);
+    return null;
   }
 }

@@ -3,9 +3,106 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { findTMDBPoster } from "@/app/actions/tmdb";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+
+type DfiCredit = {
+  Id?: number | string | null;
+  Title?: string | null;
+  DanishTitle?: string | null;
+  ProductionYear?: number | null;
+  ReleaseYear?: number | null;
+  Year?: number | null;
+  Description?: string | null;
+  Type?: string | null;
+  Category?: string | null;
+};
+
+function normalizeTitle(title: string) {
+  return title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(the|en|et|den|det)\b/g, " ")
+    .replace(/[^a-z0-9æøå\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function creditTitle(credit: DfiCredit) {
+  return String(credit.Title || credit.DanishTitle || "").trim();
+}
+
+function creditYear(credit: DfiCredit) {
+  const year = Number(credit.ProductionYear || credit.ReleaseYear || credit.Year || 0);
+  return Number.isFinite(year) && year > 0 ? year : null;
+}
+
+function creditRole(credit: DfiCredit) {
+  return credit.Description || credit.Type || "Klipper";
+}
+
+async function currentRightsHolderAndOrg() {
+  const supabase = await createClient();
+  const db = createServiceClient();
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData?.user) throw new Error("Du skal være logget ind for at importere værker.");
+
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .single();
+  if (!rh) throw new Error("Kunne ikke finde din rettighedshaver-profil.");
+
+  const { data: orgRole } = await db
+    .from("user_org_roles")
+    .select("org_id")
+    .eq("user_id", authData.user.id)
+    .limit(1)
+    .single();
+
+  return { db, userId: authData.user.id, rightsHolderId: rh.id as string, orgId: orgRole?.org_id ?? DFKS_ORG_ID };
+}
+
+async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceClient>, credit: DfiCredit, orgId: string) {
+  const filmId = credit.Id ? String(credit.Id) : null;
+  if (filmId) {
+    const { data } = await db
+      .from("works")
+      .select("id, title, year, poster_url")
+      .eq("org_id", orgId)
+      .eq("dfi_id", filmId)
+      .maybeSingle();
+    if (data) return data;
+  }
+
+  const title = creditTitle(credit);
+  const year = creditYear(credit);
+  if (!title || !year) return null;
+
+  const { data } = await db
+    .from("works")
+    .select("id, title, year, poster_url")
+    .eq("org_id", orgId)
+    .eq("year", year)
+    .limit(50);
+
+  return (data ?? []).find(work => normalizeTitle(work.title ?? "") === normalizeTitle(title)) ?? null;
+}
+
+async function assignmentExists(db: ReturnType<typeof createServiceClient>, workId: string, rightsHolderId: string) {
+  const { data } = await db
+    .from("work_assignments")
+    .select("id")
+    .eq("work_id", workId)
+    .eq("rights_holder_id", rightsHolderId)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data?.id);
+}
 
 async function fetchDFI(endpoint: string) {
   const username = process.env.DFI_API_USERNAME;
@@ -120,6 +217,12 @@ export async function searchDFIFilms(title: string) {
     filmList = scored.filter((i: any) => i.score > 0).map((i: any) => i.film);
   }
 
+  filmList.sort((a: DfiCredit, b: DfiCredit) => {
+    const bYear = Number(b.ProductionYear || b.ReleaseYear || 0);
+    const aYear = Number(a.ProductionYear || a.ReleaseYear || 0);
+    return bYear - aYear;
+  });
+
   return { success: true, results: filmList };
 }
 
@@ -131,53 +234,80 @@ export async function getDFIFilmDetails(filmId: number) {
   return { success: true, film: result.data };
 }
 
-export async function importApprovedDFIWorks(personId: number, selectedCredits: any[]) {
-  const supabase = await createClient();        // til auth + rettighedshaver
-  const db = createServiceClient();             // til works + work_assignments (bypasser RLS)
-  const { data: authData } = await supabase.auth.getUser();
+export async function prepareDFIImportCredits(personId: number, credits: DfiCredit[]) {
+  try {
+    const { db, rightsHolderId, orgId } = await currentRightsHolderAndOrg();
 
-  if (!authData?.user) {
-    return { success: false, error: "Du skal være logget ind for at importere værker." };
+    await db
+      .from("rettighedshavere")
+      .update({ dfi_person_id: personId })
+      .eq("id", rightsHolderId);
+
+    const newCredits: DfiCredit[] = [];
+    let linkedExistingCount = 0;
+    let skippedAlreadyAssignedCount = 0;
+    const errors: string[] = [];
+
+    for (const credit of credits) {
+      const existing = await findExistingWorkForDfiCredit(db, credit, orgId);
+      if (!existing?.id) {
+        newCredits.push(credit);
+        continue;
+      }
+
+      if (await assignmentExists(db, existing.id, rightsHolderId)) {
+        skippedAlreadyAssignedCount++;
+        continue;
+      }
+
+      const { error } = await db
+        .from("work_assignments")
+        .upsert(
+          {
+            work_id: existing.id,
+            org_id: orgId,
+            rights_holder_id: rightsHolderId,
+            role: creditRole(credit),
+          },
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+
+      if (error) {
+        errors.push(`Fejl ved tilknytning af ${creditTitle(credit) || "værk"}: ${error.message}`);
+        newCredits.push(credit);
+      } else {
+        linkedExistingCount++;
+      }
+    }
+
+    revalidatePath("/portal/mine-vaerker");
+    return { success: true, credits: newCredits, linkedExistingCount, skippedAlreadyAssignedCount, errors: errors.length ? errors : null };
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Kunne ikke forberede DFI-import.";
+    return { success: false, error: message, credits, linkedExistingCount: 0, skippedAlreadyAssignedCount: 0 };
   }
+}
 
-  const userId = authData.user.id;
-
-  // Hent rettighedshaver for denne bruger
-  const { data: rh } = await db
-    .from("rettighedshavere")
-    .select("id")
-    .eq("user_id", userId)
-    .single();
-
-  if (!rh) {
-    console.error("[DFI import] Ingen rettighedshaver fundet for user_id:", userId);
-    return { success: false, error: "Kunne ikke finde din rettighedshaver-profil." };
+export async function importApprovedDFIWorks(personId: number, selectedCredits: DfiCredit[]) {
+  let context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>;
+  try {
+    context = await currentRightsHolderAndOrg();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Du skal være logget ind for at importere værker.";
+    return { success: false, error: message };
   }
-  console.log("[DFI import] Rettighedshaver:", rh.id, "| Credits:", selectedCredits.length);
+  const { db, rightsHolderId, orgId } = context;
+  console.log("[DFI import] Rettighedshaver:", rightsHolderId, "| Credits:", selectedCredits.length);
 
   // Gem dfi_person_id på rettighedshaveren
   await db
     .from("rettighedshavere")
     .update({ dfi_person_id: personId })
-    .eq("id", rh.id);
-
-  // Hent brugerens org (eller brug DFKS default)
-  const { data: orgRole } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .single();
-
-  const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
+    .eq("id", rightsHolderId);
 
   let importedCount = 0;
+  let linkedExistingCount = 0;
   const errors: string[] = [];
-
-  const KNOWN_BROADCASTERS = [
-    "DR", "Danmarks Radio", "TV 2", "TV2", "SVT", "NRK",
-    "Netflix", "HBO", "Viaplay", "Discovery", "Disney", "Apple TV", "ZDF", "ARTE",
-  ];
 
   // Hent alle filmdetaljer parallelt
   const detailResults = await Promise.all(
@@ -205,52 +335,19 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     else if (combined.includes("serie") || combined.includes("tv-")) workType = "serie";
     else if (combined.includes("kort")) workType = "kortfilm";
 
-    const directors = (film.PersonCredits || [])
-      .filter((c: any) => c.TypeCode === "instr")
-      .map((c: any) => c.Name)
-      .join(", ") || null;
-
-    let platformNote: string | null = null;
-    for (const c of film.ProductionCompanies || []) {
-      const match = KNOWN_BROADCASTERS.find((b) =>
-        c.Name?.toLowerCase().includes(b.toLowerCase())
-      );
-      if (match) { platformNote = match; break; }
-    }
-
     const prodYear: number | null = film.ProductionYear || film.ReleaseYear || null;
     const filmTitle: string = film.Title || film.DanishTitle || "Ukendt titel";
 
     // Slå plakat op i TMDB (stille fejl)
     let posterUrl: string | null = null;
     try {
-      const tmdbRes = await fetchTMDBPoster(filmTitle, prodYear);
+      const tmdbRes = await findTMDBPoster(filmTitle, prodYear);
       posterUrl = tmdbRes;
     } catch { /* posterUrl forbliver null */ }
 
     try {
-      // Tjek om værket allerede eksisterer
-      let existingId: string | null = null;
-
-      const { data: byDfi } = await db
-        .from("works")
-        .select("id")
-        .eq("dfi_id", String(filmId))
-        .maybeSingle();
-
-      if (byDfi) {
-        existingId = byDfi.id;
-      } else if (filmTitle && prodYear) {
-        const { data: byTitle } = await db
-          .from("works")
-          .select("id")
-          .ilike("title", filmTitle.trim())
-          .eq("year", prodYear)
-          .maybeSingle();
-        if (byTitle) existingId = byTitle.id;
-      }
-
-      let workId = existingId;
+      const existing = await findExistingWorkForDfiCredit(db, { ...credit, Title: filmTitle, ProductionYear: prodYear }, orgId);
+      let workId = existing?.id ?? null;
 
       const workData = {
         dfi_id: String(filmId),
@@ -262,9 +359,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         poster_url: posterUrl,
       };
 
-      if (workId) {
-        await db.from("works").update(workData).eq("id", workId);
-      } else {
+      const wasExisting = Boolean(workId);
+      if (!workId) {
         const { data: newWork, error: insertErr } = await db
           .from("works")
           .insert(workData)
@@ -287,7 +383,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
           {
             work_id: workId,
             org_id: orgId,
-            rights_holder_id: rh.id,
+            rights_holder_id: rightsHolderId,
             role: credit.Description || credit.Type || "Klipper",
           },
           { onConflict: "work_id,rights_holder_id,role" }
@@ -299,7 +395,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         continue;
       }
 
-      importedCount++;
+      if (wasExisting) linkedExistingCount++;
+      else importedCount++;
     } catch (err: any) {
       errors.push(`Systemfejl for ${filmTitle}: ${err.message}`);
     }
@@ -309,32 +406,9 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
   revalidatePath("/vaerker");
 
   return {
-    success: errors.length === 0 || importedCount > 0,
+    success: errors.length === 0 || importedCount > 0 || linkedExistingCount > 0,
     importedCount,
+    linkedExistingCount,
     errors: errors.length > 0 ? errors : null,
   };
-}
-
-// Intern helper: hent TMDB-plakat-sti
-async function fetchTMDBPoster(title: string, year: number | null): Promise<string | null> {
-  const apiKey = process.env.TMDB_API_KEY;
-  if (!apiKey || !title) return null;
-
-  const q = encodeURIComponent(title.trim());
-  const yearParam = year ? `&year=${year}` : "";
-  const sep = apiKey.length === 32 ? `&api_key=${apiKey}` : "";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (apiKey.length !== 32) headers.Authorization = `Bearer ${apiKey}`;
-
-  try {
-    const res = await fetch(
-      `https://api.themoviedb.org/3/search/movie?query=${q}${yearParam}&language=da-DK${sep}`,
-      { headers }
-    );
-    if (res.ok) {
-      const data = await res.json();
-      if (data.results?.[0]?.poster_path) return data.results[0].poster_path;
-    }
-  } catch { /* stille fejl */ }
-  return null;
 }

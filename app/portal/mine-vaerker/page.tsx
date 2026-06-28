@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { linkApprovedCoEditorSuggestionsForRightsHolder } from "@/app/actions/member-works";
 import { useRouter } from "next/navigation";
 import MineVaerkerClient from "./MineVaerkerClient";
 
@@ -31,9 +32,11 @@ export default function MineVaerkerPage() {
 
       if (!rh) { setData({ assignments: [], allAssignments: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
 
+      await linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId: rh.id, fullName: rh.full_name ?? "" }).catch(() => null);
+
       const { data: assignments } = await supabase
         .from("work_assignments")
-        .select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
+        .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false });
 
@@ -41,7 +44,7 @@ export default function MineVaerkerPage() {
       const { data: allAssignments } = workIds.length
         ? await supabase
             .from("work_assignments")
-            .select("work_id, role, rettighedshavere(full_name)")
+            .select("id, work_id, role, rights_holder_id, rettighedshavere(id, full_name)")
             .in("work_id", workIds)
             .neq("rights_holder_id", rh.id)
         : { data: [] };

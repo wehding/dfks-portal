@@ -131,7 +131,7 @@ const RULES_CHUNKS = [
     {
         kilde_id: "dfks-kreditering-regler",
         kilde_titel: "Kreditering — regler og standarder",
-        tekst: `Kreditering skal altid skrives præcist ind i kontrakten som: Klipper: [Navn]. Brug ALDRIG A-klipper som kreditering. Hvis flere klippere og medlemmet har hovedfunktionen kan Hovedklipper bruges. Tjek altid at navn i kontrakt matcher DFKS-medlemsregisteret.`,
+        tekst: `Kreditering skal altid skrives præcist ind i kontrakten som: Klipper: [Navn]. Brug ALDRIG A-klipper som kreditering. Hvis flere klippere og medlemmet har hovedfunktionen kan Konceptuerende klipper bruges. Tjek altid at navn i kontrakt matcher DFKS-medlemsregisteret.`,
         kategori: "kreditering",
         dfks_fortolkning: null,
     },
