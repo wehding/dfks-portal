@@ -943,10 +943,6 @@ function VaegteTab() {
 
 // ── AI-udbyder indstillinger ──────────────────────────────────
 
-// Eksporteres ikke længere — bruges kun internt nu
-export type AiModelId = string
-export const DEFAULT_AI_MODEL: AiModelId = "claude-sonnet-4-6"
-
 function AiProviderPicker({ useCase, title, description }: { useCase: AiUseCase; title: string; description: string }) {
     const [config, setConfig] = useState<AiConfig>(AI_CONFIG_DEFAULTS[useCase])
 
