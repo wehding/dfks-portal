@@ -14,7 +14,6 @@ import {
     Layers,
     ScanSearch,
     Building2,
-    CheckCircle,
     Play,
     BarChart3,
     Database,
@@ -52,16 +51,15 @@ import { Separator } from "@/components/ui/separator"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: FileText,    labelKey: "nav.contracts"          },
-    { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
+    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
-    { key: "validering",          href: "/admin/validering",          icon: CheckCircle, labelKey: "nav.validation"         },
+    { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "overenskomster",     href: "/admin/overenskomster",     icon: BookOpen,    labelKey: "nav.agreements"       },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "videnbase",          href: "/admin/videnbase",          icon: BrainCircuit, labelKey: "nav.knowledgeBase"    },
     { key: "kvalitet",           href: "/admin/kvalitet",           icon: FlaskConical, labelKey: "nav.quality"          },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
-    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
     { key: "streaming",          href: "/admin/streaming",          icon: Play,        labelKey: "nav.streaming"        },
     { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Layers,      labelKey: "nav.aftalelicens"     },
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
@@ -78,8 +76,8 @@ const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ADMIN_KEYS,
     admin:       ADMIN_KEYS,
     "org-admin": ADMIN_KEYS.filter(k => k !== "stamdata" && k !== "brugere"),
-    jurist:      ["validering", "kontraktgennemgang"],
-    viewer:      ["kontrakter", "validering", "statistik"],
+    jurist:      ["kontrakter", "kontraktgennemgang"],
+    viewer:      ["kontrakter", "statistik"],
 }
 
 export default function PortalLayout({
@@ -203,7 +201,10 @@ export default function PortalLayout({
                                             <SidebarMenuItem key={item.href}>
                                                 <SidebarMenuButton
                                                     asChild
-                                                    isActive={pathname === item.href}
+                                                    isActive={
+                                                        pathname === item.href ||
+                                                        pathname.startsWith(`${item.href}/`)
+                                                    }
                                                 >
                                                     <Link href={item.href}>
                                                         <item.icon className="h-4 w-4" />
@@ -228,12 +229,16 @@ export default function PortalLayout({
                                             <SidebarMenuItem key={item.href}>
                                                 <SidebarMenuButton
                                                     asChild
-                                                    isActive={pathname === item.href}
+                                                    isActive={
+                                                        pathname === item.href ||
+                                                        pathname.startsWith(`${item.href}/`) ||
+                                                        (item.key === "kontrakter" && pathname.startsWith("/admin/validering"))
+                                                    }
                                                 >
                                                     <Link href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
-                                                        {item.key === "validering" && pendingCount > 0 && (
+                                                        {item.key === "kontrakter" && pendingCount > 0 && (
                                                             <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
                                                                 {pendingCount}
                                                             </span>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, Suspense, useRef } from "react"
+import Link from "next/link"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
     CheckCircle2, AlertCircle, Loader2, X, Pencil,
@@ -946,10 +947,18 @@ function AdminKontrakterContent() {
                 title={t("admin.contracts.title")}
                 subtitle={t("admin.contracts.subtitle")}
                 actions={
-                    <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]) }}>
-                        <Upload className="h-4 w-4" />
-                        Upload kontrakter
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="gap-1.5" asChild>
+                            <Link href="/admin/validering">
+                                <CheckCircle2 className="h-4 w-4" />
+                                Valideringskø
+                            </Link>
+                        </Button>
+                        <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]) }}>
+                            <Upload className="h-4 w-4" />
+                            Upload kontrakter
+                        </Button>
+                    </div>
                 }
             />
 
