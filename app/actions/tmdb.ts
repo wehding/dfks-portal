@@ -140,3 +140,49 @@ export async function findTMDBPoster(title: string, year?: number | null) {
     return null;
   }
 }
+
+export async function findTMDBMatch(title: string, year?: number | null) {
+  if (!process.env.TMDB_API_KEY || !title.trim()) return { poster_url: null, tmdb_id: null };
+
+  const encodedTitle = encodeURIComponent(title.trim());
+  const movieYear = year ? `&year=${year}` : "";
+  const tvYear = year ? `&first_air_date_year=${year}` : "";
+
+  try {
+    const [movieRes, tvRes] = await Promise.all([
+      tmdbFetch(`/search/movie?query=${encodedTitle}${movieYear}&language=da-DK`).catch(() => null),
+      tmdbFetch(`/search/tv?query=${encodedTitle}${tvYear}&language=da-DK`).catch(() => null),
+    ]);
+
+    const results: TMDBSearchItem[] = [];
+    if (movieRes?.ok) {
+      const data = await movieRes.json() as TMDBSearchResponse;
+      results.push(...(data.results ?? []));
+    }
+    if (tvRes?.ok) {
+      const data = await tvRes.json() as TMDBSearchResponse;
+      results.push(...(data.results ?? []));
+    }
+
+    if (!results.length) return { poster_url: null, tmdb_id: null };
+
+    // Find et match baseret på år
+    let match = results[0];
+    if (year) {
+      const exactYear = results.find(item => {
+        const date = typeof item.release_date === "string" ? item.release_date : item.first_air_date;
+        return typeof date === "string" && date.startsWith(String(year));
+      });
+      if (exactYear) match = exactYear;
+    }
+
+    const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
+    return {
+      poster_url: match.poster_path ? `${TMDB_IMG_W185}${match.poster_path}` : null,
+      tmdb_id: match.id ?? null,
+    };
+  } catch (err) {
+    console.error("TMDB match lookup error:", err);
+    return { poster_url: null, tmdb_id: null };
+  }
+}

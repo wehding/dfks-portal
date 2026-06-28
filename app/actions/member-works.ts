@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -191,36 +191,65 @@ export async function addWorkForMember(params: {
   // Find eksisterende værk
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
+  let existingTmdbId: number | null = null;
   if (params.workData.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.workData.dfi_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("dfi_id", params.workData.dfi_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
+      existingTmdbId = data.tmdb_id;
     }
   }
   if (!workId && params.workData.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
+      existingTmdbId = data.tmdb_id;
     }
   }
 
-  const posterUrl = params.workData.poster_url
-    ?? await findTMDBPoster(params.workData.title, params.workData.year)
-    ?? null;
+  let posterUrl = params.workData.poster_url ?? null;
+  let tmdbId = params.workData.tmdb_id ?? existingTmdbId ?? null;
+
+  // Hvis det er et DFI værk og vi ikke har en TMDB plakat/id endnu, så prøv at slå det op
+  if (params.workData.dfi_id && !tmdbId) {
+    try {
+      const match = await findTMDBMatch(params.workData.title, params.workData.year);
+      if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+    } catch (e) {
+      console.error("DFI import TMDB match lookup error:", e);
+    }
+  }
+
+  if (!posterUrl) {
+    posterUrl = await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  }
 
   // Opret nyt værk hvis ikke fundet
   if (!workId) {
     const { data: nw, error } = await db
       .from("works")
-      .insert({ org_id: orgId, status: "godkendt", ...params.workData, poster_url: posterUrl })
+      .insert({
+        org_id: orgId,
+        status: "godkendt",
+        ...params.workData,
+        poster_url: posterUrl,
+        tmdb_id: tmdbId,
+      })
       .select("id")
       .single();
     if (error || !nw) return { success: false, error: error?.message ?? "Kunne ikke oprette værk" };
     workId = nw.id;
-  } else if (!existingPosterUrl && posterUrl) {
-    await db.from("works").update({ poster_url: posterUrl }).eq("id", workId);
+  } else {
+    // Opdater hvis der mangler plakat eller TMDB id
+    const updates: any = {};
+    if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
+    if (!existingTmdbId && tmdbId) updates.tmdb_id = tmdbId;
+    if (Object.keys(updates).length > 0) {
+      await db.from("works").update(updates).eq("id", workId);
+    }
   }
 
   // Kobl rettighedshaver

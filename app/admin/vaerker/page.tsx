@@ -1432,7 +1432,7 @@ export default function VaerksadministrationPage() {
       </Dialog>
 
       <Dialog open={addOpen} onOpenChange={open => { setAddOpen(open); if (!open) { setPickedResult(null); setPickedSource(null); } }}>
-        <DialogContent className="max-h-[92vh] max-w-5xl overflow-y-auto">
+        <DialogContent className="max-h-[92vh] sm:max-w-5xl md:max-w-5xl lg:max-w-5xl xl:max-w-5xl overflow-y-auto">
           <DialogHeader><DialogTitle>Tilføj værk</DialogTitle></DialogHeader>
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
             <div className="space-y-4">
@@ -1549,7 +1549,7 @@ export default function VaerksadministrationPage() {
       </Dialog>
 
       <Dialog open={archiveOpen} onOpenChange={setArchiveOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl md:max-w-2xl lg:max-w-2xl">
           <DialogHeader><DialogTitle>Arkiver valgte værker</DialogTitle></DialogHeader>
           <div className="space-y-4">
             {selectedContracts.length > 0 && (
@@ -1579,7 +1579,7 @@ export default function VaerksadministrationPage() {
       </Dialog>
 
       <Dialog open={duplicatesOpen} onOpenChange={setDuplicatesOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="sm:max-w-3xl md:max-w-3xl lg:max-w-3xl">
           <DialogHeader><DialogTitle>Find dubletter</DialogTitle></DialogHeader>
           <div className="max-h-[60vh] space-y-3 overflow-auto">
             {duplicateGroups.length === 0 ? (
@@ -1607,7 +1607,7 @@ export default function VaerksadministrationPage() {
       </Dialog>
 
       <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl md:max-w-2xl lg:max-w-2xl">
           <DialogHeader><DialogTitle>Flet dubletter</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <Field label="Vælg hovedværk">

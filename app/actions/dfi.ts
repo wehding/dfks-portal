@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBPoster } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -72,7 +72,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
   if (filmId) {
     const { data } = await db
       .from("works")
-      .select("id, title, year, poster_url")
+      .select("id, title, year, poster_url, tmdb_id")
       .eq("org_id", orgId)
       .eq("dfi_id", filmId)
       .maybeSingle();
@@ -85,7 +85,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
 
   const { data } = await db
     .from("works")
-    .select("id, title, year, poster_url")
+    .select("id, title, year, poster_url, tmdb_id")
     .eq("org_id", orgId)
     .eq("year", year)
     .limit(50);
@@ -338,12 +338,14 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     const prodYear: number | null = film.ProductionYear || film.ReleaseYear || null;
     const filmTitle: string = film.Title || film.DanishTitle || "Ukendt titel";
 
-    // Slå plakat op i TMDB (stille fejl)
+    // Slå plakat og tmdb_id op i TMDB (stille fejl)
     let posterUrl: string | null = null;
+    let tmdbId: number | null = null;
     try {
-      const tmdbRes = await findTMDBPoster(filmTitle, prodYear);
-      posterUrl = tmdbRes;
-    } catch { /* posterUrl forbliver null */ }
+      const match = await findTMDBMatch(filmTitle, prodYear);
+      posterUrl = match.poster_url;
+      tmdbId = match.tmdb_id;
+    } catch { /* posterUrl/tmdbId forbliver null */ }
 
     try {
       const existing = await findExistingWorkForDfiCredit(db, { ...credit, Title: filmTitle, ProductionYear: prodYear }, orgId);
@@ -357,6 +359,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         org_id: orgId,
         description: film.Synopsis || film.ShortSynopsis || null,
         poster_url: posterUrl,
+        tmdb_id: tmdbId,
       };
 
       const wasExisting = Boolean(workId);
@@ -374,6 +377,14 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         }
         console.log(`[DFI import] Oprettet work: "${filmTitle}" (${workId})`);
         workId = newWork.id;
+      } else if (existing) {
+        // Opdater hvis der mangler plakat eller TMDB id
+        const updates: any = {};
+        if (!existing.poster_url && posterUrl) updates.poster_url = posterUrl;
+        if (!existing.tmdb_id && tmdbId) updates.tmdb_id = tmdbId;
+        if (Object.keys(updates).length > 0) {
+          await db.from("works").update(updates).eq("id", workId);
+        }
       }
 
       // Tilføj work_assignment

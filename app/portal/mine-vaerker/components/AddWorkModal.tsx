@@ -204,6 +204,7 @@ export function AddWorkModal({
   const [isSearching, setIsSearching]         = useState(false);
   const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
+  const [showExternalResults, setShowExternalResults] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -225,12 +226,14 @@ export function AddWorkModal({
     setPickedSource(null);
     setAddSeason("");
     setAddEpisode("");
+    setShowExternalResults(false);
   };
 
   const handleSearch = async () => {
     if (!addQuery.trim()) return;
     setIsSearching(true);
     setHasSearchedAdd(true);
+    setShowExternalResults(false);
     setLocalResults([]);
     setDfiResults([]);
     setTmdbResults([]);
@@ -244,10 +247,18 @@ export function AddWorkModal({
       searchTMDB(addQuery).catch(() => []),
     ]);
 
-    setLocalResults(((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8));
+    const locals = ((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8);
+    setLocalResults(locals);
     setDfiResults(((dfi as { results?: DfiSearchResult[] }).results ?? []).slice(0, 8));
     setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
     setIsSearching(false);
+
+    if (locals.length > 0) {
+      setPickedResult(locals[0]);
+      setPickedSource("local");
+      setManualMode(false);
+      setAddCoEditors(localWorkToCoEditors(locals[0]));
+    }
   };
 
   const pickLocalResult = (work: LocalWorkResult) => {
@@ -429,22 +440,21 @@ export function AddWorkModal({
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant={!manualMode ? "default" : "outline"} onClick={() => setManualMode(false)}>
-          {t("works.searchDfiTmdb")}
-        </Button>
         {hasSearchedAdd && (
           <Button
             type="button"
             size="sm"
             variant={manualMode ? "default" : "outline"}
             onClick={() => {
-              setManualMode(true);
-              setPickedResult(null);
-              setPickedSource(null);
-              setAddCoEditors([]);
+              setManualMode(v => !v);
+              if (!manualMode) {
+                setPickedResult(null);
+                setPickedSource(null);
+                setAddCoEditors([]);
+              }
             }}
           >
-            {t("works.createManual")}
+            {manualMode ? (locale === "da" ? "Skift til søgning" : "Switch to search") : t("works.createManual")}
           </Button>
         )}
       </div>
@@ -563,7 +573,15 @@ export function AddWorkModal({
         </div>
       )}
 
-      {!manualMode && (dfiResults.length > 0 || tmdbResults.length > 0) && (
+      {!manualMode && localResults.length > 0 && !showExternalResults && (dfiResults.length > 0 || tmdbResults.length > 0) && (
+        <div className="mt-3 mb-4 flex justify-center">
+          <Button type="button" variant="outline" size="sm" onClick={() => setShowExternalResults(true)}>
+            {locale === "da" ? "Led videre i DFI/TMDB-databasen" : "Search further in DFI/TMDB database"}
+          </Button>
+        </div>
+      )}
+
+      {!manualMode && (dfiResults.length > 0 || tmdbResults.length > 0) && (showExternalResults || localResults.length === 0) && (
         <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
           {([
             {
