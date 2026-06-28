@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
         const saveOrgId  = portalOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
         const resolvedOrgId = portalOrgId ?? sessionUser?.user_metadata?.org_id ?? saveOrgId
 
-        console.log("[gennemgang] 4/5 Starter analyserKontrakt, existingReviewId:", existingReviewId)
+        console.log("[gennemgang] 4/5 Starter analyserKontrakt")
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
@@ -81,7 +81,6 @@ export async function POST(req: NextRequest) {
                 orgId: resolvedOrgId,
                 memberId: portalUserId,
                 memberEmail: portalEmail,
-                existingReviewId,
                 provider,
                 model,
             })

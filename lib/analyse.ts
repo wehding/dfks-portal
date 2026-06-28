@@ -456,7 +456,7 @@ export type AnalyseInput = {
     orgId?: string | null
     memberId?: string | null
     memberEmail?: string | null
-    existingReviewId?: string | null
+    // existingReviewId fjernet — DB-persistering er ruternes ansvar, ikke analyserKontrakt's
     provider?: string
     model?: string
 }
