@@ -9,16 +9,23 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
-import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
+import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks, prepareDFIImportCredits } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
+import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
-const DFKS_ORG_ID  = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
-const ROLES        = ["Klipper", "Klipperansvarlig", "Assistent-klipper", "Instruktør", "Producent", "Fotograf", "Andet"];
+const ROLES        = ["B-klipper", "Klipper", "Konceptuerende klipper"];
+const WORK_TYPES   = [
+  { value: "kortfilm", label: "Kortfilm" },
+  { value: "spillefilm", label: "Spillefilm" },
+  { value: "tv-serie", label: "Tv-serie" },
+  { value: "dokumentar-serie", label: "Dokumentar-serie" },
+  { value: "dokumentarfilm", label: "Dokumentarfilm" },
+];
 
 type Work = {
   id: string;
@@ -33,9 +40,10 @@ type Work = {
   tmdb_id: number | string | null;
   poster_url: string | null;
   description: string | null;
+  work_change_requests?: ChangeRequest[];
 };
-type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
-type OtherAssignment = { work_id: string; role: string | null; rettighedshavere: { full_name: string } | null };
+type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
+type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null };
 type WorkCorrectionForm = {
   title: string;
   type: string;
@@ -46,20 +54,101 @@ type WorkCorrectionForm = {
   description: string;
 };
 
-type SortKey = "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
+type ManualWorkForm = Omit<WorkCorrectionForm, "description">;
+
+type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
+
+type RequestComment = {
+  id: string;
+  author_role: "member" | "admin";
+  message: string;
+  created_at: string;
+};
+
+type ChangeRequest = {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  source: string;
+  admin_comment?: string | null;
+  proposed_data?: Record<string, unknown>;
+  work_change_request_comments?: RequestComment[];
+};
+
+type LocalWorkResult = Work & {
+  work_assignments?: {
+    id: string;
+    role: string | null;
+    rights_holder_id?: string | null;
+    rettighedshavere?: { id: string; full_name: string } | null;
+  }[];
+};
+
+type CoEditorDraft = {
+  id: string;
+  name: string;
+  role: string;
+  assignmentId?: string | null;
+  rightsHolderId?: string | null;
+  locked?: boolean;
+  action?: "add" | "remove" | "change";
+};
+
+type DfiPersonCredit = {
+  Id?: number | string | null;
+  Name?: string | null;
+  TypeCode?: string | null;
+  Type?: string | null;
+  Function?: string | null;
+  Credit?: string | null;
+};
+
+type DfiSearchResult = {
+  Id?: number | string | null;
+  Title?: string | null;
+  DanishTitle?: string | null;
+  ProductionYear?: number | null;
+  ReleaseYear?: number | null;
+  Category?: string | null;
+  PersonCredits?: DfiPersonCredit[];
+};
+
+type TmdbSearchResult = {
+  id: number;
+  media_type?: string;
+  title?: string | null;
+  name?: string | null;
+  release_date?: string | null;
+  first_air_date?: string | null;
+  poster_path?: string | null;
+};
+
+type SearchItem = DfiSearchResult | TmdbSearchResult;
+type ResultColumnDef = {
+  label: string;
+  items: SearchItem[];
+  getKey: (x: SearchItem) => string;
+  isSelected: (x: SearchItem) => boolean;
+  onSelect: (x: SearchItem) => void;
+  getTitle: (x: SearchItem) => string;
+  getMeta: (x: SearchItem) => string;
+  getPoster: (x: SearchItem) => string | null;
+};
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
   const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "short" | "animation"> = {
     fiktion: "feature",
+    spillefilm: "feature",
     film: "feature",
     movie: "feature",
     serie: "series",
     tv: "series",
     "tv-serie": "series",
     dokumentar: "documentary",
+    dokumentarfilm: "documentary",
     documentary: "documentary",
     dokumentarserie: "docSeries",
+    "dokumentar-serie": "docSeries",
     docseries: "docSeries",
     kort: "short",
     kortfilm: "short",
@@ -76,7 +165,7 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
 
 function isSeriesType(t: string | null | undefined) {
   const label = typeLabel(t ?? "", "da").toLowerCase();
-  return label === "tv-serie" || label === "dokumentarserie";
+  return label === "tv-serie" || label === "dokumentarserie" || label === "dokumentar-serie";
 }
 
 function formatEpisodeLabel(episodeNumber?: number | null, title?: string | null) {
@@ -103,6 +192,97 @@ function workToCorrectionForm(work: Work): WorkCorrectionForm {
     genre: work.genre ?? "",
     description: work.description ?? "",
   };
+}
+
+function emptyManualWorkForm(): ManualWorkForm {
+  return {
+    title: "",
+    type: "spillefilm",
+    year: "",
+    duration_minutes: "",
+    episode_count: "",
+    genre: "",
+  };
+}
+
+function emptyCoEditor(): CoEditorDraft {
+  return { id: crypto.randomUUID(), name: "", role: "Klipper", action: "add" };
+}
+
+function displayRole(role: string | null | undefined) {
+  return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
+}
+
+function requestKindLabel(request: ChangeRequest) {
+  const kind = request.proposed_data?.kind;
+  if (kind === "creation") return "Nyt værk";
+  if (kind === "co_editors") return "Medklippere";
+  return "Rettelse";
+}
+
+function requestStatusLabel(status: ChangeRequest["status"]) {
+  if (status === "pending") return "Afventer";
+  if (status === "approved") return "Godkendt";
+  return "Afvist";
+}
+
+function adminRequestSummaries(work: Work | null) {
+  return (work?.work_change_requests ?? [])
+    .flatMap(request => {
+      const comments = (request.work_change_request_comments ?? [])
+        .filter(comment => comment.author_role === "admin")
+        .map(comment => ({
+          id: `${request.id}-${comment.id}`,
+          kind: requestKindLabel(request),
+          status: requestStatusLabel(request.status),
+          message: comment.message,
+          createdAt: comment.created_at,
+        }));
+      return comments.length ? comments : request.admin_comment ? [{
+        id: request.id,
+        kind: requestKindLabel(request),
+        status: requestStatusLabel(request.status),
+        message: request.admin_comment,
+        createdAt: "",
+      }] : [];
+    })
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+}
+
+function latestAdminComment(work: Work | null) {
+  return adminRequestSummaries(work)[0]?.message ?? null;
+}
+
+function pendingRequestLabel(work: Work | null) {
+  return (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
+}
+
+function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
+  return (work?.work_assignments ?? []).map(assignment => ({
+    id: assignment.id,
+    name: assignment.rettighedshavere?.full_name ?? "Ukendt medklipper",
+    role: displayRole(assignment.role),
+    assignmentId: assignment.id,
+    rightsHolderId: assignment.rights_holder_id ?? assignment.rettighedshavere?.id ?? null,
+    locked: true,
+  }));
+}
+
+function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
+  const credits = Array.isArray(film.PersonCredits) ? film.PersonCredits : [];
+  return credits
+    .filter((credit: DfiPersonCredit) => {
+      const code = String(credit.TypeCode ?? "").toLowerCase();
+      const text = `${credit.Type ?? ""} ${credit.Function ?? ""} ${credit.Credit ?? ""}`.toLowerCase();
+      return code.includes("klip") || code.includes("edit") || text.includes("klip") || text.includes("edit");
+    })
+    .map((credit: DfiPersonCredit) => ({
+      id: crypto.randomUUID(),
+      name: credit.Name ?? "",
+      role: "Klipper",
+      action: "add" as const,
+    }))
+    .filter((editor: CoEditorDraft) => editor.name.trim());
 }
 
 // Fælles select-stil
@@ -146,7 +326,7 @@ export default function MineVaerkerClient({
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("year");
+  const [sortKey, setSortKey]   = useState<SortKey>("date");
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -155,14 +335,20 @@ export default function MineVaerkerClient({
   const [isAdding, setIsAdding]       = useState(false);
   const [addQuery, setAddQuery]       = useState("");
   const [isSearching, setIsSearching] = useState(false);
+  const [hasSearchedAdd, setHasSearchedAdd] = useState(false);
+  const [localResults, setLocalResults] = useState<LocalWorkResult[]>([]);
   const [dfiResults, setDfiResults]   = useState<any[]>([]);
   const [tmdbResults, setTmdbResults] = useState<any[]>([]);
   const [pickedResult, setPickedResult] = useState<any>(null);
-  const [pickedSource, setPickedSource] = useState<"dfi" | "tmdb" | null>(null);
+  const [pickedSource, setPickedSource] = useState<"local" | "dfi" | "tmdb" | null>(null);
   const [addRole, setAddRole]         = useState("Klipper");
+  const [addComment, setAddComment]   = useState("");
+  const [addCoEditors, setAddCoEditors] = useState<CoEditorDraft[]>([]);
   const [addSeason, setAddSeason]     = useState("");
   const [addEpisode, setAddEpisode]   = useState("");
   const [isSaving, setIsSaving]       = useState(false);
+  const [manualMode, setManualMode]   = useState(false);
+  const [manualWork, setManualWork]   = useState<ManualWorkForm>(emptyManualWorkForm);
 
   // DFI-guiden
   const [wizardOpen, setWizardOpen]         = useState(false);
@@ -172,6 +358,8 @@ export default function MineVaerkerClient({
   const [wizardPerson, setWizardPerson]     = useState<any>(null);
   const [wizardCredits, setWizardCredits]   = useState<any[]>([]);
   const [wizardSelected, setWizardSelected] = useState<Record<number, boolean>>({});
+  const [wizardLinkedExistingCount, setWizardLinkedExistingCount] = useState(0);
+  const [wizardSkippedExistingCount, setWizardSkippedExistingCount] = useState(0);
   const [wizardSearching, setWizardSearching] = useState(false);
   const [wizardImporting, setWizardImporting] = useState(false);
   const [wizardError, setWizardError]       = useState<string | null>(null);
@@ -183,6 +371,7 @@ export default function MineVaerkerClient({
   const [showWorkCorrection, setShowWorkCorrection] = useState(false);
   const [workCorrection, setWorkCorrection] = useState<WorkCorrectionForm | null>(null);
   const [workCorrectionComment, setWorkCorrectionComment] = useState("");
+  const [editCoEditors, setEditCoEditors] = useState<CoEditorDraft[]>([]);
   const [isSendingCorrection, setIsSendingCorrection] = useState(false);
 
   const supabase = createClient();
@@ -210,10 +399,11 @@ export default function MineVaerkerClient({
     .sort((a, b) => {
       const wa = a.works, wb = b.works;
       let av: any = "", bv: any = "";
+      if (sortKey === "date") { av = new Date(a.created_at ?? 0).getTime(); bv = new Date(b.created_at ?? 0).getTime(); }
       if (sortKey === "title") { av = wa?.title ?? ""; bv = wb?.title ?? ""; }
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
       if (sortKey === "type")  { av = typeLabel(wa?.type ?? "", locale); bv = typeLabel(wb?.type ?? "", locale); }
-      if (sortKey === "role") { av = a.role ?? ""; bv = b.role ?? ""; }
+      if (sortKey === "role") { av = displayRole(a.role); bv = displayRole(b.role); }
       if (sortKey === "episode") { av = a.episodes?.episode_number ?? 0; bv = b.episodes?.episode_number ?? 0; }
       if (sortKey === "coEditors") { av = (coEditorMap[wa?.id ?? ""] ?? []).join(", "); bv = (coEditorMap[wb?.id ?? ""] ?? []).join(", "); }
       if (sortKey === "contract") { av = contractedWorkIds.includes(wa?.id ?? "") ? 1 : 0; bv = contractedWorkIds.includes(wb?.id ?? "") ? 1 : 0; }
@@ -228,7 +418,7 @@ export default function MineVaerkerClient({
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
+    else { setSortKey(key); setSortDir(key === "date" ? "desc" : "asc"); }
   };
   const sortArrow = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
@@ -239,88 +429,180 @@ export default function MineVaerkerClient({
   const selectedType = pickedSource === "dfi"
     ? (() => {
         const combined = `${pickedResult?.Category ?? ""} ${pickedResult?.Type ?? ""}`.toLowerCase();
-        if (combined.includes("dokumentar") && combined.includes("serie")) return "dokumentarserie";
-        if (combined.includes("serie") || combined.includes("tv-")) return "serie";
+        if (combined.includes("dokumentar") && combined.includes("serie")) return "dokumentar-serie";
+        if (combined.includes("serie") || combined.includes("tv-")) return "tv-serie";
         return "";
       })()
     : pickedSource === "tmdb" && pickedResult?.media_type === "tv" ? "serie" : "";
   const showSeriesFields = isSeriesType(selectedType);
 
+  const reloadAssignments = async () => {
+    if (!rightsHolderId) return;
+    const { data } = await supabase
+      .from("work_assignments")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
+      .eq("rights_holder_id", rightsHolderId)
+      .order("created_at", { ascending: false });
+    if (data) setAssignments(data as unknown as Assignment[]);
+  };
+
   const handleSearch = async () => {
     if (!addQuery.trim()) return;
     setIsSearching(true);
-    setDfiResults([]); setTmdbResults([]); setPickedResult(null); setPickedSource(null);
-    const [dfi, tmdb] = await Promise.all([
+    setHasSearchedAdd(true);
+    setLocalResults([]); setDfiResults([]); setTmdbResults([]); setPickedResult(null); setPickedSource(null); setAddCoEditors([]);
+    const [local, dfi, tmdb] = await Promise.all([
+      searchLocalWorksForMember(addQuery).catch(() => ({ success: false, works: [] })),
       searchDFIFilms(addQuery).catch(() => ({ success: false, results: [] })),
       searchTMDB(addQuery).catch(() => []),
     ]);
-    setDfiResults(((dfi as any).results ?? []).slice(0, 8));
+    setLocalResults(((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8));
+    setDfiResults(((dfi as { results?: DfiSearchResult[] }).results ?? []).slice(0, 8));
     setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
     setIsSearching(false);
   };
 
+  const pickLocalResult = (work: LocalWorkResult) => {
+    setPickedResult(work);
+    setPickedSource("local");
+    setManualMode(false);
+    setAddCoEditors(localWorkToCoEditors(work));
+  };
+
+  const pickDfiResult = async (result: DfiSearchResult) => {
+    setPickedResult(result);
+    setPickedSource("dfi");
+    setManualMode(false);
+    setAddCoEditors([]);
+    try {
+      const det = await getDFIFilmDetails(Number(result.Id));
+      const film = det.success ? (det as { film?: DfiSearchResult }).film ?? result : result;
+      const editors = extractDfiCoEditors(film);
+      if (editors.length) setAddCoEditors(editors);
+    } catch {
+      setAddCoEditors([]);
+    }
+  };
+
+  const resetAddState = () => {
+    setIsAdding(false);
+    setManualMode(false);
+    setHasSearchedAdd(false);
+    setManualWork(emptyManualWorkForm());
+    setAddQuery("");
+    setAddComment("");
+    setAddCoEditors([]);
+    setLocalResults([]);
+    setDfiResults([]);
+    setTmdbResults([]);
+    setPickedResult(null);
+    setPickedSource(null);
+    setAddSeason("");
+    setAddEpisode("");
+  };
+
   const handleAddWork = async () => {
-    if (!pickedResult || !pickedSource || !rightsHolderId) return;
+    if ((!manualMode && (!pickedResult || !pickedSource)) || !rightsHolderId) return;
     setIsSaving(true);
     try {
-      let args: Record<string, any> = { p_org_id: DFKS_ORG_ID };
-      if (pickedSource === "dfi") {
-        const det  = await getDFIFilmDetails(pickedResult.Id);
+      if (pickedSource === "local" && pickedResult) {
+        const res = await linkExistingWorkForMember({
+          rightsHolderId,
+          workId: pickedResult.id,
+          role: addRole,
+          comment: addComment,
+          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+        });
+        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+        if (res.assignment) setAssignments(prev => [res.assignment as unknown as Assignment, ...prev]);
+        setMsg({ type: "success", text: res.pending ? "Værket er tilføjet, og medklipperforslaget afventer admin." : t("works.added") });
+        resetAddState();
+        return;
+      }
+
+      if (manualMode) {
+        const res = await addWorkForMemberWithApproval({
+          rightsHolderId,
+          role: addRole,
+          comment: addComment,
+          source: "manual",
+          overrideLocalMatch: localResults.length > 0,
+          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          workData: {
+            title: manualWork.title,
+            type: manualWork.type,
+            year: numberOrNull(manualWork.year),
+            duration_minutes: numberOrNull(manualWork.duration_minutes),
+            episode_count: numberOrNull(manualWork.episode_count),
+            genre: manualWork.genre || null,
+            description: null,
+          },
+        });
+        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+        if (res.assignment) setAssignments(prev => [res.assignment as unknown as Assignment, ...prev]);
+        setMsg({ type: "success", text: res.pending ? "Værket er sendt til admin-godkendelse." : t("works.added") });
+        resetAddState();
+        return;
+      }
+
+      if (pickedSource === "dfi" && pickedResult) {
+        const det = await getDFIFilmDetails(pickedResult.Id);
         const film = det.success ? (det as any).film : pickedResult;
         const combined = ((film.Category || "") + " " + (film.Type || "")).toLowerCase();
-        const type = (combined.includes("dokumentar") && combined.includes("serie")) ? "serie"
-          : combined.includes("dokumentar") ? "dokumentar"
-          : (combined.includes("serie") || combined.includes("tv-")) ? "serie"
-          : combined.includes("kort") ? "kortfilm" : "fiktion";
-        args = { ...args, p_dfi_id: String(pickedResult.Id), p_title: film.Title || film.DanishTitle || "Ukendt", p_type: type, p_year: film.ProductionYear || film.ReleaseYear || null, p_description: film.Synopsis || null };
-      } else {
+        const type = (combined.includes("dokumentar") && combined.includes("serie")) ? "dokumentar-serie"
+          : combined.includes("dokumentar") ? "dokumentarfilm"
+          : (combined.includes("serie") || combined.includes("tv-")) ? "tv-serie"
+          : combined.includes("kort") ? "kortfilm" : "spillefilm";
+        const res = await addWorkForMemberWithApproval({
+          rightsHolderId,
+          role: addRole,
+          comment: addComment || (localResults.length > 0 ? "Brugeren har valgt DFI frem for lokalt databasehit." : ""),
+          source: "dfi",
+          overrideLocalMatch: localResults.length > 0,
+          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          workData: {
+            dfi_id: String(pickedResult.Id),
+            title: film.Title || film.DanishTitle || "Ukendt",
+            type,
+            year: film.ProductionYear || film.ReleaseYear || null,
+            description: film.Synopsis || film.ShortSynopsis || null,
+          },
+        });
+        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+        if (res.assignment) setAssignments(prev => [res.assignment as unknown as Assignment, ...prev]);
+        setMsg({ type: "success", text: res.pending ? "Værket er sendt til admin-godkendelse." : t("works.added") });
+        resetAddState();
+        return;
+      }
+
+      if (pickedSource === "tmdb" && pickedResult) {
         const det = await getTMDBWorkDetails(pickedResult.id, pickedResult.media_type || "movie");
-        const d   = det.success ? (det as any).details : pickedResult;
+        const d = det.success ? (det as { details?: TmdbSearchResult }).details ?? pickedResult : pickedResult;
         const title = d.title || d.name || "Ukendt";
-        const year  = d.release_date ? parseInt(d.release_date.substring(0, 4)) : d.first_air_date ? parseInt(d.first_air_date.substring(0, 4)) : null;
-        args = { ...args, p_tmdb_id: pickedResult.id, p_title: title, p_type: pickedResult.media_type === "tv" ? "serie" : "fiktion", p_year: year, p_description: d.overview || null, p_poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null };
+        const year = d.release_date ? parseInt(d.release_date.substring(0, 4)) : d.first_air_date ? parseInt(d.first_air_date.substring(0, 4)) : null;
+        const res = await addWorkForMemberWithApproval({
+          rightsHolderId,
+          role: addRole,
+          comment: addComment || (localResults.length > 0 ? "Brugeren har valgt TMDB frem for lokalt databasehit." : ""),
+          source: "tmdb",
+          overrideLocalMatch: localResults.length > 0,
+          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          workData: {
+            tmdb_id: pickedResult.id,
+            title,
+            type: pickedResult.media_type === "tv" ? "tv-serie" : "spillefilm",
+            year,
+            description: d.overview || null,
+            poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null,
+          },
+        });
+        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+        if (res.assignment) setAssignments(prev => [res.assignment as unknown as Assignment, ...prev]);
+        setMsg({ type: "success", text: res.pending ? "Værket er sendt til admin-godkendelse." : t("works.added") });
+        resetAddState();
+        return;
       }
-      const { data: workId, error: fnErr } = await supabase.rpc("upsert_work_for_member", args);
-      if (fnErr || !workId) throw new Error(fnErr?.message ?? t("works.createFailed"));
-      let episodeId: string | null = null;
-      if (showSeriesFields && addEpisode.trim()) {
-        const season = Number.parseInt(addSeason, 10);
-        const episode = Number.parseInt(addEpisode, 10);
-        if (Number.isFinite(episode) && episode > 0) {
-          const storedEpisodeNumber = Number.isFinite(season) && season > 0 ? season * 1000 + episode : episode;
-          const { data: ep, error: epErr } = await supabase
-            .from("episodes")
-            .upsert(
-              {
-                work_id: workId,
-                episode_number: storedEpisodeNumber,
-                title: Number.isFinite(season) && season > 0 ? `S${season}E${episode}` : `E${episode}`,
-              },
-              { onConflict: "work_id,episode_number" }
-            )
-            .select("id")
-            .single();
-          if (epErr) throw new Error(epErr.message);
-          episodeId = ep?.id ?? null;
-        }
-      }
-      const assignmentPayload = { work_id: workId, episode_id: episodeId, org_id: DFKS_ORG_ID, rights_holder_id: rightsHolderId, role: addRole };
-      if (episodeId) {
-        await supabase.from("work_assignments").insert(assignmentPayload);
-      } else {
-        await supabase.from("work_assignments").upsert(
-          assignmentPayload,
-          { onConflict: "work_id,rights_holder_id,role" }
-        );
-      }
-      const { data: fresh } = await supabase
-        .from("work_assignments")
-        .select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
-        .eq("work_id", workId).eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false }).limit(1).single();
-      if (fresh) setAssignments(prev => [fresh as unknown as Assignment, ...prev]);
-      setMsg({ type: "success", text: t("works.added") });
-      setIsAdding(false);
-      setAddQuery(""); setDfiResults([]); setTmdbResults([]); setPickedResult(null); setAddSeason(""); setAddEpisode("");
+
     } catch (err: any) {
       setMsg({ type: "error", text: err.message || t("common.genericError") });
     } finally {
@@ -343,14 +625,25 @@ export default function MineVaerkerClient({
     setShowWorkCorrection(false);
     setWorkCorrection(null);
     setWorkCorrectionComment("");
+    setEditCoEditors([]);
   };
 
   const openEdit = (a: Assignment) => {
     setEditAssignment(a);
-    setEditRole(a.role ?? "Klipper");
+    setEditRole(displayRole(a.role));
     setShowWorkCorrection(false);
     setWorkCorrection(a.works ? workToCorrectionForm(a.works) : null);
     setWorkCorrectionComment("");
+    setEditCoEditors((allAssignments ?? [])
+      .filter(other => other.work_id === a.works?.id)
+      .map(other => ({
+        id: other.id,
+        name: other.rettighedshavere?.full_name ?? "Ukendt medklipper",
+        role: displayRole(other.role),
+        assignmentId: other.id,
+        rightsHolderId: other.rights_holder_id ?? other.rettighedshavere?.id ?? null,
+        locked: true,
+      })));
   };
 
   const handleSaveEdit = async () => {
@@ -382,6 +675,7 @@ export default function MineVaerkerClient({
           description: workCorrection.description || null,
         },
         comment: workCorrectionComment,
+        coEditors: editCoEditors.filter(editor => !editor.locked || editor.action === "remove" || editor.action === "change"),
       });
       if (!res.success) throw new Error("Kunne ikke sende rettelsen.");
       setAssignments(prev => prev.map(a => a.works?.id === editAssignment.works?.id ? {
@@ -399,7 +693,7 @@ export default function MineVaerkerClient({
 
   const openWizard = () => {
     setWizardQuery(userName); setWizardPersons([]); setWizardPerson(null);
-    setWizardCredits([]); setWizardSelected({}); setWizardError(null);
+    setWizardCredits([]); setWizardSelected({}); setWizardError(null); setWizardLinkedExistingCount(0); setWizardSkippedExistingCount(0);
     if (dfiPersonId) { setWizardStep("credits"); loadWizardCredits(dfiPersonId); }
     else setWizardStep("search");
     setWizardOpen(true);
@@ -410,10 +704,16 @@ export default function MineVaerkerClient({
     const res = await getDFIPersonCredits(personId);
     if (res.success && res.credits) {
       const unique = (res.credits as any[]).filter((c, i, arr) => arr.findIndex(x => x.Id === c.Id) === i);
-      setWizardCredits(unique);
+      const prepared = await prepareDFIImportCredits(personId, unique);
+      const newCredits = prepared.success ? (prepared.credits ?? []) : unique;
+      setWizardCredits(newCredits);
+      setWizardLinkedExistingCount(prepared.linkedExistingCount ?? 0);
+      setWizardSkippedExistingCount(prepared.skippedAlreadyAssignedCount ?? 0);
       const sel: Record<number, boolean> = {};
-      unique.forEach((c: any) => { sel[c.Id] = true; });
+      newCredits.forEach((c: DfiSearchResult) => { if (c.Id != null) sel[Number(c.Id)] = true; });
       setWizardSelected(sel);
+      if (prepared.success && (prepared.linkedExistingCount ?? 0) > 0) await reloadAssignments();
+      if (!prepared.success) setWizardError(prepared.error ?? "Kunne ikke tjekke lokale værker før import.");
     } else {
       setWizardError(res.error ?? "Kunne ikke hente krediteringer.");
     }
@@ -442,17 +742,18 @@ export default function MineVaerkerClient({
     setWizardImporting(true); setWizardError(null);
     const res = await importApprovedDFIWorks(personId, approved);
     if (res.success) {
-      setMsg({ type: "success", text: t("works.importedFromDfi").replace("{count}", String(res.importedCount)) });
+      const linkedCount = res.linkedExistingCount ?? 0;
+      const importedText = t("works.importedFromDfi").replace("{count}", String(res.importedCount));
+      setMsg({ type: "success", text: linkedCount > 0 ? `${importedText} ${linkedCount} eksisterende titel${linkedCount === 1 ? "" : "r"} blev tilføjet fra databasen.` : importedText });
       setWizardOpen(false);
-      if (rightsHolderId) {
-        const { data } = await supabase.from("work_assignments").select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)").eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false });
-        if (data) setAssignments(data as unknown as Assignment[]);
-      }
+      await reloadAssignments();
     } else {
       setWizardError(res.errors?.join(", ") ?? t("works.importFailed"));
     }
     setWizardImporting(false);
   };
+
+  const editAdminSummaries = adminRequestSummaries(editAssignment?.works ?? null);
 
   // ── Render ─────────────────────────────────────────────────
 
@@ -537,13 +838,15 @@ export default function MineVaerkerClient({
             <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="date">Tilføjet dato</SelectItem>
                 <SelectItem value="title">Værktitel</SelectItem>
                 <SelectItem value="year">År</SelectItem>
                 <SelectItem value="type">Type</SelectItem>
+                <SelectItem value="contract">Kontraktstatus</SelectItem>
               </SelectContent>
             </Select>
             <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
-              {sortDir === "asc" ? "A-Z" : "Z-A"}
+              {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortKey === "contract" ? (sortDir === "asc" ? "Mangler" : "OK") : sortDir === "asc" ? "A-Z" : "Z-A"}
             </Button>
           </div>
         </div>
@@ -579,6 +882,8 @@ export default function MineVaerkerClient({
           if (!w) return null;
           const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
           const hasContract = contractedWorkIds.includes(w.id);
+          const adminComment = latestAdminComment(w);
+          const pendingLabel = pendingRequestLabel(w);
           return (
             <React.Fragment key={a.id}>
             <div
@@ -605,12 +910,18 @@ export default function MineVaerkerClient({
                 <div>
                   <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
                   {w.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[260px]">{w.description}</p>}
+                  {(pendingLabel || adminComment) && (
+                    <p className="mt-1 max-w-[300px] truncate text-xs text-amber-700">
+                      {pendingLabel ? `${pendingLabel}${adminComment ? ": " : ""}` : ""}
+                      {adminComment}
+                    </p>
+                  )}
                 </div>
               </div>
 
               <div className="text-sm text-gray-500">{w.year ?? "–"}</div>
               <div className="text-sm text-gray-500">{typeLabel(w.type, locale)}</div>
-              <div className="text-sm text-gray-500">{a.role ?? "–"}</div>
+              <div className="text-sm text-gray-500">{displayRole(a.role)}</div>
               <div className="text-sm text-gray-500">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</div>
               <div className="text-xs text-gray-500 truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
                 {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
@@ -654,6 +965,12 @@ export default function MineVaerkerClient({
                     <div className="min-w-0">
                       <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
                       <p className="mt-1 text-xs text-gray-500">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
+                      {(pendingLabel || adminComment) && (
+                        <p className="mt-1 text-xs text-amber-700">
+                          {pendingLabel ? `${pendingLabel}${adminComment ? ": " : ""}` : ""}
+                          {adminComment}
+                        </p>
+                      )}
                     </div>
                     <div
                       className="shrink-0"
@@ -670,7 +987,7 @@ export default function MineVaerkerClient({
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <div>
                       <p className="font-medium text-gray-400">Rolle</p>
-                      <p className="mt-0.5 text-gray-700">{a.role ?? "–"}</p>
+                      <p className="mt-0.5 text-gray-700">{displayRole(a.role)}</p>
                     </div>
                     <div>
                       <p className="font-medium text-gray-400">{t("works.episodes")}</p>
@@ -699,10 +1016,10 @@ export default function MineVaerkerClient({
 
       {/* ── Tilføj-panel ──────────────────────────────────────────── */}
       {isAdding && (
-        <Modal onClose={() => setIsAdding(false)} maxWidth="max-w-2xl">
+        <Modal onClose={resetAddState} maxWidth="max-w-2xl">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-lg font-semibold text-gray-900">{t("works.addWork")}</h2>
-            <button onClick={() => setIsAdding(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            <button onClick={resetAddState} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
           </div>
 
           <div className="flex flex-col gap-2 mb-4 sm:flex-row">
@@ -717,12 +1034,58 @@ export default function MineVaerkerClient({
             </Button>
           </div>
 
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant={!manualMode ? "default" : "outline"} onClick={() => setManualMode(false)}>
+              Søg i DFI/TMDB
+            </Button>
+            {hasSearchedAdd && (
+              <Button type="button" size="sm" variant={manualMode ? "default" : "outline"} onClick={() => { setManualMode(true); setPickedResult(null); setPickedSource(null); setAddCoEditors([]); }}>
+                Opret manuelt
+              </Button>
+            )}
+          </div>
+
           <div className="mb-4 space-y-1.5">
             <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
             <select value={addRole} onChange={e => setAddRole(e.target.value)} className={selectCls}>
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
+
+          {manualMode && (
+            <div className="mb-4 rounded-lg border border-gray-200 p-4">
+              <p className="mb-3 text-sm font-semibold text-gray-900">Manuel værksdata</p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Titel</Label>
+                  <Input value={manualWork.title} onChange={e => setManualWork({ ...manualWork, title: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Type</Label>
+                  <select value={manualWork.type} onChange={e => setManualWork({ ...manualWork, type: e.target.value })} className={selectCls}>
+                    {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">År</Label>
+                  <Input value={manualWork.year} onChange={e => setManualWork({ ...manualWork, year: e.target.value })} inputMode="numeric" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Varighed</Label>
+                  <Input value={manualWork.duration_minutes} onChange={e => setManualWork({ ...manualWork, duration_minutes: e.target.value })} inputMode="numeric" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Afsnit</Label>
+                  <Input value={manualWork.episode_count} onChange={e => setManualWork({ ...manualWork, episode_count: e.target.value })} inputMode="numeric" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Genre</Label>
+                  <Input value={manualWork.genre} onChange={e => setManualWork({ ...manualWork, genre: e.target.value })} />
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-gray-500">Poster oprettes ikke manuelt. Poster kommer kun via TMDB.</p>
+            </div>
+          )}
 
           {showSeriesFields && (
             <div className="grid grid-cols-2 gap-3 mb-4">
@@ -749,16 +1112,39 @@ export default function MineVaerkerClient({
             </div>
           )}
 
-          {(dfiResults.length > 0 || tmdbResults.length > 0) && (
+          {!manualMode && localResults.length > 0 && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="mb-2 text-sm font-semibold text-amber-900">Mulige eksisterende værker</p>
+              <div className="space-y-1.5">
+                {localResults.map(work => {
+                  const sel = pickedSource === "local" && pickedResult?.id === work.id;
+                  return (
+                    <button
+                      key={work.id}
+                      type="button"
+                      onClick={() => pickLocalResult(work)}
+                      className={`w-full rounded-md border px-3 py-2 text-left text-sm ${sel ? "border-gray-900 bg-white" : "border-amber-200 bg-white/70 hover:bg-white"}`}
+                    >
+                      <span className="font-medium text-gray-900">{work.title}</span>
+                      <span className="ml-2 text-xs text-gray-500">{work.year ?? "-"} · {typeLabel(work.type, locale)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-amber-800">Værket eksisterer allerede i vores database. Hvis du vælger at importere data fra DFI eller TMDB skal det godkendes af administrator.</p>
+            </div>
+          )}
+
+          {!manualMode && (dfiResults.length > 0 || tmdbResults.length > 0) && (
             <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
-              {[
-                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (f: any) => f.Id, isSelected: (f: any) => pickedResult?.Id === f.Id && pickedSource === "dfi", onSelect: (f: any) => { setPickedResult(f); setPickedSource("dfi"); }, getTitle: (f: any) => f.Title, getMeta: (f: any) => `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`, getPoster: () => null },
-                { label: `TMDB (${tmdbResults.length})`, items: tmdbResults, getKey: (i: any) => i.id, isSelected: (i: any) => pickedResult?.id === i.id && pickedSource === "tmdb", onSelect: (i: any) => { setPickedResult(i); setPickedSource("tmdb"); }, getTitle: (i: any) => i.title || i.name, getMeta: (i: any) => `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)}`, getPoster: (i: any) => i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null },
-              ].map(col => (
+              {([
+                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (x) => String((x as DfiSearchResult).Id), isSelected: (x) => pickedResult?.Id === (x as DfiSearchResult).Id && pickedSource === "dfi", onSelect: (x) => pickDfiResult(x as DfiSearchResult), getTitle: (x) => (x as DfiSearchResult).Title ?? "", getMeta: (x) => { const f = x as DfiSearchResult; return `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`; }, getPoster: () => null },
+                { label: `TMDB (${tmdbResults.length})`, items: tmdbResults, getKey: (x) => String((x as TmdbSearchResult).id), isSelected: (x) => pickedResult?.id === (x as TmdbSearchResult).id && pickedSource === "tmdb", onSelect: (x) => { const i = x as TmdbSearchResult; setPickedResult(i); setPickedSource("tmdb"); setAddCoEditors([]); }, getTitle: (x) => { const i = x as TmdbSearchResult; return i.title || i.name || ""; }, getMeta: (x) => { const i = x as TmdbSearchResult; return `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)}`; }, getPoster: (x) => { const i = x as TmdbSearchResult; return i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null; } },
+              ] as ResultColumnDef[]).map(col => (
                 <div key={col.label}>
                   <p className="text-xs font-medium text-gray-500 mb-2">{col.label}</p>
                   <div className="flex flex-col gap-1.5">
-                    {col.items.map((item: any) => {
+                    {col.items.map((item: SearchItem) => {
                       const sel = col.isSelected(item);
                       const poster = col.getPoster(item);
                       return (
@@ -784,15 +1170,41 @@ export default function MineVaerkerClient({
             </div>
           )}
 
-          {pickedResult && (
-            <div className="pt-4 border-t border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-gray-500">
-                {t("works.chosen")}: <strong className="text-gray-900">{pickedResult.Title || pickedResult.title || pickedResult.name}</strong>
-              </p>
-              <Button onClick={handleAddWork} disabled={isSaving} className="w-full gap-2 sm:w-auto">
-                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {isSaving ? t("works.adding") : t("works.addToMyWorks")}
-              </Button>
+          {(pickedResult || manualMode) && (
+            <div className="space-y-4 border-t border-gray-100 pt-4">
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="mb-3 text-sm font-semibold text-gray-900">Medklippere</p>
+                <div className="space-y-2">
+                  {addCoEditors.map(editor => (
+                    <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+                      <Input value={editor.name} disabled={editor.locked} onChange={e => setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name: e.target.value } : item))} placeholder="Navn" />
+                      <select value={editor.role} disabled={editor.locked} onChange={e => setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, role: e.target.value } : item))} className={selectCls}>
+                        {ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                      </select>
+                      <Button type="button" variant="outline" onClick={() => setAddCoEditors(prev => prev.filter(item => item.id !== editor.id))} disabled={editor.locked}>
+                        Fjern
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setAddCoEditors(prev => [...prev, emptyCoEditor()])}>
+                  Tilføj medklipper
+                </Button>
+                {addCoEditors.some(editor => editor.locked) && <p className="mt-2 text-xs text-gray-500">Eksisterende medklippere fra databasen kan ikke ændres her.</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-gray-500">Bemærkning til admin</Label>
+                <Textarea value={addComment} onChange={e => setAddComment(e.target.value)} placeholder="Skriv evt. hvorfor værket/ændringen skal godkendes..." />
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-gray-500">
+                  {manualMode ? "Manuelt værk" : t("works.chosen")}: <strong className="text-gray-900">{manualMode ? manualWork.title : pickedResult.Title || pickedResult.title || pickedResult.name || pickedResult.title}</strong>
+                </p>
+                <Button onClick={handleAddWork} disabled={isSaving || (manualMode && !manualWork.title.trim())} className="w-full gap-2 sm:w-auto">
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  {isSaving ? t("works.adding") : t("works.addToMyWorks")}
+                </Button>
+              </div>
             </div>
           )}
         </Modal>
@@ -847,7 +1259,15 @@ export default function MineVaerkerClient({
               ) : (
                 <>
                   <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-gray-500">{t("works.foundTitles").replace("{count}", String(wizardCredits.length))}</p>
+                    <div className="text-sm text-gray-500">
+                      <p>Fandt {wizardCredits.length} nye titler. Vælg dem, du vil importere.</p>
+                      {(wizardLinkedExistingCount > 0 || wizardSkippedExistingCount > 0) && (
+                        <p className="mt-1 text-xs">
+                          {wizardLinkedExistingCount > 0 && `${wizardLinkedExistingCount} eksisterende titel${wizardLinkedExistingCount === 1 ? "" : "r"} blev tilføjet fra databasen.`}
+                          {wizardSkippedExistingCount > 0 && ` ${wizardSkippedExistingCount} titel${wizardSkippedExistingCount === 1 ? "" : "r"} var allerede på din liste.`}
+                        </p>
+                      )}
+                    </div>
                     <button
                       onClick={() => { const all = Object.values(wizardSelected).every(v => v); const s: Record<number, boolean> = {}; wizardCredits.forEach(c => { s[c.Id] = !all; }); setWizardSelected(s); }}
                       className="w-full text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600 sm:w-auto"
@@ -897,8 +1317,25 @@ export default function MineVaerkerClient({
             <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
           </div>
           <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            Hvis værksdata bliver ændret forkert, kan værket blive sværere at finde og matche i systemet. Det kan i sidste ende betyde, at rettighedspenge ikke bliver udløst korrekt. Rettelser til værksdata skal derfor godkendes af admin.
+            Bemærk: Forkerte ændringer i værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af rettighedsmidler. Alle rettelser skal derfor godkendes af en administrator.
           </div>
+          {editAdminSummaries.length > 0 && (
+            <div className="mb-5 rounded-lg border border-gray-200 p-4">
+              <p className="mb-3 text-sm font-semibold text-gray-900">Kommentarer fra administrator</p>
+              <div className="space-y-2">
+                {editAdminSummaries.map(summary => (
+                  <div key={summary.id} className="rounded-md bg-gray-50 px-3 py-2 text-sm">
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                      <span className="font-medium text-gray-700">{summary.kind}</span>
+                      <span>{summary.status}</span>
+                      {summary.createdAt && <span>{new Date(summary.createdAt).toLocaleString("da-DK")}</span>}
+                    </div>
+                    <p className="text-gray-800">{summary.message}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="space-y-1.5 mb-6">
             <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
             <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
@@ -926,11 +1363,7 @@ export default function MineVaerkerClient({
                   <div className="space-y-1.5">
                     <Label className="text-sm font-medium text-gray-500">Type</Label>
                     <select value={workCorrection.type} onChange={e => setWorkCorrection({ ...workCorrection, type: e.target.value })} className={selectCls}>
-                      <option value="fiktion">Feature</option>
-                      <option value="dokumentar">Dokumentar</option>
-                      <option value="serie">TV-serie</option>
-                      <option value="kortfilm">Kortfilm</option>
-                      <option value="animation">Animation</option>
+                      {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -953,6 +1386,48 @@ export default function MineVaerkerClient({
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-gray-500">Beskrivelse</Label>
                   <Textarea value={workCorrection.description} onChange={e => setWorkCorrection({ ...workCorrection, description: e.target.value })} />
+                </div>
+                <div className="rounded-lg border border-gray-200 p-4">
+                  <p className="mb-3 text-sm font-semibold text-gray-900">Medklippere</p>
+                  <div className="space-y-2">
+                    {editCoEditors.map(editor => (
+                      <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+                        <Input
+                          value={editor.name}
+                          disabled={editor.locked && editor.action !== "change"}
+                          onChange={e => setEditCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name: e.target.value, action: item.locked ? "change" : item.action } : item))}
+                          placeholder="Navn"
+                        />
+                        <select
+                          value={editor.role}
+                          disabled={editor.locked && editor.action !== "change"}
+                          onChange={e => setEditCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, role: e.target.value, action: item.locked ? "change" : item.action } : item))}
+                          className={selectCls}
+                        >
+                          {ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                        </select>
+                        {editor.locked ? (
+                          <div className="flex gap-2">
+                            <Button type="button" variant="outline" onClick={() => setEditCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, action: item.action === "change" ? undefined : "change" } : item))}>
+                              {editor.action === "change" ? "Lås" : "Foreslå ret"}
+                            </Button>
+                            <Button type="button" variant="outline" onClick={() => setEditCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, action: item.action === "remove" ? undefined : "remove" } : item))}>
+                              {editor.action === "remove" ? "Fortryd" : "Foreslå fjern"}
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button type="button" variant="outline" onClick={() => setEditCoEditors(prev => prev.filter(item => item.id !== editor.id))}>
+                            Fjern
+                          </Button>
+                        )}
+                        {editor.action === "remove" && <p className="text-xs text-red-600 sm:col-span-3">Fjernelse kræver admin-godkendelse.</p>}
+                      </div>
+                    ))}
+                  </div>
+                  <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => setEditCoEditors(prev => [...prev, emptyCoEditor()])}>
+                    Tilføj medklipper
+                  </Button>
+                  <p className="mt-2 text-xs text-gray-500">Ændringer af eksisterende medklippere sendes til admin.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-gray-500">Bemærkning til admin</Label>

@@ -96,6 +96,7 @@ export default function AdminLayout({
     const [userRole, setUserRole] = useState<string>("admin")
     const [isSuperadmin, setIsSuperadmin] = useState<boolean>(false)
     const [pendingCount, setPendingCount] = useState<number>(0)
+    const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
 
     useEffect(() => {
         const supabase = createClient()
@@ -104,12 +105,20 @@ export default function AdminLayout({
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
             const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-            const { count } = await supabase
-                .from("contracts")
-                .select("id", { count: "exact", head: true })
-                .eq("org_id", orgId)
-                .eq("status", "kladde")
-            setPendingCount(count ?? 0)
+            const [contractsRes, worksRes] = await Promise.all([
+                supabase
+                    .from("contracts")
+                    .select("id", { count: "exact", head: true })
+                    .eq("org_id", orgId)
+                    .eq("status", "kladde"),
+                supabase
+                    .from("work_change_requests")
+                    .select("id", { count: "exact", head: true })
+                    .eq("org_id", orgId)
+                    .eq("status", "pending"),
+            ])
+            setPendingCount(contractsRes.count ?? 0)
+            setPendingWorksCount(worksRes.count ?? 0)
         }
 
         supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -129,7 +138,11 @@ export default function AdminLayout({
 
         // Opdater tæller når kontrakter gemmes eller valideres
         window.addEventListener("contracts-updated", fetchCount)
-        return () => window.removeEventListener("contracts-updated", fetchCount)
+        window.addEventListener("works-updated", fetchCount)
+        return () => {
+            window.removeEventListener("contracts-updated", fetchCount)
+            window.removeEventListener("works-updated", fetchCount)
+        }
     }, [])
 
     const handleLogout = async () => {
@@ -214,6 +227,11 @@ export default function AdminLayout({
                                                 {item.key === "kontrakter" && pendingCount > 0 && (
                                                     <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
                                                         {pendingCount}
+                                                    </span>
+                                                )}
+                                                {item.key === "vaerker" && pendingWorksCount > 0 && (
+                                                    <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
+                                                        {pendingWorksCount}
                                                     </span>
                                                 )}
                                             </Link>
