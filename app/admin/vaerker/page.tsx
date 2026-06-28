@@ -1,286 +1,260 @@
-"use client"
+"use client";
 
-import { useState, useMemo } from "react"
-import Link from "next/link"
-import {
-    Search, Film, Tv, ChevronUp, ChevronDown, ArrowUpDown,
-    Users, CheckCircle2, Clock, AlertCircle, Lock, Filter,
-} from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { PageHeader } from "@/components/page-header"
-import {
-    Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select"
-import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table"
-import type { StreamingProduction, DistributionKeyStatus, ProductionType } from "@/lib/streaming-types"
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle2, Clock, Film, Loader2, Search, XCircle } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import { fetchAdminWorksForReview, reviewWorkDataCorrection } from "@/app/actions/work-management";
 
-// ── Mock data ─────────────────────────────────────────────────
+type CommentRow = {
+  id: string;
+  author_role: "member" | "admin";
+  message: string;
+  created_at: string;
+};
 
-interface WorkEntry extends StreamingProduction {
-    editors: { name: string; sharePercent?: number }[]
-    distributionKeyStatus?: DistributionKeyStatus
-    contractStatus?: "ok" | "missing" | "pending"
+type ChangeRequest = {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  source: string;
+  old_data: Record<string, unknown>;
+  proposed_data: Record<string, unknown>;
+  created_at: string;
+  rettighedshavere?: { full_name?: string | null } | null;
+  work_change_request_comments?: CommentRow[];
+};
+
+type WorkRow = {
+  id: string;
+  title: string;
+  type: string;
+  year: number | null;
+  duration_minutes: number | null;
+  episode_count: number | null;
+  genre: string | null;
+  status: string;
+  dfi_id: string | null;
+  tmdb_id: string | number | null;
+  description: string | null;
+  poster_url: string | null;
+  work_change_requests?: ChangeRequest[];
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  til_godkendelse: "Til godkendelse",
+  godkendt: "Godkendt",
+  aktiv: "Aktiv",
+  afsluttet: "Afsluttet",
+  arkiveret: "Arkiveret",
+};
+
+const STATUS_CLASS: Record<string, string> = {
+  til_godkendelse: "border-amber-300 bg-amber-50 text-amber-700",
+  godkendt: "border-green-300 bg-green-50 text-green-700",
+  aktiv: "border-blue-300 bg-blue-50 text-blue-700",
+  afsluttet: "border-slate-300 bg-slate-50 text-slate-700",
+  arkiveret: "border-gray-300 bg-gray-50 text-gray-700",
+};
+
+function errorMessage(err: unknown, fallback: string) {
+  return err instanceof Error ? err.message : fallback;
 }
 
-const mockWorks: WorkEntry[] = [
-    { id: "001", productionNumber: "001", title: "Kærlighed for voksne", type: "film_original", premiereYear: 2022, licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 15, createdAt: "2022-01-01", updatedAt: "2024-01-01", createdBy: "admin", editors: [{ name: "Lars Wissing", sharePercent: 100 }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "002", productionNumber: "002", title: "Nisser", type: "tv_series_original", premiereYear: 2022, licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10, createdAt: "2022-01-01", updatedAt: "2023-01-01", createdBy: "admin", editors: [{ name: "Michael Bauer" }, { name: "Ida Bregninge" }, { name: "Dan Loghin" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "003", productionNumber: "003", title: "Toscana", type: "film_licensed", premiereYear: 2022, licenseDurationYears: 10, licenseStartYear: 2022, adminFeePercent: 10, createdAt: "2022-01-01", updatedAt: "2024-01-01", createdBy: "admin", editors: [{ name: "Anders Hoffmann" }, { name: "Niels Ostenfeld" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "004", productionNumber: "004", title: "Kastanjemanden", type: "tv_series_original", premiereYear: 2022, licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10, createdAt: "2022-01-01", updatedAt: "2023-01-01", createdBy: "admin", editors: [{ name: "Cathrine Ambus" }, { name: "Anja Farsig" }, { name: "Martin Schade" }, { name: "Lars Therkelsen" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "005", productionNumber: "005", title: "Skruk Sæson 1", type: "tv_series_original", premiereYear: 2022, licenseDurationYears: 50, licenseStartYear: 2022, adminFeePercent: 10, createdAt: "2022-01-01", updatedAt: "2022-01-01", createdBy: "admin", editors: [], distributionKeyStatus: "draft", contractStatus: "missing" },
-    { id: "006", productionNumber: "006", title: "Ehrengard", type: "tv_series_original", premiereYear: 2023, licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 10, createdAt: "2023-01-01", updatedAt: "2024-01-01", createdBy: "admin", editors: [{ name: "Janus Billeskov Jansen" }, { name: "Biel Andrés" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "007", productionNumber: "007", title: "A Beautiful Life", type: "tv_series_original", premiereYear: 2023, licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 15, createdAt: "2023-01-01", updatedAt: "2025-01-01", createdBy: "admin", editors: [{ name: "Anders Hofman", sharePercent: 100 }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "008", productionNumber: "008", title: "Sygeplejersken", type: "tv_series_original", premiereYear: 2023, licenseDurationYears: 50, licenseStartYear: 2023, adminFeePercent: 15, createdAt: "2023-01-01", updatedAt: "2024-01-01", createdBy: "admin", editors: [{ name: "Elin Pröjts" }, { name: "Anna Heide" }, { name: "Benjamin Binderup" }, { name: "Tómas Gislason" }], distributionKeyStatus: "proposed", contractStatus: "pending" },
-    { id: "009", productionNumber: "009", title: "Skruk Sæson 2", type: "tv_series_original", premiereYear: 2024, licenseDurationYears: 50, licenseStartYear: 2024, adminFeePercent: 10, createdAt: "2024-01-01", updatedAt: "2024-01-01", createdBy: "admin", editors: [{ name: "Lars Terkelsen" }, { name: "Jakob Juul Toldam" }, { name: "Kasper Schultz Simonsen" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "010", productionNumber: "010", title: "Bytte Bytte Baby 2", type: "film_original", premiereYear: 2024, licenseDurationYears: 50, licenseStartYear: 2024, adminFeePercent: 10, createdAt: "2024-01-01", updatedAt: "2025-01-01", createdBy: "admin", editors: [{ name: "Benjamin Binderup" }, { name: "Carsten Søsted" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-    { id: "011", productionNumber: "011", title: "Sult", type: "film_original", premiereYear: 2025, licenseDurationYears: 50, licenseStartYear: 2025, adminFeePercent: 15, createdAt: "2025-01-01", updatedAt: "2025-01-01", createdBy: "admin", editors: [{ name: "Peter Winther" }, { name: "Viola Frederikke Lindkvist Hjorth" }], distributionKeyStatus: "accepted", contractStatus: "pending" },
-    { id: "012", productionNumber: "012", title: "Reservatet", type: "tv_series_original", premiereYear: 2025, licenseDurationYears: 50, licenseStartYear: 2025, adminFeePercent: 15, createdAt: "2025-01-01", updatedAt: "2025-01-01", createdBy: "admin", editors: [{ name: "Anja Farsig" }, { name: "Kasper Leick" }, { name: "Frederik Strunk" }], distributionKeyStatus: "locked", contractStatus: "ok" },
-]
+export default function VaerksadministrationPage() {
+  const [works, setWorks] = useState<WorkRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [reviewing, setReviewing] = useState<{ work: WorkRow; request: ChangeRequest } | null>(null);
+  const [adminComment, setAdminComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-// ── Helpers ───────────────────────────────────────────────────
-
-const TYPE_LABELS: Record<ProductionType, string> = {
-    film_original: "Film · Original",
-    film_licensed: "Film · Licenseret",
-    tv_series_original: "TV-serie · Original",
-    tv_series_licensed: "TV-serie · Licenseret",
-    short_original: "Kortfilm · Original",
-    documentary_original: "Dokumentar · Original",
-}
-
-const TYPE_GROUPS: Record<string, ProductionType[]> = {
-    "Film": ["film_original", "film_licensed"],
-    "TV-serie": ["tv_series_original", "tv_series_licensed"],
-    "Kortfilm / Dokumentar": ["short_original", "documentary_original"],
-}
-
-function TypeIcon({ type }: { type: ProductionType }) {
-    if (type.startsWith("tv_")) return <Tv className="h-3.5 w-3.5 text-muted-foreground" />
-    return <Film className="h-3.5 w-3.5 text-muted-foreground" />
-}
-
-function KeyBadge({ status }: { status?: DistributionKeyStatus }) {
-    if (!status || status === "draft")
-        return <Badge variant="outline" className="gap-1 text-xs text-muted-foreground font-normal"><AlertCircle className="h-3 w-3" />Ingen</Badge>
-    if (status === "proposed" || status === "negotiating" || status === "accepted")
-        return <Badge variant="outline" className="gap-1 text-xs text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950 font-normal"><Clock className="h-3 w-3" />Afventer</Badge>
-    return <Badge variant="outline" className="gap-1 text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950 font-normal"><Lock className="h-3 w-3" />Låst</Badge>
-}
-
-function ContractBadge({ status }: { status?: string }) {
-    if (status === "ok")
-        return <Badge variant="outline" className="gap-1 text-xs text-green-700 border-green-300 bg-green-50 dark:bg-green-950 font-normal"><CheckCircle2 className="h-3 w-3" />OK</Badge>
-    if (status === "pending")
-        return <Badge variant="outline" className="gap-1 text-xs text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950 font-normal"><Clock className="h-3 w-3" />Afventer</Badge>
-    return <Badge variant="outline" className="gap-1 text-xs text-red-600 border-red-300 bg-red-50 dark:bg-red-950 font-normal"><AlertCircle className="h-3 w-3" />Mangler</Badge>
-}
-
-type SortField = "number" | "title" | "type" | "year" | "editors" | "key" | "contract"
-type SortDir = "asc" | "desc"
-
-export default function VaerkerPage() {
-    const [search, setSearch] = useState("")
-    const [filterType, setFilterType] = useState("all")
-    const [filterYear, setFilterYear] = useState("all")
-    const [filterKey, setFilterKey] = useState("all")
-    const [filterContract, setFilterContract] = useState("all")
-    const [filterEditors, setFilterEditors] = useState("all")
-    const [sortField, setSortField] = useState<SortField>("number")
-    const [sortDir, setSortDir] = useState<SortDir>("asc")
-
-    const years = useMemo(() =>
-        [...new Set(mockWorks.map(w => w.premiereYear))].sort((a, b) => b - a), [])
-
-    const filtered = useMemo(() => {
-        const q = search.toLowerCase()
-        let result = mockWorks.filter(w => {
-            const matchSearch = !q ||
-                w.title.toLowerCase().includes(q) ||
-                w.productionNumber.includes(q) ||
-                w.editors.some(e => e.name.toLowerCase().includes(q))
-            const matchType = filterType === "all" || TYPE_GROUPS[filterType]?.includes(w.type)
-            const matchYear = filterYear === "all" || w.premiereYear === parseInt(filterYear)
-            const matchKey = filterKey === "all" ||
-                (filterKey === "locked" && w.distributionKeyStatus === "locked") ||
-                (filterKey === "pending" && ["proposed", "negotiating", "accepted"].includes(w.distributionKeyStatus ?? "")) ||
-                (filterKey === "missing" && (!w.distributionKeyStatus || w.distributionKeyStatus === "draft"))
-            const matchContract = filterContract === "all" || w.contractStatus === filterContract
-            const matchEditors = filterEditors === "all" ||
-                (filterEditors === "none" && w.editors.length === 0) ||
-                (filterEditors === "has" && w.editors.length > 0)
-            return matchSearch && matchType && matchYear && matchKey && matchContract && matchEditors
-        })
-
-        result.sort((a, b) => {
-            let cmp = 0
-            switch (sortField) {
-                case "number": cmp = a.productionNumber.localeCompare(b.productionNumber, undefined, { numeric: true }); break
-                case "title": cmp = a.title.localeCompare(b.title, "da"); break
-                case "type": cmp = a.type.localeCompare(b.type); break
-                case "year": cmp = a.premiereYear - b.premiereYear; break
-                case "editors": cmp = a.editors.length - b.editors.length; break
-                case "key": cmp = (a.distributionKeyStatus ?? "").localeCompare(b.distributionKeyStatus ?? ""); break
-                case "contract": cmp = (a.contractStatus ?? "").localeCompare(b.contractStatus ?? ""); break
-            }
-            return sortDir === "asc" ? cmp : -cmp
-        })
-        return result
-    }, [search, filterType, filterYear, filterKey, filterContract, filterEditors, sortField, sortDir])
-
-    const toggleSort = (field: SortField) => {
-        if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc")
-        else { setSortField(field); setSortDir("asc") }
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetchAdminWorksForReview();
+      if (res.success) setWorks(res.works as WorkRow[]);
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke hente værker."));
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const SortIcon = ({ field }: { field: SortField }) => {
-        if (sortField !== field) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />
-        return sortDir === "asc" ? <ChevronUp className="h-3 w-3 ml-1" /> : <ChevronDown className="h-3 w-3 ml-1" />
+  useEffect(() => {
+    load();
+  }, []);
+
+  const filtered = useMemo(() => {
+    let list = works;
+    if (filterStatus !== "all") list = list.filter(work => work.status === filterStatus);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(work =>
+        work.title?.toLowerCase().includes(q) ||
+        work.type?.toLowerCase().includes(q) ||
+        String(work.year ?? "").includes(q) ||
+        work.dfi_id?.toLowerCase().includes(q) ||
+        String(work.tmdb_id ?? "").includes(q)
+      );
     }
+    return list;
+  }, [works, filterStatus, search]);
 
-    const SortBtn = ({ field, children }: { field: SortField; children: React.ReactNode }) => (
-        <button className="flex items-center text-xs font-medium" onClick={() => toggleSort(field)}>
-            {children}<SortIcon field={field} />
-        </button>
-    )
+  const pendingRequests = useMemo(
+    () => works.flatMap(work => (work.work_change_requests ?? [])
+      .filter(request => request.status === "pending")
+      .map(request => ({ work, request }))),
+    [works]
+  );
 
-    return (
-        <div className="space-y-6">
-            <PageHeader
-                title="Værker"
-                subtitle={`${filtered.length} af ${mockWorks.length} værker`}
-            />
+  const handleReview = async (decision: "approved" | "rejected") => {
+    if (!reviewing) return;
+    setSaving(true);
+    try {
+      await reviewWorkDataCorrection({ requestId: reviewing.request.id, decision, comment: adminComment });
+      setNotice(decision === "approved" ? "Rettelsen er godkendt." : "Rettelsen er afvist.");
+      setReviewing(null);
+      setAdminComment("");
+      await load();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke behandle rettelsen."));
+    } finally {
+      setSaving(false);
+    }
+  };
 
-            {/* Søgning + filtre */}
-            <div className="flex flex-wrap gap-3">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Søg på titel, nummer eller klipper..."
-                        className="pl-9"
-                    />
-                </div>
-                <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger className="w-[170px]">
-                        <Filter className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
-                        <SelectValue placeholder="Type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle typer</SelectItem>
-                        {Object.keys(TYPE_GROUPS).map(g => (
-                            <SelectItem key={g} value={g}>{g}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <Select value={filterYear} onValueChange={setFilterYear}>
-                    <SelectTrigger className="w-[110px]">
-                        <SelectValue placeholder="År" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle år</SelectItem>
-                        {years.map(y => (
-                            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <Select value={filterKey} onValueChange={setFilterKey}>
-                    <SelectTrigger className="w-[160px]">
-                        <SelectValue placeholder="Fordelingsnøgle" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle nøgler</SelectItem>
-                        <SelectItem value="locked">Låst</SelectItem>
-                        <SelectItem value="pending">Afventer</SelectItem>
-                        <SelectItem value="missing">Ingen nøgle</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Select value={filterEditors} onValueChange={setFilterEditors}>
-                    <SelectTrigger className="w-[150px]">
-                        <SelectValue placeholder="Klippere" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle klippere</SelectItem>
-                        <SelectItem value="none">Ingen klippere</SelectItem>
-                        <SelectItem value="has">Har klippere</SelectItem>
-                    </SelectContent>
-                </Select>
-                <Select value={filterContract} onValueChange={setFilterContract}>
-                    <SelectTrigger className="w-[150px]">
-                        <SelectValue placeholder="Kontrakt" />
-                    </SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="all">Alle kontrakter</SelectItem>
-                        <SelectItem value="ok">OK</SelectItem>
-                        <SelectItem value="pending">Afventer</SelectItem>
-                        <SelectItem value="missing">Mangler</SelectItem>
-                    </SelectContent>
-                </Select>
-            </div>
+  if (loading) return <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Henter værker...</div>;
 
-            {/* Tabel */}
-            <div className="rounded-lg border">
-                <Table>
-                    <TableHeader>
-                        <TableRow>
-                            <TableHead className="w-16"><SortBtn field="number">#</SortBtn></TableHead>
-                            <TableHead><SortBtn field="title">Titel</SortBtn></TableHead>
-                            <TableHead><SortBtn field="type">Type</SortBtn></TableHead>
-                            <TableHead className="w-20"><SortBtn field="year">År</SortBtn></TableHead>
-                            <TableHead><SortBtn field="editors">Klippere</SortBtn></TableHead>
-                            <TableHead><SortBtn field="key">Fordelingsnøgle</SortBtn></TableHead>
-                            <TableHead><SortBtn field="contract">Kontrakt</SortBtn></TableHead>
-                            <TableHead className="w-24" />
-                        </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                        {filtered.length === 0 ? (
-                            <TableRow>
-                                <TableCell colSpan={8} className="py-12 text-center text-sm text-muted-foreground">
-                                    Ingen værker matcher søgningen
-                                </TableCell>
-                            </TableRow>
-                        ) : filtered.map(w => (
-                            <TableRow key={w.id}>
-                                <TableCell className="tabular-nums text-muted-foreground text-sm">{w.productionNumber}</TableCell>
-                                <TableCell>
-                                    <div className="flex items-center gap-2">
-                                        <TypeIcon type={w.type} />
-                                        <span className="font-medium">{w.title}</span>
-                                    </div>
-                                </TableCell>
-                                <TableCell className="text-sm text-muted-foreground">{TYPE_LABELS[w.type]}</TableCell>
-                                <TableCell className="tabular-nums text-sm text-muted-foreground">{w.premiereYear}</TableCell>
-                                <TableCell>
-                                    {w.editors.length === 0 ? (
-                                        <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">Ingen klippere</span>
-                                    ) : (
-                                        <div className="flex items-center gap-1.5">
-                                            <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                            <span className="text-sm">
-                                                {w.editors.length === 1
-                                                    ? w.editors[0].name
-                                                    : `${w.editors[0].name} +${w.editors.length - 1}`}
-                                            </span>
-                                        </div>
-                                    )}
-                                </TableCell>
-                                <TableCell><KeyBadge status={w.distributionKeyStatus} /></TableCell>
-                                <TableCell><ContractBadge status={w.contractStatus} /></TableCell>
-                                <TableCell>
-                                    <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
-                                        <Link href={`/admin/streaming/${w.id}`}>Se værk</Link>
-                                    </Button>
-                                </TableCell>
-                            </TableRow>
-                        ))}
-                    </TableBody>
-                </Table>
-            </div>
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Værksadministration" subtitle={`${filtered.length} af ${works.length} værker`} />
+
+      {notice && (
+        <div className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} className="text-muted-foreground">Luk</button>
         </div>
-    )
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <Select value={filterStatus} onValueChange={setFilterStatus}>
+          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle status</SelectItem>
+            <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
+            <SelectItem value="godkendt">Godkendt</SelectItem>
+            <SelectItem value="aktiv">Aktiv</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {pendingRequests.length > 0 && (
+        <div className="rounded-lg border p-4">
+          <h2 className="text-base font-semibold">Ændringsanmodninger</h2>
+          <div className="mt-3 grid gap-2">
+            {pendingRequests.map(({ work, request }) => (
+              <button key={request.id} onClick={() => { setReviewing({ work, request }); setAdminComment(""); }} className="rounded-md border px-3 py-2 text-left text-sm hover:bg-muted">
+                <span className="font-medium">{work.title}</span>
+                <span className="ml-2 text-muted-foreground">{request.source} · {request.rettighedshavere?.full_name ?? "ukendt bruger"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Værk</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>År</TableHead>
+              <TableHead>Data</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.length === 0 ? (
+              <TableRow><TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</TableCell></TableRow>
+            ) : filtered.map(work => (
+              <TableRow key={work.id}>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Film className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium">{work.title}</p>
+                      <p className="text-xs text-muted-foreground">{work.description ? work.description.slice(0, 90) : "Ingen beskrivelse"}</p>
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell className="text-sm">{work.type}</TableCell>
+                <TableCell className="text-sm tabular-nums text-muted-foreground">{work.year ?? "-"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  <div>DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"}</div>
+                  <div>Varighed: {work.duration_minutes ?? "-"} · Afsnit: {work.episode_count ?? "-"} · Genre: {work.genre ?? "-"}</div>
+                  <div>Poster: {work.poster_url ? "ja" : "nej"}</div>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline" className={STATUS_CLASS[work.status] ?? ""}>
+                    {work.status === "til_godkendelse" ? <Clock className="mr-1 h-3 w-3" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
+                    {STATUS_LABELS[work.status] ?? work.status}
+                  </Badge>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+
+      <Dialog open={!!reviewing} onOpenChange={open => { if (!open) setReviewing(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Behandl ændringsanmodning</DialogTitle></DialogHeader>
+          {reviewing && (
+            <div className="space-y-4">
+              <div className="rounded-md border p-3 text-sm">
+                <div><span className="font-medium">Værk:</span> {reviewing.work.title}</div>
+                <div><span className="font-medium">Kilde:</span> {reviewing.request.source}</div>
+                <div className="mt-2">
+                  <span className="font-medium">Foreslåede data:</span>
+                  <pre className="mt-2 max-h-40 overflow-auto rounded bg-muted p-2 text-xs">{JSON.stringify(reviewing.request.proposed_data, null, 2)}</pre>
+                </div>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-sm font-medium">Kommentartråd</p>
+                <div className="mt-2 space-y-2">
+                  {(reviewing.request.work_change_request_comments ?? []).map(comment => (
+                    <div key={comment.id} className="rounded bg-muted px-3 py-2 text-sm">
+                      <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin" : "Bruger"} · {new Date(comment.created_at).toLocaleString("da-DK")}</div>
+                      <div>{comment.message}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Svar til bruger</Label>
+                <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}><XCircle className="mr-2 h-4 w-4" />Afvis</Button>
+            <Button onClick={() => handleReview("approved")} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Godkend</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }

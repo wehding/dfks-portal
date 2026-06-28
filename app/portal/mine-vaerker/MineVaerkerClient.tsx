@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
@@ -17,13 +19,52 @@ const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const DFKS_ORG_ID  = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 const ROLES        = ["Klipper", "Klipperansvarlig", "Assistent-klipper", "Instruktør", "Producent", "Fotograf", "Andet"];
 
-type Work = { id: string; title: string; type: string; year: number | null; dfi_id: string | null; tmdb_id: number | null; poster_url: string | null; description: string | null };
+type Work = {
+  id: string;
+  title: string;
+  type: string;
+  year: number | null;
+  duration_minutes: number | null;
+  episode_count: number | null;
+  genre: string | null;
+  status: string | null;
+  dfi_id: string | null;
+  tmdb_id: number | string | null;
+  poster_url: string | null;
+  description: string | null;
+};
 type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; episodes: { episode_number: number } | null; works: Work | null };
 type OtherAssignment = { work_id: string; role: string | null; rettighedshavere: { full_name: string } | null };
+type WorkCorrectionForm = {
+  title: string;
+  type: string;
+  year: string;
+  duration_minutes: string;
+  episode_count: string;
+  genre: string;
+  description: string;
+};
 
 function typeLabel(t: string) {
   const m: Record<string, string> = { fiktion: "Feature", film: "Feature", serie: "TV-serie", dokumentar: "Dokumentar", kort: "Kortfilm", animation: "Animation", movie: "Feature", tv: "TV-serie", documentary: "Dokumentar", short: "Kortfilm" };
   return m[t?.toLowerCase()] ?? t ?? "Ukendt";
+}
+
+function numberOrNull(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function workToCorrectionForm(work: Work): WorkCorrectionForm {
+  return {
+    title: work.title ?? "",
+    type: work.type ?? "fiktion",
+    year: work.year ? String(work.year) : "",
+    duration_minutes: work.duration_minutes ? String(work.duration_minutes) : "",
+    episode_count: work.episode_count ? String(work.episode_count) : "",
+    genre: work.genre ?? "",
+    description: work.description ?? "",
+  };
 }
 
 // Fælles select-stil
@@ -98,6 +139,10 @@ export default function MineVaerkerClient({
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
   const [editRole, setEditRole]             = useState("");
   const [isSavingEdit, setIsSavingEdit]     = useState(false);
+  const [showWorkCorrection, setShowWorkCorrection] = useState(false);
+  const [workCorrection, setWorkCorrection] = useState<WorkCorrectionForm | null>(null);
+  const [workCorrectionComment, setWorkCorrectionComment] = useState("");
+  const [isSendingCorrection, setIsSendingCorrection] = useState(false);
 
   const supabase = createClient();
   const router   = useRouter();
@@ -176,7 +221,7 @@ export default function MineVaerkerClient({
       );
       const { data: fresh } = await supabase
         .from("work_assignments")
-        .select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, dfi_id, tmdb_id, poster_url, description)")
+        .select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
         .eq("work_id", workId).eq("rights_holder_id", rightsHolderId).single();
       if (fresh) setAssignments(prev => [fresh as unknown as Assignment, ...prev]);
       setMsg({ type: "success", text: "Værket er tilføjet." });
@@ -199,7 +244,20 @@ export default function MineVaerkerClient({
     }
   };
 
-  const openEdit = (a: Assignment) => { setEditAssignment(a); setEditRole(a.role ?? "Klipper"); };
+  const closeEdit = () => {
+    setEditAssignment(null);
+    setShowWorkCorrection(false);
+    setWorkCorrection(null);
+    setWorkCorrectionComment("");
+  };
+
+  const openEdit = (a: Assignment) => {
+    setEditAssignment(a);
+    setEditRole(a.role ?? "Klipper");
+    setShowWorkCorrection(false);
+    setWorkCorrection(a.works ? workToCorrectionForm(a.works) : null);
+    setWorkCorrectionComment("");
+  };
 
   const handleSaveEdit = async () => {
     if (!editAssignment) return;
@@ -210,7 +268,39 @@ export default function MineVaerkerClient({
       setMsg({ type: "success", text: "Gemt." });
     }
     setIsSavingEdit(false);
-    setEditAssignment(null);
+    closeEdit();
+  };
+
+  const handleSendWorkCorrection = async () => {
+    if (!editAssignment?.works || !workCorrection) return;
+    setIsSendingCorrection(true);
+    try {
+      const res = await submitWorkDataCorrection({
+        assignmentId: editAssignment.id,
+        workId: editAssignment.works.id,
+        data: {
+          title: workCorrection.title,
+          type: workCorrection.type,
+          year: numberOrNull(workCorrection.year),
+          duration_minutes: numberOrNull(workCorrection.duration_minutes),
+          episode_count: numberOrNull(workCorrection.episode_count),
+          genre: workCorrection.genre || null,
+          description: workCorrection.description || null,
+        },
+        comment: workCorrectionComment,
+      });
+      if (!res.success) throw new Error("Kunne ikke sende rettelsen.");
+      setAssignments(prev => prev.map(a => a.works?.id === editAssignment.works?.id ? {
+        ...a,
+        works: a.works ? { ...a.works, status: "til_godkendelse" } : a.works,
+      } : a));
+      setMsg({ type: "success", text: "Rettelsen er sendt til admin og afventer godkendelse." });
+      closeEdit();
+    } catch (err: any) {
+      setMsg({ type: "error", text: err.message || "Kunne ikke sende rettelsen." });
+    } finally {
+      setIsSendingCorrection(false);
+    }
   };
 
   const openWizard = () => {
@@ -261,7 +351,7 @@ export default function MineVaerkerClient({
       setMsg({ type: "success", text: `${res.importedCount} værker importeret fra DFI.` });
       setWizardOpen(false);
       if (rightsHolderId) {
-        const { data } = await supabase.from("work_assignments").select("id, role, contract_id, works(id, title, type, year, dfi_id, tmdb_id, poster_url, description)").eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false });
+        const { data } = await supabase.from("work_assignments").select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)").eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false });
         if (data) setAssignments(data as unknown as Assignment[]);
       }
     } else {
@@ -609,10 +699,13 @@ export default function MineVaerkerClient({
 
       {/* ── Redigér-panel ──────────────────────────────────────────── */}
       {editAssignment && (
-        <Modal onClose={() => setEditAssignment(null)} maxWidth="max-w-sm">
+        <Modal onClose={closeEdit} maxWidth="max-w-2xl">
           <div className="flex items-center justify-between mb-5">
             <h2 className="font-semibold text-gray-900">{editAssignment.works?.title}</h2>
-            <button onClick={() => setEditAssignment(null)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+            <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
+          </div>
+          <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Hvis værksdata bliver ændret forkert, kan værket blive sværere at finde og matche i systemet. Det kan i sidste ende betyde, at rettighedspenge ikke bliver udløst korrekt. Rettelser til værksdata skal derfor godkendes af admin.
           </div>
           <div className="space-y-1.5 mb-6">
             <Label className="text-sm font-medium text-gray-500">Din rolle</Label>
@@ -620,8 +713,74 @@ export default function MineVaerkerClient({
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
+          <div className="mb-6 rounded-lg border border-gray-200 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Værksdata</p>
+                <p className="mt-1 text-xs text-gray-500">Foreslå rettelser til titel, type, år, varighed, afsnit, genre eller beskrivelse.</p>
+              </div>
+              <Button type="button" variant="outline" onClick={() => setShowWorkCorrection(v => !v)} className="w-full sm:w-auto">
+                {showWorkCorrection ? "Skjul rettelse" : "Foreslå rettelse af værksdata"}
+              </Button>
+            </div>
+
+            {showWorkCorrection && workCorrection && (
+              <div className="mt-4 grid gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Titel</Label>
+                  <Input value={workCorrection.title} onChange={e => setWorkCorrection({ ...workCorrection, title: e.target.value })} />
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-500">Type</Label>
+                    <select value={workCorrection.type} onChange={e => setWorkCorrection({ ...workCorrection, type: e.target.value })} className={selectCls}>
+                      <option value="fiktion">Feature</option>
+                      <option value="dokumentar">Dokumentar</option>
+                      <option value="serie">TV-serie</option>
+                      <option value="kortfilm">Kortfilm</option>
+                      <option value="animation">Animation</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-500">År</Label>
+                    <Input value={workCorrection.year} onChange={e => setWorkCorrection({ ...workCorrection, year: e.target.value })} inputMode="numeric" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-500">Varighed, minutter</Label>
+                    <Input value={workCorrection.duration_minutes} onChange={e => setWorkCorrection({ ...workCorrection, duration_minutes: e.target.value })} inputMode="numeric" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium text-gray-500">Antal afsnit</Label>
+                    <Input value={workCorrection.episode_count} onChange={e => setWorkCorrection({ ...workCorrection, episode_count: e.target.value })} inputMode="numeric" />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Genre</Label>
+                  <Input value={workCorrection.genre} onChange={e => setWorkCorrection({ ...workCorrection, genre: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Beskrivelse</Label>
+                  <Textarea value={workCorrection.description} onChange={e => setWorkCorrection({ ...workCorrection, description: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Bemærkning til admin</Label>
+                  <Textarea
+                    value={workCorrectionComment}
+                    onChange={e => setWorkCorrectionComment(e.target.value)}
+                    placeholder="Forklar kort hvorfor værksdata bør rettes."
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection || !workCorrectionComment.trim()} className="gap-2">
+                    {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
+                    Send rettelse til admin
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex justify-end gap-2.5">
-            <Button variant="outline" onClick={() => setEditAssignment(null)}>Annuller</Button>
+            <Button variant="outline" onClick={closeEdit}>Annuller</Button>
             <Button onClick={handleSaveEdit} disabled={isSavingEdit} className="gap-2">
               {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />} Gem
             </Button>
