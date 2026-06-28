@@ -8,7 +8,6 @@ import { createClient } from "@/lib/supabase/client"
 import {
     FileText,
     Building2,
-    CheckCircle,
     Wallet,
     Play,
     BarChart3,
@@ -20,6 +19,7 @@ import {
     Receipt,
     BookOpen,
     Scale,
+    Film,
     Library,
     Layers,
     UserCheck,
@@ -48,16 +48,15 @@ import { Separator } from "@/components/ui/separator"
 
 const ALL_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: FileText,    labelKey: "nav.contracts"          },
-    { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
+    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
-    { key: "validering",          href: "/admin/validering",          icon: CheckCircle, labelKey: "nav.validation"         },
+    { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "overenskomster",     href: "/admin/overenskomster",     icon: BookOpen,    labelKey: "nav.agreements"       },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "videnbase",          href: "/admin/videnbase",          icon: BrainCircuit, labelKey: "nav.knowledgeBase"    },
     { key: "kvalitet",           href: "/admin/kvalitet",           icon: FlaskConical, labelKey: "nav.quality"          },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
-    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
     { key: "streaming",          href: "/admin/streaming",          icon: Play,        labelKey: "nav.streaming"        },
     { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Layers,      labelKey: "nav.aftalelicens"     },
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
@@ -68,14 +67,22 @@ const ALL_NAV_ITEMS = [
     { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
 ]
 
+const USER_NAV_ITEMS = [
+    { key: "mine-vaerker",        href: "/portal/mine-vaerker",        icon: Film,     labelKey: "nav.myWorks"        },
+    { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",     icon: FileText, labelKey: "nav.myContracts"    },
+    { key: "okonomi",             href: "/portal/okonomi",             icon: Wallet,   labelKey: "nav.economy"        },
+    { key: "portal-aftalelicens", href: "/portal/aftalelicens",        icon: Layers,   labelKey: "nav.aftalelicens"   },
+    { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
+]
+
 const ALL_KEYS = ALL_NAV_ITEMS.map(i => i.key)
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS,
     "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere"),
-    jurist:      ["validering", "kontraktgennemgang"],
-    viewer:      ["kontrakter", "validering", "statistik"],
+    jurist:      ["kontrakter", "kontraktgennemgang"],
+    viewer:      ["kontrakter", "statistik"],
 }
 
 export default function AdminLayout({
@@ -139,6 +146,10 @@ export default function AdminLayout({
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
+    const userNavItems = USER_NAV_ITEMS.map(item => ({
+        ...item,
+        label: t(item.labelKey as Parameters<typeof t>[0]),
+    }))
 
     return (
         <SidebarProvider>
@@ -158,6 +169,38 @@ export default function AdminLayout({
                 <SidebarContent>
                     <SidebarGroup>
                         <SidebarGroupContent>
+                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                {t("nav.userSection" as Parameters<typeof t>[0])}
+                            </div>
+                            <SidebarMenu>
+                                {userNavItems.map((item) => (
+                                    <SidebarMenuItem key={item.href}>
+                                        <SidebarMenuButton
+                                            asChild
+                                            isActive={
+                                                pathname === item.href ||
+                                                pathname.startsWith(`${item.href}/`) ||
+                                                (item.key === "kontrakter" && pathname.startsWith("/admin/validering"))
+                                            }
+                                        >
+                                            <Link href={item.href}>
+                                                <item.icon className="h-4 w-4" />
+                                                <span>{item.label}</span>
+                                            </Link>
+                                        </SidebarMenuButton>
+                                    </SidebarMenuItem>
+                                ))}
+                            </SidebarMenu>
+                        </SidebarGroupContent>
+                    </SidebarGroup>
+
+                    <Separator className="mx-4 my-2 w-auto" />
+
+                    <SidebarGroup>
+                        <SidebarGroupContent>
+                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                {t("nav.adminSection" as Parameters<typeof t>[0])}
+                            </div>
                             <SidebarMenu>
                                 {navItems.map((item) => (
                                     <SidebarMenuItem key={item.href}>
@@ -168,7 +211,7 @@ export default function AdminLayout({
                                             <Link href={item.href}>
                                                 <item.icon className="h-4 w-4" />
                                                 <span>{item.label}</span>
-                                                {item.key === "validering" && pendingCount > 0 && (
+                                                {item.key === "kontrakter" && pendingCount > 0 && (
                                                     <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
                                                         {pendingCount}
                                                     </span>
