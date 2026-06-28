@@ -13,14 +13,25 @@ import { analyserKontrakt } from "@/lib/analyse"
 
 export async function POST(req: NextRequest) {
     try {
+        console.log("[gennemgang] 1/5 Modtager request")
         const formData = await req.formData()
         const file       = formData.get("file")       as File | null
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
-        // Hent brugerens navn fra Auth — fallback: full_name → email-prefix → "Ukendt"
-        const supabaseSession = await createClient()
-        const { data: { user: sessionUser } } = await supabaseSession.auth.getUser()
+        console.log("[gennemgang] 2/5 FormData parset, fil:", file?.name ?? "mangler", "provider:", provider)
+
+        // Hent brugerens navn fra Auth — fallback til formData-navn → "Ukendt"
+        // Brug try/catch: kaldet kan mangle cookie-kontekst ved interne server-kald
+        let sessionUser: { user_metadata?: Record<string, string>; email?: string } | null = null
+        try {
+            const supabaseSession = await createClient()
+            const { data: { user } } = await supabaseSession.auth.getUser()
+            sessionUser = user
+        } catch (authErr) {
+            console.warn("[gennemgang] Auth-opslag fejlede (forventet ved interne kald):", authErr)
+        }
+
         const memberName: string =
             (formData.get("memberName") as string | null) ||
             sessionUser?.user_metadata?.full_name ||
@@ -48,12 +59,12 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
         }
 
+        console.log("[gennemgang] 3/5 Læser filbuffer")
         const fileBuffer = Buffer.from(await file.arrayBuffer())
         const saveOrgId  = portalOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+        const resolvedOrgId = portalOrgId ?? sessionUser?.user_metadata?.org_id ?? saveOrgId
 
-        const { data: { user } } = await supabaseSession.auth.getUser()
-        const resolvedOrgId = portalOrgId ?? user?.user_metadata?.org_id ?? saveOrgId
-
+        console.log("[gennemgang] 4/5 Starter analyserKontrakt")
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
@@ -70,7 +81,6 @@ export async function POST(req: NextRequest) {
                 orgId: resolvedOrgId,
                 memberId: portalUserId,
                 memberEmail: portalEmail,
-                existingReviewId,
                 provider,
                 model,
             })
@@ -83,6 +93,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: msg }, { status })
         }
 
+        console.log("[gennemgang] 5/5 Analyse fuldført, gemmer resultat")
         const { result: parsed, contractText: returnText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
         // ── Gem fil i Supabase Storage ────────────────────────

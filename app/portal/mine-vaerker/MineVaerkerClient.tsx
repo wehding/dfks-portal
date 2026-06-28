@@ -13,6 +13,7 @@ import { searchDFIFilms, getDFIFilmDetails, searchDFIPerson, getDFIPersonCredits
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
+import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -33,7 +34,7 @@ type Work = {
   poster_url: string | null;
   description: string | null;
 };
-type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; episodes: { episode_number: number } | null; works: Work | null };
+type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
 type OtherAssignment = { work_id: string; role: string | null; rettighedshavere: { full_name: string } | null };
 type WorkCorrectionForm = {
   title: string;
@@ -45,9 +46,46 @@ type WorkCorrectionForm = {
   description: string;
 };
 
-function typeLabel(t: string) {
-  const m: Record<string, string> = { fiktion: "Feature", film: "Feature", serie: "TV-serie", dokumentar: "Dokumentar", kort: "Kortfilm", animation: "Animation", movie: "Feature", tv: "TV-serie", documentary: "Dokumentar", short: "Kortfilm" };
-  return m[t?.toLowerCase()] ?? t ?? "Ukendt";
+type SortKey = "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
+
+function typeLabel(t: string, locale: "da" | "en" = "da") {
+  const key = t?.toLowerCase();
+  const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "short" | "animation"> = {
+    fiktion: "feature",
+    film: "feature",
+    movie: "feature",
+    serie: "series",
+    tv: "series",
+    "tv-serie": "series",
+    dokumentar: "documentary",
+    documentary: "documentary",
+    dokumentarserie: "docSeries",
+    docseries: "docSeries",
+    kort: "short",
+    kortfilm: "short",
+    short: "short",
+    animation: "animation",
+  };
+  const labels = {
+    da: { feature: "Feature", series: "TV-serie", documentary: "Dokumentar", docSeries: "Dokumentarserie", short: "Kortfilm", animation: "Animation" },
+    en: { feature: "Feature", series: "TV series", documentary: "Documentary", docSeries: "Documentary series", short: "Short film", animation: "Animation" },
+  };
+  const type = canonical[key] ?? null;
+  return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
+}
+
+function isSeriesType(t: string | null | undefined) {
+  const label = typeLabel(t ?? "", "da").toLowerCase();
+  return label === "tv-serie" || label === "dokumentarserie";
+}
+
+function formatEpisodeLabel(episodeNumber?: number | null, title?: string | null) {
+  if (!episodeNumber) return "–";
+  const season = Math.floor(episodeNumber / 1000);
+  const episode = episodeNumber % 1000;
+  if (season > 0 && episode > 0) return `S${season}E${episode}`;
+  if (title?.trim()) return title;
+  return `E${episodeNumber}`;
 }
 
 function numberOrNull(value: string) {
@@ -73,9 +111,9 @@ const selectCls = "w-full rounded-md border border-gray-300 bg-white px-3 py-2 t
 // Modal-wrapper
 function Modal({ onClose, maxWidth = "max-w-xl", children }: { onClose: () => void; maxWidth?: string; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-6"
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-6"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`bg-white rounded-xl border border-gray-200 w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-7`}>
+      <div className={`bg-white rounded-xl border border-gray-200 w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-4 sm:p-7`}>
         {children}
       </div>
     </div>
@@ -92,6 +130,7 @@ export default function MineVaerkerClient({
   dfiPersonId: number | null;
   contractedWorkIds: string[];
 }) {
+  const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
 
   const coEditorMap = React.useMemo(() => {
@@ -106,8 +145,8 @@ export default function MineVaerkerClient({
   }, [allAssignments]);
 
   const [search, setSearch]     = useState("");
-  const [catFilter, setCatFilter] = useState("Alle");
-  const [sortKey, setSortKey]   = useState<"title" | "year" | "type">("year");
+  const [catFilter, setCatFilter] = useState("all");
+  const [sortKey, setSortKey]   = useState<SortKey>("year");
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -121,6 +160,8 @@ export default function MineVaerkerClient({
   const [pickedResult, setPickedResult] = useState<any>(null);
   const [pickedSource, setPickedSource] = useState<"dfi" | "tmdb" | null>(null);
   const [addRole, setAddRole]         = useState("Klipper");
+  const [addSeason, setAddSeason]     = useState("");
+  const [addEpisode, setAddEpisode]   = useState("");
   const [isSaving, setIsSaving]       = useState(false);
 
   // DFI-guiden
@@ -147,7 +188,15 @@ export default function MineVaerkerClient({
   const supabase = createClient();
   const router   = useRouter();
 
-  const categories = ["Alle", "Feature", "TV-serie", "Dokumentar", "Kortfilm", "Animation"];
+  const categories = [
+    { value: "all", da: "Alle", en: "All" },
+    { value: "Feature", da: "Feature", en: "Feature" },
+    { value: "TV-serie", da: "TV-serie", en: "TV series" },
+    { value: "Dokumentar", da: "Dokumentar", en: "Documentary" },
+    { value: "Dokumentarserie", da: "Dokumentarserie", en: "Documentary series" },
+    { value: "Kortfilm", da: "Kortfilm", en: "Short film" },
+    { value: "Animation", da: "Animation", en: "Animation" },
+  ];
 
   const filtered = assignments
     .filter(a => {
@@ -155,7 +204,7 @@ export default function MineVaerkerClient({
       if (!w) return false;
       const t = search.toLowerCase();
       if (t && !w.title.toLowerCase().includes(t)) return false;
-      if (catFilter !== "Alle" && typeLabel(w.type) !== catFilter) return false;
+      if (catFilter !== "all" && typeLabel(w.type, "da") !== catFilter) return false;
       return true;
     })
     .sort((a, b) => {
@@ -163,21 +212,39 @@ export default function MineVaerkerClient({
       let av: any = "", bv: any = "";
       if (sortKey === "title") { av = wa?.title ?? ""; bv = wb?.title ?? ""; }
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
-      if (sortKey === "type")  { av = typeLabel(wa?.type ?? ""); bv = typeLabel(wb?.type ?? ""); }
+      if (sortKey === "type")  { av = typeLabel(wa?.type ?? "", locale); bv = typeLabel(wb?.type ?? "", locale); }
+      if (sortKey === "role") { av = a.role ?? ""; bv = b.role ?? ""; }
+      if (sortKey === "episode") { av = a.episodes?.episode_number ?? 0; bv = b.episodes?.episode_number ?? 0; }
+      if (sortKey === "coEditors") { av = (coEditorMap[wa?.id ?? ""] ?? []).join(", "); bv = (coEditorMap[wb?.id ?? ""] ?? []).join(", "); }
+      if (sortKey === "contract") { av = contractedWorkIds.includes(wa?.id ?? "") ? 1 : 0; bv = contractedWorkIds.includes(wb?.id ?? "") ? 1 : 0; }
+      if (typeof av === "string" || typeof bv === "string") {
+        const result = String(av).localeCompare(String(bv), locale === "da" ? "da-DK" : "en", { numeric: true, sensitivity: "base" });
+        return sortDir === "asc" ? result : -result;
+      }
       if (av < bv) return sortDir === "asc" ? -1 : 1;
       if (av > bv) return sortDir === "asc" ?  1 : -1;
       return 0;
     });
 
-  const handleSort = (key: typeof sortKey) => {
+  const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir("asc"); }
   };
-  const sortArrow = (key: typeof sortKey) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+  const sortArrow = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
   const totalWorks  = assignments.length;
   const withContract = assignments.filter(a => contractedWorkIds.includes(a.works?.id ?? "")).length;
-  const missingYear  = assignments.filter(a => !a.works?.year).length;
+  const missingContract = Math.max(totalWorks - withContract, 0);
+
+  const selectedType = pickedSource === "dfi"
+    ? (() => {
+        const combined = `${pickedResult?.Category ?? ""} ${pickedResult?.Type ?? ""}`.toLowerCase();
+        if (combined.includes("dokumentar") && combined.includes("serie")) return "dokumentarserie";
+        if (combined.includes("serie") || combined.includes("tv-")) return "serie";
+        return "";
+      })()
+    : pickedSource === "tmdb" && pickedResult?.media_type === "tv" ? "serie" : "";
+  const showSeriesFields = isSeriesType(selectedType);
 
   const handleSearch = async () => {
     if (!addQuery.trim()) return;
@@ -214,33 +281,60 @@ export default function MineVaerkerClient({
         args = { ...args, p_tmdb_id: pickedResult.id, p_title: title, p_type: pickedResult.media_type === "tv" ? "serie" : "fiktion", p_year: year, p_description: d.overview || null, p_poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null };
       }
       const { data: workId, error: fnErr } = await supabase.rpc("upsert_work_for_member", args);
-      if (fnErr || !workId) throw new Error(fnErr?.message ?? "Kunne ikke oprette værk");
-      await supabase.from("work_assignments").upsert(
-        { work_id: workId, org_id: DFKS_ORG_ID, rights_holder_id: rightsHolderId, role: addRole },
-        { onConflict: "work_id,rights_holder_id,role" }
-      );
+      if (fnErr || !workId) throw new Error(fnErr?.message ?? t("works.createFailed"));
+      let episodeId: string | null = null;
+      if (showSeriesFields && addEpisode.trim()) {
+        const season = Number.parseInt(addSeason, 10);
+        const episode = Number.parseInt(addEpisode, 10);
+        if (Number.isFinite(episode) && episode > 0) {
+          const storedEpisodeNumber = Number.isFinite(season) && season > 0 ? season * 1000 + episode : episode;
+          const { data: ep, error: epErr } = await supabase
+            .from("episodes")
+            .upsert(
+              {
+                work_id: workId,
+                episode_number: storedEpisodeNumber,
+                title: Number.isFinite(season) && season > 0 ? `S${season}E${episode}` : `E${episode}`,
+              },
+              { onConflict: "work_id,episode_number" }
+            )
+            .select("id")
+            .single();
+          if (epErr) throw new Error(epErr.message);
+          episodeId = ep?.id ?? null;
+        }
+      }
+      const assignmentPayload = { work_id: workId, episode_id: episodeId, org_id: DFKS_ORG_ID, rights_holder_id: rightsHolderId, role: addRole };
+      if (episodeId) {
+        await supabase.from("work_assignments").insert(assignmentPayload);
+      } else {
+        await supabase.from("work_assignments").upsert(
+          assignmentPayload,
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+      }
       const { data: fresh } = await supabase
         .from("work_assignments")
-        .select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
-        .eq("work_id", workId).eq("rights_holder_id", rightsHolderId).single();
+        .select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
+        .eq("work_id", workId).eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false }).limit(1).single();
       if (fresh) setAssignments(prev => [fresh as unknown as Assignment, ...prev]);
-      setMsg({ type: "success", text: "Værket er tilføjet." });
+      setMsg({ type: "success", text: t("works.added") });
       setIsAdding(false);
-      setAddQuery(""); setDfiResults([]); setTmdbResults([]); setPickedResult(null);
+      setAddQuery(""); setDfiResults([]); setTmdbResults([]); setPickedResult(null); setAddSeason(""); setAddEpisode("");
     } catch (err: any) {
-      setMsg({ type: "error", text: err.message || "Der opstod en fejl." });
+      setMsg({ type: "error", text: err.message || t("common.genericError") });
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDeleteSelected = async () => {
-    if (!selected.length || !confirm(`Fjern ${selected.length} valgte værk(er) fra din liste?`)) return;
+    if (!selected.length || !confirm(t("works.confirmRemove").replace("{count}", String(selected.length)))) return;
     const { error } = await supabase.from("work_assignments").delete().in("id", selected).eq("rights_holder_id", rightsHolderId ?? "");
     if (!error) {
       setAssignments(prev => prev.filter(a => !selected.includes(a.id)));
       setSelected([]);
-      setMsg({ type: "success", text: "Valgte værker fjernet." });
+      setMsg({ type: "success", text: t("works.selectedRemoved") });
     }
   };
 
@@ -265,7 +359,7 @@ export default function MineVaerkerClient({
     const { error } = await supabase.from("work_assignments").update({ role: editRole }).eq("id", editAssignment.id);
     if (!error) {
       setAssignments(prev => prev.map(a => a.id === editAssignment.id ? { ...a, role: editRole } : a));
-      setMsg({ type: "success", text: "Gemt." });
+      setMsg({ type: "success", text: t("common.saved") });
     }
     setIsSavingEdit(false);
     closeEdit();
@@ -342,20 +436,20 @@ export default function MineVaerkerClient({
 
   const handleWizardImport = async () => {
     const approved = wizardCredits.filter(c => wizardSelected[c.Id]);
-    if (!approved.length) { alert("Vælg mindst ét værk."); return; }
+    if (!approved.length) { alert(t("works.chooseAtLeastOne")); return; }
     const personId = wizardPerson?.Id ?? dfiPersonId;
     if (!personId) return;
     setWizardImporting(true); setWizardError(null);
     const res = await importApprovedDFIWorks(personId, approved);
     if (res.success) {
-      setMsg({ type: "success", text: `${res.importedCount} værker importeret fra DFI.` });
+      setMsg({ type: "success", text: t("works.importedFromDfi").replace("{count}", String(res.importedCount)) });
       setWizardOpen(false);
       if (rightsHolderId) {
-        const { data } = await supabase.from("work_assignments").select("id, role, contract_id, episode_id, episodes(episode_number), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)").eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false });
+        const { data } = await supabase.from("work_assignments").select("id, role, contract_id, episode_id, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)").eq("rights_holder_id", rightsHolderId).order("created_at", { ascending: false });
         if (data) setAssignments(data as unknown as Assignment[]);
       }
     } else {
-      setWizardError(res.errors?.join(", ") ?? "Import fejlede.");
+      setWizardError(res.errors?.join(", ") ?? t("works.importFailed"));
     }
     setWizardImporting(false);
   };
@@ -366,31 +460,31 @@ export default function MineVaerkerClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Mine Værker</h1>
-          <p className="text-sm text-gray-500 mt-1">Dine registrerede film- og serieproduktioner og tilhørende rettigheder.</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-gray-900">{t("works.title")}</h1>
+          <p className="text-sm text-gray-500 mt-1">{t("works.registeredSubtitle")}</p>
         </div>
-        <div className="flex gap-2.5">
-          <Button variant="outline" onClick={openWizard} className="gap-2">
-            <RefreshCw className="h-4 w-4" /> Importer fra DFI
+        <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+          <Button variant="outline" onClick={openWizard} className="w-full gap-2 sm:w-auto">
+            <RefreshCw className="h-4 w-4" /> {t("works.importFromDfi")}
           </Button>
-          <Button onClick={() => setIsAdding(true)} className="gap-2">
-            <Plus className="h-4 w-4" /> Tilføj værk
+          <Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
+            <Plus className="h-4 w-4" /> {t("works.addWork")}
           </Button>
         </div>
       </div>
 
       {/* Statistik */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         {[
-          { label: "Total værker",  value: totalWorks },
-          { label: "Med kontrakt",  value: withContract },
-          { label: "Mangler årstal",value: missingYear },
+          { label: t("works.totalWorks"),  value: totalWorks },
+          { label: t("works.withContract"),  value: withContract },
+          { label: t("works.missingContract"), value: missingContract },
         ].map(s => (
-          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-6 py-5">
+          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
             <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
-            <p className="text-3xl font-bold text-gray-900">{s.value}</p>
+            <p className="text-2xl font-bold text-gray-900 sm:text-3xl">{s.value}</p>
           </div>
         ))}
       </div>
@@ -411,39 +505,52 @@ export default function MineVaerkerClient({
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
 
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 gap-3 flex-wrap">
-          <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="flex flex-col px-4 py-3.5 border-b border-gray-100 gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:flex-wrap md:w-auto md:items-center">
             {selected.length > 0 ? (
               <>
-                <span className="text-sm font-semibold text-red-700">{selected.length} valgt</span>
-                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="gap-1.5 h-7 text-xs">
-                  <Trash2 className="h-3.5 w-3.5" /> Fjern valgte
+                <span className="text-sm font-semibold text-red-700">{selected.length} {t("works.selected")}</span>
+                <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 w-full gap-1.5 text-xs sm:w-auto">
+                  <Trash2 className="h-3.5 w-3.5" /> {t("works.removeSelected")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-7 text-xs">Annuller</Button>
+                <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 w-full text-xs sm:w-auto">{t("common.cancel")}</Button>
               </>
             ) : (
               <Select value={catFilter} onValueChange={setCatFilter}>
-                <SelectTrigger className="w-[160px] h-8 text-sm"><SelectValue placeholder="Alle kategorier" /></SelectTrigger>
+                <SelectTrigger className="h-9 w-full text-sm sm:w-[160px]"><SelectValue placeholder={t("works.allCategories")} /></SelectTrigger>
                 <SelectContent>
-                  {categories.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                  {categories.map(cat => <SelectItem key={cat.value} value={cat.value}>{locale === "da" ? cat.da : cat.en}</SelectItem>)}
                 </SelectContent>
               </Select>
             )}
           </div>
-          <div className="relative">
+          <div className="relative w-full md:w-auto">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
             <Input
-              placeholder="Søg i værker..."
+              placeholder={t("works.searchPlaceholder")}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm w-56"
+              className="h-9 w-full pl-8 text-sm md:w-56"
             />
+          </div>
+          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
+            <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
+              <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="title">Værktitel</SelectItem>
+                <SelectItem value="year">År</SelectItem>
+                <SelectItem value="type">Type</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+              {sortDir === "asc" ? "A-Z" : "Z-A"}
+            </Button>
           </div>
         </div>
 
         {/* Kolonnehoveder */}
         <div
-          className="grid px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none"
+          className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none lg:grid"
           style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
         >
           <input
@@ -452,20 +559,20 @@ export default function MineVaerkerClient({
             onChange={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))}
             className="cursor-pointer w-4 h-4"
           />
-          <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-gray-700">Værktitel{sortArrow("title")}</div>
-          <div onClick={() => handleSort("year")}  className="cursor-pointer hover:text-gray-700">År{sortArrow("year")}</div>
-          <div onClick={() => handleSort("type")}  className="cursor-pointer hover:text-gray-700">Type{sortArrow("type")}</div>
-          <div>Rolle</div>
-          <div>Afsnit</div>
-          <div>Medklippere</div>
-          <div className="text-right">Kontrakt</div>
+          <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-gray-700">{t("works.workTitle")}{sortArrow("title")}</div>
+          <div onClick={() => handleSort("year")}  className="cursor-pointer hover:text-gray-700">{t("works.year")}{sortArrow("year")}</div>
+          <div onClick={() => handleSort("type")}  className="cursor-pointer hover:text-gray-700">{t("works.type")}{sortArrow("type")}</div>
+          <div onClick={() => handleSort("role")} className="cursor-pointer hover:text-gray-700">{t("works.role")}{sortArrow("role")}</div>
+          <div onClick={() => handleSort("episode")} className="cursor-pointer hover:text-gray-700">{t("works.episodes")}{sortArrow("episode")}</div>
+          <div onClick={() => handleSort("coEditors")} className="cursor-pointer hover:text-gray-700">{t("works.coEditors")}{sortArrow("coEditors")}</div>
+          <div onClick={() => handleSort("contract")} className="text-right cursor-pointer hover:text-gray-700">{t("works.contract")}{sortArrow("contract")}</div>
         </div>
 
         {/* Rækker */}
         {filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-gray-500">
             <Film className="mx-auto h-10 w-10 text-gray-300 mb-3" />
-            <p>{assignments.length === 0 ? "Ingen værker endnu. Klik 'Tilføj værk' for at starte." : "Ingen resultater for denne søgning."}</p>
+            <p>{assignments.length === 0 ? t("works.emptyHint") : t("works.noSearchResults")}</p>
           </div>
         ) : filtered.map(a => {
           const w = a.works;
@@ -473,10 +580,10 @@ export default function MineVaerkerClient({
           const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
           const hasContract = contractedWorkIds.includes(w.id);
           return (
+            <React.Fragment key={a.id}>
             <div
-              key={a.id}
               onClick={() => openEdit(a)}
-              className="grid items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
+              className="hidden items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
               <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }}>
@@ -502,9 +609,9 @@ export default function MineVaerkerClient({
               </div>
 
               <div className="text-sm text-gray-500">{w.year ?? "–"}</div>
-              <div className="text-sm text-gray-500">{typeLabel(w.type)}</div>
+              <div className="text-sm text-gray-500">{typeLabel(w.type, locale)}</div>
               <div className="text-sm text-gray-500">{a.role ?? "–"}</div>
-              <div className="text-sm text-gray-500">{a.episodes?.episode_number ? `E${a.episodes.episode_number}` : "–"}</div>
+              <div className="text-sm text-gray-500">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</div>
               <div className="text-xs text-gray-500 truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
                 {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
               </div>
@@ -515,18 +622,78 @@ export default function MineVaerkerClient({
                 onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
               >
                 {hasContract ? (
-                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>OK</span>
+                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
                 ) : (
-                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">Mangler</Badge>
+                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">{t("works.contractMissing")}</Badge>
                 )}
               </div>
             </div>
+            <div
+              key={`${a.id}-mobile`}
+              onClick={() => openEdit(a)}
+              className="border-b border-gray-100 px-4 py-4 transition-colors active:bg-gray-50 lg:hidden"
+            >
+              <div className="flex gap-3">
+                <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }} className="pt-1">
+                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => {}} className="cursor-pointer w-4 h-4" />
+                </div>
+                <div className="w-10 shrink-0 flex items-start justify-center">
+                  {posterSrc ? (
+                    <div className="h-14 w-10 overflow-hidden rounded">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={posterSrc} alt={w.title} className="h-full w-full object-cover" loading="lazy" />
+                    </div>
+                  ) : (
+                    <div className="flex h-14 w-10 items-center justify-center rounded bg-gray-50">
+                      <Film className="h-4 w-4 text-gray-300" />
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                      <p className="mt-1 text-xs text-gray-500">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
+                    </div>
+                    <div
+                      className="shrink-0"
+                      onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                    >
+                      {hasContract ? (
+                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                      ) : (
+                        <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">{t("works.contractMissing")}</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <p className="font-medium text-gray-400">Rolle</p>
+                      <p className="mt-0.5 text-gray-700">{a.role ?? "–"}</p>
+                    </div>
+                    <div>
+                      <p className="font-medium text-gray-400">{t("works.episodes")}</p>
+                      <p className="mt-0.5 text-gray-700">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <p className="font-medium text-xs text-gray-400">{t("works.coEditors")}</p>
+                    <p className="mt-0.5 text-xs text-gray-700 line-clamp-2">
+                      {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            </React.Fragment>
           );
         })}
 
         {/* Footer */}
         <div className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
-          {filtered.length} af {assignments.length} værker
+          {filtered.length} {t("works.of")} {assignments.length} {t("works.worksLower")}
         </div>
       </div>
 
@@ -534,34 +701,59 @@ export default function MineVaerkerClient({
       {isAdding && (
         <Modal onClose={() => setIsAdding(false)} maxWidth="max-w-2xl">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-lg font-semibold text-gray-900">Tilføj Værk</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{t("works.addWork")}</h2>
             <button onClick={() => setIsAdding(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
           </div>
 
-          <div className="flex gap-2 mb-4">
+          <div className="flex flex-col gap-2 mb-4 sm:flex-row">
             <Input
-              placeholder="Søg titel i DFI og TMDB..."
+              placeholder={t("works.addSearchPlaceholder")}
               value={addQuery}
               onChange={e => setAddQuery(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter") handleSearch(); }}
             />
-            <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="gap-1.5 shrink-0">
-              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Søg
+            <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
+              {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
             </Button>
           </div>
 
           <div className="mb-4 space-y-1.5">
-            <Label className="text-sm font-medium text-gray-500">Din rolle</Label>
+            <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
             <select value={addRole} onChange={e => setAddRole(e.target.value)} className={selectCls}>
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
 
+          {showSeriesFields && (
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  placeholder="1"
+                  value={addSeason}
+                  onChange={e => setAddSeason(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  placeholder="1"
+                  value={addEpisode}
+                  onChange={e => setAddEpisode(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
           {(dfiResults.length > 0 || tmdbResults.length > 0) && (
-            <div className="grid grid-cols-2 gap-5 mb-4">
+            <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
               {[
-                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (f: any) => f.Id, isSelected: (f: any) => pickedResult?.Id === f.Id && pickedSource === "dfi", onSelect: (f: any) => { setPickedResult(f); setPickedSource("dfi"); }, getTitle: (f: any) => f.Title, getMeta: (f: any) => `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`, getPoster: (_: any) => null },
-                { label: `TMDB (${tmdbResults.length})`, items: tmdbResults, getKey: (i: any) => i.id, isSelected: (i: any) => pickedResult?.id === i.id && pickedSource === "tmdb", onSelect: (i: any) => { setPickedResult(i); setPickedSource("tmdb"); }, getTitle: (i: any) => i.title || i.name, getMeta: (i: any) => `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${i.media_type === "tv" ? "TV-serie" : "Film"}`, getPoster: (i: any) => i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null },
+                { label: `DFI (${dfiResults.length})`, items: dfiResults, getKey: (f: any) => f.Id, isSelected: (f: any) => pickedResult?.Id === f.Id && pickedSource === "dfi", onSelect: (f: any) => { setPickedResult(f); setPickedSource("dfi"); }, getTitle: (f: any) => f.Title, getMeta: (f: any) => `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`, getPoster: () => null },
+                { label: `TMDB (${tmdbResults.length})`, items: tmdbResults, getKey: (i: any) => i.id, isSelected: (i: any) => pickedResult?.id === i.id && pickedSource === "tmdb", onSelect: (i: any) => { setPickedResult(i); setPickedSource("tmdb"); }, getTitle: (i: any) => i.title || i.name, getMeta: (i: any) => `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)}`, getPoster: (i: any) => i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null },
               ].map(col => (
                 <div key={col.label}>
                   <p className="text-xs font-medium text-gray-500 mb-2">{col.label}</p>
@@ -593,13 +785,13 @@ export default function MineVaerkerClient({
           )}
 
           {pickedResult && (
-            <div className="pt-4 border-t border-gray-100 flex items-center justify-between">
+            <div className="pt-4 border-t border-gray-100 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-gray-500">
-                Valgt: <strong className="text-gray-900">{pickedResult.Title || pickedResult.title || pickedResult.name}</strong>
+                {t("works.chosen")}: <strong className="text-gray-900">{pickedResult.Title || pickedResult.title || pickedResult.name}</strong>
               </p>
-              <Button onClick={handleAddWork} disabled={isSaving} className="gap-2">
+              <Button onClick={handleAddWork} disabled={isSaving} className="w-full gap-2 sm:w-auto">
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                {isSaving ? "Tilføjer..." : "Tilføj til mine værker"}
+                {isSaving ? t("works.adding") : t("works.addToMyWorks")}
               </Button>
             </div>
           )}
@@ -610,17 +802,17 @@ export default function MineVaerkerClient({
       {wizardOpen && (
         <Modal onClose={() => setWizardOpen(false)} maxWidth="max-w-lg">
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-lg font-semibold text-gray-900">Importer fra DFI</h2>
+            <h2 className="text-lg font-semibold text-gray-900">{t("works.importFromDfi")}</h2>
             <button onClick={() => setWizardOpen(false)} className="text-gray-400 hover:text-gray-600"><X className="h-5 w-5" /></button>
           </div>
 
           {wizardStep === "search" && (
             <form onSubmit={handleWizardSearch} className="space-y-4">
-              <p className="text-sm text-gray-500">Søg dit navn i DFI Filmdatabasen for at importere alle dine krediteringer.</p>
-              <div className="flex gap-2">
-                <Input value={wizardQuery} onChange={e => setWizardQuery(e.target.value)} placeholder="Fornavn Efternavn" />
-                <Button type="submit" disabled={wizardSearching} className="gap-1.5 shrink-0">
-                  {wizardSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Søg
+              <p className="text-sm text-gray-500">{t("works.dfiIntro")}</p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input value={wizardQuery} onChange={e => setWizardQuery(e.target.value)} placeholder={t("works.namePlaceholder")} />
+                <Button type="submit" disabled={wizardSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
+                  {wizardSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
                 </Button>
               </div>
               {wizardError && <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{wizardError}</div>}
@@ -629,7 +821,7 @@ export default function MineVaerkerClient({
 
           {wizardStep === "persons" && (
             <div className="space-y-3">
-              <p className="text-sm text-gray-500">Fandt {wizardPersons.length} personer. Vælg dig selv:</p>
+              <p className="text-sm text-gray-500">{t("works.foundPersons").replace("{count}", String(wizardPersons.length))}</p>
               {wizardPersons.map(p => (
                 <button
                   key={p.Id}
@@ -648,19 +840,19 @@ export default function MineVaerkerClient({
               {wizardSearching ? (
                 <div className="flex flex-col items-center py-10 gap-3">
                   <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-                  <p className="text-sm text-gray-500">Henter krediteringer fra DFI...</p>
+                  <p className="text-sm text-gray-500">{t("works.loadingCredits")}</p>
                 </div>
               ) : wizardError ? (
                 <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">{wizardError}</div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between mb-3">
-                    <p className="text-sm text-gray-500">Fandt {wizardCredits.length} titler. Vælg dem du vil importere:</p>
+                  <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-gray-500">{t("works.foundTitles").replace("{count}", String(wizardCredits.length))}</p>
                     <button
                       onClick={() => { const all = Object.values(wizardSelected).every(v => v); const s: Record<number, boolean> = {}; wizardCredits.forEach(c => { s[c.Id] = !all; }); setWizardSelected(s); }}
-                      className="text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600"
+                      className="w-full text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600 sm:w-auto"
                     >
-                      {Object.values(wizardSelected).every(v => v) ? "Fravælg alle" : "Vælg alle"}
+                      {Object.values(wizardSelected).every(v => v) ? t("works.deselectAll") : t("works.selectAll")}
                     </button>
                   </div>
                   <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
@@ -685,9 +877,9 @@ export default function MineVaerkerClient({
                     ))}
                   </div>
                   <div className="flex justify-end mt-4">
-                    <Button onClick={handleWizardImport} disabled={wizardImporting} className="gap-2">
+                    <Button onClick={handleWizardImport} disabled={wizardImporting} className="w-full gap-2 sm:w-auto">
                       {wizardImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                      {wizardImporting ? "Importerer..." : `Importer ${Object.values(wizardSelected).filter(Boolean).length} værker`}
+                      {wizardImporting ? t("works.importing") : t("works.importCount").replace("{count}", String(Object.values(wizardSelected).filter(Boolean).length))}
                     </Button>
                   </div>
                 </>
@@ -708,7 +900,7 @@ export default function MineVaerkerClient({
             Hvis værksdata bliver ændret forkert, kan værket blive sværere at finde og matche i systemet. Det kan i sidste ende betyde, at rettighedspenge ikke bliver udløst korrekt. Rettelser til værksdata skal derfor godkendes af admin.
           </div>
           <div className="space-y-1.5 mb-6">
-            <Label className="text-sm font-medium text-gray-500">Din rolle</Label>
+            <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
             <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
               {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
@@ -779,10 +971,10 @@ export default function MineVaerkerClient({
               </div>
             )}
           </div>
-          <div className="flex justify-end gap-2.5">
-            <Button variant="outline" onClick={closeEdit}>Annuller</Button>
+          <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+            <Button variant="outline" onClick={closeEdit}>{t("common.cancel")}</Button>
             <Button onClick={handleSaveEdit} disabled={isSavingEdit} className="gap-2">
-              {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />} Gem
+              {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />} {t("common.save")}
             </Button>
           </div>
         </Modal>

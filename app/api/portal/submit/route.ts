@@ -155,8 +155,15 @@ export async function POST(req: NextRequest) {
             // Marker at filen allerede er gemt — gennemgang skal ikke gemme på ny
             fd.append("existingReviewId", reviewId)
 
+            // Inkluder invite-cookie så middleware-gate ikke blokerer det interne kald
+            const internalHeaders: HeadersInit = {}
+            if (process.env.INVITE_CODE) {
+                internalHeaders["Cookie"] = `dfks_invite=${process.env.INVITE_CODE}`
+            }
+
             const resp = await fetch(`${baseUrl}/api/gennemgang`, {
                 method: "POST",
+                headers: internalHeaders,
                 body: fd,
             })
 

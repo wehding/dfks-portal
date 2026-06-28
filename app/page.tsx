@@ -20,9 +20,16 @@ export default function LoginPage() {
     const [error, setError] = useState("")
     const [loading, setLoading] = useState(false)
     const isDev = process.env.NODE_ENV === "development"
+    const missingSupabaseConfig =
+        !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+        !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     const [resettingOnboarding, setResettingOnboarding] = useState(false)
 
     const handleResetOnboarding = async () => {
+        if (missingSupabaseConfig) {
+            toast.error("Supabase mangler lokal opsætning i .env.local")
+            return
+        }
         if (!email) {
             toast.error("Indtast en e-mailadresse i feltet ovenfor")
             return
@@ -45,6 +52,10 @@ export default function LoginPage() {
     }
 
     const handleDevLogin = async (type: "member" | "admin") => {
+        if (missingSupabaseConfig) {
+            setError("Supabase mangler lokal opsætning. Tilføj NEXT_PUBLIC_SUPABASE_URL og NEXT_PUBLIC_SUPABASE_ANON_KEY i .env.local.")
+            return
+        }
         setLoading(true)
         const creds = type === "admin"
             ? { email: "wehding@gmail.com", password: "" }
@@ -69,6 +80,12 @@ export default function LoginPage() {
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault()
         setError("")
+
+        if (missingSupabaseConfig) {
+            setError("Supabase mangler lokal opsætning. Tilføj NEXT_PUBLIC_SUPABASE_URL og NEXT_PUBLIC_SUPABASE_ANON_KEY i .env.local.")
+            return
+        }
+
         setLoading(true)
 
         const supabase = createClient()
@@ -165,6 +182,12 @@ export default function LoginPage() {
                             {loading ? "Logger ind…" : t("auth.login")}
                         </Button>
                     </form>
+
+                    {missingSupabaseConfig && (
+                        <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                            Supabase mangler lokal opsætning. Tilføj <span className="font-mono">NEXT_PUBLIC_SUPABASE_URL</span> og <span className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</span> i <span className="font-mono">.env.local</span>, og genstart appen.
+                        </div>
+                    )}
 
                     {isDev && (
                         <div className="border-t pt-4 mt-2 flex flex-col gap-2">
