@@ -3,7 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBPoster } from "@/app/actions/tmdb";
+import { findTMDBMatch } from "@/app/actions/tmdb";
+import { extractDfiPosterUrl, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -18,6 +19,11 @@ type DfiCredit = {
   Description?: string | null;
   Type?: string | null;
   Category?: string | null;
+};
+
+type DfiSearchScore = {
+  film: DfiCredit;
+  score: number;
 };
 
 function normalizeTitle(title: string) {
@@ -72,7 +78,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
   if (filmId) {
     const { data } = await db
       .from("works")
-      .select("id, title, year, poster_url")
+      .select("id, title, year, poster_url, tmdb_id, dfi_metadata")
       .eq("org_id", orgId)
       .eq("dfi_id", filmId)
       .maybeSingle();
@@ -85,7 +91,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
 
   const { data } = await db
     .from("works")
-    .select("id, title, year, poster_url")
+    .select("id, title, year, poster_url, tmdb_id, dfi_metadata")
     .eq("org_id", orgId)
     .eq("year", year)
     .limit(50);
@@ -133,12 +139,12 @@ async function fetchDFI(endpoint: string) {
 
     const data = await res.json();
     return { success: true, data };
-  } catch (error: any) {
+  } catch (error: unknown) {
     clearTimeout(timeoutId);
-    if (error.name === "AbortError") {
+    if (error instanceof Error && error.name === "AbortError") {
       return { success: false, error: "Tidsafbrydelse: DFI API svarede ikke inden for 15 sekunder." };
     }
-    return { success: false, error: error.message || "Netværksfejl ved DFI API-kald" };
+    return { success: false, error: error instanceof Error ? error.message : "Netværksfejl ved DFI API-kald" };
   }
 }
 
@@ -201,11 +207,11 @@ export async function searchDFIFilms(title: string) {
     return { success: false, error: result.error || "Ingen film fundet." };
   }
 
-  let filmList = result.data.FilmList || [];
+  let filmList = (result.data.FilmList || []) as DfiCredit[];
 
   if (hasSpaces && filmList.length > 0) {
     const originalLower = cleanedTitle.toLowerCase();
-    const scored = filmList.map((film: any) => {
+    const scored = filmList.map((film): DfiSearchScore => {
       const t = (film.Title || "").toLowerCase();
       let score = t === originalLower ? 100 : t.includes(originalLower) ? 50 : 0;
       originalLower.split(/\s+/).filter((w) => w.length > 1).forEach((w) => {
@@ -213,8 +219,8 @@ export async function searchDFIFilms(title: string) {
       });
       return { film, score };
     });
-    scored.sort((a: any, b: any) => b.score - a.score);
-    filmList = scored.filter((i: any) => i.score > 0).map((i: any) => i.film);
+    scored.sort((a, b) => b.score - a.score);
+    filmList = scored.filter((i) => i.score > 0).map((i) => i.film);
   }
 
   filmList.sort((a: DfiCredit, b: DfiCredit) => {
@@ -322,28 +328,24 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     })
   );
 
-  for (const item of detailResults.filter(Boolean) as { credit: any; film: any }[]) {
+  for (const item of detailResults.filter(Boolean) as { credit: DfiCredit; film: DfiMetadata }[]) {
     const { credit, film } = item;
     const filmId = credit.Id;
 
-    const categoryLower = (film.Category || "").toLowerCase();
-    const typeLower = (film.Type || "").toLowerCase();
-    const combined = categoryLower + " " + typeLower;
-    let workType = "fiktion";
-    if (combined.includes("dokumentar") && combined.includes("serie")) workType = "serie"; // dokumentarserie
-    else if (combined.includes("dokumentar")) workType = "dokumentar";
-    else if (combined.includes("serie") || combined.includes("tv-")) workType = "serie";
-    else if (combined.includes("kort")) workType = "kortfilm";
+    const workType = mapDfiWorkType(film.Category, film.Type);
 
-    const prodYear: number | null = film.ProductionYear || film.ReleaseYear || null;
-    const filmTitle: string = film.Title || film.DanishTitle || "Ukendt titel";
+    const prodYear = Number(film.ProductionYear || film.ReleaseYear || 0) || null;
+    const filmTitle = String(film.Title || film.DanishTitle || "Ukendt titel");
 
-    // Slå plakat op i TMDB (stille fejl)
-    let posterUrl: string | null = null;
+    let posterUrl = extractDfiPosterUrl(film);
+
+    // Slå plakat og tmdb_id op i TMDB (stille fejl)
+    let tmdbId: number | null = null;
     try {
-      const tmdbRes = await findTMDBPoster(filmTitle, prodYear);
-      posterUrl = tmdbRes;
-    } catch { /* posterUrl forbliver null */ }
+      const match = await findTMDBMatch(filmTitle, prodYear);
+      tmdbId = match.tmdb_id;
+      if (!posterUrl) posterUrl = match.poster_url;
+    } catch { /* tmdbId/posterUrl forbliver som de er */ }
 
     try {
       const existing = await findExistingWorkForDfiCredit(db, { ...credit, Title: filmTitle, ProductionYear: prodYear }, orgId);
@@ -357,6 +359,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         org_id: orgId,
         description: film.Synopsis || film.ShortSynopsis || null,
         poster_url: posterUrl,
+        tmdb_id: tmdbId,
+        dfi_metadata: film,
       };
 
       const wasExisting = Boolean(workId);
@@ -374,6 +378,15 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         }
         console.log(`[DFI import] Oprettet work: "${filmTitle}" (${workId})`);
         workId = newWork.id;
+      } else if (existing) {
+        // Opdater hvis der mangler plakat eller TMDB id
+        const updates: Record<string, unknown> = {};
+        if (!existing.poster_url && posterUrl) updates.poster_url = posterUrl;
+        if (!existing.tmdb_id && tmdbId) updates.tmdb_id = tmdbId;
+        updates.dfi_metadata = film;
+        if (Object.keys(updates).length > 0) {
+          await db.from("works").update(updates).eq("id", workId);
+        }
       }
 
       // Tilføj work_assignment
@@ -397,8 +410,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
 
       if (wasExisting) linkedExistingCount++;
       else importedCount++;
-    } catch (err: any) {
-      errors.push(`Systemfejl for ${filmTitle}: ${err.message}`);
+    } catch (err: unknown) {
+      errors.push(`Systemfejl for ${filmTitle}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
     }
   }
 

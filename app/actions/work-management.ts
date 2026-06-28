@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { findTMDBPoster } from "@/app/actions/tmdb";
+import type { DfiMetadata } from "@/lib/dfi-metadata";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -23,12 +24,14 @@ type AdminWorkData = WorkCorrectionData & {
   tmdb_id: number | null;
   poster_url: string | null;
   status: string;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type CreateWorkData = WorkCorrectionData & {
   dfi_id?: string | null;
   tmdb_id?: number | null;
   poster_url?: string | null;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type ProposedCoEditor = {
@@ -69,6 +72,7 @@ const ADMIN_EDITABLE_KEYS: (keyof AdminWorkData)[] = [
   "tmdb_id",
   "poster_url",
   "status",
+  "dfi_metadata",
 ];
 
 function cleanText(value: string | null | undefined) {
@@ -100,6 +104,7 @@ function normalizeAdminData(data: AdminWorkData): AdminWorkData {
     tmdb_id: data.tmdb_id,
     poster_url: cleanText(data.poster_url),
     status: cleanText(data.status) ?? "godkendt",
+    dfi_metadata: data.dfi_metadata ?? null,
   };
 }
 
@@ -139,85 +144,95 @@ function normalizeTitle(title: string) {
     .trim();
 }
 
-async function findRightsHolderByName(db: ReturnType<typeof createServiceClient>, name: string) {
+async function findRightsHolderByName(db: ReturnType<typeof createServiceClient>, name: string, orgId: string) {
   const normalizedName = normalizeTitle(name);
   if (!normalizedName) return null;
 
   const { data } = await db
     .from("org_affiliations")
     .select("rettighedshavere(id, full_name)")
-    .eq("org_id", DFKS_ORG_ID);
+    .eq("org_id", orgId);
 
   return (data ?? [])
     .map(row => Array.isArray(row.rettighedshavere) ? row.rettighedshavere[0] : row.rettighedshavere)
     .find(holder => holder?.id && normalizeTitle(holder.full_name ?? "") === normalizedName) ?? null;
 }
 
-async function applyCoEditorChanges(db: ReturnType<typeof createServiceClient>, workId: string, coEditors?: ProposedCoEditor[]) {
+async function applyCoEditorChanges(db: ReturnType<typeof createServiceClient>, workId: string, orgId: string, coEditors?: ProposedCoEditor[]) {
   for (const editor of coEditors ?? []) {
     const role = cleanText(editor.role) ?? "Klipper";
     const share_percent = cleanSharePercent(editor.sharePercent ?? editor.share_percent);
 
-    if (editor.action === "remove" && editor.assignmentId) {
-      const { error } = await db
-        .from("work_assignments")
-        .delete()
-        .eq("id", editor.assignmentId)
-        .eq("work_id", workId)
-        .eq("org_id", DFKS_ORG_ID);
-      if (error) throw new Error(error.message);
-      continue;
-    }
+         if (editor.action === "remove" && editor.assignmentId) {
+           const { error } = await db
+             .from("work_assignments")
+             .delete()
+             .eq("id", editor.assignmentId)
+             .eq("work_id", workId)
+             .eq("org_id", orgId);
+           if (error) throw new Error(error.message);
+           continue;
+         }
 
-    if (editor.action === "change" && editor.assignmentId) {
-      const { error } = await retryWithoutSharePercent(
-        await db
-          .from("work_assignments")
-          .update({ role, share_percent })
-          .eq("id", editor.assignmentId)
-          .eq("work_id", workId)
-          .eq("org_id", DFKS_ORG_ID),
-        async () => await db
-          .from("work_assignments")
-          .update({ role })
-          .eq("id", editor.assignmentId)
-          .eq("work_id", workId)
-          .eq("org_id", DFKS_ORG_ID)
-      );
-      if (error) throw new Error(error.message);
-      continue;
-    }
+         if (editor.action === "change" && editor.assignmentId) {
+           const { error } = await retryWithoutSharePercent(
+             await db
+               .from("work_assignments")
+               .update({ role, share_percent })
+               .eq("id", editor.assignmentId)
+               .eq("work_id", workId)
+               .eq("org_id", orgId),
+             async () => await db
+               .from("work_assignments")
+               .update({ role })
+               .eq("id", editor.assignmentId)
+               .eq("work_id", workId)
+               .eq("org_id", orgId)
+           );
+           if (error) throw new Error(error.message);
+           continue;
+         }
 
-    let rightsHolderId = cleanText(editor.rightsHolderId);
-    if (!rightsHolderId && editor.name) {
-      const holder = await findRightsHolderByName(db, editor.name);
-      rightsHolderId = holder?.id ?? null;
-    }
-    if (!rightsHolderId) continue;
+         let rightsHolderId = cleanText(editor.rightsHolderId);
+         if (!rightsHolderId && editor.name) {
+           const holder = await findRightsHolderByName(db, editor.name, orgId);
+           rightsHolderId = holder?.id ?? null;
+         }
+         if (!rightsHolderId) continue;
 
-    const { error } = await retryWithoutSharePercent(
-      await db
-        .from("work_assignments")
-        .upsert(
-          { work_id: workId, org_id: DFKS_ORG_ID, rights_holder_id: rightsHolderId, role, share_percent },
-          { onConflict: "work_id,rights_holder_id,role" }
-        ),
-      async () => await db
-        .from("work_assignments")
-        .upsert(
-          { work_id: workId, org_id: DFKS_ORG_ID, rights_holder_id: rightsHolderId, role },
-          { onConflict: "work_id,rights_holder_id,role" }
-        )
-    );
-    if (error) throw new Error(error.message);
-  }
-}
+         const { error } = await retryWithoutSharePercent(
+           await db
+             .from("work_assignments")
+             .upsert(
+               { work_id: workId, org_id: orgId, rights_holder_id: rightsHolderId, role, share_percent },
+               { onConflict: "work_id,rights_holder_id,role" }
+             ),
+           async () => await db
+             .from("work_assignments")
+             .upsert(
+               { work_id: workId, org_id: orgId, rights_holder_id: rightsHolderId, role },
+               { onConflict: "work_id,rights_holder_id,role" }
+             )
+         );
+         if (error) throw new Error(error.message);
+       }
+     }
 
 async function currentUser() {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("Du skal være logget ind.");
   return { supabase, user: data.user };
+}
+
+async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: string): Promise<string> {
+  const { data } = await db
+    .from("user_org_roles")
+    .select("org_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  return data?.org_id ?? DFKS_ORG_ID;
 }
 
 export async function submitWorkDataCorrection(params: {
@@ -260,10 +275,11 @@ export async function submitWorkDataCorrection(params: {
   const coEditors = params.coEditors ?? [];
   if (!Object.keys(proposedChanges).length && !coEditors.length) throw new Error("Der er ingen ændringer at sende til admin.");
 
+  const orgId = await currentOrgId(db, user.id);
   const { data: request, error: requestError } = await db
     .from("work_change_requests")
     .insert({
-      org_id: work.org_id ?? DFKS_ORG_ID,
+      org_id: work.org_id ?? orgId,
       work_id: work.id,
       requested_by_user_id: user.id,
       requested_by_rights_holder_id: rightsHolder.id,
@@ -294,22 +310,23 @@ export async function submitWorkDataCorrection(params: {
 }
 
 export async function fetchAdminWorksForReview() {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const withSharePercent = await db
     .from("works")
     .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .order("created_at", { ascending: false });
   const { data, error } = await retryWithoutSharePercent(
     withSharePercent,
     async () => await db
       .from("works")
       .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
-      .eq("org_id", DFKS_ORG_ID)
+      .eq("org_id", orgId)
       .order("created_at", { ascending: false })
   );
 
@@ -318,15 +335,16 @@ export async function fetchAdminWorksForReview() {
 }
 
 export async function fetchAdminRightsHolders() {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { data, error } = await db
     .from("org_affiliations")
     .select("rettighedshavere(id, full_name)")
-    .eq("org_id", DFKS_ORG_ID);
+    .eq("org_id", orgId);
 
   if (error) throw new Error(error.message);
   const rightsHolders = (data ?? [])
@@ -338,15 +356,16 @@ export async function fetchAdminRightsHolders() {
 }
 
 export async function fetchPendingWorkReviewCount() {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) return { success: true, count: 0 };
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { count, error } = await db
     .from("work_change_requests")
     .select("id", { count: "exact", head: true })
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .eq("status", "pending");
 
   if (error) throw new Error(error.message);
@@ -381,7 +400,7 @@ export async function updateAdminWorkData(params: {
   assignments?: { id?: string; rightsHolderId?: string; role: string; sharePercent?: number | null }[];
   broadcaster?: string | null;
 }) {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
@@ -395,11 +414,12 @@ export async function updateAdminWorkData(params: {
   }, {});
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { error } = await db
     .from("works")
     .update(updates)
     .eq("id", params.workId)
-    .eq("org_id", DFKS_ORG_ID);
+    .eq("org_id", orgId);
 
   if (error) throw new Error(error.message);
 
@@ -416,13 +436,13 @@ export async function updateAdminWorkData(params: {
           .update({ role, share_percent })
           .eq("id", assignment.id)
           .eq("work_id", params.workId)
-          .eq("org_id", DFKS_ORG_ID),
+          .eq("org_id", orgId),
         async () => await db
           .from("work_assignments")
           .update({ role })
           .eq("id", assignment.id)
           .eq("work_id", params.workId)
-          .eq("org_id", DFKS_ORG_ID)
+          .eq("org_id", orgId)
       );
       if (assignmentError) throw new Error(assignmentError.message);
       continue;
@@ -435,7 +455,7 @@ export async function updateAdminWorkData(params: {
           .upsert(
             {
               work_id: params.workId,
-              org_id: DFKS_ORG_ID,
+              org_id: orgId,
               rights_holder_id: assignment.rightsHolderId,
               role,
               share_percent,
@@ -447,7 +467,7 @@ export async function updateAdminWorkData(params: {
           .upsert(
             {
               work_id: params.workId,
-              org_id: DFKS_ORG_ID,
+              org_id: orgId,
               rights_holder_id: assignment.rightsHolderId,
               role,
             },
@@ -465,12 +485,13 @@ export async function updateAdminWorkData(params: {
 
 export async function createAdminWork(params: {
   data: CreateWorkData;
+  workId?: string | null;
   rightsHolderId?: string | null;
   role?: string | null;
   sharePercent?: number | null;
   broadcaster?: string | null;
 }) {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
@@ -479,10 +500,23 @@ export async function createAdminWork(params: {
   if (!normalized.type) throw new Error("Type må ikke være tom.");
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
 
-  if (params.data.dfi_id) {
+  if (params.workId) {
+    const { data } = await db
+      .from("works")
+      .select("id, poster_url")
+      .eq("id", params.workId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (data?.id) {
+      workId = data.id;
+      existingPosterUrl = data.poster_url;
+    }
+  }
+  if (!workId && params.data.dfi_id) {
     const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).maybeSingle();
     if (data?.id) {
       workId = data.id;
@@ -517,24 +551,31 @@ export async function createAdminWork(params: {
     const { data: created, error } = await db
       .from("works")
       .insert({
-        org_id: DFKS_ORG_ID,
+        org_id: orgId,
         ...normalized,
         dfi_id: cleanText(params.data.dfi_id),
         tmdb_id: params.data.tmdb_id ?? null,
         poster_url: posterUrl,
+        dfi_metadata: params.data.dfi_metadata ?? null,
         status: "godkendt",
       })
       .select("id")
       .single();
     if (error || !created?.id) throw new Error(error?.message ?? "Kunne ikke oprette værk.");
     workId = created.id;
-  } else if (!existingPosterUrl && posterUrl) {
-    const { error } = await db
-      .from("works")
-      .update({ poster_url: posterUrl })
-      .eq("id", workId)
-      .eq("org_id", DFKS_ORG_ID);
-    if (error) throw new Error(error.message);
+  } else {
+    // Opdater hvis der mangler plakat eller DFI metadata
+    const updates: Partial<CreateWorkData> = {};
+    if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
+    if (params.data.dfi_metadata) updates.dfi_metadata = params.data.dfi_metadata;
+    if (Object.keys(updates).length > 0) {
+      const { error } = await db
+        .from("works")
+        .update(updates)
+        .eq("id", workId)
+        .eq("org_id", orgId);
+      if (error) throw new Error(error.message);
+    }
   }
 
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");
@@ -546,7 +587,7 @@ export async function createAdminWork(params: {
         .upsert(
           {
             work_id: workId,
-            org_id: DFKS_ORG_ID,
+            org_id: orgId,
             rights_holder_id: params.rightsHolderId,
             role: params.role,
             share_percent: cleanSharePercent(params.sharePercent),
@@ -558,7 +599,7 @@ export async function createAdminWork(params: {
         .upsert(
           {
             work_id: workId,
-            org_id: DFKS_ORG_ID,
+            org_id: orgId,
             rights_holder_id: params.rightsHolderId,
             role: params.role,
           },
@@ -576,7 +617,7 @@ export async function createAdminWork(params: {
 }
 
 export async function archiveAdminWorks(params: { workIds: string[] }) {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
@@ -584,10 +625,11 @@ export async function archiveAdminWorks(params: { workIds: string[] }) {
   if (!ids.length) throw new Error("Vælg mindst ét værk.");
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { error } = await db
     .from("works")
     .update({ status: "arkiveret" })
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .in("id", ids);
 
   if (error) throw new Error(error.message);
@@ -597,7 +639,7 @@ export async function archiveAdminWorks(params: { workIds: string[] }) {
 }
 
 export async function approveAdminWorks(params: { workIds: string[] }) {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
@@ -605,10 +647,11 @@ export async function approveAdminWorks(params: { workIds: string[] }) {
   if (!ids.length) throw new Error("Vælg mindst ét værk.");
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { error } = await db
     .from("works")
     .update({ status: "godkendt" })
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .in("id", ids);
 
   if (error) throw new Error(error.message);
@@ -621,7 +664,7 @@ export async function mergeAdminWorks(params: {
   masterWorkId: string;
   duplicateWorkIds: string[];
 }) {
-  const { supabase } = await currentUser();
+  const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
@@ -632,11 +675,12 @@ export async function mergeAdminWorks(params: {
   }
 
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const { data: master, error: masterError } = await db
     .from("works")
     .select("id, org_id")
     .eq("id", params.masterWorkId)
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .single();
   if (masterError || !master) throw new Error("Hovedværket findes ikke.");
 
@@ -656,7 +700,7 @@ export async function mergeAdminWorks(params: {
   const { error: archiveError } = await db
     .from("works")
     .update({ status: "arkiveret" })
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .in("id", duplicateIds);
 
   if (archiveError) throw new Error(archiveError.message);
@@ -698,8 +742,8 @@ export async function reviewWorkDataCorrection(params: {
     };
     const { error } = await db.from("works").update(workUpdates).eq("id", request.work_id);
     if (error) throw new Error(error.message);
-    await applyCoEditorChanges(db, request.work_id, proposed.coEditors);
-    await applyCoEditorChanges(db, request.work_id, proposed.assignmentChanges);
+    await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.coEditors);
+    await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.assignmentChanges);
   }
 
   const adminMessage = cleanText(params.comment) ?? (params.decision === "rejected" ? "Rettelsen er afvist." : null);

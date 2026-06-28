@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
+import { getDFIFilmDetails } from "@/app/actions/dfi";
+import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -18,6 +20,7 @@ type MemberWorkData = {
   genre?: string | null;
   description?: string | null;
   poster_url?: string | null;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type ProposedCoEditor = {
@@ -60,6 +63,16 @@ async function currentUser() {
   return data.user;
 }
 
+async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: string): Promise<string> {
+  const { data } = await db
+    .from("user_org_roles")
+    .select("org_id")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  return data?.org_id ?? DFKS_ORG_ID;
+}
+
 async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>, rightsHolderId: string) {
   const user = await currentUser();
   const { data, error } = await db
@@ -91,12 +104,12 @@ function normalizeCoEditors(coEditors?: ProposedCoEditor[]) {
     }));
 }
 
-async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, title: string, year: number | null) {
+async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, title: string, year: number | null, orgId: string) {
   if (!title.trim()) return [];
   const { data } = await db
     .from("works")
     .select("id, title, type, year, status, dfi_id, tmdb_id, poster_url")
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .limit(200);
 
   return (data ?? [])
@@ -117,10 +130,11 @@ async function createWorkRequest(params: {
   proposedData: Record<string, unknown>;
   comment: string;
 }) {
+  const orgId = await currentOrgId(params.db, params.userId);
   const { data: request, error: requestError } = await params.db
     .from("work_change_requests")
     .insert({
-      org_id: DFKS_ORG_ID,
+      org_id: orgId,
       work_id: params.workId,
       requested_by_user_id: params.userId,
       requested_by_rights_holder_id: params.rightsHolderId,
@@ -173,43 +187,87 @@ export async function addWorkForMember(params: {
     poster_url?: string | null;
   };
 }) {
+  const user = await currentUser();
   const db = createServiceClient();
-
-  const orgId = DFKS_ORG_ID;
+  const orgId = await currentOrgId(db, user.id);
 
   // Find eksisterende værk
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
+  let existingTmdbId: number | null = null;
   if (params.workData.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.workData.dfi_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("dfi_id", params.workData.dfi_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
+      existingTmdbId = data.tmdb_id;
     }
   }
   if (!workId && params.workData.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
+      existingTmdbId = data.tmdb_id;
     }
   }
 
-  const posterUrl = params.workData.poster_url
-    ?? await findTMDBPoster(params.workData.title, params.workData.year)
-    ?? null;
+  let posterUrl = params.workData.poster_url ?? null;
+  let tmdbId = params.workData.tmdb_id ?? existingTmdbId ?? null;
+  let dfiMetadata: DfiMetadata | null = null;
+
+  if (params.workData.dfi_id) {
+    try {
+      const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
+      if (details.success && details.film) {
+        dfiMetadata = details.film as DfiMetadata;
+        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+      }
+    } catch (e) {
+      console.error("DFI lookup error in member-works action:", e);
+    }
+  }
+
+  // Hvis det er et DFI værk og vi ikke har en TMDB plakat/id endnu, så prøv at slå det op
+  if (params.workData.dfi_id && !tmdbId) {
+    try {
+      const match = await findTMDBMatch(params.workData.title, params.workData.year);
+      if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+    } catch (e) {
+      console.error("DFI import TMDB match lookup error:", e);
+    }
+  }
+
+  if (!posterUrl) {
+    posterUrl = await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  }
 
   // Opret nyt værk hvis ikke fundet
   if (!workId) {
     const { data: nw, error } = await db
       .from("works")
-      .insert({ org_id: orgId, status: "godkendt", ...params.workData, poster_url: posterUrl })
+      .insert({
+        org_id: orgId,
+        status: "godkendt",
+        ...params.workData,
+        poster_url: posterUrl,
+        tmdb_id: tmdbId,
+        dfi_metadata: dfiMetadata,
+      })
       .select("id")
       .single();
     if (error || !nw) return { success: false, error: error?.message ?? "Kunne ikke oprette værk" };
     workId = nw.id;
-  } else if (!existingPosterUrl && posterUrl) {
-    await db.from("works").update({ poster_url: posterUrl }).eq("id", workId);
+  } else {
+    // Opdater hvis der mangler plakat, TMDB id eller DFI metadata
+    const updates: Partial<MemberWorkData> = {};
+    if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
+    if (!existingTmdbId && tmdbId) updates.tmdb_id = tmdbId;
+    if (dfiMetadata) updates.dfi_metadata = dfiMetadata;
+    if (Object.keys(updates).length > 0) {
+      await db.from("works").update(updates).eq("id", workId);
+    }
   }
 
   // Kobl rettighedshaver
@@ -235,14 +293,16 @@ export async function addWorkForMember(params: {
 }
 
 export async function searchLocalWorksForMember(query: string) {
+  const user = await currentUser();
   const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
   const q = query.trim();
   if (!q) return { success: true, works: [] };
 
   const { data, error } = await db
     .from("works")
     .select("id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
 
@@ -259,19 +319,20 @@ export async function linkExistingWorkForMember(params: {
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
 
   const { data: work, error: workError } = await db
     .from("works")
     .select("id, title, type, year, status")
     .eq("id", params.workId)
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .single();
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
 
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
-      { work_id: params.workId, org_id: DFKS_ORG_ID, rights_holder_id: params.rightsHolderId, role: params.role },
+      { work_id: params.workId, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
       { onConflict: "work_id,rights_holder_id,role" }
     );
   if (assignErr) return { success: false, error: assignErr.message };
@@ -311,16 +372,48 @@ export async function addWorkForMemberWithApproval(params: {
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
-  const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year);
+  const orgId = await currentOrgId(db, user.id);
+  const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
   const coEditors = normalizeCoEditors(params.coEditors);
   const requiresApproval = params.overrideLocalMatch || similarWorks.length > 0 || coEditors.length > 0;
-  const posterUrl = params.workData.poster_url ?? await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  let dfiMetadata = params.workData.dfi_metadata ?? null;
+  let posterUrl = params.workData.poster_url ?? null;
+  let tmdbId = params.workData.tmdb_id ?? null;
+
+  if (params.workData.dfi_id && !dfiMetadata) {
+    try {
+      const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
+      if (details.success && details.film) {
+        dfiMetadata = details.film as DfiMetadata;
+        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+      }
+    } catch (error) {
+      console.error("DFI lookup error in addWorkForMemberWithApproval:", error);
+    }
+  }
+
+  if (params.workData.dfi_id && !tmdbId) {
+    try {
+      const match = await findTMDBMatch(params.workData.title, params.workData.year);
+      if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+    } catch (error) {
+      console.error("DFI TMDB match lookup error in addWorkForMemberWithApproval:", error);
+    }
+  }
+
+  posterUrl = posterUrl ?? await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  const enrichedWorkData = {
+    ...params.workData,
+    tmdb_id: tmdbId,
+    poster_url: posterUrl,
+    dfi_metadata: dfiMetadata,
+  };
 
   const insertPayload = {
-    org_id: DFKS_ORG_ID,
+    org_id: orgId,
     status: requiresApproval ? "til_godkendelse" : "godkendt",
-    ...params.workData,
-    poster_url: posterUrl,
+    ...enrichedWorkData,
   };
 
   const { data: work, error: workError } = await db
@@ -333,7 +426,7 @@ export async function addWorkForMemberWithApproval(params: {
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
-      { work_id: work.id, org_id: DFKS_ORG_ID, rights_holder_id: params.rightsHolderId, role: params.role },
+      { work_id: work.id, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
       { onConflict: "work_id,rights_holder_id,role" }
     );
   if (assignErr) return { success: false, error: assignErr.message };
@@ -347,7 +440,7 @@ export async function addWorkForMemberWithApproval(params: {
       source: "Mine værker - oprettelse",
       proposedData: {
         kind: "creation",
-        workData: params.workData,
+        workData: enrichedWorkData,
         memberRole: params.role,
         coEditors,
         source: params.source,
@@ -369,8 +462,90 @@ export async function addWorkForMemberWithApproval(params: {
 
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
   const db = createServiceClient();
-  await db.from("work_assignments").delete().eq("id", assignmentId).eq("rights_holder_id", rightsHolderId);
+
+  // Hent work_id for denne work_assignment
+  const { data: assignment, error: assignError } = await db
+    .from("work_assignments")
+    .select("work_id")
+    .eq("id", assignmentId)
+    .eq("rights_holder_id", rightsHolderId)
+    .maybeSingle();
+
+  if (assignError || !assignment) throw new Error("Kreditering ikke fundet.");
+
+  // Tjek om der er tilknyttede kontrakter
+  const { data: contracts, error: contractsError } = await db
+    .from("contracts")
+    .select("id")
+    .eq("work_id", assignment.work_id)
+    .eq("rights_holder_id", rightsHolderId)
+    .limit(1);
+
+  if (contractsError) throw new Error(contractsError.message);
+  if (contracts && contracts.length > 0) {
+    throw new Error("Du kan ikke fjerne dette værk, da du har en eller flere tilknyttede kontrakter på det. Slet eller omlink kontrakterne først.");
+  }
+
+  const { error: deleteError } = await db
+    .from("work_assignments")
+    .delete()
+    .eq("id", assignmentId)
+    .eq("rights_holder_id", rightsHolderId);
+
+  if (deleteError) throw new Error(deleteError.message);
   return { success: true };
+}
+
+export async function removeWorkAssignments(assignmentIds: string[], rightsHolderId: string) {
+  const db = createServiceClient();
+  const deletedIds: string[] = [];
+  const errors: string[] = [];
+
+  for (const id of assignmentIds) {
+    try {
+      const { data: assignment } = await db
+        .from("work_assignments")
+        .select("work_id, works(title)")
+        .eq("id", id)
+        .eq("rights_holder_id", rightsHolderId)
+        .maybeSingle();
+
+      if (!assignment) continue;
+
+      const { data: contracts } = await db
+        .from("contracts")
+        .select("id")
+        .eq("work_id", assignment.work_id)
+        .eq("rights_holder_id", rightsHolderId)
+        .limit(1);
+
+      const workRelation = (assignment as { works?: { title?: string } | { title?: string }[] | null }).works;
+      const workTitle = Array.isArray(workRelation) ? workRelation[0]?.title : workRelation?.title;
+
+      if (contracts && contracts.length > 0) {
+        const title = workTitle;
+        errors.push(`"${title || "Værket"}" har tilknyttede kontrakter.`);
+        continue;
+      }
+
+      const { error } = await db
+        .from("work_assignments")
+        .delete()
+        .eq("id", id)
+        .eq("rights_holder_id", rightsHolderId);
+
+      if (error) {
+        const title = workTitle;
+        errors.push(`Fejl ved sletning af ${title || "værk"}: ${error.message}`);
+      } else {
+        deletedIds.push(id);
+      }
+    } catch (e: unknown) {
+      errors.push(e instanceof Error ? e.message : "Ukendt fejl");
+    }
+  }
+
+  return { success: errors.length === 0, deletedIds, errors };
 }
 
 export async function ensureWorkPosterFromTMDB(params: {
@@ -405,14 +580,15 @@ export async function linkApprovedCoEditorSuggestionsForRightsHolder(params: {
   fullName: string;
 }) {
   const db = createServiceClient();
-  await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
   const normalizedName = normalizeTitle(params.fullName);
   if (!normalizedName) return { success: true, linked: 0 };
 
   const { data: requests } = await db
     .from("work_change_requests")
     .select("id, work_id, proposed_data")
-    .eq("org_id", DFKS_ORG_ID)
+    .eq("org_id", orgId)
     .eq("status", "approved");
 
   let linked = 0;
@@ -423,7 +599,7 @@ export async function linkApprovedCoEditorSuggestionsForRightsHolder(params: {
       const { error } = await db
         .from("work_assignments")
         .upsert(
-          { work_id: request.work_id, org_id: DFKS_ORG_ID, rights_holder_id: params.rightsHolderId, role: editor.role || "Klipper" },
+          { work_id: request.work_id, org_id: orgId, rights_holder_id: params.rightsHolderId, role: editor.role || "Klipper" },
           { onConflict: "work_id,rights_holder_id,role" }
         );
       if (!error) linked++;

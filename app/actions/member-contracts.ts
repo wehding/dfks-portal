@@ -26,7 +26,7 @@ export async function uploadMemberContract(formData: FormData) {
     .select("org_id")
     .eq("user_id", user.id)
     .limit(1)
-    .single();
+    .maybeSingle();
   const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
 
   const file = formData.get("file") as File | null;
@@ -174,7 +174,7 @@ export async function linkContractToWork(contractId: string, workId: string | nu
 
 export async function getContractSignedUrl(pdfUrl: string) {
   const db = createServiceClient();
-  const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 300);
+  const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
   return { url: data?.signedUrl ?? null };
 }
 

@@ -5,12 +5,16 @@ import { createClient } from "@/lib/supabase/client";
 import { linkApprovedCoEditorSuggestionsForRightsHolder } from "@/app/actions/member-works";
 import { useRouter } from "next/navigation";
 import MineVaerkerClient from "./MineVaerkerClient";
+import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerkerClient";
+
+type ContractWorkIdRow = { work_id: string | null };
 
 export default function MineVaerkerPage() {
   const router = useRouter();
   const [data, setData] = useState<{
-    assignments: any[];
-    allAssignments: any[];
+    assignments: Assignment[];
+    allAssignments: OtherAssignment[];
+    broadcasters: BroadcasterLogo[];
     rightsHolderId: string | null;
     userName: string;
     dfiPersonId: number | null;
@@ -30,17 +34,23 @@ export default function MineVaerkerPage() {
         .eq("user_id", user.id)
         .single();
 
-      if (!rh) { setData({ assignments: [], allAssignments: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
+      if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
 
       await linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId: rh.id, fullName: rh.full_name ?? "" }).catch(() => null);
 
       const { data: assignments } = await supabase
         .from("work_assignments")
-        .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
+        .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false });
 
-      const workIds = (assignments ?? []).map((a: any) => a.works?.id).filter(Boolean);
+      const { data: broadcasters } = await supabase
+        .from("broadcasters")
+        .select("name, logo_path")
+        .order("name", { ascending: true });
+
+      const assignmentRows = (assignments ?? []) as unknown as Assignment[];
+      const workIds = assignmentRows.map(a => a.works?.id).filter((id): id is string => Boolean(id));
       const { data: allAssignments } = workIds.length
         ? await supabase
             .from("work_assignments")
@@ -56,12 +66,15 @@ export default function MineVaerkerPage() {
         .not("work_id", "is", null);
 
       const contractedWorkIdSet = new Set(
-        (contractedWorkIds ?? []).map((c: any) => c.work_id)
+        ((contractedWorkIds ?? []) as ContractWorkIdRow[])
+          .map(c => c.work_id)
+          .filter((id): id is string => Boolean(id))
       );
 
       setData({
-        assignments: assignments ?? [],
-        allAssignments: allAssignments ?? [],
+        assignments: assignmentRows,
+        allAssignments: (allAssignments ?? []) as unknown as OtherAssignment[],
+        broadcasters: (broadcasters ?? []) as BroadcasterLogo[],
         rightsHolderId: rh.id,
         userName: rh.full_name ?? "",
         dfiPersonId: rh.dfi_person_id ?? null,
@@ -82,8 +95,9 @@ export default function MineVaerkerPage() {
 
   return (
     <MineVaerkerClient
-      initialAssignments={data.assignments as any}
-      allAssignments={data.allAssignments as any}
+      initialAssignments={data.assignments}
+      allAssignments={data.allAssignments}
+      broadcasters={data.broadcasters}
       rightsHolderId={data.rightsHolderId}
       userName={data.userName}
       dfiPersonId={data.dfiPersonId}
