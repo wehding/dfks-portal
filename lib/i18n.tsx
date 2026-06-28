@@ -9,6 +9,8 @@ const translations = {
         // Navigation
         "nav.portal": "Medlemsportal",
         "nav.admin": "Administration",
+        "nav.userSection": "Bruger",
+        "nav.adminSection": "Administrator",
         "nav.myWorks": "Mine Værker",
         "nav.myContracts": "Mine Kontrakter",
         "nav.economy": "Økonomi",
@@ -441,6 +443,8 @@ const translations = {
         // Navigation
         "nav.portal": "Member Portal",
         "nav.admin": "Administration",
+        "nav.userSection": "User",
+        "nav.adminSection": "Administrator",
         "nav.myWorks": "My Works",
         "nav.myContracts": "My Contracts",
         "nav.economy": "Economy",

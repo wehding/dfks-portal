@@ -20,6 +20,7 @@ import {
     Receipt,
     BookOpen,
     Scale,
+    Film,
     Library,
     Layers,
     UserCheck,
@@ -66,6 +67,14 @@ const ALL_NAV_ITEMS = [
     { key: "krediteringer",      href: "/admin/krediteringer",      icon: Award,       labelKey: "nav.credits"          },
     { key: "indbetalinger",      href: "/admin/indbetalinger",      icon: Receipt,     labelKey: "nav.producerPayments" },
     { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
+]
+
+const USER_NAV_ITEMS = [
+    { key: "mine-vaerker",        href: "/portal/mine-vaerker",        icon: Film,     labelKey: "nav.myWorks"        },
+    { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",     icon: FileText, labelKey: "nav.myContracts"    },
+    { key: "okonomi",             href: "/portal/okonomi",             icon: Wallet,   labelKey: "nav.economy"        },
+    { key: "portal-aftalelicens", href: "/portal/aftalelicens",        icon: Layers,   labelKey: "nav.aftalelicens"   },
+    { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
 
 const ALL_KEYS = ALL_NAV_ITEMS.map(i => i.key)
@@ -139,6 +148,10 @@ export default function AdminLayout({
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
+    const userNavItems = USER_NAV_ITEMS.map(item => ({
+        ...item,
+        label: t(item.labelKey as Parameters<typeof t>[0]),
+    }))
 
     return (
         <SidebarProvider>
@@ -158,6 +171,34 @@ export default function AdminLayout({
                 <SidebarContent>
                     <SidebarGroup>
                         <SidebarGroupContent>
+                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                {t("nav.userSection" as Parameters<typeof t>[0])}
+                            </div>
+                            <SidebarMenu>
+                                {userNavItems.map((item) => (
+                                    <SidebarMenuItem key={item.href}>
+                                        <SidebarMenuButton
+                                            asChild
+                                            isActive={pathname === item.href}
+                                        >
+                                            <Link href={item.href}>
+                                                <item.icon className="h-4 w-4" />
+                                                <span>{item.label}</span>
+                                            </Link>
+                                        </SidebarMenuButton>
+                                    </SidebarMenuItem>
+                                ))}
+                            </SidebarMenu>
+                        </SidebarGroupContent>
+                    </SidebarGroup>
+
+                    <Separator className="mx-4 my-2 w-auto" />
+
+                    <SidebarGroup>
+                        <SidebarGroupContent>
+                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                {t("nav.adminSection" as Parameters<typeof t>[0])}
+                            </div>
                             <SidebarMenu>
                                 {navItems.map((item) => (
                                     <SidebarMenuItem key={item.href}>
