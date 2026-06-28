@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
     "lint": "eslint"
   },
   "dependencies": {

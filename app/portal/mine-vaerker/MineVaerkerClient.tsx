@@ -40,10 +40,13 @@ type Work = {
   tmdb_id: number | string | null;
   poster_url: string | null;
   description: string | null;
+  work_production_numbers?: WorkProductionNumber[];
   work_change_requests?: ChangeRequest[];
 };
-type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
-type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null };
+export type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
+export type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null };
+type WorkProductionNumber = { tv_station: string | null; number: string | null };
+export type BroadcasterLogo = { name: string; logo_path: string | null };
 type WorkCorrectionForm = {
   title: string;
   type: string;
@@ -133,6 +136,7 @@ type ResultColumnDef = {
   getMeta: (x: SearchItem) => string;
   getPoster: (x: SearchItem) => string | null;
 };
+type SortValue = string | number;
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
@@ -253,6 +257,10 @@ function latestAdminComment(work: Work | null) {
   return adminRequestSummaries(work)[0]?.message ?? null;
 }
 
+function getWorkBroadcaster(work: Work | null) {
+  return (work?.work_production_numbers ?? []).find(item => item.number === "broadcast/stream")?.tv_station ?? null;
+}
+
 function pendingRequestLabel(work: Work | null) {
   return (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
 }
@@ -301,10 +309,11 @@ function Modal({ onClose, maxWidth = "max-w-xl", children }: { onClose: () => vo
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
+  initialAssignments, allAssignments, broadcasters, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
+  broadcasters: BroadcasterLogo[];
   rightsHolderId: string | null;
   userName: string;
   dfiPersonId: number | null;
@@ -312,6 +321,14 @@ export default function MineVaerkerClient({
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
+
+  const broadcasterLogoMap = React.useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const broadcaster of broadcasters) {
+      if (broadcaster.name && broadcaster.logo_path) map[broadcaster.name] = broadcaster.logo_path;
+    }
+    return map;
+  }, [broadcasters]);
 
   const coEditorMap = React.useMemo(() => {
     const map: Record<string, string[]> = {};
@@ -360,7 +377,7 @@ export default function MineVaerkerClient({
     })
     .sort((a, b) => {
       const wa = a.works, wb = b.works;
-      let av: any = "", bv: any = "";
+      let av: SortValue = "", bv: SortValue = "";
       if (sortKey === "date") { av = new Date(a.created_at ?? 0).getTime(); bv = new Date(b.created_at ?? 0).getTime(); }
       if (sortKey === "title") { av = wa?.title ?? ""; bv = wb?.title ?? ""; }
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
@@ -394,7 +411,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -428,8 +445,8 @@ export default function MineVaerkerClient({
           setSelected(prev => prev.filter(id => !res.deletedIds.includes(id)));
         }
       }
-    } catch (err: any) {
-      setMsg({ type: "error", text: err.message || t("common.genericError") });
+    } catch (err: unknown) {
+      setMsg({ type: "error", text: err instanceof Error ? err.message : t("common.genericError") });
     }
   };
 
@@ -564,6 +581,8 @@ export default function MineVaerkerClient({
           const hasContract = contractedWorkIds.includes(w.id);
           const adminComment = latestAdminComment(w);
           const pendingLabel = pendingRequestLabel(w);
+          const broadcaster = getWorkBroadcaster(w);
+          const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
           return (
             <React.Fragment key={a.id}>
             <div
@@ -588,7 +607,15 @@ export default function MineVaerkerClient({
                   )}
                 </div>
                 <div>
-                  <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                    {broadcasterLogo && (
+                      <span className="inline-flex h-6 max-w-20 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster ?? undefined}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
+                      </span>
+                    )}
+                  </div>
                   {w.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[260px]">{w.description}</p>}
                   {(pendingLabel || adminComment) && (
                     <p className="mt-1 max-w-[300px] truncate text-xs text-amber-700">
@@ -643,7 +670,15 @@ export default function MineVaerkerClient({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                        {broadcasterLogo && (
+                          <span className="inline-flex h-6 max-w-20 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster ?? undefined}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
+                          </span>
+                        )}
+                      </div>
                       <p className="mt-1 text-xs text-gray-500">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
                       {(pendingLabel || adminComment) && (
                         <p className="mt-1 text-xs text-amber-700">

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
+import { getDFIFilmDetails } from "@/app/actions/dfi";
+import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -18,6 +20,7 @@ type MemberWorkData = {
   genre?: string | null;
   description?: string | null;
   poster_url?: string | null;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type ProposedCoEditor = {
@@ -211,6 +214,19 @@ export async function addWorkForMember(params: {
 
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? existingTmdbId ?? null;
+  let dfiMetadata: DfiMetadata | null = null;
+
+  if (params.workData.dfi_id) {
+    try {
+      const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
+      if (details.success && details.film) {
+        dfiMetadata = details.film as DfiMetadata;
+        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+      }
+    } catch (e) {
+      console.error("DFI lookup error in member-works action:", e);
+    }
+  }
 
   // Hvis det er et DFI værk og vi ikke har en TMDB plakat/id endnu, så prøv at slå det op
   if (params.workData.dfi_id && !tmdbId) {
@@ -237,16 +253,18 @@ export async function addWorkForMember(params: {
         ...params.workData,
         poster_url: posterUrl,
         tmdb_id: tmdbId,
+        dfi_metadata: dfiMetadata,
       })
       .select("id")
       .single();
     if (error || !nw) return { success: false, error: error?.message ?? "Kunne ikke oprette værk" };
     workId = nw.id;
   } else {
-    // Opdater hvis der mangler plakat eller TMDB id
-    const updates: any = {};
+    // Opdater hvis der mangler plakat, TMDB id eller DFI metadata
+    const updates: Partial<MemberWorkData> = {};
     if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
     if (!existingTmdbId && tmdbId) updates.tmdb_id = tmdbId;
+    if (dfiMetadata) updates.dfi_metadata = dfiMetadata;
     if (Object.keys(updates).length > 0) {
       await db.from("works").update(updates).eq("id", workId);
     }
@@ -358,13 +376,44 @@ export async function addWorkForMemberWithApproval(params: {
   const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
   const coEditors = normalizeCoEditors(params.coEditors);
   const requiresApproval = params.overrideLocalMatch || similarWorks.length > 0 || coEditors.length > 0;
-  const posterUrl = params.workData.poster_url ?? await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  let dfiMetadata = params.workData.dfi_metadata ?? null;
+  let posterUrl = params.workData.poster_url ?? null;
+  let tmdbId = params.workData.tmdb_id ?? null;
+
+  if (params.workData.dfi_id && !dfiMetadata) {
+    try {
+      const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
+      if (details.success && details.film) {
+        dfiMetadata = details.film as DfiMetadata;
+        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+      }
+    } catch (error) {
+      console.error("DFI lookup error in addWorkForMemberWithApproval:", error);
+    }
+  }
+
+  if (params.workData.dfi_id && !tmdbId) {
+    try {
+      const match = await findTMDBMatch(params.workData.title, params.workData.year);
+      if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+    } catch (error) {
+      console.error("DFI TMDB match lookup error in addWorkForMemberWithApproval:", error);
+    }
+  }
+
+  posterUrl = posterUrl ?? await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  const enrichedWorkData = {
+    ...params.workData,
+    tmdb_id: tmdbId,
+    poster_url: posterUrl,
+    dfi_metadata: dfiMetadata,
+  };
 
   const insertPayload = {
     org_id: orgId,
     status: requiresApproval ? "til_godkendelse" : "godkendt",
-    ...params.workData,
-    poster_url: posterUrl,
+    ...enrichedWorkData,
   };
 
   const { data: work, error: workError } = await db
@@ -391,7 +440,7 @@ export async function addWorkForMemberWithApproval(params: {
       source: "Mine værker - oprettelse",
       proposedData: {
         kind: "creation",
-        workData: params.workData,
+        workData: enrichedWorkData,
         memberRole: params.role,
         coEditors,
         source: params.source,
@@ -470,8 +519,12 @@ export async function removeWorkAssignments(assignmentIds: string[], rightsHolde
         .eq("rights_holder_id", rightsHolderId)
         .limit(1);
 
+      const workRelation = (assignment as { works?: { title?: string } | { title?: string }[] | null }).works;
+      const workTitle = Array.isArray(workRelation) ? workRelation[0]?.title : workRelation?.title;
+
       if (contracts && contracts.length > 0) {
-        errors.push(`"${(assignment.works as any)?.title || 'Værket'}" har tilknyttede kontrakter.`);
+        const title = workTitle;
+        errors.push(`"${title || "Værket"}" har tilknyttede kontrakter.`);
         continue;
       }
 
@@ -482,12 +535,13 @@ export async function removeWorkAssignments(assignmentIds: string[], rightsHolde
         .eq("rights_holder_id", rightsHolderId);
 
       if (error) {
-        errors.push(`Fejl ved sletning af ${(assignment.works as any)?.title || 'værk'}: ${error.message}`);
+        const title = workTitle;
+        errors.push(`Fejl ved sletning af ${title || "værk"}: ${error.message}`);
       } else {
         deletedIds.push(id);
       }
-    } catch (e: any) {
-      errors.push(e.message);
+    } catch (e: unknown) {
+      errors.push(e instanceof Error ? e.message : "Ukendt fejl");
     }
   }
 

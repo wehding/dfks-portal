@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { findTMDBPoster } from "@/app/actions/tmdb";
+import type { DfiMetadata } from "@/lib/dfi-metadata";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -23,12 +24,14 @@ type AdminWorkData = WorkCorrectionData & {
   tmdb_id: number | null;
   poster_url: string | null;
   status: string;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type CreateWorkData = WorkCorrectionData & {
   dfi_id?: string | null;
   tmdb_id?: number | null;
   poster_url?: string | null;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type ProposedCoEditor = {
@@ -69,6 +72,7 @@ const ADMIN_EDITABLE_KEYS: (keyof AdminWorkData)[] = [
   "tmdb_id",
   "poster_url",
   "status",
+  "dfi_metadata",
 ];
 
 function cleanText(value: string | null | undefined) {
@@ -100,6 +104,7 @@ function normalizeAdminData(data: AdminWorkData): AdminWorkData {
     tmdb_id: data.tmdb_id,
     poster_url: cleanText(data.poster_url),
     status: cleanText(data.status) ?? "godkendt",
+    dfi_metadata: data.dfi_metadata ?? null,
   };
 }
 
@@ -480,6 +485,7 @@ export async function updateAdminWorkData(params: {
 
 export async function createAdminWork(params: {
   data: CreateWorkData;
+  workId?: string | null;
   rightsHolderId?: string | null;
   role?: string | null;
   sharePercent?: number | null;
@@ -498,7 +504,19 @@ export async function createAdminWork(params: {
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
 
-  if (params.data.dfi_id) {
+  if (params.workId) {
+    const { data } = await db
+      .from("works")
+      .select("id, poster_url")
+      .eq("id", params.workId)
+      .eq("org_id", orgId)
+      .maybeSingle();
+    if (data?.id) {
+      workId = data.id;
+      existingPosterUrl = data.poster_url;
+    }
+  }
+  if (!workId && params.data.dfi_id) {
     const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).maybeSingle();
     if (data?.id) {
       workId = data.id;
@@ -538,19 +556,26 @@ export async function createAdminWork(params: {
         dfi_id: cleanText(params.data.dfi_id),
         tmdb_id: params.data.tmdb_id ?? null,
         poster_url: posterUrl,
+        dfi_metadata: params.data.dfi_metadata ?? null,
         status: "godkendt",
       })
       .select("id")
       .single();
     if (error || !created?.id) throw new Error(error?.message ?? "Kunne ikke oprette værk.");
     workId = created.id;
-  } else if (!existingPosterUrl && posterUrl) {
-    const { error } = await db
-      .from("works")
-      .update({ poster_url: posterUrl })
-      .eq("id", workId)
-      .eq("org_id", orgId);
-    if (error) throw new Error(error.message);
+  } else {
+    // Opdater hvis der mangler plakat eller DFI metadata
+    const updates: Partial<CreateWorkData> = {};
+    if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
+    if (params.data.dfi_metadata) updates.dfi_metadata = params.data.dfi_metadata;
+    if (Object.keys(updates).length > 0) {
+      const { error } = await db
+        .from("works")
+        .update(updates)
+        .eq("id", workId)
+        .eq("org_id", orgId);
+      if (error) throw new Error(error.message);
+    }
   }
 
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");

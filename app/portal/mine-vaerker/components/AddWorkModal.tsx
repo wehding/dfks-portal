@@ -10,6 +10,7 @@ import { Modal } from "./Modal";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
+import { extractDfiPosterUrl, mapDfiWorkType } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -57,7 +58,25 @@ interface LocalWorkResult {
   tmdb_id: number | null;
   poster_url: string | null;
   description: string | null;
-  work_assignments: any[];
+  work_assignments: WorkAssignmentPreview[];
+}
+
+interface WorkAssignmentPreview {
+  id: string;
+  role?: string | null;
+  rights_holder_id?: string | null;
+  rettighedshavere?: {
+    id?: string | null;
+    full_name?: string | null;
+  } | null;
+}
+
+interface DfiPersonCredit {
+  TypeCode?: string | null;
+  Type?: string | null;
+  Function?: string | null;
+  Credit?: string | null;
+  Name?: string | null;
 }
 
 interface DfiSearchResult {
@@ -68,7 +87,7 @@ interface DfiSearchResult {
   Category?: string;
   Description?: string;
   Type?: string;
-  PersonCredits?: any[];
+  PersonCredits?: DfiPersonCredit[];
   Synopsis?: string;
   ShortSynopsis?: string;
   DanishTitle?: string;
@@ -89,13 +108,13 @@ type SearchItem = LocalWorkResult | DfiSearchResult | TmdbSearchResult;
 
 interface ResultColumnDef {
   label: string;
-  items: any[];
-  getKey: (item: any) => string;
-  isSelected: (item: any) => boolean;
-  onSelect: (item: any) => void;
-  getTitle: (item: any) => string;
-  getMeta: (item: any) => string;
-  getPoster: (item: any) => string | null;
+  items: SearchItem[];
+  getKey: (item: SearchItem) => string;
+  isSelected: (item: SearchItem) => boolean;
+  onSelect: (item: SearchItem) => void;
+  getTitle: (item: SearchItem) => string;
+  getMeta: (item: SearchItem) => string;
+  getPoster: (item: SearchItem) => string | null;
 }
 
 interface AddWorkModalProps {
@@ -124,6 +143,19 @@ function emptyCoEditor(): CoEditorDraft {
 
 function displayRole(role: string | null | undefined) {
   return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
+}
+
+function searchItemTitle(item: SearchItem | null) {
+  if (!item) return "";
+  if ("Title" in item) {
+    const dfiItem = item as DfiSearchResult;
+    return dfiItem.Title || dfiItem.DanishTitle || "";
+  }
+  if ("media_type" in item || "name" in item) {
+    const tmdbItem = item as TmdbSearchResult;
+    return tmdbItem.title || tmdbItem.name || "";
+  }
+  return (item as LocalWorkResult).title;
 }
 
 function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
@@ -199,7 +231,7 @@ export function AddWorkModal({
   const [localResults, setLocalResults]       = useState<LocalWorkResult[]>([]);
   const [dfiResults, setDfiResults]           = useState<DfiSearchResult[]>([]);
   const [tmdbResults, setTmdbResults]         = useState<TmdbSearchResult[]>([]);
-  const [pickedResult, setPickedResult]       = useState<any>(null);
+  const [pickedResult, setPickedResult]       = useState<SearchItem | null>(null);
   const [pickedSource, setPickedSource]       = useState<"local" | "dfi" | "tmdb" | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
   const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
@@ -283,14 +315,21 @@ export function AddWorkModal({
     }
   };
 
+  const closeAfterSuccess = async () => {
+    await reloadAssignments();
+    resetAddState();
+    onClose();
+  };
+
   const handleAddWork = async () => {
     if ((!manualMode && (!pickedResult || !pickedSource)) || !rightsHolderId) return;
     setIsSaving(true);
     try {
       if (pickedSource === "local" && pickedResult) {
+        const localResult = pickedResult as LocalWorkResult;
         const res = await linkExistingWorkForMember({
           rightsHolderId,
-          workId: pickedResult.id,
+          workId: localResult.id,
           role: addRole,
           comment: addComment,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
@@ -300,8 +339,7 @@ export function AddWorkModal({
           res.pending ? t("works.addedPending") : t("works.added"),
           true
         );
-        await reloadAssignments();
-        onClose();
+        await closeAfterSuccess();
         return;
       }
 
@@ -325,25 +363,15 @@ export function AddWorkModal({
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
-        await reloadAssignments();
-        onClose();
+        await closeAfterSuccess();
         return;
       }
 
       if (pickedSource === "dfi" && pickedResult) {
-        const det = await getDFIFilmDetails(pickedResult.Id);
-        const film = det.success ? (det as any).film : pickedResult;
-        const combined = ((film.Category || "") + " " + (film.Type || "")).toLowerCase();
-        const type =
-          combined.includes("dokumentar") && combined.includes("serie")
-            ? "dokumentar-serie"
-            : combined.includes("dokumentar")
-            ? "dokumentarfilm"
-            : combined.includes("serie") || combined.includes("tv-")
-            ? "tv-serie"
-            : combined.includes("kort")
-            ? "kortfilm"
-            : "spillefilm";
+        const dfiResult = pickedResult as DfiSearchResult;
+        const det = await getDFIFilmDetails(dfiResult.Id);
+        const film = (det.success ? (det as { film?: DfiSearchResult }).film : dfiResult) ?? dfiResult;
+        const type = mapDfiWorkType(film.Category, film.Type);
         const res = await addWorkForMemberWithApproval({
           rightsHolderId,
           role: addRole,
@@ -352,23 +380,24 @@ export function AddWorkModal({
           overrideLocalMatch: localResults.length > 0,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
           workData: {
-            dfi_id: String(pickedResult.Id),
+            dfi_id: String(dfiResult.Id),
             title: film.Title || film.DanishTitle || "Ukendt",
             type,
             year: film.ProductionYear || film.ReleaseYear || null,
             description: film.Synopsis || film.ShortSynopsis || null,
+            poster_url: extractDfiPosterUrl(film),
           },
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
-        await reloadAssignments();
-        onClose();
+        await closeAfterSuccess();
         return;
       }
 
       if (pickedSource === "tmdb" && pickedResult) {
-        const det = await getTMDBWorkDetails(pickedResult.id, pickedResult.media_type || "movie");
-        const d = det.success ? (det as { details?: TmdbSearchResult }).details ?? pickedResult : pickedResult;
+        const tmdbResult = pickedResult as TmdbSearchResult;
+        const det = await getTMDBWorkDetails(tmdbResult.id, tmdbResult.media_type || "movie");
+        const d = det.success ? (det as { details?: TmdbSearchResult }).details ?? tmdbResult : tmdbResult;
         const title = d.title || d.name || "Ukendt";
         const year = d.release_date
           ? parseInt(d.release_date.substring(0, 4))
@@ -383,9 +412,9 @@ export function AddWorkModal({
           overrideLocalMatch: localResults.length > 0,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
           workData: {
-            tmdb_id: pickedResult.id,
+            tmdb_id: tmdbResult.id,
             title,
-            type: pickedResult.media_type === "tv" ? "tv-serie" : "spillefilm",
+            type: tmdbResult.media_type === "tv" ? "tv-serie" : "spillefilm",
             year,
             description: d.overview || null,
             poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null,
@@ -393,12 +422,11 @@ export function AddWorkModal({
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
-        await reloadAssignments();
-        onClose();
+        await closeAfterSuccess();
         return;
       }
-    } catch (err: any) {
-      onWorkAdded(err.message || t("common.genericError"), false);
+    } catch (err: unknown) {
+      onWorkAdded(err instanceof Error ? err.message : t("common.genericError"), false);
     } finally {
       setIsSaving(false);
     }
@@ -409,10 +437,10 @@ export function AddWorkModal({
     (!manualMode &&
       pickedResult &&
       (pickedSource === "local"
-        ? pickedResult.type === "tv-serie" || pickedResult.type === "dokumentar-serie"
+        ? (pickedResult as LocalWorkResult).type === "tv-serie" || (pickedResult as LocalWorkResult).type === "dokumentar-serie"
         : pickedSource === "dfi"
-        ? (pickedResult.Type || pickedResult.Category || "").toLowerCase().includes("serie")
-        : pickedResult.media_type === "tv"));
+        ? ((pickedResult as DfiSearchResult).Type || (pickedResult as DfiSearchResult).Category || "").toLowerCase().includes("serie")
+        : (pickedResult as TmdbSearchResult).media_type === "tv"));
 
   if (!isOpen) return null;
 
@@ -549,7 +577,7 @@ export function AddWorkModal({
           <p className="mb-2 text-sm font-semibold text-amber-900">{t("works.possibleExisting")}</p>
           <div className="space-y-1.5">
             {localResults.map(work => {
-              const sel = pickedSource === "local" && pickedResult?.id === work.id;
+              const sel = pickedSource === "local" && (pickedResult as LocalWorkResult | null)?.id === work.id;
               return (
                 <button
                   key={work.id}
@@ -587,11 +615,11 @@ export function AddWorkModal({
             {
               label: `DFI (${dfiResults.length})`,
               items: dfiResults,
-              getKey: (x: any) => String((x as DfiSearchResult).Id),
-              isSelected: (x: any) => pickedResult?.Id === (x as DfiSearchResult).Id && pickedSource === "dfi",
-              onSelect: (x: any) => pickDfiResult(x as DfiSearchResult),
-              getTitle: (x: any) => (x as DfiSearchResult).Title ?? "",
-              getMeta: (x: any) => {
+              getKey: (x: SearchItem) => String((x as DfiSearchResult).Id),
+              isSelected: (x: SearchItem) => (pickedResult as DfiSearchResult | null)?.Id === (x as DfiSearchResult).Id && pickedSource === "dfi",
+              onSelect: (x: SearchItem) => pickDfiResult(x as DfiSearchResult),
+              getTitle: (x: SearchItem) => (x as DfiSearchResult).Title ?? "",
+              getMeta: (x: SearchItem) => {
                 const f = x as DfiSearchResult;
                 return `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`;
               },
@@ -600,25 +628,25 @@ export function AddWorkModal({
             {
               label: `TMDB (${tmdbResults.length})`,
               items: tmdbResults,
-              getKey: (x: any) => String((x as TmdbSearchResult).id),
-              isSelected: (x: any) => pickedResult?.id === (x as TmdbSearchResult).id && pickedSource === "tmdb",
-              onSelect: (x: any) => {
+              getKey: (x: SearchItem) => String((x as TmdbSearchResult).id),
+              isSelected: (x: SearchItem) => (pickedResult as TmdbSearchResult | null)?.id === (x as TmdbSearchResult).id && pickedSource === "tmdb",
+              onSelect: (x: SearchItem) => {
                 const i = x as TmdbSearchResult;
                 setPickedResult(i);
                 setPickedSource("tmdb");
                 setAddCoEditors([]);
               },
-              getTitle: (x: any) => {
+              getTitle: (x: SearchItem) => {
                 const i = x as TmdbSearchResult;
                 return i.title || i.name || "";
               },
-              getMeta: (x: any) => {
+              getMeta: (x: SearchItem) => {
                 const i = x as TmdbSearchResult;
                 return `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${
                   i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)
                 }`;
               },
-              getPoster: (x: any) => {
+              getPoster: (x: SearchItem) => {
                 const i = x as TmdbSearchResult;
                 return i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null;
               },
@@ -729,7 +757,7 @@ export function AddWorkModal({
               <strong className="text-gray-900">
                 {manualMode
                   ? manualWork.title
-                  : pickedResult.Title || pickedResult.title || pickedResult.name || pickedResult.title}
+                  : searchItemTitle(pickedResult)}
               </strong>
             </p>
             <Button onClick={handleAddWork} disabled={isSaving || (manualMode && !manualWork.title.trim())} className="w-full gap-2 sm:w-auto">

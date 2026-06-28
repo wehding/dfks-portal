@@ -34,6 +34,7 @@ import {
 } from "@/app/actions/work-management";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
 import { getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
+import { extractDfiPosterUrl, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -44,6 +45,8 @@ const WORK_TYPES = [
   { value: "dokumentar-serie", label: "Dokumentar-serie" },
   { value: "dokumentarfilm", label: "Dokumentarfilm" },
 ];
+
+const WORK_TYPE_VALUES = WORK_TYPES.map(type => type.value) as DfiWorkType[];
 
 const CREDIT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 const BROADCASTERS = [
@@ -69,6 +72,35 @@ const BROADCASTERS = [
 ];
 const NO_BROADCASTER = "__none__";
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
+
+function dfiText(metadata: DfiMetadata | null | undefined, key: string) {
+  const value = metadata?.[key];
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  return "";
+}
+
+function dfiListText(metadata: DfiMetadata | null | undefined, key: string) {
+  const value = metadata?.[key];
+  if (Array.isArray(value)) return value.map(item => String(item)).join(", ");
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function dfiRecord(metadata: DfiMetadata | null | undefined, key: string) {
+  const value = metadata?.[key];
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function dfiArray(metadata: DfiMetadata | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function workTypeFallback(value: string | null | undefined): DfiWorkType {
+  return WORK_TYPE_VALUES.includes(value as DfiWorkType) ? value as DfiWorkType : "spillefilm";
+}
 
 type SortKey = "title" | "type" | "year" | "data" | "broadcaster" | "status";
 type SortDir = "asc" | "desc";
@@ -130,6 +162,7 @@ type WorkRow = {
   tmdb_id: string | number | null;
   description: string | null;
   poster_url: string | null;
+  dfi_metadata?: DfiMetadata | null;
   work_change_requests?: ChangeRequest[];
   contracts?: ContractLink[];
   work_assignments?: WorkAssignment[];
@@ -149,6 +182,7 @@ type WorkForm = {
   poster_url: string;
   status: string;
   broadcaster: string;
+  dfi_metadata?: DfiMetadata | null;
 };
 
 type AddWorkForm = {
@@ -172,6 +206,19 @@ type AssignmentDraft = {
 };
 
 type SearchResult = Record<string, unknown>;
+type AdminCreateWorkData = {
+  title: string;
+  type: string;
+  year: number | null;
+  duration_minutes: number | null;
+  episode_count: number | null;
+  genre: string | null;
+  description: null;
+  dfi_id: string | null;
+  tmdb_id: number | null;
+  poster_url: string | null;
+  dfi_metadata: DfiMetadata | null;
+};
 
 const STATUS_LABELS: Record<string, string> = {
   til_godkendelse: "Til godkendelse",
@@ -354,6 +401,7 @@ function toForm(work: WorkRow): WorkForm {
     poster_url: work.poster_url ?? "",
     status: displayStatus(work),
     broadcaster: getWorkBroadcaster(work) ?? NO_BROADCASTER,
+    dfi_metadata: work.dfi_metadata ?? null,
   };
 }
 
@@ -425,11 +473,12 @@ export default function VaerksadministrationPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
   const [addForm, setAddForm] = useState<AddWorkForm>(defaultAddForm);
-  const [addSource, setAddSource] = useState<"manual" | "dfi" | "tmdb">("manual");
+  const [addSource, setAddSource] = useState<"manual" | "local" | "dfi" | "tmdb">("manual");
+  const [localResults, setLocalResults] = useState<SearchResult[]>([]);
   const [dfiResults, setDfiResults] = useState<SearchResult[]>([]);
   const [tmdbResults, setTmdbResults] = useState<SearchResult[]>([]);
   const [pickedResult, setPickedResult] = useState<SearchResult | null>(null);
-  const [pickedSource, setPickedSource] = useState<"dfi" | "tmdb" | null>(null);
+  const [pickedSource, setPickedSource] = useState<"local" | "dfi" | "tmdb" | null>(null);
   const [isSearchingAdd, setIsSearchingAdd] = useState(false);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
   const [newAssignment, setNewAssignment] = useState<AssignmentDraft>({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
@@ -591,6 +640,20 @@ export default function VaerksadministrationPage() {
     setEditTmdbResults([]);
   };
 
+  const updateDfiMetaField = (key: string, value: unknown) => {
+    setEditForm(prev => {
+      if (!prev) return prev;
+      const currentMeta = prev.dfi_metadata || {};
+      return {
+        ...prev,
+        dfi_metadata: {
+          ...currentMeta,
+          [key]: value
+        }
+      };
+    });
+  };
+
   const handleSaveWork = async () => {
     if (!editing || !editForm) return;
     setSaving(true);
@@ -609,6 +672,7 @@ export default function VaerksadministrationPage() {
           tmdb_id: nullableNumber(editForm.tmdb_id),
           poster_url: editForm.poster_url || null,
           status: editForm.status,
+          dfi_metadata: editForm.dfi_metadata || null,
         },
         broadcaster: editForm.broadcaster === NO_BROADCASTER ? null : editForm.broadcaster,
         assignments: [
@@ -754,10 +818,37 @@ export default function VaerksadministrationPage() {
   const handleAddSearch = async () => {
     if (!addQuery.trim()) return;
     setIsSearchingAdd(true);
+    setLocalResults([]);
     setDfiResults([]);
     setTmdbResults([]);
     setPickedResult(null);
     setPickedSource(null);
+    const normalizedQuery = addQuery.trim().toLowerCase();
+    const localMatches = works
+      .filter(work =>
+        work.title?.toLowerCase().includes(normalizedQuery) ||
+        String(work.year ?? "").includes(normalizedQuery) ||
+        work.dfi_id?.toLowerCase().includes(normalizedQuery) ||
+        String(work.tmdb_id ?? "").includes(normalizedQuery)
+      )
+      .slice(0, 8)
+      .map(work => ({ ...work }));
+    setLocalResults(localMatches);
+    if (localMatches.length > 0) {
+      const first = localMatches[0];
+      setPickedResult(first);
+      setPickedSource("local");
+      setAddSource("local");
+      setAddForm(form => ({
+        ...form,
+        title: textValue(first.title),
+        type: textValue(first.type) || form.type,
+        year: first.year ? String(first.year) : "",
+        duration_minutes: first.duration_minutes ? String(first.duration_minutes) : "",
+        episode_count: first.episode_count ? String(first.episode_count) : "",
+        genre: textValue(first.genre),
+      }));
+    }
     try {
       const [dfi, tmdb] = await Promise.all([
         searchDFIFilms(addQuery).catch(() => ({ success: false, results: [] })),
@@ -791,26 +882,18 @@ export default function VaerksadministrationPage() {
 
   const applyDfiToEdit = async (result: SearchResult) => {
     if (!editForm) return;
-    const combined = `${textValue(result.Category)} ${textValue(result.Type)}`.toLowerCase();
-    const type = combined.includes("dokumentar") && combined.includes("serie")
-      ? "dokumentar-serie"
-      : combined.includes("dokumentar")
-        ? "dokumentarfilm"
-        : combined.includes("serie") || combined.includes("tv-")
-          ? "tv-serie"
-          : combined.includes("kort")
-            ? "kortfilm"
-            : "spillefilm";
 
     setSaving(true);
     try {
       const details = await getDFIFilmDetails(Number(result.Id));
       const film = (details.success ? (details as { film?: SearchResult }).film : result) ?? result;
+      const type = mapDfiWorkType(film.Category, film.Type, workTypeFallback(editForm.type));
       const nextValues: Partial<WorkForm> = {
         title: textValue(film.Title) || textValue(film.DanishTitle) || editForm.title,
         type,
         year: film.ProductionYear || film.ReleaseYear ? String(film.ProductionYear || film.ReleaseYear) : editForm.year,
         dfi_id: String(result.Id),
+        poster_url: extractDfiPosterUrl(film) ?? editForm.poster_url,
       };
       setImportPreview({ source: "DFI", rows: importDiffRows(editForm, nextValues) });
       setEditForm({
@@ -853,20 +936,26 @@ export default function VaerksadministrationPage() {
     }
   };
 
+  const pickLocalResult = (result: SearchResult) => {
+    setPickedResult(result);
+    setPickedSource("local");
+    setAddSource("local");
+    setAddForm(form => ({
+      ...form,
+      title: textValue(result.title),
+      type: textValue(result.type) || form.type,
+      year: result.year ? String(result.year) : "",
+      duration_minutes: result.duration_minutes ? String(result.duration_minutes) : "",
+      episode_count: result.episode_count ? String(result.episode_count) : "",
+      genre: textValue(result.genre),
+    }));
+  };
+
   const pickDfiResult = (result: SearchResult) => {
     setPickedResult(result);
     setPickedSource("dfi");
     setAddSource("dfi");
-    const combined = `${textValue(result.Category)} ${textValue(result.Type)}`.toLowerCase();
-    const type = combined.includes("dokumentar") && combined.includes("serie")
-      ? "dokumentar-serie"
-      : combined.includes("dokumentar")
-        ? "dokumentarfilm"
-        : combined.includes("serie") || combined.includes("tv-")
-          ? "tv-serie"
-          : combined.includes("kort")
-            ? "kortfilm"
-            : "spillefilm";
+    const type = mapDfiWorkType(result.Category, result.Type);
     setAddForm(form => ({
       ...form,
       title: textValue(result.Title) || textValue(result.DanishTitle),
@@ -893,7 +982,7 @@ export default function VaerksadministrationPage() {
   const handleCreateWork = async () => {
     setSaving(true);
     try {
-      let data = {
+      let data: AdminCreateWorkData = {
         title: addForm.title,
         type: addForm.type,
         year: nullableNumber(addForm.year),
@@ -904,6 +993,7 @@ export default function VaerksadministrationPage() {
         dfi_id: null as string | null,
         tmdb_id: null as number | null,
         poster_url: null as string | null,
+        dfi_metadata: null,
       };
 
       if (pickedSource === "dfi" && pickedResult) {
@@ -914,6 +1004,8 @@ export default function VaerksadministrationPage() {
           title: textValue(film.Title) || textValue(film.DanishTitle) || data.title,
           year: numberValue(film.ProductionYear) || numberValue(film.ReleaseYear) || data.year,
           dfi_id: String(pickedResult.Id),
+          poster_url: extractDfiPosterUrl(film),
+          dfi_metadata: film as DfiMetadata,
         };
       }
 
@@ -932,6 +1024,7 @@ export default function VaerksadministrationPage() {
       }
 
       await createAdminWork({
+        workId: pickedSource === "local" && pickedResult ? textValue(pickedResult.id) : null,
         data,
         rightsHolderId: addForm.rightsHolderId || null,
         role: addForm.role || null,
@@ -945,6 +1038,7 @@ export default function VaerksadministrationPage() {
       setAddSource("manual");
       setPickedResult(null);
       setPickedSource(null);
+      setLocalResults([]);
       setDfiResults([]);
       setTmdbResults([]);
       await load();
@@ -1269,7 +1363,158 @@ export default function VaerksadministrationPage() {
                         </SelectContent>
                       </Select>
                     </Field>
+
+                    {editForm.dfi_id && !editForm.dfi_metadata && (
+                      <div className="col-span-full mt-2 rounded border border-dashed p-3 flex items-center justify-between text-sm bg-muted/40">
+                        <span className="text-muted-foreground">Der er ikke hentet udvidet DFI metadata for dette værk.</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            setSaving(true);
+                            try {
+                              const res = await getDFIFilmDetails(Number(editForm.dfi_id));
+                              if (res.success && res.film) {
+                                setEditForm({ ...editForm, dfi_metadata: res.film });
+                                setNotice("DFI metadata hentet.");
+                              } else {
+                                setNotice("Kunne ikke hente DFI metadata.");
+                              }
+                            } catch {
+                              setNotice("Fejl ved hentning af DFI data.");
+                            } finally {
+                              setSaving(false);
+                            }
+                          }}
+                          disabled={saving}
+                        >
+                          Hent DFI data
+                        </Button>
+                      </div>
+                    )}
+
+                    {editForm.dfi_metadata && (
+                      <>
+                        <Field label="Original Titel (DFI)">
+                          <Input
+                            value={dfiText(editForm.dfi_metadata, "OriginalTitle")}
+                            onChange={e => updateDfiMetaField("OriginalTitle", e.target.value)}
+                          />
+                        </Field>
+                        <Field label="Alternative Titler (kommasepareret)">
+                          <Input
+                            value={dfiListText(editForm.dfi_metadata, "AltTitle")}
+                            onChange={e =>
+                              updateDfiMetaField(
+                                "AltTitle",
+                                e.target.value.split(",").map((t: string) => t.trim()).filter(Boolean)
+                              )
+                            }
+                          />
+                        </Field>
+                        <Field label="Udgivelsesår Slut (DFI)">
+                          <Input
+                            type="number"
+                            value={dfiText(editForm.dfi_metadata, "ReleaseYearEnd")}
+                            onChange={e => updateDfiMetaField("ReleaseYearEnd", parseInt(e.target.value) || null)}
+                          />
+                        </Field>
+                        <Field label="Spilletid (DFI minutter)">
+                          <Input
+                            type="number"
+                            value={dfiText(editForm.dfi_metadata, "LengthInMin")}
+                            onChange={e => updateDfiMetaField("LengthInMin", parseInt(e.target.value) || null)}
+                          />
+                        </Field>
+                        <Field label="Genre (DFI)">
+                          <Input
+                            value={dfiText(editForm.dfi_metadata, "Genre")}
+                            onChange={e => updateDfiMetaField("Genre", e.target.value)}
+                          />
+                        </Field>
+                      </>
+                    )}
                   </div>
+
+                  {editForm.dfi_metadata && (
+                    <div className="mt-5 space-y-4 border-t pt-4">
+                      {/* Checkboxes for fil status */}
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">DFI fil-tilgængelighed</Label>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 text-sm">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!editForm.dfi_metadata.HasPoster}
+                              onChange={e => updateDfiMetaField("HasPoster", e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Has Poster</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!editForm.dfi_metadata.HasStills}
+                              onChange={e => updateDfiMetaField("HasStills", e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Has Stills</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!editForm.dfi_metadata.HasVideo}
+                              onChange={e => updateDfiMetaField("HasVideo", e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Has Video</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!editForm.dfi_metadata.HasManus}
+                              onChange={e => updateDfiMetaField("HasManus", e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Has Manus</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              checked={!!editForm.dfi_metadata.HasAdditionalData}
+                              onChange={e => updateDfiMetaField("HasAdditionalData", e.target.checked)}
+                              className="h-4 w-4"
+                            />
+                            <span>Has Add. Data</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Parent / Children seriehierarki */}
+                      {(dfiRecord(editForm.dfi_metadata, "Parent") || dfiArray(editForm.dfi_metadata, "Children").length > 0) && (
+                        <div className="grid gap-4 sm:grid-cols-2 text-sm bg-muted/40 rounded border p-3 mt-3">
+                          {dfiRecord(editForm.dfi_metadata, "Parent") && (
+                            <div>
+                              <p className="font-semibold text-muted-foreground">Tilhører serien (Parent)</p>
+                              <p className="mt-0.5 font-medium">
+                                {String(dfiRecord(editForm.dfi_metadata, "Parent")?.Title || "Ukendt serie")} (DFI ID:{" "}
+                                {String(dfiRecord(editForm.dfi_metadata, "Parent")?.Id || "-")})
+                              </p>
+                            </div>
+                          )}
+                          {dfiArray(editForm.dfi_metadata, "Children").length > 0 && (
+                            <div>
+                              <p className="font-semibold text-muted-foreground">Underværker (Children afsnit)</p>
+                              <p className="mt-0.5 font-medium">
+                                Serie med {dfiArray(editForm.dfi_metadata, "Children").length} registrerede afsnit hos DFI.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </InfoPanel>
                 <InfoPanel title="Rettighedshavere">
                   {(editing.work_assignments ?? []).length === 0 ? (
@@ -1431,15 +1676,15 @@ export default function VaerksadministrationPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={addOpen} onOpenChange={open => { setAddOpen(open); if (!open) { setPickedResult(null); setPickedSource(null); } }}>
+      <Dialog open={addOpen} onOpenChange={open => { setAddOpen(open); if (!open) { setPickedResult(null); setPickedSource(null); setLocalResults([]); } }}>
         <DialogContent className="max-h-[92vh] sm:max-w-5xl md:max-w-5xl lg:max-w-5xl xl:max-w-5xl overflow-y-auto">
           <DialogHeader><DialogTitle>Tilføj værk</DialogTitle></DialogHeader>
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
             <div className="space-y-4">
-              <InfoPanel title="Søg i DFI og TMDB">
+              <InfoPanel title="Søg i lokal database, DFI og TMDB">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
-                    placeholder="Søg titel i DFI og TMDB..."
+                    placeholder="Søg titel i lokal database, DFI og TMDB..."
                     value={addQuery}
                     onChange={e => setAddQuery(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") handleAddSearch(); }}
@@ -1449,8 +1694,29 @@ export default function VaerksadministrationPage() {
                     Søg
                   </Button>
                 </div>
-                {(dfiResults.length > 0 || tmdbResults.length > 0) && (
-                  <div className="grid gap-4 md:grid-cols-2">
+                {localResults.length > 0 && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div>
+                        <p className="font-medium">Titlen findes allerede i databasen.</p>
+                        <p className="mt-1 text-xs">Vælg det lokale værk, hvis det er samme titel. Hvis du vælger DFI eller TMDB i stedet, kan der opstå dubletter.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {(localResults.length > 0 || dfiResults.length > 0 || tmdbResults.length > 0) && (
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <SearchColumn
+                      title={`Lokal database (${localResults.length})`}
+                      items={localResults}
+                      selected={pickedSource === "local" ? pickedResult : null}
+                      getKey={item => String(item.id)}
+                      getTitle={item => textValue(item.title) || "Ukendt"}
+                      getMeta={item => `${item.year || "-"} · ${textValue(item.type) || "-"}`}
+                      getPoster={item => posterSrc(textValue(item.poster_url))}
+                      onSelect={pickLocalResult}
+                    />
                     <SearchColumn
                       title={`DFI (${dfiResults.length})`}
                       items={dfiResults}
@@ -1533,7 +1799,7 @@ export default function VaerksadministrationPage() {
                   <Input inputMode="numeric" maxLength={3} className="w-20" value={addForm.sharePercent} onChange={e => setAddForm({ ...addForm, sharePercent: e.target.value })} />
                 </Field>
                 <p className="text-xs text-muted-foreground">
-                  Manuel oprettelse gemmer ikke poster-url. Poster kommer kun med, når værket vælges fra TMDB.
+                  Manuel oprettelse gemmer ikke poster-url. Poster hentes fra DFI eller TMDB og indtastes ikke manuelt.
                 </p>
               </InfoPanel>
             </div>

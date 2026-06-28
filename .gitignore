@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 config/ai-keys.json
+
+# supabase (lokal CLI-state)
+supabase/.temp/
