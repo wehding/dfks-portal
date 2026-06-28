@@ -1,6 +1,9 @@
 "use server";
 
 type TMDBSearchItem = {
+  id: number;
+  title?: string;
+  name?: string;
   media_type?: string;
   poster_path?: string | null;
   release_date?: string | null;

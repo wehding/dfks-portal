@@ -135,10 +135,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { toast.error("Ikke logget ind"); setSaving(false); return; }
 
-      const { data: orgRow } = await supabase.from("org_affiliations").select("org_id").eq("rights_holder_id",
-        (await supabase.from("rettighedshavere").select("id").eq("user_id", user.id).single()).data?.id ?? ""
-      ).single();
-      const orgId = orgRow?.org_id ?? DFKS_ORG_ID;
+      const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+      const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
 
       const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
       if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); setSaving(false); return; }
