@@ -40,21 +40,8 @@ Når Codex laver en PR, skal beskrivelsen altid indeholde:
 - Hvad er ændret?
 - Hvorfor er det ændret?
 - Hvordan er det testet?
-- Er der noget Martin skal reviewe?
 
 PR'er bør som udgangspunkt oprettes som kladder, indtil brugeren siger, at de er klar til review.
-
-## Martin-review
-
-Spørg Martin eller markér tydeligt i PR'en, hvis ændringen berører:
-
-- juridiske regler
-- royaltysatser
-- overenskomstlogik
-- kontrakttyper
-- AI-prompts med domæneviden
-- databasearkitektur
-- modulernes formål og adskillelse
 
 ## Før push
 
@@ -64,4 +51,3 @@ Før Codex foreslår eller udfører push:
 2. Bekræft at arbejdet ligger på en sidebranch.
 3. Undgå push direkte til `master`.
 4. Foreslå PR mod `master`.
-
