@@ -363,13 +363,12 @@ export async function fetchAdminBroadcasters() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("broadcasters")
-    .select("name")
+    .select("name, logo_path")
     .order("name", { ascending: true });
 
   if (error) throw new Error(error.message);
   const broadcasters = (data ?? [])
-    .map(row => row.name)
-    .filter((name): name is string => Boolean(name));
+    .filter((row): row is { name: string; logo_path: string | null } => Boolean(row.name));
 
   return { success: true, broadcasters };
 }

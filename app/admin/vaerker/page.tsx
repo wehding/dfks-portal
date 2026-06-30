@@ -73,6 +73,8 @@ const BROADCASTERS = [
 ];
 const NO_BROADCASTER = "__none__";
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
+type BroadcasterOption = { name: string; logo_path: string | null };
+const FALLBACK_BROADCASTER_OPTIONS: BroadcasterOption[] = BROADCASTERS.map(name => ({ name, logo_path: null }));
 
 function dfiText(metadata: DfiMetadata | null | undefined, key: string) {
   const value = metadata?.[key];
@@ -457,7 +459,7 @@ function defaultAddForm(): AddWorkForm {
 export default function VaerksadministrationPage() {
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
-  const [broadcasterOptions, setBroadcasterOptions] = useState<string[]>(BROADCASTERS);
+  const [broadcasterOptions, setBroadcasterOptions] = useState<BroadcasterOption[]>(FALLBACK_BROADCASTER_OPTIONS);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -509,7 +511,7 @@ export default function VaerksadministrationPage() {
       try {
         const broadcastersRes = await fetchAdminBroadcasters();
         if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
-          setBroadcasterOptions(broadcastersRes.broadcasters);
+          setBroadcasterOptions(broadcastersRes.broadcasters as BroadcasterOption[]);
         }
       } catch (broadcastersErr: unknown) {
         setNotice(errorMessage(broadcastersErr, "Kunne ikke hente broadcaster-listen fra databasen."));
@@ -1369,7 +1371,17 @@ export default function VaerksadministrationPage() {
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                          {broadcasterOptions.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                          {broadcasterOptions.map(broadcaster => (
+                            <SelectItem key={broadcaster.name} value={broadcaster.name}>
+                              <span className="flex items-center gap-2">
+                                {broadcaster.logo_path && (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
+                                )}
+                                <span>{broadcaster.name}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </Field>
@@ -1778,7 +1790,17 @@ export default function VaerksadministrationPage() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                        {broadcasterOptions.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                        {broadcasterOptions.map(broadcaster => (
+                          <SelectItem key={broadcaster.name} value={broadcaster.name}>
+                            <span className="flex items-center gap-2">
+                              {broadcaster.logo_path && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
+                              )}
+                              <span>{broadcaster.name}</span>
+                            </span>
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </Field>
