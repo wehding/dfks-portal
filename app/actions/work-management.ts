@@ -355,6 +355,25 @@ export async function fetchAdminRightsHolders() {
   return { success: true, rightsHolders };
 }
 
+export async function fetchAdminBroadcasters() {
+  const { supabase } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("broadcasters")
+    .select("name")
+    .order("name", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  const broadcasters = (data ?? [])
+    .map(row => row.name)
+    .filter((name): name is string => Boolean(name));
+
+  return { success: true, broadcasters };
+}
+
 export async function fetchPendingWorkReviewCount() {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);

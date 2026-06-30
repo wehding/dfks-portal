@@ -26,6 +26,7 @@ import {
   archiveAdminWorks,
   approveAdminWorks,
   createAdminWork,
+  fetchAdminBroadcasters,
   fetchAdminRightsHolders,
   fetchAdminWorksForReview,
   mergeAdminWorks,
@@ -456,6 +457,7 @@ function defaultAddForm(): AddWorkForm {
 export default function VaerksadministrationPage() {
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
+  const [broadcasterOptions, setBroadcasterOptions] = useState<string[]>(BROADCASTERS);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -503,6 +505,14 @@ export default function VaerksadministrationPage() {
       } catch (rightsErr: unknown) {
         setRightsHolders([]);
         setNotice(errorMessage(rightsErr, "Kunne ikke hente rettighedshavere, men værkerne er indlæst."));
+      }
+      try {
+        const broadcastersRes = await fetchAdminBroadcasters();
+        if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
+          setBroadcasterOptions(broadcastersRes.broadcasters);
+        }
+      } catch (broadcastersErr: unknown) {
+        setNotice(errorMessage(broadcastersErr, "Kunne ikke hente broadcaster-listen fra databasen."));
       }
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente værker."));
@@ -1359,7 +1369,7 @@ export default function VaerksadministrationPage() {
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                          {BROADCASTERS.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                          {broadcasterOptions.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
                         </SelectContent>
                       </Select>
                     </Field>
@@ -1768,7 +1778,7 @@ export default function VaerksadministrationPage() {
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                        {BROADCASTERS.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                        {broadcasterOptions.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </Field>
