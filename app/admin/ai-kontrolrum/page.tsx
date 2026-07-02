@@ -939,7 +939,7 @@ function KvalitetTab() {
                     </p>
                     <div className="space-y-2">
                         {stats.medKorrektion.slice(0, 10).map(f => {
-                            const cfg = SVAERHEDSGRAD_CONFIG[f.fund_svaerhedsgrad] ?? SVAERHEDSGRAD_CONFIG.info
+                            const cfg = SVAERHEDSGRAD_CONFIG[f.fund_svaerhedsgrad as keyof typeof SVAERHEDSGRAD_CONFIG] ?? SVAERHEDSGRAD_CONFIG.info
                             const Icon = cfg.icon
                             return (
                                 <div key={f.id} className={`rounded-lg border p-4 space-y-2 ${cfg.bg}`}>
