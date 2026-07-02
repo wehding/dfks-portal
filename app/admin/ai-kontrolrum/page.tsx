@@ -862,7 +862,8 @@ function KvalitetTab() {
             incorrectMap[f.fund_titel] = (incorrectMap[f.fund_titel] ?? 0) + 1
         }
         const topForkerte = Object.entries(incorrectMap).sort((a, b) => b[1] - a[1]).slice(0, 6)
-        return { total, correct, incorrect: total - correct, pct, bySvaerhed, topForkerte }
+        const medKorrektion = feedback.filter(f => !f.godkendt && f.korrektion_beskrivelse)
+        return { total, correct, incorrect: total - correct, pct, bySvaerhed, topForkerte, medKorrektion }
     }, [feedback])
 
     if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
@@ -926,6 +927,33 @@ function KvalitetTab() {
                                 <Badge variant="outline" className="tabular-nums">{count}×</Badge>
                             </div>
                         ))}
+                    </div>
+                </div>
+            )}
+            {stats.medKorrektion.length > 0 && (
+                <div className="space-y-2">
+                    <p className="text-sm font-semibold">Seneste korrektioner fra jurist</p>
+                    <p className="text-xs text-muted-foreground">
+                        Når juristen markerer et fund som forkert og skriver en korrektion, vises den her.
+                        Gem dem som sagserfaringer under <strong>Kontraktgennemgang</strong> så de bruges ved næste analyse.
+                    </p>
+                    <div className="space-y-2">
+                        {stats.medKorrektion.slice(0, 10).map(f => {
+                            const cfg = SVAERHEDSGRAD_CONFIG[f.fund_svaerhedsgrad] ?? SVAERHEDSGRAD_CONFIG.info
+                            const Icon = cfg.icon
+                            return (
+                                <div key={f.id} className={`rounded-lg border p-4 space-y-2 ${cfg.bg}`}>
+                                    <div className="flex items-center gap-2">
+                                        <Icon className={`h-3.5 w-3.5 ${cfg.color} shrink-0`} />
+                                        <span className="text-sm font-medium">{f.fund_titel}</span>
+                                        <span className="text-xs text-muted-foreground ml-auto">
+                                            {new Date(f.created_at).toLocaleDateString("da-DK")}
+                                        </span>
+                                    </div>
+                                    <p className="text-xs text-foreground/80 pl-5">{f.korrektion_beskrivelse}</p>
+                                </div>
+                            )
+                        })}
                     </div>
                 </div>
             )}
