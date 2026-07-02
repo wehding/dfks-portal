@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useState, useMemo, useRef, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -22,9 +22,26 @@ import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
     Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins, Wand2, RotateCcw,
+    Users, RefreshCw, Upload, GitCompare, ChevronUp, ChevronDown, UserPlus, UserMinus, Building2,
 } from "lucide-react"
 import { toast } from "sonner"
 import NoteringGuide from "@/components/notering-guide"
+import {
+    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table"
+import {
+    getProducerGroups,
+    getGroupMembers,
+    getGroupMemberCounts,
+    getNonGroupEmployers,
+    upsertEmployerInGroup,
+    removeFromGroup,
+    moveToGroup,
+    renameGroup,
+    deleteGroup,
+    bulkImportToGroup,
+    type DbEmployerWithGroup,
+} from "@/lib/db/employers"
 
 // ── Shared types ───────────────────────────────────────────────
 
@@ -42,6 +59,7 @@ type LegalNote = {
     body: string
     priority: "baggrund" | "altid"
     active: boolean
+    exclude_for_overenskomst: boolean
     gyldig_fra: string | null
     gyldig_til: string | null
     created_at: string
@@ -298,7 +316,14 @@ function NoteringerTab() {
 
     const saveNote = async (note: LegalNote) => {
         try {
-            await apiPatch(note.id, { title: note.title, body: note.body, priority: note.priority, gyldig_fra: note.gyldig_fra, gyldig_til: note.gyldig_til })
+            await apiPatch(note.id, {
+                title: note.title,
+                body: note.body,
+                priority: note.priority,
+                gyldig_fra: note.gyldig_fra,
+                gyldig_til: note.gyldig_til,
+                exclude_for_overenskomst: note.exclude_for_overenskomst ? ["alle"] : [],
+            })
             setEditingId(null)
             toast.success("Notering gemt")
         } catch (e: any) { toast.error(e.message) }
@@ -556,6 +581,18 @@ function NoteringerTab() {
                                                     <Input type="date" className="h-7 text-xs" value={note.gyldig_til ?? ""} onChange={e => updateLocal(note.id, { gyldig_til: e.target.value || null })} />
                                                 </div>
                                             </div>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={note.exclude_for_overenskomst ?? false}
+                                                    onChange={async e => {
+                                                        updateLocal(note.id, { exclude_for_overenskomst: e.target.checked })
+                                                        await apiPatch(note.id, { exclude_for_overenskomst: e.target.checked ? ["alle"] : [] }).catch(err => toast.error(err.message))
+                                                    }}
+                                                    className="h-3.5 w-3.5 rounded"
+                                                />
+                                                <span className="text-xs text-muted-foreground">Fravalgt ved overenskomst-kontrakter</span>
+                                            </label>
                                         </>
                                     ) : (
                                         <p className="text-sm text-muted-foreground whitespace-pre-wrap">{note.body}</p>
@@ -1721,6 +1758,448 @@ function SatserTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Fane 7 — Producentlister (ProF-medlemmer)
+// ─────────────────────────────────────────────────────────────
+
+function ProducenterTab() {
+    const [dbGroupNames, setDbGroupNames] = useState<string[]>([])
+    const [memberCounts, setMemberCounts] = useState<Record<string, number>>({})
+    const [activeGroupName, setActiveGroupName] = useState<string | null>(null)
+    const [dbMembers, setDbMembers] = useState<DbEmployerWithGroup[]>([])
+    const [groupsLoading, setGroupsLoading] = useState(true)
+    const [membersLoading, setMembersLoading] = useState(false)
+    const [editingGroupOldName, setEditingGroupOldName] = useState<string | null>(null)
+    const [editingGroupNewName, setEditingGroupNewName] = useState("")
+    const [pendingNewGroup, setPendingNewGroup] = useState<string | null>(null)
+    const [addCompanyName, setAddCompanyName] = useState("")
+    const [memberSearch, setMemberSearch] = useState("")
+    const [memberUploading, setMemberUploading] = useState(false)
+    const [memberSortAsc, setMemberSortAsc] = useState<boolean | null>(null)
+    const [nonMembers, setNonMembers] = useState<{ id: string; name: string }[]>([])
+    const [nonMembersLoading, setNonMembersLoading] = useState(false)
+    const [nonMembersLoaded, setNonMembersLoaded] = useState(false)
+    const [profSyncOpen, setProfSyncOpen] = useState(false)
+    const [profSyncLoading, setProfSyncLoading] = useState(false)
+    const [profSyncResult, setProfSyncResult] = useState<{ onlyInProf: string[]; onlyInDb: string[] } | null>(null)
+    const memberFileRef = useRef<HTMLInputElement>(null)
+    const profSyncFileRef = useRef<HTMLInputElement>(null)
+
+    const loadGroups = useCallback(async () => {
+        setGroupsLoading(true)
+        const names = await getProducerGroups()
+        setDbGroupNames(names)
+        const counts = await getGroupMemberCounts()
+        setMemberCounts(counts)
+        if (names.length > 0 && !activeGroupName) setActiveGroupName(names[0])
+        setGroupsLoading(false)
+    }, [activeGroupName])
+
+    const loadMembers = useCallback(async (groupName: string) => {
+        setMembersLoading(true)
+        const members = await getGroupMembers(groupName)
+        setDbMembers(members)
+        setMembersLoading(false)
+    }, [])
+
+    useEffect(() => { loadGroups() }, [])
+    useEffect(() => { if (activeGroupName) loadMembers(activeGroupName) }, [activeGroupName])
+
+    const switchGroup = (name: string) => { setActiveGroupName(name); setMemberSearch("") }
+
+    const handleCreateGroup = () => {
+        setPendingNewGroup("")
+        setEditingGroupNewName("")
+    }
+
+    const commitNewGroup = async () => {
+        const name = editingGroupNewName.trim()
+        if (!name) { setPendingNewGroup(null); return }
+        const next = [...dbGroupNames, name]
+        setDbGroupNames(next)
+        setActiveGroupName(name)
+        setPendingNewGroup(null)
+        setEditingGroupOldName(null)
+        toast.success(`Liste "${name}" oprettet`)
+    }
+
+    const commitRename = async () => {
+        const oldName = editingGroupOldName
+        const newName = editingGroupNewName.trim()
+        if (!oldName || !newName || newName === oldName) { setEditingGroupOldName(null); return }
+        await renameGroup(oldName, newName)
+        setDbGroupNames(prev => prev.map(n => n === oldName ? newName : n))
+        if (activeGroupName === oldName) setActiveGroupName(newName)
+        setEditingGroupOldName(null)
+        toast.success("Liste omdøbt")
+    }
+
+    const handleDeleteGroup = async (name: string) => {
+        if (!confirm(`Slet listen "${name}" og fjern alle selskaber fra den?`)) return
+        await deleteGroup(name)
+        const next = dbGroupNames.filter(n => n !== name)
+        setDbGroupNames(next)
+        if (activeGroupName === name) setActiveGroupName(next[0] ?? null)
+        toast.success("Liste slettet")
+    }
+
+    const handleAddCompany = async () => {
+        const name = addCompanyName.trim()
+        if (!name || !activeGroupName) return
+        if (dbMembers.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+            toast.error("Selskabet er allerede på listen"); return
+        }
+        await upsertEmployerInGroup({ name }, activeGroupName)
+        setAddCompanyName("")
+        await loadMembers(activeGroupName)
+        setMemberCounts(prev => ({ ...prev, [activeGroupName]: (prev[activeGroupName] ?? 0) + 1 }))
+    }
+
+    const handleMoveCompany = async (employerId: string, fromGroup: string, toGroup: string) => {
+        await moveToGroup(employerId, fromGroup, toGroup)
+        await loadMembers(fromGroup)
+        setMemberCounts(prev => ({
+            ...prev,
+            [fromGroup]: Math.max(0, (prev[fromGroup] ?? 1) - 1),
+            [toGroup]: (prev[toGroup] ?? 0) + 1,
+        }))
+        toast.success("Selskab flyttet")
+    }
+
+    const handleRemoveCompany = async (employerId: string, groupName: string, companyName: string) => {
+        if (!confirm(`Fjern "${companyName}" fra listen?`)) return
+        await removeFromGroup(employerId, groupName)
+        await loadMembers(groupName)
+        setMemberCounts(prev => ({ ...prev, [groupName]: Math.max(0, (prev[groupName] ?? 1) - 1) }))
+        toast.success("Selskab fjernet")
+    }
+
+    const handleMemberFile = async (files: FileList | File[]) => {
+        if (!activeGroupName) return
+        const file = files[0]
+        if (!file) return
+        setMemberUploading(true)
+        try {
+            const XLSX = await import("xlsx")
+            const buf = await file.arrayBuffer()
+            const wb = XLSX.read(buf, { type: "array" })
+            const ws = wb.Sheets[wb.SheetNames[0]]
+            const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
+            const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
+            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.includes(k.toLowerCase().trim()))
+            if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet (Selskab/Producent/Name)"); return }
+            const structured = rows.map((r: Record<string, unknown>) => ({ name: String(r[nameKey] ?? "").trim() })).filter(r => r.name)
+            const result = await bulkImportToGroup(structured, activeGroupName)
+            await loadMembers(activeGroupName)
+            setMemberCounts(prev => ({ ...prev, [activeGroupName]: (prev[activeGroupName] ?? 0) + result.inserted }))
+            toast.success(`${result.inserted} selskaber importeret`)
+        } catch (e: any) {
+            toast.error(e.message ?? "Import fejlede")
+        } finally {
+            setMemberUploading(false)
+        }
+    }
+
+    const runProfSync = async (file: File) => {
+        setProfSyncLoading(true)
+        setProfSyncResult(null)
+        try {
+            const XLSX = await import("xlsx")
+            const buf = await file.arrayBuffer()
+            const wb = XLSX.read(buf, { type: "array" })
+            const ws = wb.Sheets[wb.SheetNames[0]]
+            const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
+            const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
+            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.includes(k.toLowerCase().trim()))
+            if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet"); return }
+            const profNames = rows.map((r: Record<string, unknown>) => String(r[nameKey] ?? "").trim()).filter(Boolean)
+            const dbNames = dbMembers.map(m => m.name)
+            const norm = (s: string) => s.toLowerCase().replace(/[.,\s]+/g, " ").trim()
+            const profSet = new Set(profNames.map(norm))
+            const dbSet = new Set(dbNames.map(norm))
+            setProfSyncResult({
+                onlyInProf: profNames.filter(n => !dbSet.has(norm(n))),
+                onlyInDb: dbNames.filter(n => !profSet.has(norm(n))),
+            })
+        } finally {
+            setProfSyncLoading(false)
+        }
+    }
+
+    const acceptProfAddition = async (name: string) => {
+        if (!activeGroupName) return
+        await upsertEmployerInGroup({ name }, activeGroupName)
+        await loadMembers(activeGroupName)
+        setProfSyncResult(prev => prev ? { ...prev, onlyInProf: prev.onlyInProf.filter(n => n !== name) } : prev)
+    }
+
+    const acceptProfRemoval = async (name: string) => {
+        if (!activeGroupName) return
+        const m = dbMembers.find(m => m.name === name)
+        if (m) await removeFromGroup(m.id, activeGroupName)
+        await loadMembers(activeGroupName)
+        setProfSyncResult(prev => prev ? { ...prev, onlyInDb: prev.onlyInDb.filter(n => n !== name) } : prev)
+    }
+
+    const loadNonMembers = async () => {
+        setNonMembersLoading(true)
+        const result = await getNonGroupEmployers()
+        setNonMembers(result)
+        setNonMembersLoaded(true)
+        setNonMembersLoading(false)
+    }
+
+    const addNonMemberToGroup = async (employerId: string, name: string, groupName: string) => {
+        await upsertEmployerInGroup({ name }, groupName)
+        setNonMembers(prev => prev.filter(e => e.id !== employerId))
+        setMemberCounts(prev => ({ ...prev, [groupName]: (prev[groupName] ?? 0) + 1 }))
+        if (activeGroupName === groupName) await loadMembers(groupName)
+        toast.success(`"${name}" tilføjet til ${groupName}`)
+    }
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-start justify-between">
+                <div>
+                    <p className="text-sm text-muted-foreground">
+                        Kun ProF-medlemmer er juridisk bundet af overenskomsten. AI-screeningen bruger listerne til at identificere om producenten er overenskomstdækket.
+                    </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={handleCreateGroup}>
+                    <Plus className="h-3.5 w-3.5 mr-1.5" />Tilføj liste
+                </Button>
+            </div>
+
+            {groupsLoading ? (
+                <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground text-sm">
+                    <RefreshCw className="h-4 w-4 animate-spin" />Henter lister…
+                </div>
+            ) : dbGroupNames.length === 0 && !pendingNewGroup ? (
+                <div className="rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground">
+                    <Users className="h-8 w-8 opacity-30" />
+                    <p className="text-sm">Ingen lister endnu</p>
+                    <Button size="sm" variant="outline" onClick={handleCreateGroup}>
+                        <Plus className="h-3.5 w-3.5 mr-1.5" />Opret første liste
+                    </Button>
+                </div>
+            ) : (
+                <div className="rounded-lg border overflow-hidden">
+                    <div className="flex items-center border-b bg-muted/30 px-2 pt-2 gap-0.5 flex-wrap">
+                        {dbGroupNames.map(name => (
+                            <div
+                                key={name}
+                                className={`group flex items-center gap-1 px-3 py-2 rounded-t-md cursor-pointer text-sm border-b-2 transition-colors ${name === activeGroupName ? "border-foreground bg-background font-medium text-foreground" : "border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}
+                                onClick={() => { if (editingGroupOldName !== name) switchGroup(name) }}
+                            >
+                                {editingGroupOldName === name ? (
+                                    <input autoFocus className="w-32 text-sm bg-transparent border-b border-foreground outline-none"
+                                        value={editingGroupNewName} onChange={e => setEditingGroupNewName(e.target.value)}
+                                        onBlur={commitRename} onKeyDown={e => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditingGroupOldName(null) }}
+                                        onClick={e => e.stopPropagation()} />
+                                ) : (
+                                    <>
+                                        <span onDoubleClick={e => { e.stopPropagation(); setEditingGroupOldName(name); setEditingGroupNewName(name) }} title="Dobbeltklik for at omdøbe">{name}</span>
+                                        {(memberCounts[name] ?? 0) > 0 && <span className="text-[10px] text-muted-foreground ml-0.5">({memberCounts[name]})</span>}
+                                        <button className="opacity-0 group-hover:opacity-60 hover:!opacity-100 ml-1 text-muted-foreground hover:text-destructive transition-opacity"
+                                            onClick={e => { e.stopPropagation(); handleDeleteGroup(name) }} title="Slet liste">
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        ))}
+                        {pendingNewGroup !== null && (
+                            <div className="flex items-center gap-1 px-2 py-1.5">
+                                <input autoFocus className="w-32 text-sm bg-transparent border-b border-foreground outline-none"
+                                    value={editingGroupNewName} onChange={e => setEditingGroupNewName(e.target.value)}
+                                    onBlur={commitNewGroup} onKeyDown={e => { if (e.key === "Enter") commitNewGroup(); if (e.key === "Escape") { setPendingNewGroup(null); setEditingGroupOldName(null) } }}
+                                    placeholder="Listenavn…" />
+                            </div>
+                        )}
+                    </div>
+
+                    {activeGroupName && (
+                        <div className="p-4 flex items-center gap-3">
+                            <div className="relative flex-1">
+                                <input type="text" value={memberSearch} onChange={e => setMemberSearch(e.target.value)}
+                                    placeholder="Søg i listen…"
+                                    className="w-full rounded-md border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+                                {memberSearch && <button onClick={() => setMemberSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>}
+                            </div>
+                            <div className="flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm text-muted-foreground cursor-pointer hover:border-muted-foreground/50 transition-colors whitespace-nowrap"
+                                onClick={() => memberFileRef.current?.click()}>
+                                <input ref={memberFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files && handleMemberFile(e.target.files)} />
+                                {memberUploading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                                Upload Excel
+                            </div>
+                            <button onClick={() => setProfSyncOpen(o => !o)}
+                                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors whitespace-nowrap">
+                                <GitCompare className="h-3.5 w-3.5" />Sammenlign med ProF
+                            </button>
+                        </div>
+                    )}
+
+                    {activeGroupName && profSyncOpen && (
+                        <div className="mx-4 mb-4 rounded-lg border bg-muted/30 p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <p className="text-sm font-medium">Sammenlign med ProF-liste</p>
+                                <button onClick={() => setProfSyncOpen(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+                            </div>
+                            <p className="text-xs text-muted-foreground">Upload en Excel-fil med en kolonne der hedder <strong>"Selskab"</strong>. Portalen sammenligner den med din liste.</p>
+                            <div className="rounded-lg border-2 border-dashed p-6 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors" onClick={() => profSyncFileRef.current?.click()}>
+                                <input ref={profSyncFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && runProfSync(e.target.files[0])} />
+                                {profSyncLoading ? <RefreshCw className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /> : <><Upload className="mx-auto h-5 w-5 text-muted-foreground/50" /><p className="mt-2 text-sm text-muted-foreground">Klik for at vælge Excel-fil</p></>}
+                            </div>
+                            {profSyncResult && (
+                                <div className="space-y-3 pt-1">
+                                    {profSyncResult.onlyInProf.length === 0 && profSyncResult.onlyInDb.length === 0 && (
+                                        <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" />Listen er i overensstemmelse med ProF-hjemmesiden.</p>
+                                    )}
+                                    {profSyncResult.onlyInProf.length > 0 && (
+                                        <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><UserPlus className="h-3.5 w-3.5" />På ProF, men ikke i din liste ({profSyncResult.onlyInProf.length})</p>
+                                                <button onClick={async () => { for (const n of [...profSyncResult.onlyInProf]) await acceptProfAddition(n) }} className="text-xs text-emerald-700 dark:text-emerald-400 underline underline-offset-2">Tilføj alle</button>
+                                            </div>
+                                            <div className="space-y-1">
+                                                {profSyncResult.onlyInProf.map(name => (
+                                                    <div key={name} className="flex items-center justify-between rounded bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1.5">
+                                                        <span className="text-xs">{name}</span>
+                                                        <button onClick={() => acceptProfAddition(name)} className="text-xs text-emerald-700 dark:text-emerald-400 font-medium hover:underline">Tilføj</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {profSyncResult.onlyInDb.length > 0 && (
+                                        <div className="space-y-1.5">
+                                            <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><UserMinus className="h-3.5 w-3.5" />I din liste, men ikke på ProF — muligvis udmeldt ({profSyncResult.onlyInDb.length})</p>
+                                            <div className="space-y-1">
+                                                {profSyncResult.onlyInDb.map(name => (
+                                                    <div key={name} className="flex items-center justify-between rounded bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
+                                                        <span className="text-xs">{name}</span>
+                                                        <button onClick={() => acceptProfRemoval(name)} className="text-xs text-amber-700 dark:text-amber-400 font-medium hover:underline">Fjern fra liste</button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeGroupName && (
+                        <div className="border-t overflow-x-auto">
+                            {membersLoading ? (
+                                <div className="flex items-center gap-2 py-6 justify-center text-muted-foreground text-sm"><RefreshCw className="h-4 w-4 animate-spin" />Henter medlemmer…</div>
+                            ) : (
+                                <>
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead className="text-xs cursor-pointer select-none" onClick={() => setMemberSortAsc(prev => prev === true ? false : true)}>
+                                                    <span className="flex items-center gap-1">Selskab
+                                                        {memberSortAsc === true && <ChevronUp className="h-3 w-3" />}
+                                                        {memberSortAsc === false && <ChevronDown className="h-3 w-3" />}
+                                                        {memberSortAsc === null && <ChevronUp className="h-3 w-3 opacity-30" />}
+                                                    </span>
+                                                </TableHead>
+                                                <TableHead className="text-xs">Kontaktperson</TableHead>
+                                                <TableHead className="text-xs">Telefon</TableHead>
+                                                <TableHead className="text-xs">Email</TableHead>
+                                                <TableHead className="text-xs w-[160px]" />
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {(memberSortAsc === null ? dbMembers : [...dbMembers].sort((a, b) => memberSortAsc ? a.name.localeCompare(b.name, "da") : b.name.localeCompare(a.name, "da")))
+                                                .filter(m => !memberSearch || m.name.toLowerCase().includes(memberSearch.toLowerCase()))
+                                                .map(m => {
+                                                    const otherGroups = dbGroupNames.filter(n => n !== activeGroupName)
+                                                    return (
+                                                        <TableRow key={m.id}>
+                                                            <TableCell className="text-xs font-medium">{m.name}</TableCell>
+                                                            <TableCell className="text-xs text-muted-foreground">{m.contact_name ?? "—"}</TableCell>
+                                                            <TableCell className="text-xs text-muted-foreground">{m.contact_phone ?? "—"}</TableCell>
+                                                            <TableCell className="text-xs text-muted-foreground">{m.contact_email ?? "—"}</TableCell>
+                                                            <TableCell className="text-xs">
+                                                                <div className="flex items-center gap-1 justify-end">
+                                                                    {otherGroups.length > 0 && (
+                                                                        <Select onValueChange={toName => handleMoveCompany(m.id, activeGroupName, toName)}>
+                                                                            <SelectTrigger className="h-6 text-xs w-[110px] px-2"><SelectValue placeholder="Flyt til…" /></SelectTrigger>
+                                                                            <SelectContent>{otherGroups.map(gn => <SelectItem key={gn} value={gn} className="text-xs">{gn}</SelectItem>)}</SelectContent>
+                                                                        </Select>
+                                                                    )}
+                                                                    <button onClick={() => handleRemoveCompany(m.id, activeGroupName, m.name)} className="text-muted-foreground hover:text-destructive transition-colors" title="Fjern fra liste"><X className="h-3.5 w-3.5" /></button>
+                                                                </div>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )
+                                                })}
+                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
+                                        </TableBody>
+                                    </Table>
+                                    <div className="flex items-center gap-2 px-4 py-2 border-t bg-muted/30">
+                                        <input type="text" value={addCompanyName} onChange={e => setAddCompanyName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCompany()}
+                                            placeholder="Tilføj nyt selskab manuelt…"
+                                            className="flex-1 h-7 rounded-md border bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring" />
+                                        <Button size="sm" variant="outline" className="h-7 text-xs px-2" onClick={handleAddCompany} disabled={!addCompanyName.trim()}>
+                                            <Plus className="h-3 w-3 mr-1" />Tilføj
+                                        </Button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            <div className="rounded-lg border">
+                <div className="flex items-center justify-between px-4 py-3 border-b">
+                    <div>
+                        <h3 className="text-sm font-medium">Selskaber uden producentforeningsmedlemskab</h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">Selskaber i databasen der ikke optræder i nogen producentliste.</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={loadNonMembers} disabled={nonMembersLoading}>
+                        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${nonMembersLoading ? "animate-spin" : ""}`} />
+                        {nonMembersLoaded ? "Opdatér" : "Vis ikke-medlemmer"}
+                    </Button>
+                </div>
+                {nonMembersLoaded && (
+                    nonMembers.length === 0 ? (
+                        <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
+                            <CheckCircle2 className="h-4 w-4 text-green-500" />Alle selskaber er tilknyttet mindst én producentliste.
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <Table>
+                                <TableHeader><TableRow><TableHead className="w-[32px] text-xs">#</TableHead><TableHead className="text-xs">Selskab</TableHead><TableHead className="text-xs" /></TableRow></TableHeader>
+                                <TableBody>
+                                    {nonMembers.map((e, i) => (
+                                        <TableRow key={e.id}>
+                                            <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
+                                            <TableCell className="text-xs">{e.name}</TableCell>
+                                            <TableCell className="text-xs">
+                                                {dbGroupNames.length > 0 && (
+                                                    <Select onValueChange={gn => addNonMemberToGroup(e.id, e.name, gn)}>
+                                                        <SelectTrigger className="h-6 text-xs w-[120px] px-2"><SelectValue placeholder="Tilføj til…" /></SelectTrigger>
+                                                        <SelectContent>{dbGroupNames.map(gn => <SelectItem key={gn} value={gn} className="text-xs">{gn}</SelectItem>)}</SelectContent>
+                                                    </Select>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                            <div className="px-4 py-2 text-xs text-muted-foreground border-t">{nonMembers.length} selskab{nonMembers.length !== 1 ? "er" : ""} uden producentforeningsmedlemskab</div>
+                        </div>
+                    )
+                )}
+            </div>
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
 // Hovedside
 // ─────────────────────────────────────────────────────────────
 
@@ -1732,9 +2211,12 @@ export default function AiKontrolrumPage() {
                 subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
             />
             <Tabs defaultValue="overenskomster">
-                <TabsList className="grid grid-cols-6 w-full">
+                <TabsList className="grid grid-cols-7 w-full">
                     <TabsTrigger value="overenskomster" className="gap-1 text-xs">
                         <ScrollText className="h-3.5 w-3.5" />Overenskomster
+                    </TabsTrigger>
+                    <TabsTrigger value="producenter" className="gap-1 text-xs">
+                        <Building2 className="h-3.5 w-3.5" />Producenter
                     </TabsTrigger>
                     <TabsTrigger value="videnbase" className="gap-1 text-xs">
                         <BookOpen className="h-3.5 w-3.5" />Videnbase
@@ -1753,6 +2235,7 @@ export default function AiKontrolrumPage() {
                     </TabsTrigger>
                 </TabsList>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
+                <TabsContent value="producenter" className="mt-4"><ProducenterTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>
