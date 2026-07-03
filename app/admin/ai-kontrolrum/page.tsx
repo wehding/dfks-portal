@@ -2179,7 +2179,6 @@ function ProducenterTab() {
                                                     </span>
                                                 </TableHead>
                                                 <TableHead className="text-xs">Kontaktperson</TableHead>
-                                                <TableHead className="text-xs">Telefon</TableHead>
                                                 <TableHead className="text-xs w-14" title="Associerede medlemmer er ikke overenskomstbundet">Assoc.</TableHead>
                                                 <TableHead className="text-xs w-28" />
                                             </TableRow>
@@ -2193,7 +2192,6 @@ function ProducenterTab() {
                                                         <TableRow key={m.id}>
                                                             <TableCell className="text-xs font-medium">{m.name}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_name ?? "—"}</TableCell>
-                                                            <TableCell className="text-xs text-muted-foreground">{m.contact_phone ?? "—"}</TableCell>
                                                             <TableCell className="text-xs w-20">
                                                                 <input type="checkbox" checked={m.associeret ?? false}
                                                                     onChange={async e => {
@@ -2218,7 +2216,7 @@ function ProducenterTab() {
                                                         </TableRow>
                                                     )
                                                 })}
-                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
+                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
                                         </TableBody>
                                     </Table>
                                     <div className="flex items-center gap-2 px-4 py-2 border-t bg-muted/30">
