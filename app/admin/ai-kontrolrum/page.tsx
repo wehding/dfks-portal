@@ -40,7 +40,10 @@ import {
     renameGroup,
     deleteGroup,
     bulkImportToGroup,
+    setAssocieret,
+    getActiveGroupCount,
     type DbEmployerWithGroup,
+    type EmployerInput,
 } from "@/lib/db/employers"
 
 // ── Shared types ───────────────────────────────────────────────
@@ -1773,16 +1776,20 @@ function ProducenterTab() {
     const [pendingNewGroup, setPendingNewGroup] = useState<string | null>(null)
     const [addCompanyName, setAddCompanyName] = useState("")
     const [memberSearch, setMemberSearch] = useState("")
-    const [memberUploading, setMemberUploading] = useState(false)
     const [memberSortAsc, setMemberSortAsc] = useState<boolean | null>(null)
     const [nonMembers, setNonMembers] = useState<{ id: string; name: string }[]>([])
     const [nonMembersLoading, setNonMembersLoading] = useState(false)
     const [nonMembersLoaded, setNonMembersLoaded] = useState(false)
-    const [profSyncOpen, setProfSyncOpen] = useState(false)
-    const [profSyncLoading, setProfSyncLoading] = useState(false)
-    const [profSyncResult, setProfSyncResult] = useState<{ onlyInProf: string[]; onlyInDb: string[] } | null>(null)
-    const memberFileRef = useRef<HTMLInputElement>(null)
-    const profSyncFileRef = useRef<HTMLInputElement>(null)
+    const uploadRef = useRef<HTMLInputElement>(null)
+
+    type DiffNy      = { name: string; data: EmployerInput; approved: boolean }
+    type DiffUdgaaet = { name: string; id: string; inOtherGroups: number; approved: boolean }
+    type DiffAendret = { name: string; id: string; data: Partial<EmployerInput>; current: Partial<EmployerInput>; approved: boolean }
+    const [diffResult, setDiffResult] = useState<{
+        ny: DiffNy[]; udgaaet: DiffUdgaaet[]; aendret: DiffAendret[]
+    } | null>(null)
+    const [diffLoading, setDiffLoading] = useState(false)
+    const [applyingDiff, setApplyingDiff] = useState(false)
 
     const loadGroups = useCallback(async () => {
         setGroupsLoading(true)
@@ -1873,102 +1880,114 @@ function ProducenterTab() {
         toast.success("Selskab fjernet")
     }
 
-    const handleMemberFile = async (files: FileList | File[]) => {
+    const parseExcel = async (file: File): Promise<EmployerInput[]> => {
+        const XLSX = await import("xlsx")
+        const buf = await file.arrayBuffer()
+        const wb = XLSX.read(buf, { type: "array" })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
+        const NAME_HDRS    = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
+        const CONTACT_HDRS = ["kontaktperson", "contact name", "kontakt", "contact", "ejere", "ceo", "direktor"]
+        const WEB_HDRS     = ["hjemmeside", "website", "url", "web"]
+        const PHONE_HDRS   = ["telefon", "phone", "tlf", "mobil"]
+        const EMAIL_HDRS   = ["email", "e-mail", "mail"]
+        const keys = Object.keys(rows[0] ?? {})
+        const nameKey    = keys.find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
+        const contactKey = keys.find(k => CONTACT_HDRS.some(h => k.toLowerCase().includes(h)))
+        const webKey     = keys.find(k => WEB_HDRS.some(h => k.toLowerCase().includes(h)))
+        const phoneKey   = keys.find(k => PHONE_HDRS.some(h => k.toLowerCase().includes(h)))
+        const emailKey   = keys.find(k => EMAIL_HDRS.some(h => k.toLowerCase().includes(h)))
+        if (!nameKey) throw new Error("Ingen kolonneoverskrift fundet (Selskab/Producent/Name)")
+        return rows.map((r: Record<string, unknown>) => ({
+            name:          String(r[nameKey] ?? "").trim(),
+            contact_name:  contactKey ? String(r[contactKey] ?? "").trim() || null : undefined,
+            contact_phone: phoneKey   ? String(r[phoneKey]   ?? "").trim() || null : undefined,
+            contact_email: emailKey   ? String(r[emailKey]   ?? "").trim() || null : undefined,
+            website:       webKey     ? String(r[webKey]     ?? "").trim() || null : undefined,
+        })).filter(r => r.name)
+    }
+
+    const normStr = (s: string) => s.toLowerCase()
+        .replace(/[‘’ʼ´`]/g, "'").replace(/[–—]/g, "-")
+        .replace(/[.,\s]+/g, " ").trim()
+
+    const handleUploadForDiff = async (file: File) => {
         if (!activeGroupName) return
-        const file = files[0]
-        if (!file) return
-        setMemberUploading(true)
+        setDiffLoading(true)
+        setDiffResult(null)
         try {
-            const XLSX = await import("xlsx")
-            const buf = await file.arrayBuffer()
-            const wb = XLSX.read(buf, { type: "array" })
-            const ws = wb.Sheets[wb.SheetNames[0]]
-            const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
-            const NAME_HDRS    = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
-            const CONTACT_HDRS = ["kontaktperson", "contact name", "kontakt", "contact", "ejere", "ceo", "direktør"]
-            const WEB_HDRS     = ["hjemmeside", "website", "url", "web"]
-            const PHONE_HDRS   = ["telefon", "phone", "tlf", "mobil"]
-            const EMAIL_HDRS   = ["email", "e-mail", "mail"]
-            const keys = Object.keys(rows[0] ?? {})
-            const nameKey    = keys.find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
-            const contactKey = keys.find(k => CONTACT_HDRS.some(h => k.toLowerCase().includes(h)))
-            const webKey     = keys.find(k => WEB_HDRS.some(h => k.toLowerCase().includes(h)))
-            const phoneKey   = keys.find(k => PHONE_HDRS.some(h => k.toLowerCase().includes(h)))
-            const emailKey   = keys.find(k => EMAIL_HDRS.some(h => k.toLowerCase().includes(h)))
-            if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet (Selskab/Producent/Name)"); return }
-            const structured = rows.map((r: Record<string, unknown>) => ({
-                name:          String(r[nameKey] ?? "").trim(),
-                contact_name:  contactKey ? String(r[contactKey] ?? "").trim() || null : null,
-                contact_phone: phoneKey   ? String(r[phoneKey]   ?? "").trim() || null : null,
-                contact_email: emailKey   ? String(r[emailKey]   ?? "").trim() || null : null,
-                website:       webKey     ? String(r[webKey]     ?? "").trim() || null : null,
-            })).filter(r => r.name)
-            const result = await bulkImportToGroup(structured, activeGroupName)
-            await loadMembers(activeGroupName)
-            setMemberCounts(prev => ({ ...prev, [activeGroupName]: (prev[activeGroupName] ?? 0) + result.inserted }))
-            toast.success(`${result.inserted} selskaber importeret`)
+            const fileRows = await parseExcel(file)
+            if (fileRows.length === 0) { toast.error("Ingen selskaber i filen"); return }
+            const current = await getGroupMembers(activeGroupName)
+            setDbMembers(current)
+            if (current.length === 0) {
+                const result = await bulkImportToGroup(fileRows, activeGroupName)
+                await loadMembers(activeGroupName)
+                setMemberCounts(prev => ({ ...prev, [activeGroupName!]: result.inserted }))
+                toast.success(`${result.inserted} selskaber importeret`)
+                return
+            }
+            const fileMap = new Map(fileRows.map(r => [normStr(r.name), r]))
+            const dbMap   = new Map(current.map(m => [normStr(m.name), m]))
+            const ny: DiffNy[] = []
+            const udgaaet: DiffUdgaaet[] = []
+            const aendret: DiffAendret[] = []
+            for (const [n, data] of fileMap) {
+                if (!dbMap.has(n)) ny.push({ name: data.name, data, approved: true })
+            }
+            for (const [n, m] of dbMap) {
+                if (!fileMap.has(n)) {
+                    const total = await getActiveGroupCount(m.id)
+                    udgaaet.push({ name: m.name, id: m.id, inOtherGroups: Math.max(0, total - 1), approved: true })
+                }
+            }
+            for (const [n, data] of fileMap) {
+                const m = dbMap.get(n)
+                if (!m) continue
+                const changes: Partial<EmployerInput> = {}
+                const prev: Partial<EmployerInput> = {}
+                if (data.contact_name  !== undefined && data.contact_name  !== m.contact_name)  { changes.contact_name  = data.contact_name;  prev.contact_name  = m.contact_name }
+                if (data.contact_phone !== undefined && data.contact_phone !== m.contact_phone) { changes.contact_phone = data.contact_phone; prev.contact_phone = m.contact_phone }
+                if (data.contact_email !== undefined && data.contact_email !== m.contact_email) { changes.contact_email = data.contact_email; prev.contact_email = m.contact_email }
+                if (data.website       !== undefined && data.website       !== m.website)       { changes.website       = data.website;       prev.website       = m.website }
+                if (Object.keys(changes).length > 0) aendret.push({ name: m.name, id: m.id, data: changes, current: prev, approved: true })
+            }
+            setDiffResult({ ny, udgaaet, aendret })
+            if (ny.length === 0 && udgaaet.length === 0 && aendret.length === 0) toast.success("Listen er identisk med filen")
         } catch (e: any) {
-            toast.error(e.message ?? "Import fejlede")
+            toast.error(e.message ?? "Fejl ved læsning af fil")
         } finally {
-            setMemberUploading(false)
+            setDiffLoading(false)
         }
     }
 
-    const runProfSync = async (file: File) => {
-        setProfSyncLoading(true)
-        setProfSyncResult(null)
+    const applyDiff = async () => {
+        if (!diffResult || !activeGroupName) return
+        setApplyingDiff(true)
         try {
-            const XLSX = await import("xlsx")
-            const buf = await file.arrayBuffer()
-            const wb = XLSX.read(buf, { type: "array" })
-            const ws = wb.Sheets[wb.SheetNames[0]]
-            const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
-            const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
-            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
-            if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet"); return }
-            const profNames = rows.map((r: Record<string, unknown>) => String(r[nameKey] ?? "").trim()).filter(Boolean)
-            if (profNames.length === 0) { toast.error("Ingen selskaber fundet i filen"); return }
-
-            // Hent friske members fra DB — undgå stale state
-            let currentMembers = dbMembers
-            if (activeGroupName && dbMembers.length === 0) {
-                currentMembers = await getGroupMembers(activeGroupName)
-                setDbMembers(currentMembers)
+            let inserted = 0, removed = 0, updated = 0
+            for (const item of diffResult.ny.filter(i => i.approved)) {
+                await upsertEmployerInGroup(item.data, activeGroupName); inserted++
             }
-            const dbNames = currentMembers.map(m => m.name)
-
-            const norm = (s: string) => s.toLowerCase()
-                .replace(/[''ʼ´`]/g, "'")
-                .replace(/[–—]/g, "-")
-                .replace(/[.,\s]+/g, " ")
-                .trim()
-            const profSet = new Set(profNames.map(norm))
-            const dbSet = new Set(dbNames.map(norm))
-            const result = {
-                onlyInProf: profNames.filter(n => !dbSet.has(norm(n))),
-                onlyInDb: dbNames.filter(n => !profSet.has(norm(n))),
+            for (const item of diffResult.udgaaet.filter(i => i.approved)) {
+                await removeFromGroup(item.id, activeGroupName); removed++
             }
-            console.log(`[ProF sync] Fil: ${profNames.length} selskaber, DB: ${dbNames.length} selskaber, kun i fil: ${result.onlyInProf.length}, kun i DB: ${result.onlyInDb.length}`)
-            setProfSyncResult(result)
+            const supabase = createClient()
+            for (const item of diffResult.aendret.filter(i => i.approved)) {
+                await supabase.from("employers").update(item.data).eq("id", item.id); updated++
+            }
+            await loadMembers(activeGroupName)
+            setMemberCounts(prev => ({ ...prev, [activeGroupName!]: (prev[activeGroupName!] ?? 0) + inserted - removed }))
+            setDiffResult(null)
+            const parts = [inserted && `${inserted} tilf\u00f8jet`, removed && `${removed} fjernet`, updated && `${updated} opdateret`].filter(Boolean)
+            toast.success(parts.join(", ") || "Ingen \u00e6ndringer")
+        } catch (e: any) {
+            toast.error(e.message ?? "Fejl ved anvendelse")
         } finally {
-            setProfSyncLoading(false)
+            setApplyingDiff(false)
         }
     }
 
-    const acceptProfAddition = async (name: string) => {
-        if (!activeGroupName) return
-        await upsertEmployerInGroup({ name }, activeGroupName)
-        await loadMembers(activeGroupName)
-        setProfSyncResult(prev => prev ? { ...prev, onlyInProf: prev.onlyInProf.filter(n => n !== name) } : prev)
-    }
-
-    const acceptProfRemoval = async (name: string) => {
-        if (!activeGroupName) return
-        const m = dbMembers.find(m => m.name === name)
-        if (m) await removeFromGroup(m.id, activeGroupName)
-        await loadMembers(activeGroupName)
-        setProfSyncResult(prev => prev ? { ...prev, onlyInDb: prev.onlyInDb.filter(n => n !== name) } : prev)
-    }
 
     const loadNonMembers = async () => {
         setNonMembersLoading(true)
@@ -2056,67 +2075,90 @@ function ProducenterTab() {
                                 {memberSearch && <button onClick={() => setMemberSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>}
                             </div>
                             <div className="flex items-center gap-2 rounded-md border border-dashed px-3 py-1.5 text-sm text-muted-foreground cursor-pointer hover:border-muted-foreground/50 transition-colors whitespace-nowrap"
-                                onClick={() => memberFileRef.current?.click()}>
-                                <input ref={memberFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files && handleMemberFile(e.target.files)} />
-                                {memberUploading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                                Upload Excel
+                                onClick={() => uploadRef.current?.click()}>
+                                <input ref={uploadRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => { if (e.target.files?.[0]) { handleUploadForDiff(e.target.files[0]); e.target.value = "" } }} />
+                                {diffLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                                {diffLoading ? "Analyserer..." : "Importer / Opdater"}
                             </div>
-                            <button onClick={() => setProfSyncOpen(o => !o)}
-                                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:border-muted-foreground/50 transition-colors whitespace-nowrap">
-                                <GitCompare className="h-3.5 w-3.5" />Sammenlign med ProF
-                            </button>
                         </div>
                     )}
 
-                    {activeGroupName && profSyncOpen && (
-                        <div className="mx-4 mb-4 rounded-lg border bg-muted/30 p-4 space-y-3">
+                    {/* Diff-visning */}
+                    {diffResult && (diffResult.ny.length > 0 || diffResult.udgaaet.length > 0 || diffResult.aendret.length > 0) && (
+                        <div className="mx-4 mb-4 rounded-lg border bg-muted/20 p-4 space-y-4">
                             <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium">Sammenlign med ProF-liste</p>
-                                <button onClick={() => setProfSyncOpen(false)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+                                <p className="text-sm font-medium">Gennemse \u00e6ndringer inden du anvender</p>
+                                <button onClick={() => setDiffResult(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
                             </div>
-                            <p className="text-xs text-muted-foreground">Upload en Excel-fil med en kolonne der hedder <strong>"Selskab"</strong>. Portalen sammenligner den med din liste.</p>
-                            <div className="rounded-lg border-2 border-dashed p-6 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors" onClick={() => profSyncFileRef.current?.click()}>
-                                <input ref={profSyncFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={e => e.target.files?.[0] && runProfSync(e.target.files[0])} />
-                                {profSyncLoading ? <RefreshCw className="mx-auto h-5 w-5 animate-spin text-muted-foreground" /> : <><Upload className="mx-auto h-5 w-5 text-muted-foreground/50" /><p className="mt-2 text-sm text-muted-foreground">Klik for at vælge Excel-fil</p></>}
-                            </div>
-                            {profSyncResult && (
-                                <div className="space-y-3 pt-1">
-                                    {profSyncResult.onlyInProf.length === 0 && profSyncResult.onlyInDb.length === 0 && (
-                                        <p className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1.5"><CheckCircle2 className="h-4 w-4" />Listen er i overensstemmelse med ProF-hjemmesiden.</p>
-                                    )}
-                                    {profSyncResult.onlyInProf.length > 0 && (
-                                        <div className="space-y-1.5">
-                                            <div className="flex items-center justify-between">
-                                                <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><UserPlus className="h-3.5 w-3.5" />På ProF, men ikke i din liste ({profSyncResult.onlyInProf.length})</p>
-                                                <button onClick={async () => { for (const n of [...profSyncResult.onlyInProf]) await acceptProfAddition(n) }} className="text-xs text-emerald-700 dark:text-emerald-400 underline underline-offset-2">Tilføj alle</button>
-                                            </div>
-                                            <div className="space-y-1">
-                                                {profSyncResult.onlyInProf.map(name => (
-                                                    <div key={name} className="flex items-center justify-between rounded bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1.5">
-                                                        <span className="text-xs">{name}</span>
-                                                        <button onClick={() => acceptProfAddition(name)} className="text-xs text-emerald-700 dark:text-emerald-400 font-medium hover:underline">Tilføj</button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                    {profSyncResult.onlyInDb.length > 0 && (
-                                        <div className="space-y-1.5">
-                                            <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><UserMinus className="h-3.5 w-3.5" />I din liste, men ikke på ProF — muligvis udmeldt ({profSyncResult.onlyInDb.length})</p>
-                                            <div className="space-y-1">
-                                                {profSyncResult.onlyInDb.map(name => (
-                                                    <div key={name} className="flex items-center justify-between rounded bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5">
-                                                        <span className="text-xs">{name}</span>
-                                                        <button onClick={() => acceptProfRemoval(name)} className="text-xs text-amber-700 dark:text-amber-400 font-medium hover:underline">Fjern fra liste</button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
+                            {diffResult.ny.length > 0 && (
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><UserPlus className="h-3.5 w-3.5" />Nye ({diffResult.ny.length})</p>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, ny: p.ny.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                    </div>
+                                    <div className="space-y-1">
+                                        {diffResult.ny.map((item, idx) => (
+                                            <label key={item.name} className="flex items-center gap-2 rounded bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1.5 cursor-pointer">
+                                                <input type="checkbox" checked={item.approved} onChange={e => setDiffResult(p => p ? { ...p, ny: p.ny.map((i, j) => j === idx ? { ...i, approved: e.target.checked } : i) } : p)} className="h-3.5 w-3.5" />
+                                                <span className="text-xs flex-1">{item.name}</span>
+                                                {item.data.contact_name && <span className="text-xs text-muted-foreground">{item.data.contact_name}</span>}
+                                            </label>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
+                            {diffResult.udgaaet.length > 0 && (
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs font-medium text-red-700 dark:text-red-400 flex items-center gap-1"><UserMinus className="h-3.5 w-3.5" />Udg\u00e5ede ({diffResult.udgaaet.length})</p>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, udgaaet: p.udgaaet.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                    </div>
+                                    <div className="space-y-1">
+                                        {diffResult.udgaaet.map((item, idx) => (
+                                            <label key={item.name} className="flex items-center gap-2 rounded bg-red-50 dark:bg-red-950/30 px-3 py-1.5 cursor-pointer">
+                                                <input type="checkbox" checked={item.approved} onChange={e => setDiffResult(p => p ? { ...p, udgaaet: p.udgaaet.map((i, j) => j === idx ? { ...i, approved: e.target.checked } : i) } : p)} className="h-3.5 w-3.5" />
+                                                <span className="text-xs flex-1">{item.name}</span>
+                                                {item.inOtherGroups > 0
+                                                    ? <span className="text-xs text-amber-600">Stadig i {item.inOtherGroups} anden liste</span>
+                                                    : <span className="text-xs text-muted-foreground">Flyttes til ikke-medlemmer</span>}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {diffResult.aendret.length > 0 && (
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" />{"Æ"}ndrede felter ({diffResult.aendret.length})</p>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, aendret: p.aendret.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                    </div>
+                                    <div className="space-y-1">
+                                        {diffResult.aendret.map((item, idx) => (
+                                            <label key={item.name} className="flex items-start gap-2 rounded bg-amber-50 dark:bg-amber-950/30 px-3 py-2 cursor-pointer">
+                                                <input type="checkbox" checked={item.approved} onChange={e => setDiffResult(p => p ? { ...p, aendret: p.aendret.map((i, j) => j === idx ? { ...i, approved: e.target.checked } : i) } : p)} className="h-3.5 w-3.5 mt-0.5" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-xs font-medium">{item.name}</p>
+                                                    {Object.entries(item.data).map(([k, v]) => (
+                                                        <p key={k} className="text-[10px] text-muted-foreground">
+                                                            {k}: <span className="line-through">{(item.current as Record<string,unknown>)[k] as string ?? "\u2014"}</span> {"->"} <span className="text-foreground">{v as string ?? "\u2014"}</span>
+                                                        </p>
+                                                    ))}
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            <div className="flex items-center justify-end gap-2 pt-1 border-t">
+                                <Button variant="outline" size="sm" onClick={() => setDiffResult(null)}>Annuller</Button>
+                                <Button size="sm" onClick={applyDiff} disabled={applyingDiff} className="gap-1.5">
+                                    {applyingDiff && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                                    Anvend valgte \u00e6ndringer
+                                </Button>
+                            </div>
                         </div>
                     )}
+
 
                     {activeGroupName && (
                         <div className="border-t overflow-x-auto">
@@ -2137,6 +2179,7 @@ function ProducenterTab() {
                                                 <TableHead className="text-xs">Kontaktperson</TableHead>
                                                 <TableHead className="text-xs">Telefon</TableHead>
                                                 <TableHead className="text-xs">Email</TableHead>
+                                                <TableHead className="text-xs w-20" title="Associerede medlemmer er ikke overenskomstbundet">Assoc.</TableHead>
                                                 <TableHead className="text-xs w-[160px]" />
                                             </TableRow>
                                         </TableHeader>
@@ -2151,6 +2194,16 @@ function ProducenterTab() {
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_name ?? "—"}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_phone ?? "—"}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_email ?? "—"}</TableCell>
+                                                            <TableCell className="text-xs w-20">
+                                                                <input type="checkbox" checked={m.associeret ?? false}
+                                                                    onChange={async e => {
+                                                                        const ok = await setAssocieret(m.id, e.target.checked)
+                                                                        if (ok) setDbMembers(prev => prev.map(x => x.id === m.id ? { ...x, associeret: e.target.checked } : x))
+                                                                        else toast.error("Kunne ikke opdatere")
+                                                                    }}
+                                                                    className="h-3.5 w-3.5 cursor-pointer"
+                                                                    title="Associeret medlem — ikke overenskomstbundet" />
+                                                            </TableCell>
                                                             <TableCell className="text-xs">
                                                                 <div className="flex items-center gap-1 justify-end">
                                                                     {otherGroups.length > 0 && (
@@ -2165,7 +2218,7 @@ function ProducenterTab() {
                                                         </TableRow>
                                                     )
                                                 })}
-                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
+                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
                                         </TableBody>
                                     </Table>
                                     <div className="flex items-center gap-2 px-4 py-2 border-t bg-muted/30">

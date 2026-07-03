@@ -22,6 +22,7 @@ export interface DbEmployer {
     contact_email: string | null
     contact_phone: string | null
     website: string | null
+    associeret: boolean
     created_at: string
 }
 
@@ -64,7 +65,7 @@ export async function getGroupMembers(groupName: string): Promise<DbEmployerWith
             valid_from,
             employers (
                 id, name, cvr, address,
-                contact_name, contact_email, contact_phone, website,
+                contact_name, contact_email, contact_phone, website, associeret,
                 created_at
             )
         `)
@@ -93,7 +94,7 @@ export async function getNonGroupEmployers(): Promise<DbEmployer[]> {
 
     const { data, error } = await supabase
         .from("employers")
-        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, created_at")
+        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, created_at")
         .order("name")
     if (error || !data) return []
     const idSet = new Set(ids)
@@ -204,6 +205,27 @@ export async function removeFromGroup(employerId: string, groupName: string): Pr
         .eq("association_name", groupName)
         .is("valid_to", null)
     return !error
+}
+
+/** Sæt associeret-status på en employer */
+export async function setAssocieret(employerId: string, associeret: boolean): Promise<boolean> {
+    const supabase = createClient()
+    const { error } = await supabase
+        .from("employers")
+        .update({ associeret })
+        .eq("id", employerId)
+    return !error
+}
+
+/** Tjek om en employer er i mindst én anden aktiv gruppe */
+export async function getActiveGroupCount(employerId: string): Promise<number> {
+    const supabase = createClient()
+    const { count } = await supabase
+        .from("employer_registries")
+        .select("*", { count: "exact", head: true })
+        .eq("employer_id", employerId)
+        .is("valid_to", null)
+    return count ?? 0
 }
 
 /** Move employer from one group to another */
