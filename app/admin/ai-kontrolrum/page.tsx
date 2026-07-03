@@ -193,7 +193,7 @@ function VidenbaseTab() {
                             if (!res.ok) throw new Error((await res.json()).error)
                             const data = await res.json()
                             setSyncResult({ ok: data.ok, fejl: data.fejl })
-                            toast.success()
+                            toast.success(`Retsinformation synkroniseret — ${data.ok} paragraffer opdateret`)
                         } catch (e: any) { toast.error(e.message) }
                         finally { setSyncing(false) }
                     }} disabled={syncing} title="Hent opdateret lovtekst fra retsinformation.dk">
