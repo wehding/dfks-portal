@@ -1927,14 +1927,29 @@ function ProducenterTab() {
             const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
             if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet"); return }
             const profNames = rows.map((r: Record<string, unknown>) => String(r[nameKey] ?? "").trim()).filter(Boolean)
-            const dbNames = dbMembers.map(m => m.name)
-            const norm = (s: string) => s.toLowerCase().replace(/[.,\s]+/g, " ").trim()
+            if (profNames.length === 0) { toast.error("Ingen selskaber fundet i filen"); return }
+
+            // Hent friske members fra DB — undgå stale state
+            let currentMembers = dbMembers
+            if (activeGroupName && dbMembers.length === 0) {
+                currentMembers = await getGroupMembers(activeGroupName)
+                setDbMembers(currentMembers)
+            }
+            const dbNames = currentMembers.map(m => m.name)
+
+            const norm = (s: string) => s.toLowerCase()
+                .replace(/[''ʼ´`]/g, "'")
+                .replace(/[–—]/g, "-")
+                .replace(/[.,\s]+/g, " ")
+                .trim()
             const profSet = new Set(profNames.map(norm))
             const dbSet = new Set(dbNames.map(norm))
-            setProfSyncResult({
+            const result = {
                 onlyInProf: profNames.filter(n => !dbSet.has(norm(n))),
                 onlyInDb: dbNames.filter(n => !profSet.has(norm(n))),
-            })
+            }
+            console.log(`[ProF sync] Fil: ${profNames.length} selskaber, DB: ${dbNames.length} selskaber, kun i fil: ${result.onlyInProf.length}, kun i DB: ${result.onlyInDb.length}`)
+            setProfSyncResult(result)
         } finally {
             setProfSyncLoading(false)
         }
