@@ -27,6 +27,7 @@ import {
     BrainCircuit,
     ShieldCheck,
     ChevronRight,
+    CheckCircle2,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -49,6 +50,7 @@ import { Separator } from "@/components/ui/separator"
 
 const ADMIN_NAV_ITEMS = [
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: FileText,    labelKey: "nav.contracts"        },
+    { key: "validering",          href: "/admin/validering",          icon: CheckCircle2, labelKey: "nav.validation"      },
     { key: "vaerker",             href: "/admin/vaerker",             icon: Library,     labelKey: "nav.works"            },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"    },
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },

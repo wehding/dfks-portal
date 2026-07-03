@@ -110,7 +110,6 @@ export default function AdminValideringPage() {
     const [showMaskingConfirm, setShowMaskingConfirm] = useState(false)
     const [maskingPreview, setMaskingPreview] = useState<{ count: number; types: string[] }>({ count: 0, types: [] })
     const [maskedText, setMaskedText] = useState("")
-    const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null)
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
@@ -386,7 +385,8 @@ export default function AdminValideringPage() {
                 pensionSupplement: ed.pensionSupplement ?? "",
                 personalSupplement: ed.personalSupplement ?? "",
                 otherSupplements: ed.otherSupplements ?? "",
-                workingWeeks: ed.workingWeeks ?? "",
+                // Kontraktens EGNE uger — ikke den samlede total inkl. allonger (ed.workingWeeks)
+                workingWeeks: ed.contractWorkingWeeks ?? ed.workingWeeks ?? "",
                 svod: impliedBySvod,
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
@@ -476,6 +476,36 @@ export default function AdminValideringPage() {
                 betaRate: formData.betaRate ? Number(formData.betaRate) : undefined,
                 specialNotes: formData.specialNotes || undefined,
             }
+
+            // Genberegn samlet arbejdstid + gældende løn ud fra evt. tidligere gemte allonge-udtræk,
+            // så et almindeligt "Godkend" ikke overskriver den samlede arbejdstid inkl. allonger.
+            // Tolerant over for at ai_status/ai_result-kolonnerne endnu ikke er kørt i produktion.
+            const contractWorkingWeeks = extractedData.workingWeeks ?? 0
+            let allongeWeeksSum = 0
+            let currentSalary: number | undefined = extractedData.salary
+            let currentSalaryUnit: string | undefined = extractedData.salaryUnit
+            try {
+                const { data: attachments, error: attErr } = await supabase
+                    .from("contract_attachments")
+                    .select("created_at, ai_status, ai_result")
+                    .eq("contract_id", id)
+                    .eq("type", "allonge")
+                if (!attErr && attachments?.length) {
+                    const klareAllonger = attachments
+                        .filter((a: any) => a.ai_status === "klar" && a.ai_result)
+                        .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                    allongeWeeksSum = klareAllonger.reduce((sum: number, a: any) => sum + (Number(a.ai_result?.workingWeeks) || 0), 0)
+                    const latest = klareAllonger[klareAllonger.length - 1]
+                    if (latest?.ai_result?.salary != null) currentSalary = latest.ai_result.salary
+                    if (latest?.ai_result?.salaryUnit) currentSalaryUnit = latest.ai_result.salaryUnit
+                }
+            } catch (e) {
+                console.warn("[validering] Kunne ikke hente allonge-udtræk (migration kørt endnu?):", e)
+            }
+            ;(extractedData as any).contractWorkingWeeks = contractWorkingWeeks
+            ;(extractedData as any).workingWeeks = contractWorkingWeeks + allongeWeeksSum
+            ;(extractedData as any).currentSalary = currentSalary
+            ;(extractedData as any).currentSalaryUnit = currentSalaryUnit
 
             const { error: valError } = await supabase.from("contract_validations").upsert({
                 contract_id: id,
@@ -734,7 +764,6 @@ export default function AdminValideringPage() {
             // Brug contracts/extract (fuld admin-prompt med kilder og highlights)
             const fd = new FormData()
             fd.append("maskedText", textToSend)
-            if (reviewingContract?.id) fd.append("contractId", reviewingContract.id)
             const resp = await fetch("/api/contracts/extract", { method: "POST", body: fd })
             if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error ?? `Fejl ${resp.status}`) }
             const data = await resp.json()
@@ -787,14 +816,8 @@ export default function AdminValideringPage() {
         }
     }
 
-    const openAttachment = async (attachment: { id: string; pdf_url: string | null }) => {
-        if (!attachment.pdf_url) return
-        setOpeningAttachmentId(attachment.id)
-        const supabase = createClient()
-        const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(attachment.pdf_url, 3600)
-        setOpeningAttachmentId(null)
-        if (error || !data?.signedUrl) { toast.error("Kunne ikke åbne allongen"); return }
-        window.open(data.signedUrl, "_blank")
+    const updateReviewingContract = (partial: Partial<ValidatingContract>) => {
+        setContracts(prev => prev.map(c => c.id === reviewingId ? { ...c, ...partial } as ValidatingContract : c))
     }
 
     const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -893,24 +916,20 @@ export default function AdminValideringPage() {
                     </Badge>
                 </div>
 
-                {reviewingContract.contract_attachments.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-medium text-muted-foreground">Allonger:</span>
-                        {reviewingContract.contract_attachments.map(a => (
-                            <button
-                                key={a.id}
-                                onClick={() => openAttachment(a)}
-                                disabled={openingAttachmentId === a.id}
-                                className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-muted transition-colors"
-                            >
-                                <FileText className="h-3 w-3" />
-                                {a.title ?? "Allonge"}
-                                {openingAttachmentId === a.id && <Loader2 className="h-3 w-3 animate-spin" />}
-                            </button>
-                        ))}
-                    </div>
-                )}
+                <Tabs defaultValue="kontrakt">
+                    {reviewingContract.contract_attachments.length > 0 && (
+                        <TabsList>
+                            <TabsTrigger value="kontrakt">Kontrakt</TabsTrigger>
+                            {reviewingContract.contract_attachments.map(a => (
+                                <TabsTrigger key={a.id} value={a.id} className="gap-1.5">
+                                    <FileText className="h-3.5 w-3.5" />
+                                    {a.title ?? "Allonge"}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                    )}
 
+                <TabsContent value="kontrakt" className="mt-4">
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     {/* PDF viewer */}
                     <div className="rounded-lg border overflow-hidden" style={{ height: "80vh" }}>
@@ -1244,6 +1263,11 @@ export default function AdminValideringPage() {
                             <Separator />
                             <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                 <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
+                                {reviewingContract.contract_attachments.length > 0 && (reviewingContract.validation?.extracted_data as any)?.workingWeeks != null && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        Samlet arbejdstid inkl. allonger: <span className="font-medium">{(reviewingContract.validation?.extracted_data as any).workingWeeks} uger</span> — se allonge-fanerne
+                                    </p>
+                                )}
                             </F>
                             <Separator />
                             <div>
@@ -1337,6 +1361,13 @@ export default function AdminValideringPage() {
                         </div>
                     </div>
                 </div>
+                </TabsContent>
+                {reviewingContract.contract_attachments.map(a => (
+                    <TabsContent key={a.id} value={a.id} className="mt-4">
+                        <AllongeTabContent attachment={a} reviewingContract={reviewingContract} onSaved={updateReviewingContract} />
+                    </TabsContent>
+                ))}
+                </Tabs>
             </div>
 
             <Dialog open={showMaskingConfirm} onOpenChange={() => setShowMaskingConfirm(false)}>
@@ -1656,6 +1687,256 @@ function EmptyState({ icon, title, desc }: { icon: React.ReactNode; title: strin
             {icon}
             <p className="text-sm font-medium">{title}</p>
             {desc && <p className="text-xs text-muted-foreground mt-1">{desc}</p>}
+        </div>
+    )
+}
+
+type AllongeAttachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string }
+type AllongeAiResult = { salary: number | null; salaryUnit: string | null; workingWeeks: number | null; specialNotes: string | null; extractedAt: string }
+
+function AllongeTabContent({
+    attachment,
+    reviewingContract,
+    onSaved,
+}: {
+    attachment: AllongeAttachment
+    reviewingContract: ValidatingContract
+    onSaved: (partial: Partial<ValidatingContract>) => void
+}) {
+    const [signedUrl, setSignedUrl] = useState<string | null>(null)
+    const [loadingUrl, setLoadingUrl] = useState(false)
+    const [extracting, setExtracting] = useState(false)
+    const [saving, setSaving] = useState(false)
+    const [salary, setSalary] = useState("")
+    const [salaryUnit, setSalaryUnit] = useState("monthly")
+    const [workingWeeks, setWorkingWeeks] = useState("")
+    const [specialNotes, setSpecialNotes] = useState("")
+
+    // Hent evt. tidligere gemt ai_result for denne allonge — tolerant over for
+    // at ai_status/ai_result-kolonnerne endnu ikke er kørt i produktion (migration 20260703210149)
+    useEffect(() => {
+        (async () => {
+            const supabase = createClient()
+            const { data, error } = await supabase
+                .from("contract_attachments")
+                .select("ai_status, ai_result")
+                .eq("id", attachment.id)
+                .single()
+            if (error) { console.warn("[allonge-tab] ai_status/ai_result ikke tilgængelig endnu:", error.message); return }
+            const r = data?.ai_result as AllongeAiResult | null
+            if (r) {
+                setSalary(r.salary != null ? String(r.salary) : "")
+                setSalaryUnit(r.salaryUnit ?? "monthly")
+                setWorkingWeeks(r.workingWeeks != null ? String(r.workingWeeks) : "")
+                setSpecialNotes(r.specialNotes ?? "")
+            }
+        })()
+    }, [attachment.id])
+
+    useEffect(() => {
+        if (!attachment.pdf_url) return
+        setLoadingUrl(true)
+        const supabase = createClient()
+        supabase.storage.from(BUCKET).createSignedUrl(attachment.pdf_url, 3600).then(({ data }) => {
+            setSignedUrl(data?.signedUrl ?? null)
+            setLoadingUrl(false)
+        })
+    }, [attachment.pdf_url])
+
+    const handleExtract = async () => {
+        setExtracting(true)
+        try {
+            const resp = await fetch("/api/validate/extract-allonge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ attachmentId: attachment.id }),
+            })
+            const json = await resp.json()
+            if (!resp.ok || !json.ok) throw new Error(json.error ?? "Udtræk fejlede")
+            const d = json.data
+            if (d.salary != null) setSalary(String(d.salary))
+            if (d.salaryUnit) setSalaryUnit(d.salaryUnit)
+            if (d.workingWeeks != null) setWorkingWeeks(String(d.workingWeeks))
+            if (d.specialNotes) setSpecialNotes(d.specialNotes)
+            toast.success("Allonge-felter udtrukket")
+        } catch (e: any) {
+            toast.error(`Udtræk fejlede: ${e.message}`)
+        } finally {
+            setExtracting(false)
+        }
+    }
+
+    const handleSave = async () => {
+        setSaving(true)
+        try {
+            const supabase = createClient()
+            const aiResult: AllongeAiResult = {
+                salary: salary ? Number(salary) : null,
+                salaryUnit: salaryUnit || null,
+                workingWeeks: workingWeeks ? Number(workingWeeks) : null,
+                specialNotes: specialNotes || null,
+                extractedAt: new Date().toISOString(),
+            }
+            const { error: attErr } = await supabase
+                .from("contract_attachments")
+                .update({ ai_status: "klar", ai_result: aiResult })
+                .eq("id", attachment.id)
+            if (attErr) throw new Error(`${attErr.message} — kør migrationen for contract_attachments.ai_status/ai_result i Supabase først`)
+
+            // Genberegn samlet arbejdstid og gældende løn på tværs af alle allonger på kontrakten
+            const alleAttachments = await supabase
+                .from("contract_attachments")
+                .select("id, created_at, ai_status, ai_result")
+                .eq("contract_id", reviewingContract.id)
+                .eq("type", "allonge")
+
+            const klareAllonger = (alleAttachments.data ?? [])
+                .filter((a: any) => a.ai_status === "klar" && a.ai_result)
+                .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+
+            const ed = (reviewingContract.validation?.extracted_data as any) ?? {}
+            const contractWorkingWeeks: number = ed.contractWorkingWeeks ?? ed.workingWeeks ?? 0
+            const allongeWeeksSum = klareAllonger.reduce((sum: number, a: any) => sum + (Number(a.ai_result?.workingWeeks) || 0), 0)
+            const totalWorkingWeeks = contractWorkingWeeks + allongeWeeksSum
+
+            const latest = klareAllonger[klareAllonger.length - 1]
+            const currentSalary = latest?.ai_result?.salary ?? ed.salary ?? null
+            const currentSalaryUnit = latest?.ai_result?.salaryUnit ?? ed.salaryUnit ?? null
+
+            const mergedExtractedData = {
+                ...ed,
+                contractWorkingWeeks,
+                workingWeeks: totalWorkingWeeks,
+                currentSalary,
+                currentSalaryUnit,
+            }
+
+            if (reviewingContract.validation) {
+                const { error: valErr } = await supabase
+                    .from("contract_validations")
+                    .update({ extracted_data: mergedExtractedData })
+                    .eq("contract_id", reviewingContract.id)
+                if (valErr) throw new Error(valErr.message)
+            } else {
+                const { error: valErr } = await supabase
+                    .from("contract_validations")
+                    .insert({ contract_id: reviewingContract.id, org_id: reviewingContract.org_id, extracted_data: mergedExtractedData })
+                if (valErr) throw new Error(valErr.message)
+            }
+
+            onSaved({
+                validation: {
+                    ...(reviewingContract.validation as any),
+                    id: reviewingContract.validation?.id ?? "",
+                    extracted_data: mergedExtractedData,
+                },
+            })
+            toast.success("Allonge gemt — samlet arbejdstid opdateret")
+        } catch (e: any) {
+            toast.error(`Kunne ikke gemme: ${e.message}`)
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const ed = (reviewingContract.validation?.extracted_data as any) ?? {}
+    const pdfPath = (attachment.pdf_url ?? "").toLowerCase()
+    const isDocx = pdfPath.endsWith(".docx") || pdfPath.endsWith(".doc")
+
+    return (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="rounded-lg border overflow-hidden" style={{ height: "80vh" }}>
+                <div className="flex items-center justify-between border-b px-4 py-3">
+                    <span className="text-sm font-medium">{attachment.title ?? "Allonge"}</span>
+                </div>
+                {loadingUrl ? (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />Henter dokument...
+                    </div>
+                ) : signedUrl && !isDocx ? (
+                    <PdfViewer url={signedUrl} />
+                ) : signedUrl && isDocx ? (
+                    <iframe src={signedUrl} className="w-full h-full border-0" title={attachment.title ?? "Allonge"} />
+                ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil</div>
+                )}
+            </div>
+
+            <div className="rounded-lg border overflow-y-auto" style={{ maxHeight: "80vh" }}>
+                <div className="flex items-center gap-2 border-b px-4 py-3 sticky top-0 bg-background z-10">
+                    <span className="text-sm font-medium">Allonge-udtræk</span>
+                    <Button size="sm" variant="outline" className="ml-auto gap-1.5" disabled={extracting} onClick={handleExtract}>
+                        <Sparkles className={`h-3.5 w-3.5 ${extracting ? "animate-pulse" : ""}`} />
+                        {extracting ? "Udtrækker..." : "AI-udtræk"}
+                    </Button>
+                </div>
+                <div className="p-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                            <Label>Ny løn (fremadrettet)</Label>
+                            <Input type="number" value={salary} onChange={e => setSalary(e.target.value)} />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>Enhed</Label>
+                            <Select value={salaryUnit} onValueChange={setSalaryUnit}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="monthly">Månedlig</SelectItem>
+                                    <SelectItem value="weekly">Ugentlig</SelectItem>
+                                    <SelectItem value="daily">Dagligt</SelectItem>
+                                    <SelectItem value="total">Total</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Ekstra arbejdsuger (denne allonge)</Label>
+                        <Input type="number" value={workingWeeks} onChange={e => setWorkingWeeks(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label>Kommentarer</Label>
+                        <Textarea value={specialNotes} onChange={e => setSpecialNotes(e.target.value)} rows={3} />
+                    </div>
+
+                    <Separator />
+
+                    <div className="rounded-lg bg-muted/50 p-3 text-xs space-y-1">
+                        <p className="font-medium text-muted-foreground mb-1.5">Samlet beregning (går ind i statistik)</p>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Kontraktens uger</span><span>{ed.contractWorkingWeeks ?? ed.workingWeeks ?? "—"}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Samlet arbejdstid (kontrakt + allonger)</span><span className="font-medium">{ed.workingWeeks ?? "—"} uger</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Nuværende løn</span><span>{ed.currentSalary ?? ed.salary ?? "—"} ({ed.currentSalaryUnit ?? ed.salaryUnit ?? "—"})</span></div>
+                    </div>
+
+                    <Separator />
+
+                    <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-2">Baggrundsinformation fra kontrakten (kun visning)</p>
+                        <div className="space-y-1 text-xs">
+                            {([
+                                ["Producent", ed.producerName ?? ed.employerName],
+                                ["Produktion", ed.workTitle],
+                                ["Overenskomst", ed.overenskomst],
+                                ["Kontrakttype", ed.contractType],
+                                ["Oprindelig løn", ed.salary ? `${ed.salary} (${ed.salaryUnit ?? "—"})` : null],
+                                ["Oprindelige arbejdsuger", ed.contractWorkingWeeks ?? ed.workingWeeks],
+                                ["SVOD", ed.svod != null ? (ed.svod ? "Ja" : "Nej") : null],
+                                ["Copydan", ed.copydan != null ? (ed.copydan ? "Ja" : "Nej") : null],
+                                ["Royalty", ed.royalty != null ? (ed.royalty ? "Ja" : "Nej") : null],
+                            ] as [string, unknown][]).filter(([, v]) => v != null && v !== "").map(([label, value]) => (
+                                <div key={label} className="flex justify-between bg-muted/30 rounded px-2 py-1">
+                                    <span className="text-muted-foreground">{label}</span>
+                                    <span className="font-medium">{String(value)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <Button className="w-full gap-1.5" disabled={saving} onClick={handleSave}>
+                        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                        Gem allonge-udtræk
+                    </Button>
+                </div>
+            </div>
         </div>
     )
 }

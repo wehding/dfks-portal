@@ -5,44 +5,30 @@ import { extractPdfText } from "@/lib/pdf-parse"
 
 const BUCKET = "kontrakter"
 
-// Henter og sammensætter rå tekst fra alle allonger på en kontrakt,
-// klar til at blive tilføjet til kontraktteksten FØR maskePersonalData().
-export async function hentAllongeTekst(contractId: string): Promise<string> {
+// Henter og udtrækker rå tekst for én specifik allonge, til brug i den
+// separate allonge-only AI-udtræk (løn, uger, kommentarer).
+export async function hentAttachmentTekst(attachmentId: string): Promise<{ title: string | null; text: string } | null> {
     const db = createServiceClient()
-    const { data: attachments } = await db
+    const { data: attachment } = await db
         .from("contract_attachments")
-        .select("title, pdf_url, created_at")
-        .eq("contract_id", contractId)
-        .eq("type", "allonge")
-        .order("created_at", { ascending: true })
+        .select("title, pdf_url")
+        .eq("id", attachmentId)
+        .single()
 
-    if (!attachments?.length) return ""
+    if (!attachment?.pdf_url) return null
 
-    let combined = ""
-    for (const a of attachments) {
-        if (!a.pdf_url) continue
-        const { data: fileData, error } = await db.storage.from(BUCKET).download(a.pdf_url)
-        if (error || !fileData) {
-            console.warn("[allonge-text] Kunne ikke hente allonge-fil:", a.pdf_url, error?.message)
-            continue
-        }
-        const buffer = Buffer.from(await fileData.arrayBuffer())
-        const ext = a.pdf_url.split(".").pop()?.toLowerCase()
-
-        let text = ""
-        try {
-            if (ext === "pdf") text = await extractPdfText(buffer)
-            else if (ext === "docx") text = (await mammoth.extractRawText({ buffer })).value
-            else text = buffer.toString("utf-8")
-        } catch (e) {
-            console.warn("[allonge-text] Kunne ikke udtrække tekst fra allonge:", a.title, e)
-            continue
-        }
-        if (!text.trim()) continue
-
-        combined += `\n\n──────────────────────────────────────\nALLONGE: ${a.title ?? "Uden titel"} (uploadet ${a.created_at?.substring(0, 10) ?? ""})\n──────────────────────────────────────\n${text}`
+    const { data: fileData, error } = await db.storage.from(BUCKET).download(attachment.pdf_url)
+    if (error || !fileData) {
+        console.warn("[allonge-text] Kunne ikke hente allonge-fil:", attachment.pdf_url, error?.message)
+        return null
     }
-    return combined
-}
+    const buffer = Buffer.from(await fileData.arrayBuffer())
+    const ext = attachment.pdf_url.split(".").pop()?.toLowerCase()
 
-export const ALLONGE_PROMPT_NOTE = `Kontraktteksten kan indeholde et eller flere "ALLONGE"-afsnit efter selve kontrakten — disse er senere tillæg/forlængelser til den oprindelige kontrakt. Hvis en allonge ændrer en værdi fra kontrakten (fx forlænget slutdato, flere arbejdsuger, ændret løn eller tillæg), skal allongens værdi bruges frem for kontraktens oprindelige værdi. Nævn kort i specialNotes hvilke felter der er ændret af en allonge.`
+    let text = ""
+    if (ext === "pdf") text = await extractPdfText(buffer)
+    else if (ext === "docx") text = (await mammoth.extractRawText({ buffer })).value
+    else text = buffer.toString("utf-8")
+
+    return { title: attachment.title, text }
+}
