@@ -1885,7 +1885,7 @@ function ProducenterTab() {
             const ws = wb.Sheets[wb.SheetNames[0]]
             const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
             const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
-            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.includes(k.toLowerCase().trim()))
+            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
             if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet (Selskab/Producent/Name)"); return }
             const structured = rows.map((r: Record<string, unknown>) => ({ name: String(r[nameKey] ?? "").trim() })).filter(r => r.name)
             const result = await bulkImportToGroup(structured, activeGroupName)
@@ -1909,7 +1909,7 @@ function ProducenterTab() {
             const ws = wb.Sheets[wb.SheetNames[0]]
             const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
             const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
-            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.includes(k.toLowerCase().trim()))
+            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
             if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet"); return }
             const profNames = rows.map((r: Record<string, unknown>) => String(r[nameKey] ?? "").trim()).filter(Boolean)
             const dbNames = dbMembers.map(m => m.name)
