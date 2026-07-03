@@ -27,6 +27,7 @@ Medlemmer kan selv uploade allonger (forlængelser, ekstra uger) til deres egne 
 
 - `contract_attachments.type = 'allonge'` bruges til dette — til forskel fra `'bilag'`/`'andet'`.
 - Server actions: `app/actions/member-attachments.ts` (`uploadMemberAttachment`, `deleteMemberAttachment`).
+- **Medlem kan selv slette en allonge — men kun indtil admin har validereret den.** `deleteMemberAttachment` tjekker `contract_attachments.ai_status`: så længe den ikke er `'klar'` (dvs. admin ikke har kørt/gemt allonge-udtræk endnu, se nedenfor) kan medlemmet slette sin egen allonge. Når `ai_status = 'klar'`, afvises medlemmets sletning — herefter er det kun admin (`"Admins kan administrere bilag"`-policyen) der kan slette. Håndhæves både i `deleteMemberAttachment` (application-niveau, tolerant hvis `ai_status`-kolonnen mangler) og i RLS (`"Brugere kan slette egne allonger inden validering"`, migration `20260703224439`).
 - UI: `app/portal/mine-kontrakter/AddAlongeDialog.tsx` + allonge-listen i `MineKontrakterClient.tsx`.
 - Admin ser allonger i to steder: `app/admin/kontrakter/page.tsx` (kontraktliste + "Se kontrakt"-dialog, antal-badge + klikbare knapper der åbner via signeret URL) og `app/admin/validering/page.tsx` (se nedenfor, samme antal-badge i listen).
 

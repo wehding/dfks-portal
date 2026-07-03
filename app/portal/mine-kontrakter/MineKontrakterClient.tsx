@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip } from "lucide-react";
 import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
+import { deleteMemberAttachment } from "@/app/actions/member-attachments";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import AddAlongeDialog from "./AddAlongeDialog";
@@ -84,6 +85,7 @@ export default function MineKontrakterClient({
   const [linkingSaving, setLinkingSaving] = useState(false);
   const [isAddingAllonge, setIsAddingAllonge] = useState(false);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<string | null>(null);
 
   const total     = contracts.length;
   const godkendte = contracts.filter(c => c.status === "valideret").length;
@@ -143,6 +145,22 @@ export default function MineKontrakterClient({
     const res = await getContractSignedUrl(attachment.pdf_url);
     setOpeningAttachmentId(null);
     if (res.url) window.open(res.url, "_blank");
+  }
+
+  async function handleDeleteAttachment(attachment: Attachment) {
+    if (!selectedContract) return;
+    if (!confirm(`Er du sikker på at du vil slette "${attachment.title ?? "allongen"}"?`)) return;
+    setDeletingAttachmentId(attachment.id);
+    const res = await deleteMemberAttachment(attachment.id);
+    setDeletingAttachmentId(null);
+    if (res.success) {
+      const updatedContract = { ...selectedContract, contract_attachments: selectedContract.contract_attachments.filter(a => a.id !== attachment.id) };
+      setSelectedContract(updatedContract);
+      setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract : c));
+      setMsg({ type: "success", text: "Allonge slettet" });
+    } else {
+      setMsg({ type: "error", text: res.error ?? "Kunne ikke slette allongen" });
+    }
   }
 
   return (
@@ -417,22 +435,36 @@ export default function MineKontrakterClient({
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {selectedContract.contract_attachments.map(a => (
-                      <button
+                      <div
                         key={a.id}
-                        onClick={() => openAttachment(a)}
-                        disabled={openingAttachmentId === a.id}
-                        className="flex items-center justify-between text-left text-sm px-3 py-2 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors"
+                        className="flex items-center gap-1.5 rounded-md border border-gray-200 bg-gray-50"
                       >
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                          <span className="font-medium text-gray-900 truncate">{a.title ?? "Allonge"}</span>
-                        </span>
-                        <span className="text-xs text-gray-500 shrink-0 ml-2">
-                          {openingAttachmentId === a.id
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : a.created_at.substring(0, 10)}
-                        </span>
-                      </button>
+                        <button
+                          onClick={() => openAttachment(a)}
+                          disabled={openingAttachmentId === a.id}
+                          className="flex flex-1 min-w-0 items-center justify-between text-left text-sm px-3 py-2 hover:bg-gray-100 transition-colors rounded-md"
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                            <span className="font-medium text-gray-900 truncate">{a.title ?? "Allonge"}</span>
+                          </span>
+                          <span className="text-xs text-gray-500 shrink-0 ml-2">
+                            {openingAttachmentId === a.id
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : a.created_at.substring(0, 10)}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAttachment(a)}
+                          disabled={deletingAttachmentId === a.id}
+                          title="Slet allonge"
+                          className="p-2 mr-1 text-gray-400 hover:text-red-500 transition-colors shrink-0"
+                        >
+                          {deletingAttachmentId === a.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <Trash2 className="h-3.5 w-3.5" />}
+                        </button>
+                      </div>
                     ))}
                   </div>
                 )}
