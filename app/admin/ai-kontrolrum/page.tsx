@@ -978,7 +978,7 @@ function KvalitetTab() {
                     <p className="text-sm font-semibold">Seneste korrektioner fra jurist</p>
                     <p className="text-xs text-muted-foreground">
                         Når juristen markerer et fund som forkert og skriver en korrektion, vises den her.
-                        Gem dem som sagserfaringer under <strong>Kontraktgennemgang</strong> så de bruges ved næste analyse.
+                        Gem dem som sagserfaringer under <strong>Kontraktgennemgang</strong> eller direkte i fanen <strong>Mønstre</strong> ovenfor — så bruges de automatisk ved næste analyse.
                     </p>
                     <div className="space-y-2">
                         {stats.medKorrektion.slice(0, 10).map(f => {
