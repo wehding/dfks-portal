@@ -1884,10 +1884,25 @@ function ProducenterTab() {
             const wb = XLSX.read(buf, { type: "array" })
             const ws = wb.Sheets[wb.SheetNames[0]]
             const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
-            const NAME_HDRS = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
-            const nameKey = Object.keys(rows[0] ?? {}).find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
+            const NAME_HDRS    = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
+            const CONTACT_HDRS = ["kontaktperson", "contact name", "kontakt", "contact", "ejere", "ceo", "direktør"]
+            const WEB_HDRS     = ["hjemmeside", "website", "url", "web"]
+            const PHONE_HDRS   = ["telefon", "phone", "tlf", "mobil"]
+            const EMAIL_HDRS   = ["email", "e-mail", "mail"]
+            const keys = Object.keys(rows[0] ?? {})
+            const nameKey    = keys.find(k => NAME_HDRS.some(h => k.toLowerCase().includes(h)))
+            const contactKey = keys.find(k => CONTACT_HDRS.some(h => k.toLowerCase().includes(h)))
+            const webKey     = keys.find(k => WEB_HDRS.some(h => k.toLowerCase().includes(h)))
+            const phoneKey   = keys.find(k => PHONE_HDRS.some(h => k.toLowerCase().includes(h)))
+            const emailKey   = keys.find(k => EMAIL_HDRS.some(h => k.toLowerCase().includes(h)))
             if (!nameKey) { toast.error("Ingen kolonneoverskrift fundet (Selskab/Producent/Name)"); return }
-            const structured = rows.map((r: Record<string, unknown>) => ({ name: String(r[nameKey] ?? "").trim() })).filter(r => r.name)
+            const structured = rows.map((r: Record<string, unknown>) => ({
+                name:          String(r[nameKey] ?? "").trim(),
+                contact_name:  contactKey ? String(r[contactKey] ?? "").trim() || null : null,
+                contact_phone: phoneKey   ? String(r[phoneKey]   ?? "").trim() || null : null,
+                contact_email: emailKey   ? String(r[emailKey]   ?? "").trim() || null : null,
+                website:       webKey     ? String(r[webKey]     ?? "").trim() || null : null,
+            })).filter(r => r.name)
             const result = await bulkImportToGroup(structured, activeGroupName)
             await loadMembers(activeGroupName)
             setMemberCounts(prev => ({ ...prev, [activeGroupName]: (prev[activeGroupName] ?? 0) + result.inserted }))
