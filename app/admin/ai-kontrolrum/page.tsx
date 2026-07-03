@@ -1979,8 +1979,8 @@ function ProducenterTab() {
             await loadMembers(activeGroupName)
             setMemberCounts(prev => ({ ...prev, [activeGroupName!]: (prev[activeGroupName!] ?? 0) + inserted - removed }))
             setDiffResult(null)
-            const parts = [inserted && `${inserted} tilf\u00f8jet`, removed && `${removed} fjernet`, updated && `${updated} opdateret`].filter(Boolean)
-            toast.success(parts.join(", ") || "Ingen \u00e6ndringer")
+            const parts = [inserted && `${inserted} tilføjet`, removed && `${removed} fjernet`, updated && `${updated} opdateret`].filter(Boolean)
+            toast.success(parts.join(", ") || "Ingen ændringer")
         } catch (e: any) {
             toast.error(e.message ?? "Fejl ved anvendelse")
         } finally {
@@ -2087,14 +2087,14 @@ function ProducenterTab() {
                     {diffResult && (diffResult.ny.length > 0 || diffResult.udgaaet.length > 0 || diffResult.aendret.length > 0) && (
                         <div className="mx-4 mb-4 rounded-lg border bg-muted/20 p-4 space-y-4">
                             <div className="flex items-center justify-between">
-                                <p className="text-sm font-medium">Gennemse \u00e6ndringer inden du anvender</p>
+                                <p className="text-sm font-medium">Gennemse ændringer inden du anvender</p>
                                 <button onClick={() => setDiffResult(null)} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
                             </div>
                             {diffResult.ny.length > 0 && (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
                                         <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><UserPlus className="h-3.5 w-3.5" />Nye ({diffResult.ny.length})</p>
-                                        <button onClick={() => setDiffResult(p => p ? { ...p, ny: p.ny.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, ny: p.ny.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">Vælg alle</button>
                                     </div>
                                     <div className="space-y-1">
                                         {diffResult.ny.map((item, idx) => (
@@ -2110,8 +2110,8 @@ function ProducenterTab() {
                             {diffResult.udgaaet.length > 0 && (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-xs font-medium text-red-700 dark:text-red-400 flex items-center gap-1"><UserMinus className="h-3.5 w-3.5" />Udg\u00e5ede ({diffResult.udgaaet.length})</p>
-                                        <button onClick={() => setDiffResult(p => p ? { ...p, udgaaet: p.udgaaet.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                        <p className="text-xs font-medium text-red-700 dark:text-red-400 flex items-center gap-1"><UserMinus className="h-3.5 w-3.5" />Udgåede ({diffResult.udgaaet.length})</p>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, udgaaet: p.udgaaet.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">Vælg alle</button>
                                     </div>
                                     <div className="space-y-1">
                                         {diffResult.udgaaet.map((item, idx) => (
@@ -2130,7 +2130,7 @@ function ProducenterTab() {
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
                                         <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" />Ændrede felter ({diffResult.aendret.length})</p>
-                                        <button onClick={() => setDiffResult(p => p ? { ...p, aendret: p.aendret.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
+                                        <button onClick={() => setDiffResult(p => p ? { ...p, aendret: p.aendret.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">Vælg alle</button>
                                     </div>
                                     <div className="space-y-1">
                                         {diffResult.aendret.map((item, idx) => (
@@ -2140,7 +2140,7 @@ function ProducenterTab() {
                                                     <p className="text-xs font-medium">{item.name}</p>
                                                     {Object.entries(item.data).map(([k, v]) => (
                                                         <p key={k} className="text-[10px] text-muted-foreground">
-                                                            {k}: <span className="line-through">{(item.current as Record<string,unknown>)[k] as string ?? "\u2014"}</span> {"->"} <span className="text-foreground">{v as string ?? "\u2014"}</span>
+                                                            {k}: <span className="line-through">{(item.current as Record<string,unknown>)[k] as string ?? "—"}</span> {"->"} <span className="text-foreground">{v as string ?? "—"}</span>
                                                         </p>
                                                     ))}
                                                 </div>
@@ -2153,7 +2153,7 @@ function ProducenterTab() {
                                 <Button variant="outline" size="sm" onClick={() => setDiffResult(null)}>Annuller</Button>
                                 <Button size="sm" onClick={applyDiff} disabled={applyingDiff} className="gap-1.5">
                                     {applyingDiff && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                                    Anvend valgte \u00e6ndringer
+                                    Anvend valgte ændringer
                                 </Button>
                             </div>
                         </div>
