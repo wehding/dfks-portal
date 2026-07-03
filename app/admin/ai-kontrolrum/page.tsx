@@ -22,7 +22,7 @@ import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
     Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins, Wand2, RotateCcw,
-    Users, RefreshCw, Upload, GitCompare, ChevronUp, ChevronDown, UserPlus, UserMinus, Building2,
+    Users, RefreshCw, Upload, GitCompare, ChevronUp, ChevronDown, ChevronRight, UserPlus, UserMinus, Building2,
 } from "lucide-react"
 import { toast } from "sonner"
 import NoteringGuide from "@/components/notering-guide"
@@ -41,7 +41,10 @@ import {
     deleteGroup,
     bulkImportToGroup,
     setAssocieret,
+    setParentEmployer,
+    getSubsidiaries,
     getActiveGroupCount,
+    type DbEmployer,
     type DbEmployerWithGroup,
     type EmployerInput,
 } from "@/lib/db/employers"
@@ -1777,6 +1780,8 @@ function ProducenterTab() {
     const [addCompanyName, setAddCompanyName] = useState("")
     const [memberSearch, setMemberSearch] = useState("")
     const [memberSortAsc, setMemberSortAsc] = useState<boolean | null>(null)
+    const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+    const [subsidiariesMap, setSubsidiariesMap] = useState<Record<string, DbEmployer[]>>({})
     const [nonMembers, setNonMembers] = useState<{ id: string; name: string }[]>([])
     const [nonMembersLoading, setNonMembersLoading] = useState(false)
     const [nonMembersLoaded, setNonMembersLoaded] = useState(false)
@@ -2189,6 +2194,7 @@ function ProducenterTab() {
                                                 .map(m => {
                                                     const otherGroups = dbGroupNames.filter(n => n !== activeGroupName)
                                                     return (
+                                                        <>
                                                         <TableRow key={m.id}>
                                                             <TableCell className="text-xs font-medium">{m.name}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_name ?? "—"}</TableCell>
@@ -2211,9 +2217,43 @@ function ProducenterTab() {
                                                                         </Select>
                                                                     )}
                                                                     <button onClick={() => handleRemoveCompany(m.id, activeGroupName, m.name)} className="text-muted-foreground hover:text-destructive transition-colors" title="Fjern fra liste"><X className="h-3.5 w-3.5" /></button>
+                                                            <button
+                                                                title="Vis/skjul underselskaber"
+                                                                className="text-muted-foreground hover:text-foreground transition-colors"
+                                                                onClick={async () => {
+                                                                    const isOpen = expandedIds.has(m.id)
+                                                                    if (!isOpen && !subsidiariesMap[m.id]) {
+                                                                        const subs = await getSubsidiaries(m.id)
+                                                                        setSubsidiariesMap(prev => ({ ...prev, [m.id]: subs }))
+                                                                    }
+                                                                    setExpandedIds(prev => {
+                                                                        const next = new Set(prev)
+                                                                        isOpen ? next.delete(m.id) : next.add(m.id)
+                                                                        return next
+                                                                    })
+                                                                }}
+                                                            >
+                                                                <ChevronRight className={`h-3.5 w-3.5 transition-transform ${expandedIds.has(m.id) ? "rotate-90" : ""}`} />
+                                                            </button>
                                                                 </div>
                                                             </TableCell>
                                                         </TableRow>
+                                                        {expandedIds.has(m.id) && (subsidiariesMap[m.id] ?? []).map(sub => (
+                                                            <TableRow key={sub.id} className="bg-muted/30">
+                                                                <TableCell className="text-xs pl-8 text-muted-foreground italic">↳ {sub.name}</TableCell>
+                                                                <TableCell className="text-xs text-muted-foreground">{sub.contact_name ?? "—"}</TableCell>
+                                                                <TableCell className="text-xs" />
+                                                                <TableCell className="text-xs">
+                                                                    <button onClick={async () => {
+                                                                        await setParentEmployer(sub.id, null)
+                                                                        setSubsidiariesMap(prev => ({ ...prev, [m.id]: (prev[m.id] ?? []).filter(s => s.id !== sub.id) }))
+                                                                        await loadNonMembers()
+                                                                        toast.success("Underselskab fjernet")
+                                                                    }} className="text-muted-foreground hover:text-destructive" title="Fjern tilknytning"><X className="h-3 w-3" /></button>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                        </>
                                                     )
                                                 })}
                                             {dbMembers.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
@@ -2260,12 +2300,27 @@ function ProducenterTab() {
                                             <TableCell className="text-xs text-muted-foreground">{i + 1}</TableCell>
                                             <TableCell className="text-xs">{e.name}</TableCell>
                                             <TableCell className="text-xs">
-                                                {dbGroupNames.length > 0 && (
-                                                    <Select onValueChange={gn => addNonMemberToGroup(e.id, e.name, gn)}>
-                                                        <SelectTrigger className="h-6 text-xs w-[120px] px-2"><SelectValue placeholder="Tilføj til…" /></SelectTrigger>
-                                                        <SelectContent>{dbGroupNames.map(gn => <SelectItem key={gn} value={gn} className="text-xs">{gn}</SelectItem>)}</SelectContent>
+                                                <div className="flex items-center gap-1 flex-wrap">
+                                                    {dbGroupNames.length > 0 && (
+                                                        <Select onValueChange={gn => addNonMemberToGroup(e.id, e.name, gn)}>
+                                                            <SelectTrigger className="h-6 text-xs w-[100px] px-2"><SelectValue placeholder="Tilføj til…" /></SelectTrigger>
+                                                            <SelectContent>{dbGroupNames.map(gn => <SelectItem key={gn} value={gn} className="text-xs">{gn}</SelectItem>)}</SelectContent>
+                                                        </Select>
+                                                    )}
+                                                    <Select onValueChange={async (parentId) => {
+                                                        const ok = await setParentEmployer(e.id, parentId)
+                                                        if (ok) {
+                                                            setNonMembers(prev => prev.filter(x => x.id !== e.id))
+                                                            await loadMembers(activeGroupName!)
+                                                            toast.success(`"${e.name}" tilknyttet som underselskab`)
+                                                        } else toast.error("Kunne ikke tilknytte underselskab")
+                                                    }}>
+                                                        <SelectTrigger className="h-6 text-xs w-[110px] px-2"><SelectValue placeholder="Underselskab af…" /></SelectTrigger>
+                                                        <SelectContent>
+                                                            {dbMembers.map(m => <SelectItem key={m.id} value={m.id} className="text-xs">{m.name}</SelectItem>)}
+                                                        </SelectContent>
                                                     </Select>
-                                                )}
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))}

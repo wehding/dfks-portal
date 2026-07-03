@@ -23,6 +23,7 @@ export interface DbEmployer {
     contact_phone: string | null
     website: string | null
     associeret: boolean
+    parent_id: string | null
     created_at: string
 }
 
@@ -65,7 +66,7 @@ export async function getGroupMembers(groupName: string): Promise<DbEmployerWith
             valid_from,
             employers (
                 id, name, cvr, address,
-                contact_name, contact_email, contact_phone, website, associeret,
+                contact_name, contact_email, contact_phone, website, associeret, parent_id,
                 created_at
             )
         `)
@@ -94,7 +95,7 @@ export async function getNonGroupEmployers(): Promise<DbEmployer[]> {
 
     const { data, error } = await supabase
         .from("employers")
-        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, created_at")
+        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, parent_id, created_at")
         .order("name")
     if (error || !data) return []
     const idSet = new Set(ids)
@@ -205,6 +206,27 @@ export async function removeFromGroup(employerId: string, groupName: string): Pr
         .eq("association_name", groupName)
         .is("valid_to", null)
     return !error
+}
+
+/** Tilknyt et underselskab til et moderselskab */
+export async function setParentEmployer(childId: string, parentId: string | null): Promise<boolean> {
+    const supabase = createClient()
+    const { error } = await supabase
+        .from("employers")
+        .update({ parent_id: parentId })
+        .eq("id", childId)
+    return !error
+}
+
+/** Hent alle underselskaber for et givet moderselskab */
+export async function getSubsidiaries(parentId: string): Promise<DbEmployer[]> {
+    const supabase = createClient()
+    const { data } = await supabase
+        .from("employers")
+        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, parent_id, created_at")
+        .eq("parent_id", parentId)
+        .order("name")
+    return (data ?? []) as DbEmployer[]
 }
 
 /** Sæt associeret-status på en employer */
