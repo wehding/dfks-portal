@@ -51,7 +51,7 @@ const ALL_NAV_ITEMS = [
     { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
     { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
-    { key: "overenskomster",     href: "/admin/overenskomster",     icon: BookOpen,    labelKey: "nav.agreements"       },
+    // Overenskomster er integreret i AI-kontrolrum
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     // Videnbase er integreret i AI-kontrolrum
