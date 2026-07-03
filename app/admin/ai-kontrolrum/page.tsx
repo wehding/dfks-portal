@@ -2355,35 +2355,35 @@ export default function AiKontrolrumPage() {
                 subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
             />
             <Tabs defaultValue="overenskomster">
-                <TabsList className="grid grid-cols-7 w-full">
-                    <TabsTrigger value="overenskomster" className="gap-1 text-xs">
-                        <ScrollText className="h-3.5 w-3.5" />Overenskomster
+                <TabsList className="flex flex-wrap h-auto gap-1 justify-start">
+                    <TabsTrigger value="overenskomster" className="gap-1.5 text-xs whitespace-nowrap">
+                        <ScrollText className="h-3.5 w-3.5 shrink-0" />Overenskomster
                     </TabsTrigger>
-                    <TabsTrigger value="producenter" className="gap-1 text-xs">
-                        <Building2 className="h-3.5 w-3.5" />Producenter
+                    <TabsTrigger value="satser" className="gap-1.5 text-xs whitespace-nowrap">
+                        <Coins className="h-3.5 w-3.5 shrink-0" />Satser
                     </TabsTrigger>
-                    <TabsTrigger value="videnbase" className="gap-1 text-xs">
-                        <BookOpen className="h-3.5 w-3.5" />Videnbase
+                    <TabsTrigger value="producenter" className="gap-1.5 text-xs whitespace-nowrap">
+                        <Building2 className="h-3.5 w-3.5 shrink-0" />Producenter
                     </TabsTrigger>
-                    <TabsTrigger value="noteringer" className="gap-1 text-xs">
-                        <ListChecks className="h-3.5 w-3.5" />Noteringer
+                    <TabsTrigger value="videnbase" className="gap-1.5 text-xs whitespace-nowrap">
+                        <BookOpen className="h-3.5 w-3.5 shrink-0" />Videnbase
                     </TabsTrigger>
-                    <TabsTrigger value="moenstre" className="gap-1 text-xs">
-                        <Brain className="h-3.5 w-3.5" />Mønstre
+                    <TabsTrigger value="noteringer" className="gap-1.5 text-xs whitespace-nowrap">
+                        <ListChecks className="h-3.5 w-3.5 shrink-0" />Noteringer
                     </TabsTrigger>
-                    <TabsTrigger value="satser" className="gap-1 text-xs">
-                        <Coins className="h-3.5 w-3.5" />Satser
+                    <TabsTrigger value="moenstre" className="gap-1.5 text-xs whitespace-nowrap">
+                        <Brain className="h-3.5 w-3.5 shrink-0" />Mønstre
                     </TabsTrigger>
-                    <TabsTrigger value="kvalitet" className="gap-1 text-xs">
-                        <FlaskConical className="h-3.5 w-3.5" />Kvalitet
+                    <TabsTrigger value="kvalitet" className="gap-1.5 text-xs whitespace-nowrap">
+                        <FlaskConical className="h-3.5 w-3.5 shrink-0" />Kvalitet
                     </TabsTrigger>
                 </TabsList>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
+                <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
                 <TabsContent value="producenter" className="mt-4"><ProducenterTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>
-                <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
                 <TabsContent value="kvalitet" className="mt-4"><KvalitetTab /></TabsContent>
             </Tabs>
         </div>
