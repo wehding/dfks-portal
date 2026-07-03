@@ -38,7 +38,8 @@ export async function uploadMemberContract(formData: FormData) {
   }
 
   // Upload til kontrakter-bucket (samme som admin)
-  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_æøåÆØÅ]/g, "_");
+  // Supabase Storage-nøgler tillader ikke æøå (afprøvet: giver "Invalid key") — erstat i stedet for at bevare
+  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
   const pdfUrl = `${user.id}/${Date.now()}-${safeName}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 

@@ -39,7 +39,8 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
     return { success: false, error: "Filformat ikke understøttet — brug PDF, DOCX eller TXT" };
   }
 
-  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_æøåÆØÅ]/g, "_");
+  // Supabase Storage-nøgler tillader ikke æøå (afprøvet: giver "Invalid key") — erstat i stedet for at bevare
+  const safeName = file.name.replace(/[^a-zA-Z0-9.\-_]/g, "_");
   const pdfUrl = `${user.id}/allonger/${contractId}/${Date.now()}-${safeName}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
