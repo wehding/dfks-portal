@@ -103,6 +103,9 @@ export interface DbContractAttachment {
     pdf_url: string | null
     created_by: string | null
     created_at: string
+    // Forberedt til senere AI-udtræk af allongens indhold — ubrugt indtil videre
+    ai_status: "analyserer" | "klar" | "fejl" | null
+    ai_result: Record<string, unknown> | null
 }
 
 export interface DbContractValidation {

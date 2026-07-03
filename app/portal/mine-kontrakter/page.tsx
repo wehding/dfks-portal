@@ -22,7 +22,7 @@ export default async function MineKontrakterPage() {
   const { data: contracts } = rh
     ? await db
         .from("contracts")
-        .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes)")
+        .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes), contract_attachments(id, type, title, pdf_url, created_at)")
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false })
     : { data: [] };
