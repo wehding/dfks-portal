@@ -258,13 +258,15 @@ export async function bulkImportToGroup(
         const existingId = existingMap.get(nameLc)
 
         if (existingId) {
-            // Update contact info
-            await supabase.from("employers").update({
-                contact_name: row.contact_name ?? null,
-                contact_email: row.contact_email ?? null,
-                contact_phone: row.contact_phone ?? null,
-                website: row.website ?? null,
-            }).eq("id", existingId)
+            // Opdater kun felter der har en ny ikke-null-værdi — slet ikke eksisterende data
+            const patch: Record<string, string | null> = {}
+            if (row.contact_name  != null) patch.contact_name  = row.contact_name
+            if (row.contact_email != null) patch.contact_email = row.contact_email
+            if (row.contact_phone != null) patch.contact_phone = row.contact_phone
+            if (row.website       != null) patch.website       = row.website
+            if (Object.keys(patch).length) {
+                await supabase.from("employers").update(patch).eq("id", existingId)
+            }
 
             if (!memberSet.has(existingId)) {
                 await addToGroup(existingId, groupName)
