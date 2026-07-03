@@ -99,7 +99,8 @@ export async function getNonGroupEmployers(): Promise<DbEmployer[]> {
         .order("name")
     if (error || !data) return []
     const idSet = new Set(ids)
-    return (data as DbEmployer[]).filter(e => !idSet.has(e.id))
+    // Ekskludér underselskaber (parent_id IS NOT NULL) — de er bundet via moderselskabet
+    return (data as DbEmployer[]).filter(e => !idSet.has(e.id) && !e.parent_id)
 }
 
 // ── Upsert + add to group ─────────────────────────────────────────────────────
@@ -206,6 +207,35 @@ export async function removeFromGroup(employerId: string, groupName: string): Pr
         .eq("association_name", groupName)
         .is("valid_to", null)
     return !error
+}
+
+/**
+ * Slår op om et firma er underselskab af et ProF-medlem.
+ * Returnerer moderselskabets navn hvis fundet, ellers null.
+ */
+export async function findParentMember(companyName: string): Promise<string | null> {
+    const supabase = createClient()
+    // Find firma ved navn (case-insensitiv)
+    const { data: company } = await supabase
+        .from("employers")
+        .select("id, name, parent_id")
+        .ilike("name", companyName.trim())
+        .maybeSingle()
+    if (!company?.parent_id) return null
+    // Hent moderselskab
+    const { data: parent } = await supabase
+        .from("employers")
+        .select("id, name")
+        .eq("id", company.parent_id)
+        .single()
+    if (!parent) return null
+    // Tjek om moderselskabet er aktivt ProF-medlem
+    const { count } = await supabase
+        .from("employer_registries")
+        .select("*", { count: "exact", head: true })
+        .eq("employer_id", parent.id)
+        .is("valid_to", null)
+    return (count ?? 0) > 0 ? parent.name : null
 }
 
 /** Tilknyt et underselskab til et moderselskab */
