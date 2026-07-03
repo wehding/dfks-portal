@@ -28,8 +28,9 @@ Medlemmer kan selv uploade allonger (forlængelser, ekstra uger) til deres egne 
 - `contract_attachments.type = 'allonge'` bruges til dette — til forskel fra `'bilag'`/`'andet'`.
 - Server actions: `app/actions/member-attachments.ts` (`uploadMemberAttachment`, `deleteMemberAttachment`).
 - UI: `app/portal/mine-kontrakter/AddAlongeDialog.tsx` + allonge-listen i `MineKontrakterClient.tsx`.
-- **Vigtigt:** AI-udtræk af allongens indhold og aggregering ind i `contract_validations.extracted_data` er **ikke** implementeret endnu. Felterne `contract_attachments.ai_status`/`ai_result` er forberedt til dette, men ubrugte — antag ikke at allonge-data allerede indgår i rettighedsbetaling eller statistik.
-- Admin-siden (`app/admin/validering/page.tsx`) henter allerede `contract_attachments(*)` med, så nye allonger er automatisk synlige der.
+- **AI-udtræk:** Når admin kører "AI-udtræk" på en kontrakt (`/api/validate/extract` for storage-kontrakter, `/api/contracts/extract` for lokalt uploadede filer), hentes og udtrækkes tekst fra alle tilknyttede allonger automatisk (`lib/allonge-text.ts`) og tilføjes til kontraktteksten før AI-kaldet. AI-prompten er instrueret i at allonge-værdier vinder over kontraktens oprindelige værdier ved konflikt (fx forlænget slutdato, ændret løn/arbejdsuger). Resultatet indgår i samme `contract_validations.extracted_data` som resten af udtrækket.
+- Felterne `contract_attachments.ai_status`/`ai_result` er stadig forberedt men ubrugte — de er tiltænkt en fremtidig per-allonge-analyse, uafhængig af den samlede kontrakt-dataudtræk beskrevet ovenfor.
+- Admin-siden (`app/admin/validering/page.tsx`) viser nu allonger både i kontraktlisten (antal, ikon) og i kontrakt-detaljevisningen (klikbare knapper der åbner allongen via signeret URL).
 
 ---
 

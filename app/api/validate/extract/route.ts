@@ -17,6 +17,7 @@ import { maskPersonalData } from "@/lib/mask-text"
 import { getApiKey } from "@/lib/ai-key-store"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
+import { hentAllongeTekst, ALLONGE_PROMPT_NOTE } from "@/lib/allonge-text"
 import {
     CONTRACT_TYPE_RULE, COLLECTIVE_AGREEMENT_RULE,
     COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE, IS_FREELANCE_CONTRACT_RULE,
@@ -32,7 +33,9 @@ Returner KUN JSON — ingen forklaringstekst.
 VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
 [CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
 Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
+Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.
+
+${ALLONGE_PROMPT_NOTE}`
 
 const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som JSON:
 {
@@ -101,6 +104,10 @@ export async function POST(req: NextRequest) {
             text = result.value
         } else {
             text = buffer.toString("utf-8")
+        }
+
+        if (contractId) {
+            text += await hentAllongeTekst(contractId)
         }
 
         const masked = maskPersonalData(text)

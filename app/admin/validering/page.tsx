@@ -4,7 +4,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import {
     Check, X, FileText, Upload, ArrowLeft, Building2, AlertTriangle,
-    Trash2, Clock, CheckCircle2, Eye, Sparkles, Loader2, Lock,
+    Trash2, Clock, CheckCircle2, Eye, Sparkles, Loader2, Lock, Paperclip,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -65,7 +65,7 @@ type ValidatingContract = {
     employers: { id: string; name: string; cvr: string | null } | null
     rettighedshavere: { id: string; full_name: string } | null
     works: { id: string; title: string } | null
-    contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null }[]
+    contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string }[]
     validation: {
         id: string
         holiday_pay_rate: number | null
@@ -110,6 +110,7 @@ export default function AdminValideringPage() {
     const [showMaskingConfirm, setShowMaskingConfirm] = useState(false)
     const [maskingPreview, setMaskingPreview] = useState<{ count: number; types: string[] }>({ count: 0, types: [] })
     const [maskedText, setMaskedText] = useState("")
+    const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null)
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
@@ -733,6 +734,7 @@ export default function AdminValideringPage() {
             // Brug contracts/extract (fuld admin-prompt med kilder og highlights)
             const fd = new FormData()
             fd.append("maskedText", textToSend)
+            if (reviewingContract?.id) fd.append("contractId", reviewingContract.id)
             const resp = await fetch("/api/contracts/extract", { method: "POST", body: fd })
             if (!resp.ok) { const e = await resp.json().catch(() => ({})); throw new Error(e.error ?? `Fejl ${resp.status}`) }
             const data = await resp.json()
@@ -783,6 +785,16 @@ export default function AdminValideringPage() {
         if (!fromAi) {
             setBrugerRedigerede(prev => { const next = new Set(prev); next.add(key); return next })
         }
+    }
+
+    const openAttachment = async (attachment: { id: string; pdf_url: string | null }) => {
+        if (!attachment.pdf_url) return
+        setOpeningAttachmentId(attachment.id)
+        const supabase = createClient()
+        const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(attachment.pdf_url, 3600)
+        setOpeningAttachmentId(null)
+        if (error || !data?.signedUrl) { toast.error("Kunne ikke åbne allongen"); return }
+        window.open(data.signedUrl, "_blank")
     }
 
     const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -880,6 +892,24 @@ export default function AdminValideringPage() {
                         {statusLabel[reviewingContract.status] ?? reviewingContract.status}
                     </Badge>
                 </div>
+
+                {reviewingContract.contract_attachments.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">Allonger:</span>
+                        {reviewingContract.contract_attachments.map(a => (
+                            <button
+                                key={a.id}
+                                onClick={() => openAttachment(a)}
+                                disabled={openingAttachmentId === a.id}
+                                className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-muted transition-colors"
+                            >
+                                <FileText className="h-3 w-3" />
+                                {a.title ?? "Allonge"}
+                                {openingAttachmentId === a.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                            </button>
+                        ))}
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     {/* PDF viewer */}
@@ -1677,6 +1707,11 @@ function ContractTable({ contracts, onReview, onDelete, showStatus = false }: {
                                 <div className="flex items-center gap-2">
                                     <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                                     <span className="text-sm font-medium">{c.displayTitle}</span>
+                                    {c.contract_attachments.length > 0 && (
+                                        <span title={`${c.contract_attachments.length} allonge(r)`} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                            <Paperclip className="h-3 w-3" />{c.contract_attachments.length}
+                                        </span>
+                                    )}
                                 </div>
                             </TableCell>
                             <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{c.displayEmployer ?? "—"}</TableCell>
