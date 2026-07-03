@@ -1810,6 +1810,14 @@ function ProducenterTab() {
         setMembersLoading(true)
         const members = await getGroupMembers(groupName)
         setDbMembers(members)
+        // Forudhent underselskaber for alle selskaber med parent_id-reference i gruppen
+        const parentIds = [...new Set(members.map(m => m.id))]
+        const subsResults = await Promise.all(parentIds.map(id => getSubsidiaries(id)))
+        const newMap: Record<string, DbEmployer[]> = {}
+        parentIds.forEach((id, i) => { if (subsResults[i].length > 0) newMap[id] = subsResults[i] })
+        setSubsidiariesMap(newMap)
+        // Åbn automatisk dem der har underselskaber
+        setExpandedIds(new Set(Object.keys(newMap)))
         setMembersLoading(false)
     }, [])
 
