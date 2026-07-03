@@ -112,6 +112,8 @@ function VidenbaseTab() {
     const [showAdd, setShowAdd] = useState(false)
     const [reindexing, setReindexing] = useState(false)
     const [reindexResult, setReindexResult] = useState<{ opdateret: number; uændret: number; fejl: number } | null>(null)
+    const [syncing, setSyncing] = useState(false)
+    const [syncResult, setSyncResult] = useState<{ ok: number; fejl: number } | null>(null)
     const [sidstOpdateret, setSidstOpdateret] = useState<string | null>(null)
 
     useEffect(() => {
@@ -183,6 +185,20 @@ function VidenbaseTab() {
                     <Button size="sm" variant="outline" className="gap-1.5" onClick={handleReindex} disabled={reindexing}>
                         {reindexing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span>↻</span>}
                         {reindexing ? "Genindekserer..." : "Genindeksér"}
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1.5" onClick={async () => {
+                        setSyncing(true); setSyncResult(null)
+                        try {
+                            const res = await fetch("/api/admin/sync-retsinformation", { method: "POST" })
+                            if (!res.ok) throw new Error((await res.json()).error)
+                            const data = await res.json()
+                            setSyncResult({ ok: data.ok, fejl: data.fejl })
+                            toast.success()
+                        } catch (e: any) { toast.error(e.message) }
+                        finally { setSyncing(false) }
+                    }} disabled={syncing} title="Hent opdateret lovtekst fra retsinformation.dk">
+                        {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileUp className="h-3.5 w-3.5" />}
+                        {syncing ? "Henter love..." : "Sync retsinformation"}
                     </Button>
                     <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowAdd(true)}>
                         <Plus className="h-3.5 w-3.5" />Tilføj chunk

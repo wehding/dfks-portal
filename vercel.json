@@ -3,6 +3,10 @@
     {
       "path": "/api/admin/reindex",
       "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/admin/sync-retsinformation",
+      "schedule": "0 4 * * 1"
     }
   ]
 }
