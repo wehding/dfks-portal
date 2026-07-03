@@ -2129,7 +2129,7 @@ function ProducenterTab() {
                             {diffResult.aendret.length > 0 && (
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
-                                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" />{"Æ"}ndrede felter ({diffResult.aendret.length})</p>
+                                        <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1"><RefreshCw className="h-3.5 w-3.5" />Ændrede felter ({diffResult.aendret.length})</p>
                                         <button onClick={() => setDiffResult(p => p ? { ...p, aendret: p.aendret.map(i => ({ ...i, approved: true })) } : p)} className="text-xs underline text-muted-foreground">V\u00e6lg alle</button>
                                     </div>
                                     <div className="space-y-1">
@@ -2178,9 +2178,8 @@ function ProducenterTab() {
                                                 </TableHead>
                                                 <TableHead className="text-xs">Kontaktperson</TableHead>
                                                 <TableHead className="text-xs">Telefon</TableHead>
-                                                <TableHead className="text-xs">Email</TableHead>
-                                                <TableHead className="text-xs w-20" title="Associerede medlemmer er ikke overenskomstbundet">Assoc.</TableHead>
-                                                <TableHead className="text-xs w-[160px]" />
+                                                <TableHead className="text-xs w-14" title="Associerede medlemmer er ikke overenskomstbundet">Assoc.</TableHead>
+                                                <TableHead className="text-xs w-28" />
                                             </TableRow>
                                         </TableHeader>
                                         <TableBody>
@@ -2193,7 +2192,6 @@ function ProducenterTab() {
                                                             <TableCell className="text-xs font-medium">{m.name}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_name ?? "—"}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{m.contact_phone ?? "—"}</TableCell>
-                                                            <TableCell className="text-xs text-muted-foreground">{m.contact_email ?? "—"}</TableCell>
                                                             <TableCell className="text-xs w-20">
                                                                 <input type="checkbox" checked={m.associeret ?? false}
                                                                     onChange={async e => {
@@ -2218,7 +2216,7 @@ function ProducenterTab() {
                                                         </TableRow>
                                                     )
                                                 })}
-                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
+                                            {dbMembers.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-xs text-muted-foreground py-6">Ingen selskaber på listen endnu</TableCell></TableRow>}
                                         </TableBody>
                                     </Table>
                                     <div className="flex items-center gap-2 px-4 py-2 border-t bg-muted/30">
