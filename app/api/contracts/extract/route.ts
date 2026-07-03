@@ -17,7 +17,6 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { createClient } from "@supabase/supabase-js"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import { hentAllongeTekst, ALLONGE_PROMPT_NOTE } from "@/lib/allonge-text"
 import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
 import {
     CONTRACT_TYPE_RULE,
@@ -39,9 +38,7 @@ Returner KUN JSON — ingen forklaringstekst.
 VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
 [CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
 Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.
-
-${ALLONGE_PROMPT_NOTE}`
+Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
 
 const EXTRACTION_PROMPT = `Udtræk følgende data fra denne kontrakt og returner som JSON.
 Returner KUN JSON — ingen forklaringstekst.
@@ -101,7 +98,6 @@ export async function POST(req: NextRequest) {
 
         // If client already masked text (after user confirmation), use it directly
         const preMasked = formData.get("maskedText") as string | null
-        const contractId = formData.get("contractId") as string | null
 
         let masked: string
 
@@ -126,18 +122,8 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: "Filformat ikke understøttet — brug PDF, DOCX eller TXT" }, { status: 400 })
             }
 
-            if (contractId) {
-                text += await hentAllongeTekst(contractId)
-            }
-
             // Mask personal data before sending to AI
             masked = maskPersonalData(text)
-        }
-
-        // Ved pre-maskeret tekst kender vi ikke den rå kontrakttekst — hent og maskér allongerne separat
-        if (preMasked && contractId) {
-            const allongeRaw = await hentAllongeTekst(contractId)
-            if (allongeRaw) masked += maskPersonalData(allongeRaw)
         }
 
         // Hent overenskomsttekster fra DB — samme som gennemgang-ruten

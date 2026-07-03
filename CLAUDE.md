@@ -28,9 +28,14 @@ Medlemmer kan selv uploade allonger (forlængelser, ekstra uger) til deres egne 
 - `contract_attachments.type = 'allonge'` bruges til dette — til forskel fra `'bilag'`/`'andet'`.
 - Server actions: `app/actions/member-attachments.ts` (`uploadMemberAttachment`, `deleteMemberAttachment`).
 - UI: `app/portal/mine-kontrakter/AddAlongeDialog.tsx` + allonge-listen i `MineKontrakterClient.tsx`.
-- **AI-udtræk:** Når admin kører "AI-udtræk" på en kontrakt (`/api/validate/extract` for storage-kontrakter, `/api/contracts/extract` for lokalt uploadede filer), hentes og udtrækkes tekst fra alle tilknyttede allonger automatisk (`lib/allonge-text.ts`) og tilføjes til kontraktteksten før AI-kaldet. AI-prompten er instrueret i at allonge-værdier vinder over kontraktens oprindelige værdier ved konflikt (fx forlænget slutdato, ændret løn/arbejdsuger). Resultatet indgår i samme `contract_validations.extracted_data` som resten af udtrækket.
-- Felterne `contract_attachments.ai_status`/`ai_result` er stadig forberedt men ubrugte — de er tiltænkt en fremtidig per-allonge-analyse, uafhængig af den samlede kontrakt-dataudtræk beskrevet ovenfor.
-- Admin-siden (`app/admin/validering/page.tsx`) viser nu allonger både i kontraktlisten (antal, ikon) og i kontrakt-detaljevisningen (klikbare knapper der åbner allongen via signeret URL).
+- Admin ser allonger i to steder: `app/admin/kontrakter/page.tsx` (kontraktliste + "Se kontrakt"-dialog, antal-badge + klikbare knapper der åbner via signeret URL) og `app/admin/validering/page.tsx` (se nedenfor, samme antal-badge i listen).
+
+**AI-udtræk af allonger (`app/admin/validering/page.tsx`)** — hvert allonge-vedhæftning får sin egen fane i valideringsdialogen, ved siden af "Kontrakt"-fanen:
+- Allonge-fanen kører et *separat, afgrænset* AI-udtræk via `/api/validate/extract-allonge` (bruger `lib/allonge-text.ts` til tekstudtræk af netop den ene fil) — kun tre felter: `salary`/`salaryUnit` (den NYE løn fremadrettet fra allongen), `workingWeeks` (EKSTRA arbejdsuger tilføjet af allongen — ikke det samlede antal), og `specialNotes`. De øvrige kontraktfelter (overenskomst, royalty, SVOD osv.) vises i samme fane som read-only "Baggrundsinformation" hentet fra kontraktens egen `extracted_data` — de bliver IKKE gen-udtrukket eller ændret af allonge-fanen.
+- Løn erstatter ikke kontraktens oprindelige løn (den gjaldt jo frem til allongen) — i stedet gemmes begge: `extracted_data.salary`/`salaryUnit` er kontraktens egen (uændret), `extracted_data.currentSalary`/`currentSalaryUnit` er den nyeste gældende løn (fra seneste "klar"-allonge, falder tilbage til kontraktens egen hvis ingen allonger er behandlet endnu).
+- Arbejdsuger lægges sammen: `extracted_data.contractWorkingWeeks` er kontraktens egne uger (det tal admin ser og redigerer i selve "Kontrakt"-fanen), `extracted_data.workingWeeks` bliver den SAMLEDE arbejdstid (kontrakt + alle "klar"-allonger) — genberegnes ved hvert allonge-gem OG ved almindeligt "Godkend" på kontrakten, så rækkefølgen ikke betyder noget. Det er `workingWeeks` (totalen) statistikmodulet (`app/admin/statistik/page.tsx`) allerede læser, så ingen ændringer var nødvendige der.
+- Hver allonges egne udtrukne felter gemmes i `contract_attachments.ai_result` (`{ salary, salaryUnit, workingWeeks, specialNotes, extractedAt }`) med `ai_status = 'klar'` — disse felter var tidligere forberedt men ubrugte, og er nu i aktiv brug til netop dette formål.
+- Ved flere allonger på samme kontrakt: én fane per allonge, hver med sit eget "klar"-udtræk; totalen summeres på tværs af alle.
 
 ---
 
@@ -93,6 +98,7 @@ Google text-embedding-004 (768 dim) — primær embedding-udbyder
     /screen                   ← Alle øvrige Claude API-kald går HER
     /tmdb                     ← TMDB filmdata
     /validate/extract         ← Validering udtræk
+    /validate/extract-allonge ← Afgrænset AI-udtræk af allonge (løn/uger/kommentarer)
     /videnbase                ← Videnbase API
   /portal                     ← Medlemsportal
     /aftalelicens
@@ -255,7 +261,7 @@ Alle migrationer kørt i Supabase SQL Editor. Filer i `supabase/migrations/`.
 | 20260605 | `case_learnings` |
 | 20260609 | `knowledge_chunks` (vector(768)) |
 | 20260611 | `contracts` member-felter, member onboarding |
-| 20260703 | `contract_attachments` udvidet: `ai_status`, `ai_result` (forberedt til senere AI-udtræk); ny RLS-policy så medlemmer selv kan uploade allonger til egne kontrakter |
+| 20260703 | `contract_attachments` udvidet: `ai_status`, `ai_result` — bruges aktivt af allonge-udtræk i `/admin/validering`; ny RLS-policy så medlemmer selv kan uploade allonger til egne kontrakter. **Migration `20260703210149_contract_attachments_member_upload.sql` var ikke kørt i produktion pr. 2026-07-03 — tjek status før allonge-udtræk-fanen kan virke.** |
 
 ---
 
