@@ -83,15 +83,34 @@ export async function deleteMemberAttachment(attachmentId: string) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
 
-  // Ejerskab er allerede sikret ved upload — created_by alene er tilstrækkeligt
-  const { data: attachment } = await db
+  // Ejerskab er allerede sikret ved upload — created_by alene er tilstrækkeligt.
+  // ai_status afgør om medlemmet stadig må slette selv: når admin har kørt
+  // allonge-udtræk (ai_status = 'klar'), må kun admin slette den herefter.
+  let attachment: { id: string; pdf_url: string | null; created_by: string | null; ai_status?: string | null } | null = null;
+
+  const withStatus = await db
     .from("contract_attachments")
-    .select("id, pdf_url, created_by")
+    .select("id, pdf_url, created_by, ai_status")
     .eq("id", attachmentId)
     .single();
 
-  if (!attachment || attachment.created_by !== user.id) {
-    return { success: false, error: "Ikke tilladt" };
+  if (withStatus.error) {
+    // Fald tilbage uden ai_status hvis migration 20260703210149 (ai_status/ai_result) endnu ikke er kørt
+    console.warn("[member-attachments] ai_status ikke tilgængelig, falder tilbage:", withStatus.error.message);
+    const fallback = await db
+      .from("contract_attachments")
+      .select("id, pdf_url, created_by")
+      .eq("id", attachmentId)
+      .single();
+    attachment = fallback.data;
+  } else {
+    attachment = withStatus.data;
+  }
+
+  if (!attachment) return { success: false, error: "Allonge ikke fundet" };
+  if (attachment.created_by !== user.id) return { success: false, error: "Ikke tilladt" };
+  if (attachment.ai_status === "klar") {
+    return { success: false, error: "Allongen er allerede valideret af DFKS og kan ikke længere slettes af dig — kontakt DFKS hvis den skal fjernes." };
   }
 
   if (attachment.pdf_url) {
