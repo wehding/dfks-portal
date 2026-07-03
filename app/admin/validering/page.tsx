@@ -65,7 +65,7 @@ type ValidatingContract = {
     employers: { id: string; name: string; cvr: string | null } | null
     rettighedshavere: { id: string; full_name: string } | null
     works: { id: string; title: string } | null
-    contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string }[]
+    contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string; ai_status: string | null }[]
     validation: {
         id: string
         holiday_pay_rate: number | null
@@ -405,8 +405,15 @@ export default function AdminValideringPage() {
         }
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const unreviewedContracts = contracts.filter(c => c.status === "kladde")
-    const reviewedContracts = contracts.filter(c => c.status === "valideret" || c.status === "arkiveret")
+    // En "klar" allonge er allerede behandlet af admin — en allonge uden det (fx 'analyserer')
+    // skal have kontrakten til at dukke op i valideringskøen igen, selvom kontrakten
+    // allerede er valideret/arkiveret.
+    const pendingAllonger = (c: ValidatingContract) =>
+        c.contract_attachments.filter(a => a.type === "allonge" && a.ai_status !== "klar")
+    const hasPendingAllonge = (c: ValidatingContract) => pendingAllonger(c).length > 0
+
+    const unreviewedContracts = contracts.filter(c => c.status === "kladde" || hasPendingAllonge(c))
+    const reviewedContracts = contracts.filter(c => (c.status === "valideret" || c.status === "arkiveret") && !hasPendingAllonge(c))
     const reviewingContract = contracts.find(c => c.id === reviewingId) ?? null
 
     // Hent DOCX-tekst fra Storage når kontrakten åbnes
@@ -898,6 +905,12 @@ export default function AdminValideringPage() {
             ? rightsHighlightSource[activeField].split("||").map(s => s.trim()).filter(Boolean)
             : []
 
+        // Hvis kontrakten kun er tilbage i køen pga. en ubehandlet allonge (dvs. den er
+        // allerede valideret), åbn direkte på den relevante allonge-fane i stedet for "Kontrakt"
+        const firstPendingAllonge = reviewingContract.status !== "kladde"
+            ? reviewingContract.contract_attachments.find(a => a.type === "allonge" && a.ai_status !== "klar")
+            : undefined
+
         return (
             <>
             <div className="space-y-6">
@@ -916,7 +929,7 @@ export default function AdminValideringPage() {
                     </Badge>
                 </div>
 
-                <Tabs defaultValue="kontrakt">
+                <Tabs defaultValue={firstPendingAllonge?.id ?? "kontrakt"}>
                     {reviewingContract.contract_attachments.length > 0 && (
                         <TabsList>
                             <TabsTrigger value="kontrakt">Kontrakt</TabsTrigger>
@@ -1830,7 +1843,13 @@ function AllongeTabContent({
                     id: reviewingContract.validation?.id ?? "",
                     extracted_data: mergedExtractedData,
                 },
+                contract_attachments: reviewingContract.contract_attachments.map(a =>
+                    a.id === attachment.id ? { ...a, ai_status: "klar" } : a
+                ),
             })
+            // Kontrakten kan nu være ude af valideringskøen (hvis ingen flere allonger afventer) —
+            // opdater sidemenuens tal med det samme, samme mønster som handleApprove/handleReject
+            window.dispatchEvent(new CustomEvent("contracts-updated"))
             toast.success("Allonge gemt — samlet arbejdstid opdateret")
         } catch (e: any) {
             toast.error(`Kunne ikke gemme: ${e.message}`)
@@ -1992,6 +2011,11 @@ function ContractTable({ contracts, onReview, onDelete, showStatus = false }: {
                                         <span title={`${c.contract_attachments.length} allonge(r)`} className="flex items-center gap-0.5 text-xs text-muted-foreground">
                                             <Paperclip className="h-3 w-3" />{c.contract_attachments.length}
                                         </span>
+                                    )}
+                                    {c.contract_attachments.some(a => a.type === "allonge" && a.ai_status !== "klar") && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-300 text-amber-700 bg-amber-50 font-normal">
+                                            Allonge afventer
+                                        </Badge>
                                     )}
                                 </div>
                             </TableCell>
