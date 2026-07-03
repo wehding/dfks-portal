@@ -1992,7 +1992,7 @@ function ProducenterTab() {
             await loadMembers(activeGroupName)
             setMemberCounts(prev => ({ ...prev, [activeGroupName!]: (prev[activeGroupName!] ?? 0) + inserted - removed }))
             // Genindlæs ikke-medlemmer automatisk hvis der er fjernet nogen
-            if (removed > 0) await loadNonMembers()
+            if (removed > 0 || inserted > 0) await loadNonMembers()
             setDiffResult(null)
             const parts = [inserted && `${inserted} tilføjet`, removed && `${removed} fjernet`, updated && `${updated} opdateret`].filter(Boolean)
             toast.success(parts.join(", ") || "Ingen ændringer")
