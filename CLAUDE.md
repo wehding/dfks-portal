@@ -262,7 +262,8 @@ Alle migrationer kørt i Supabase SQL Editor. Filer i `supabase/migrations/`.
 | 20260605 | `case_learnings` |
 | 20260609 | `knowledge_chunks` (vector(768)) |
 | 20260611 | `contracts` member-felter, member onboarding |
-| 20260703 | `contract_attachments` udvidet: `ai_status`, `ai_result` — bruges aktivt af allonge-udtræk i `/admin/validering`; ny RLS-policy så medlemmer selv kan uploade allonger til egne kontrakter. **Migration `20260703210149_contract_attachments_member_upload.sql` var ikke kørt i produktion pr. 2026-07-03 — tjek status før allonge-udtræk-fanen kan virke.** |
+| 20260703 | `contract_attachments` udvidet: `ai_status`, `ai_result` — bruges aktivt af allonge-udtræk i `/admin/validering`; ny RLS-policy så medlemmer selv kan uploade allonger til egne kontrakter (`20260703210149`) |
+| 20260703 | Ny RLS delete-policy: medlemmer kan slette egne allonger indtil `ai_status = 'klar'` (`20260703224439`) |
 
 ---
 
