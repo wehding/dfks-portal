@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, Suspense, useRef } from "react"
 import Link from "next/link"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
-    CheckCircle2, AlertCircle, Loader2, X, Pencil,
+    CheckCircle2, AlertCircle, Loader2, X, Pencil, Paperclip,
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -50,6 +50,7 @@ type ContractRow = {
     rights_holder_name: string | null
     working_title: string | null
     work_title: string | null
+    contract_attachments: { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string }[]
 }
 
 type EditForm = {
@@ -174,6 +175,7 @@ function AdminKontrakterContent() {
     // View dialog
     const [viewContract, setViewContract] = useState<ContractRow | null>(null)
     const [viewPdfUrl, setViewPdfUrl] = useState<string | null>(null)
+    const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null)
 
     // Edit dialog
     const [editContract, setEditContract] = useState<ContractRow | null>(null)
@@ -226,7 +228,8 @@ function AdminKontrakterContent() {
                             employer_id, rights_holder_id, working_title,
                             employers (name),
                             rettighedshavere (full_name),
-                            works (title)
+                            works (title),
+                            contract_attachments (id, type, title, pdf_url, created_at)
                         `)
                         .eq("org_id", resolvedOrgId)
                         .order("created_at", { ascending: false }),
@@ -256,6 +259,7 @@ function AdminKontrakterContent() {
                         rights_holder_name: r.rettighedshavere?.full_name ?? null,
                         working_title: r.working_title ?? null,
                         work_title: r.works?.title ?? null,
+                        contract_attachments: r.contract_attachments ?? [],
                     })))
                 }
                 if (employersRes.data) setEmployers(employersRes.data)
@@ -278,6 +282,16 @@ function AdminKontrakterContent() {
         const supabase = createClient()
         const { data } = await supabase.storage.from("kontrakter").createSignedUrl(contract.pdf_url, 3600)
         if (data?.signedUrl) setViewPdfUrl(data.signedUrl)
+    }
+
+    const openAttachment = async (attachment: { id: string; pdf_url: string | null }) => {
+        if (!attachment.pdf_url) return
+        setOpeningAttachmentId(attachment.id)
+        const supabase = createClient()
+        const { data, error } = await supabase.storage.from("kontrakter").createSignedUrl(attachment.pdf_url, 3600)
+        setOpeningAttachmentId(null)
+        if (error || !data?.signedUrl) { toast.error("Kunne ikke åbne allongen"); return }
+        window.open(data.signedUrl, "_blank")
     }
 
     // ── Upload: file selection ────────────────────────────────
@@ -406,6 +420,7 @@ function AdminKontrakterContent() {
                         employer_id: employerId, rights_holder_id: rhId,
                         working_title: newContract.working_title,
                         employer_name: ext.employerName ?? null, rights_holder_name: ext.rightsHolderName ?? null, work_title: null,
+                        contract_attachments: [],
                     })
                 }
 
@@ -824,6 +839,7 @@ function AdminKontrakterContent() {
                         employer_name: ext.employerName ?? null,
                         rights_holder_name: ext.rightsHolderName ?? null,
                         work_title: null,
+                        contract_attachments: [],
                     })
                 }
             }
@@ -1012,7 +1028,16 @@ function AdminKontrakterContent() {
                         ) : (
                             filtered.map(c => (
                                 <TableRow key={c.id}>
-                                    <TableCell className="font-medium">{c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                                    <TableCell className="font-medium">
+                                        <div className="flex items-center gap-1.5">
+                                            {c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}
+                                            {c.contract_attachments.length > 0 && (
+                                                <span title={`${c.contract_attachments.length} allonge(r)`} className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                                                    <Paperclip className="h-3 w-3" />{c.contract_attachments.length}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </TableCell>
                                     <TableCell className="text-sm">{c.rights_holder_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
                                     <TableCell className="text-sm text-muted-foreground">{c.employer_name ?? "—"}</TableCell>
                                     <TableCell className="text-sm">{c.type === "a-løn" ? "A-løn" : "Leverandør"}</TableCell>
@@ -1068,6 +1093,23 @@ function AdminKontrakterContent() {
                             {viewContract?.rights_holder_name} • {viewContract?.employer_name} • {viewContract?.type === "a-løn" ? "A-løn" : "Leverandør"}
                         </DialogDescription>
                     </DialogHeader>
+                    {viewContract && viewContract.contract_attachments.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            <span className="text-xs font-medium text-muted-foreground">Allonger:</span>
+                            {viewContract.contract_attachments.map(a => (
+                                <button
+                                    key={a.id}
+                                    onClick={() => openAttachment(a)}
+                                    disabled={openingAttachmentId === a.id}
+                                    className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs hover:bg-muted transition-colors"
+                                >
+                                    <FileText className="h-3 w-3" />
+                                    {a.title ?? "Allonge"}
+                                    {openingAttachmentId === a.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                     <div className="flex-1 overflow-hidden rounded-lg border">
                         {viewPdfUrl ? (
                             <PdfViewer url={viewPdfUrl} />
