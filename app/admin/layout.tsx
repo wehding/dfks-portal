@@ -141,11 +141,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
             const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-            const [contractsRes, worksRes] = await Promise.all([
-                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
+            const [contractsRes, allongeRes, worksRes] = await Promise.all([
+                supabase.from("contracts").select("id").eq("org_id", orgId).eq("status", "kladde"),
+                // Kontrakter med en allonge admin endnu ikke har behandlet (ai_status != 'klar')
+                // skal også tælle med, selvom selve kontrakten allerede er valideret/arkiveret.
+                supabase.from("contract_attachments").select("contract_id, ai_status, contracts!inner(org_id)").eq("type", "allonge").eq("contracts.org_id", orgId),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
             ])
-            setPendingCount(contractsRes.count ?? 0)
+            const kladdeIds = (contractsRes.data ?? []).map((c: any) => c.id)
+            const pendingAllongeIds = (allongeRes.data ?? [])
+                .filter((a: any) => a.ai_status !== "klar")
+                .map((a: any) => a.contract_id)
+            const uniqueContractIds = new Set([...kladdeIds, ...pendingAllongeIds])
+            setPendingCount(uniqueContractIds.size)
             setPendingWorksCount(worksRes.count ?? 0)
         }
 
@@ -198,7 +206,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <Link href={item.href}>
                     <item.icon className="h-4 w-4" />
                     <span>{item.label}</span>
-                    {item.key === "kontrakter" && pendingCount > 0 && (
+                    {(item.key === "kontrakter" || item.key === "validering") && pendingCount > 0 && (
                         <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
                             {pendingCount}
                         </span>
