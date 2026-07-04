@@ -36,6 +36,17 @@ function nameTokens(name: string): string[] {
     return name.toLowerCase().replace(LEGAL_SUFFIXES, "").replace(/[^a-zæøå0-9\s]/g, " ").trim().split(/\s+/).filter(t => t.length > 1)
 }
 
+// Runder til 1 decimal og undgår flydende-komma-artefakter som 22.400000000000002
+function round1(n: number): number {
+    return Math.round((n + Number.EPSILON) * 10) / 10
+}
+
+// Til visning af arbejdsuger — tolerant over for allerede gemte, ikke-afrundede værdier
+function fmtWeeks(n: unknown): string {
+    if (typeof n !== "number" || Number.isNaN(n)) return "—"
+    return String(round1(n))
+}
+
 function tokenOverlapScore(a: string, b: string): number {
     // Eksakt match (case-insensitiv) giver altid 1.0
     if (a.toLowerCase() === b.toLowerCase()) return 1.0
@@ -509,8 +520,8 @@ export default function AdminValideringPage() {
             } catch (e) {
                 console.warn("[validering] Kunne ikke hente allonge-udtræk (migration kørt endnu?):", e)
             }
-            ;(extractedData as any).contractWorkingWeeks = contractWorkingWeeks
-            ;(extractedData as any).workingWeeks = contractWorkingWeeks + allongeWeeksSum
+            ;(extractedData as any).contractWorkingWeeks = round1(contractWorkingWeeks)
+            ;(extractedData as any).workingWeeks = round1(contractWorkingWeeks + allongeWeeksSum)
             ;(extractedData as any).currentSalary = currentSalary
             ;(extractedData as any).currentSalaryUnit = currentSalaryUnit
 
@@ -1278,7 +1289,7 @@ export default function AdminValideringPage() {
                                 <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 {reviewingContract.contract_attachments.length > 0 && (reviewingContract.validation?.extracted_data as any)?.workingWeeks != null && (
                                     <p className="text-xs text-muted-foreground mt-1">
-                                        Samlet arbejdstid inkl. allonger: <span className="font-medium">{(reviewingContract.validation?.extracted_data as any).workingWeeks} uger</span> — se allonge-fanerne
+                                        Samlet arbejdstid inkl. allonger: <span className="font-medium">{fmtWeeks((reviewingContract.validation?.extracted_data as any).workingWeeks)} uger</span> — se allonge-fanerne
                                     </p>
                                 )}
                             </F>
@@ -1808,9 +1819,9 @@ function AllongeTabContent({
                 .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
 
             const ed = (reviewingContract.validation?.extracted_data as any) ?? {}
-            const contractWorkingWeeks: number = ed.contractWorkingWeeks ?? ed.workingWeeks ?? 0
+            const contractWorkingWeeks: number = round1(ed.contractWorkingWeeks ?? ed.workingWeeks ?? 0)
             const allongeWeeksSum = klareAllonger.reduce((sum: number, a: any) => sum + (Number(a.ai_result?.workingWeeks) || 0), 0)
-            const totalWorkingWeeks = contractWorkingWeeks + allongeWeeksSum
+            const totalWorkingWeeks = round1(contractWorkingWeeks + allongeWeeksSum)
 
             const latest = klareAllonger[klareAllonger.length - 1]
             const currentSalary = latest?.ai_result?.salary ?? ed.salary ?? null
@@ -1921,8 +1932,8 @@ function AllongeTabContent({
 
                     <div className="rounded-lg bg-muted/50 p-3 text-xs space-y-1">
                         <p className="font-medium text-muted-foreground mb-1.5">Samlet beregning (går ind i statistik)</p>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Kontraktens uger</span><span>{ed.contractWorkingWeeks ?? ed.workingWeeks ?? "—"}</span></div>
-                        <div className="flex justify-between"><span className="text-muted-foreground">Samlet arbejdstid (kontrakt + allonger)</span><span className="font-medium">{ed.workingWeeks ?? "—"} uger</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Kontraktens uger</span><span>{fmtWeeks(ed.contractWorkingWeeks ?? ed.workingWeeks)}</span></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Samlet arbejdstid (kontrakt + allonger)</span><span className="font-medium">{fmtWeeks(ed.workingWeeks)} uger</span></div>
                         <div className="flex justify-between"><span className="text-muted-foreground">Nuværende løn</span><span>{ed.currentSalary ?? ed.salary ?? "—"} ({ed.currentSalaryUnit ?? ed.salaryUnit ?? "—"})</span></div>
                     </div>
 
@@ -1937,7 +1948,7 @@ function AllongeTabContent({
                                 ["Overenskomst", ed.overenskomst],
                                 ["Kontrakttype", ed.contractType],
                                 ["Oprindelig løn", ed.salary ? `${ed.salary} (${ed.salaryUnit ?? "—"})` : null],
-                                ["Oprindelige arbejdsuger", ed.contractWorkingWeeks ?? ed.workingWeeks],
+                                ["Oprindelige arbejdsuger", typeof (ed.contractWorkingWeeks ?? ed.workingWeeks) === "number" ? round1(ed.contractWorkingWeeks ?? ed.workingWeeks) : (ed.contractWorkingWeeks ?? ed.workingWeeks)],
                                 ["SVOD", ed.svod != null ? (ed.svod ? "Ja" : "Nej") : null],
                                 ["Copydan", ed.copydan != null ? (ed.copydan ? "Ja" : "Nej") : null],
                                 ["Royalty", ed.royalty != null ? (ed.royalty ? "Ja" : "Nej") : null],
