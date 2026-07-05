@@ -10,7 +10,7 @@ import { Modal } from "./Modal";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
-import { extractDfiPosterUrl, mapDfiWorkType } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -43,6 +43,7 @@ interface ManualWorkForm {
   duration_minutes: string;
   episode_count: string;
   genre: string;
+  director: string;
 }
 
 interface LocalWorkResult {
@@ -53,6 +54,7 @@ interface LocalWorkResult {
   duration_minutes: number | null;
   episode_count: number | null;
   genre: string | null;
+  director: string | null;
   status: string;
   dfi_id: string | null;
   tmdb_id: number | null;
@@ -84,6 +86,7 @@ interface DfiSearchResult {
   Title?: string;
   ReleaseYear?: number;
   ProductionYear?: number;
+  Premiere?: unknown;
   Category?: string;
   Description?: string;
   Type?: string;
@@ -134,6 +137,7 @@ function emptyManualWorkForm(): ManualWorkForm {
     duration_minutes: "",
     episode_count: "",
     genre: "",
+    director: "",
   };
 }
 
@@ -226,7 +230,16 @@ export function AddWorkModal({
   const [manualWork, setManualWork]           = useState<ManualWorkForm>(emptyManualWorkForm());
   const [addSeason, setAddSeason]             = useState("");
   const [addEpisode, setAddEpisode]           = useState("");
+  const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
+  const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
   const [addComment, setAddComment]           = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      resetAddState();
+    }
+  }, [isOpen]);
+
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
   const [localResults, setLocalResults]       = useState<LocalWorkResult[]>([]);
   const [dfiResults, setDfiResults]           = useState<DfiSearchResult[]>([]);
@@ -239,10 +252,28 @@ export function AddWorkModal({
   const [showExternalResults, setShowExternalResults] = useState(false);
 
   useEffect(() => {
-    if (isOpen) {
-      resetAddState();
-    }
-  }, [isOpen]);
+    const updateTmdbEpisodes = async () => {
+      if (pickedSource === "tmdb" && pickedResult) {
+        const tmdbResult = pickedResult as TmdbSearchResult;
+        try {
+          const det = await getTMDBWorkDetails(tmdbResult.id, "tv");
+          if (det.success && det.details) {
+            const d = det.details as any;
+            const sNum = parseInt(addSeason) || 1;
+            const season = d.seasons?.find((s: any) => s.season_number === sNum);
+            const count = season ? season.episode_count : null;
+            if (count) {
+              setDetectedEpisodeCount(count);
+              setSelectedEpisodes(Array.from({ length: count }, (_, idx) => idx + 1));
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    };
+    updateTmdbEpisodes();
+  }, [addSeason, pickedSource, pickedResult]);
 
   const resetAddState = () => {
     setManualMode(false);
@@ -258,6 +289,8 @@ export function AddWorkModal({
     setPickedSource(null);
     setAddSeason("");
     setAddEpisode("");
+    setDetectedEpisodeCount(null);
+    setSelectedEpisodes([]);
     setShowExternalResults(false);
   };
 
@@ -305,12 +338,27 @@ export function AddWorkModal({
     setPickedSource("dfi");
     setManualMode(false);
     setAddCoEditors([]);
+    setDetectedEpisodeCount(null);
+    setSelectedEpisodes([]);
     try {
       const det = await getDFIFilmDetails(Number(result.Id));
       const film = det.success ? (det as { film?: DfiSearchResult }).film ?? result : result;
       const editors = extractDfiCoEditors(film);
       if (editors.length) setAddCoEditors(editors);
-    } catch {
+
+      const comment = (film as any).Comment || (film as any).Synopsis || "";
+      let count = parseDfiEpisodeCount(comment);
+      if (!count && (film as any).Children) {
+        const children = (film as any).Children as any[];
+        const isEp = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
+        if (isEp) count = children.length;
+      }
+      if (count) {
+        setDetectedEpisodeCount(count);
+        setSelectedEpisodes(Array.from({ length: count }, (_, i) => i + 1));
+      }
+    } catch (e) {
+      console.error(e);
       setAddCoEditors([]);
     }
   };
@@ -333,6 +381,8 @@ export function AddWorkModal({
           role: addRole,
           comment: addComment,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          seasonNumber: numberOrNull(addSeason),
+          episodeNumber: numberOrNull(addEpisode),
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
         onWorkAdded(
@@ -357,7 +407,11 @@ export function AddWorkModal({
             year: numberOrNull(manualWork.year),
             duration_minutes: numberOrNull(manualWork.duration_minutes),
             episode_count: numberOrNull(manualWork.episode_count),
+            season_number: numberOrNull(addSeason),
+            episode_number: numberOrNull(addEpisode),
+            selected_episodes: selectedEpisodes,
             genre: manualWork.genre || null,
+            director: manualWork.director || null,
             description: null,
           },
         });
@@ -372,6 +426,8 @@ export function AddWorkModal({
         const det = await getDFIFilmDetails(dfiResult.Id);
         const film = (det.success ? (det as { film?: DfiSearchResult }).film : dfiResult) ?? dfiResult;
         const type = mapDfiWorkType(film.Category, film.Type);
+        const dfiPoster = (det.success ? det.posterDataUrl : null) ?? extractDfiPosterUrl(film);
+        const director = extractDfiDirectors(film).join(", ") || null;
         const res = await addWorkForMemberWithApproval({
           rightsHolderId,
           role: addRole,
@@ -383,9 +439,14 @@ export function AddWorkModal({
             dfi_id: String(dfiResult.Id),
             title: film.Title || film.DanishTitle || "Ukendt",
             type,
-            year: film.ProductionYear || film.ReleaseYear || null,
+            year: extractDfiPremiereYear(film),
+            director,
+            season_number: numberOrNull(addSeason),
+            episode_number: numberOrNull(addEpisode),
+            selected_episodes: selectedEpisodes,
+            episode_count: detectedEpisodeCount,
             description: film.Synopsis || film.ShortSynopsis || null,
-            poster_url: extractDfiPosterUrl(film),
+            poster_url: dfiPoster,
           },
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
@@ -416,6 +477,10 @@ export function AddWorkModal({
             title,
             type: tmdbResult.media_type === "tv" ? "tv-serie" : "spillefilm",
             year,
+            season_number: numberOrNull(addSeason),
+            episode_number: numberOrNull(addEpisode),
+            selected_episodes: selectedEpisodes,
+            episode_count: detectedEpisodeCount,
             description: d.overview || null,
             poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null,
           },
@@ -554,21 +619,98 @@ export function AddWorkModal({
                 onChange={e => setManualWork({ ...manualWork, genre: e.target.value })}
               />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-500">Instruktør</Label>
+              <Input
+                value={manualWork.director}
+                onChange={e => setManualWork({ ...manualWork, director: e.target.value })}
+              />
+            </div>
           </div>
           <p className="mt-3 text-xs text-gray-500">{t("works.posterHint")}</p>
         </div>
       )}
 
       {showSeriesFields && (
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
-            <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
+        <div className="mb-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
+              <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
+            </div>
+            {detectedEpisodeCount === null && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
+                <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />
+              </div>
+            )}
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
-            <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />
-          </div>
+
+          {detectedEpisodeCount !== null && (
+            <div className="rounded-lg border border-gray-200 p-4 bg-white/50">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
+                <Label className="text-sm font-semibold text-gray-900">
+                  {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
+                </Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    className="h-7 text-xs px-2"
+                    onClick={() => setSelectedEpisodes(Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
+                  >
+                    {locale === "da" ? "Vælg alle" : "Select all"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    className="h-7 text-xs px-2"
+                    onClick={() => setSelectedEpisodes([])}
+                  >
+                    {locale === "da" ? "Fravælg alle" : "Deselect all"}
+                  </Button>
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 max-h-40 overflow-y-auto p-1">
+                {Array.from({ length: detectedEpisodeCount }, (_, idx) => {
+                  const epNum = idx + 1;
+                  const isChecked = selectedEpisodes.includes(epNum);
+                  return (
+                    <label
+                      key={epNum}
+                      className={`flex items-center justify-center border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
+                        isChecked 
+                          ? "border-gray-900 bg-gray-900 font-semibold text-white" 
+                          : "border-gray-200 bg-white hover:bg-gray-50 text-gray-600"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={isChecked}
+                        onChange={() => {
+                          setSelectedEpisodes(prev =>
+                            prev.includes(epNum)
+                              ? prev.filter(x => x !== epNum)
+                              : [...prev, epNum].sort((a, b) => a - b)
+                          );
+                        }}
+                      />
+                      {epNum}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!manualMode && hasSearchedAdd && !isSearching && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0 && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-900">
+          {locale === "da" ? "Titel ikke fundet" : "Title not found"}
         </div>
       )}
 
@@ -621,7 +763,7 @@ export function AddWorkModal({
               getTitle: (x: SearchItem) => (x as DfiSearchResult).Title ?? "",
               getMeta: (x: SearchItem) => {
                 const f = x as DfiSearchResult;
-                return `${f.ProductionYear || f.ReleaseYear} · ${f.Category}`;
+                return `${extractDfiPremiereYear(f) ?? "-"} · ${f.Category}`;
               },
               getPoster: () => null,
             },

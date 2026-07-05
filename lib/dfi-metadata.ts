@@ -26,6 +26,15 @@ function textValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function positiveYear(value: unknown) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
 function normalizeDfiLabel(value: unknown) {
   return typeof value === "string" ? value.trim().toLowerCase().replace(/\s+/g, " ") : "";
 }
@@ -65,7 +74,7 @@ function imagePath(image: Record<string, unknown>) {
     const path = textValue(portrait.Path);
     if (path) return path;
   }
-  return textValue(image.PathMini) ?? textValue(image.PathMicr) ?? textValue(image.Path);
+  return textValue(image.PathMicr) ?? textValue(image.PathMini) ?? textValue(image.Path);
 }
 
 export function extractDfiPosterUrl(metadata: unknown) {
@@ -80,3 +89,99 @@ export function extractDfiPosterUrl(metadata: unknown) {
 
   return null;
 }
+
+export function extractDfiPremiereYear(metadata: unknown) {
+  if (!isRecord(metadata)) return null;
+
+  const premiere = Array.isArray(metadata.Premiere) ? metadata.Premiere : [];
+  const premiereYears = premiere
+    .map(item => {
+      if (!isRecord(item)) return null;
+      const date = textValue(item.PremiereDate);
+      return date ? positiveYear(date.substring(0, 4)) : null;
+    })
+    .filter((year): year is number => year !== null)
+    .sort((a, b) => a - b);
+
+  return premiereYears[0]
+    ?? positiveYear(metadata.ReleaseYear)
+    ?? positiveYear(metadata.Year)
+    ?? positiveYear(metadata.ProductionYear)
+    ?? positiveYear(metadata.ReleaseYearEnd);
+}
+
+export function extractDfiDirectors(metadata: unknown) {
+  if (!isRecord(metadata)) return [];
+
+  const directFields = [
+    metadata.Director,
+    metadata.Directors,
+    metadata.Director1,
+    metadata.Director2,
+  ];
+  const directNames = directFields.flatMap(value => {
+    if (Array.isArray(value)) {
+      return value
+        .map(item => {
+          if (typeof item === "string") return item.trim();
+          if (isRecord(item)) return textValue(item.Name) ?? textValue(item.FullName) ?? textValue(item.Title) ?? "";
+          return "";
+        })
+        .filter(Boolean);
+    }
+    const text = textValue(value);
+    return text ? [text] : [];
+  });
+
+  const credits = Array.isArray(metadata.PersonCredits) ? metadata.PersonCredits : [];
+  const creditNames = credits
+    .filter(item => {
+      if (!isRecord(item)) return false;
+      const typeCode = String(item.TypeCode ?? "").trim().toLowerCase();
+      const type = String(item.Type ?? "").trim().toLowerCase();
+      const description = String(item.Description ?? "").trim().toLowerCase();
+      const functionText = String(item.Function ?? "").trim().toLowerCase();
+      const credit = String(item.Credit ?? "").trim().toLowerCase();
+      const role = String(item.Role ?? "").trim().toLowerCase();
+      const roleText = [description, functionText, credit, role].filter(Boolean).join(" ");
+
+      if (typeCode === "instr" && type === "instruktion" && !roleText) return true;
+      return ["instruktør", "director"].includes(description)
+        || ["instruktør", "director"].includes(functionText)
+        || ["instruktør", "director"].includes(credit)
+        || ["instruktør", "director"].includes(role);
+    })
+    .map(item => isRecord(item) ? textValue(item.Name) ?? textValue(item.FullName) ?? "" : "")
+    .filter(Boolean);
+
+  return Array.from(new Set([...directNames, ...creditNames]));
+}
+
+export function parseDfiEpisodeCount(comment: string | null | undefined): number | null {
+  if (!comment) return null;
+  const match = comment.match(/(\d+)\s+afsnit/i);
+  if (match) return parseInt(match[1], 10);
+  return null;
+}
+
+export function parseDfiEpisodeTitleInfo(title: string | null | undefined) {
+  if (!title) return null;
+  // F.eks. "Velkommen til frontlinjen 1:6 - Vi kommer med fred" -> episode 1, total 6, subtitle: "Vi kommer med fred"
+  const regex = /(?:^|\s)(\d+):(\d+)(?:\s*-\s*|\s+)(.*)$/i;
+  const match = title.match(regex);
+  if (match) {
+    const episodeNumber = parseInt(match[1], 10);
+    const totalEpisodes = parseInt(match[2], 10);
+    const subtitle = match[3] ? match[3].trim() : "";
+    return { episodeNumber, totalEpisodes, subtitle };
+  }
+  const simpleRegex = /(?:^|\s)(\d+):(\d+)/i;
+  const simpleMatch = title.match(simpleRegex);
+  if (simpleMatch) {
+    const episodeNumber = parseInt(simpleMatch[1], 10);
+    const totalEpisodes = parseInt(simpleMatch[2], 10);
+    return { episodeNumber, totalEpisodes, subtitle: "" };
+  }
+  return null;
+}
+

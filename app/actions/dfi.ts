@@ -4,15 +4,17 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch } from "@/app/actions/tmdb";
-import { extractDfiPosterUrl, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {
   Id?: number | string | null;
   Title?: string | null;
   DanishTitle?: string | null;
+  OriginalTitle?: string | null;
   ProductionYear?: number | null;
   ReleaseYear?: number | null;
   Year?: number | null;
@@ -41,9 +43,15 @@ function creditTitle(credit: DfiCredit) {
   return String(credit.Title || credit.DanishTitle || "").trim();
 }
 
+function creditSearchText(credit: DfiCredit) {
+  return [credit.Title, credit.DanishTitle, credit.OriginalTitle]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .join(" ")
+    .toLowerCase();
+}
+
 function creditYear(credit: DfiCredit) {
-  const year = Number(credit.ProductionYear || credit.ReleaseYear || credit.Year || 0);
-  return Number.isFinite(year) && year > 0 ? year : null;
+  return extractDfiPremiereYear(credit);
 }
 
 function creditRole(credit: DfiCredit) {
@@ -148,6 +156,38 @@ async function fetchDFI(endpoint: string) {
   }
 }
 
+export async function downloadDfiPosterDataUrl(metadata: unknown) {
+  const posterUrl = extractDfiPosterUrl(metadata);
+  if (!posterUrl) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch(posterUrl, {
+      headers: { Accept: "image/avif,image/webp,image/*,*/*" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return null;
+
+    const contentLength = Number(res.headers.get("content-length") || 0);
+    if (contentLength > MAX_DFI_POSTER_BYTES) return null;
+
+    const contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+    if (!contentType.startsWith("image/")) return null;
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.byteLength > MAX_DFI_POSTER_BYTES) return null;
+
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch {
+    clearTimeout(timeoutId);
+    return null;
+  }
+}
+
 export async function searchDFIPerson(
   firstName?: string,
   lastName?: string,
@@ -192,27 +232,40 @@ export async function searchDFIFilms(title: string) {
 
   const cleanedTitle = title.trim().replace(/^["'»«'"'""]/, "").replace(/["'»«'"'""]$/, "").trim();
   const hasSpaces = cleanedTitle.includes(" ");
-  let searchQuery = cleanedTitle;
+  const searchQueries = [cleanedTitle];
 
   if (hasSpaces) {
     const words = cleanedTitle.split(/\s+/).map((w) => w.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, ""));
     const distinctiveWords = words.filter((w) => w.length > 2);
-    const candidates = distinctiveWords.length > 0 ? distinctiveWords : words;
-    searchQuery = candidates.reduce((longest, current) =>
-      current.length > longest.length ? current : longest, "");
+    searchQueries.push(...(distinctiveWords.length > 0 ? distinctiveWords : words));
   }
 
-  const result = await fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`);
-  if (!result.success || !result.data) {
-    return { success: false, error: result.error || "Ingen film fundet." };
+  const results = await Promise.all(
+    Array.from(new Set(searchQueries.filter(Boolean))).map(searchQuery =>
+      fetchDFI(`/v1/film?Title=${encodeURIComponent(searchQuery)}`)
+    )
+  );
+
+  const firstError = results.find(result => !result.success);
+  const filmsById = new Map<string, DfiCredit>();
+  for (const result of results) {
+    if (!result.success || !result.data) continue;
+    for (const film of (result.data.FilmList || []) as DfiCredit[]) {
+      const key = String(film.Id ?? `${film.Title}-${film.ReleaseYear}-${film.ProductionYear}`);
+      if (!filmsById.has(key)) filmsById.set(key, film);
+    }
   }
 
-  let filmList = (result.data.FilmList || []) as DfiCredit[];
+  if (!filmsById.size) {
+    return { success: false, error: firstError?.error || "Ingen film fundet." };
+  }
+
+  let filmList = Array.from(filmsById.values());
 
   if (hasSpaces && filmList.length > 0) {
     const originalLower = cleanedTitle.toLowerCase();
     const scored = filmList.map((film): DfiSearchScore => {
-      const t = (film.Title || "").toLowerCase();
+      const t = creditSearchText(film);
       let score = t === originalLower ? 100 : t.includes(originalLower) ? 50 : 0;
       originalLower.split(/\s+/).filter((w) => w.length > 1).forEach((w) => {
         if (t.includes(w)) score += 10;
@@ -224,8 +277,8 @@ export async function searchDFIFilms(title: string) {
   }
 
   filmList.sort((a: DfiCredit, b: DfiCredit) => {
-    const bYear = Number(b.ProductionYear || b.ReleaseYear || 0);
-    const aYear = Number(a.ProductionYear || a.ReleaseYear || 0);
+    const bYear = extractDfiPremiereYear(b) ?? 0;
+    const aYear = extractDfiPremiereYear(a) ?? 0;
     return bYear - aYear;
   });
 
@@ -237,7 +290,8 @@ export async function getDFIFilmDetails(filmId: number) {
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente filmdetaljer." };
   }
-  return { success: true, film: result.data };
+  const posterDataUrl = await downloadDfiPosterDataUrl(result.data);
+  return { success: true, film: result.data, posterDataUrl };
 }
 
 export async function prepareDFIImportCredits(personId: number, credits: DfiCredit[]) {
@@ -334,10 +388,10 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
 
     const workType = mapDfiWorkType(film.Category, film.Type);
 
-    const prodYear = Number(film.ProductionYear || film.ReleaseYear || 0) || null;
+    const prodYear = extractDfiPremiereYear(film);
     const filmTitle = String(film.Title || film.DanishTitle || "Ukendt titel");
 
-    let posterUrl = extractDfiPosterUrl(film);
+    let posterUrl = await downloadDfiPosterDataUrl(film) ?? extractDfiPosterUrl(film);
 
     // Slå plakat og tmdb_id op i TMDB (stille fejl)
     let tmdbId: number | null = null;
@@ -358,9 +412,15 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         year: prodYear,
         org_id: orgId,
         description: film.Synopsis || film.ShortSynopsis || null,
+        director: extractDfiDirectors(film).join(", ") || null,
         poster_url: posterUrl,
         tmdb_id: tmdbId,
         dfi_metadata: film,
+        dfi_title: typeof film.Title === "string" ? film.Title : null,
+        dfi_danish_title: typeof film.DanishTitle === "string" ? film.DanishTitle : null,
+        dfi_original_title: typeof film.OriginalTitle === "string" ? film.OriginalTitle : null,
+        dfi_category: typeof film.Category === "string" ? film.Category : null,
+        dfi_type: typeof film.Type === "string" ? film.Type : null,
       };
 
       const wasExisting = Boolean(workId);

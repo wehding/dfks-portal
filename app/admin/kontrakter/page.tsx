@@ -8,19 +8,15 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { maskPersonalData } from "@/lib/mask-text"
 import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
-import { SourceBtn } from "@/components/source-btn"
 import { normaliseSources } from "@/lib/ai-sources"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
-import { Switch } from "@/components/ui/switch"
-import { Textarea } from "@/components/ui/textarea"
-import { Separator } from "@/components/ui/separator"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -101,7 +97,7 @@ type ExtractedData = {
     contractDate: string | null
     startDate: string | null
     endDate: string | null
-    [key: string]: any
+    [key: string]: string | null
 }
 
 type RhMatch = { id: string; full_name: string; score: number }
@@ -185,6 +181,19 @@ function AdminKontrakterContent() {
     const [uploadItems, setUploadItems] = useState<UploadItem[]>([])
     const [uploadPhase, setUploadPhase] = useState<"select" | "processing">("select")
     const [saving, setSaving] = useState(false)
+    const prefillWorkIdRef = useRef<string | null>(null)
+
+    // Åbn upload-flowet automatisk når man kommer fra "Tilføj kontrakt" (?new=1&work=<id>)
+    useEffect(() => {
+        if (typeof window === "undefined") return
+        const params = new URLSearchParams(window.location.search)
+        prefillWorkIdRef.current = params.get("work")
+        if (params.get("new") === "1") {
+            setShowUpload(true)
+            setUploadPhase("select")
+            setUploadItems([])
+        }
+    }, [])
 
     // Delete
     const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -240,7 +249,7 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    setContracts(contractsRes.data.map((r: any) => ({
+                    setContracts((contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { title?: string | null } | null }>).map((r) => ({
                         id: r.id,
                         type: r.type,
                         overenskomst: r.overenskomst,
@@ -259,7 +268,7 @@ function AdminKontrakterContent() {
                     })))
                 }
                 if (employersRes.data) setEmployers(employersRes.data)
-                if (rhRes.data) setRightsHolders(rhRes.data.map((r: any) => ({ id: r.id, full_name: r.full_name })))
+                if (rhRes.data) setRightsHolders(rhRes.data.map((r: { id: string; full_name: string }) => ({ id: r.id, full_name: r.full_name })))
             } catch (e) {
                 console.error("Load fejl:", e)
             } finally {
@@ -355,6 +364,7 @@ function AdminKontrakterContent() {
                     status: "kladde",
                     pdf_url: filePath,
                     working_title: ext.workTitle ?? null,
+                    work_id: prefillWorkIdRef.current,
                     contract_date: ext.contractDate ?? null,
                     start_date: ext.startDate ?? null,
                     end_date: ext.endDate ?? null,
@@ -371,6 +381,7 @@ function AdminKontrakterContent() {
                         status: "kladde",
                         pdf_url: filePath,
                         working_title: ext.workTitle ?? null,
+                        work_id: prefillWorkIdRef.current,
                         contract_date: ext.contractDate ?? null,
                         start_date: ext.startDate ?? null,
                         end_date: ext.endDate ?? null,
@@ -410,8 +421,8 @@ function AdminKontrakterContent() {
                 }
 
                 updated[i] = { ...updated[i], status: "done" }
-            } catch (err: any) {
-                updated[i] = { ...updated[i], status: "error", error: err.message }
+            } catch (err: unknown) {
+                updated[i] = { ...updated[i], status: "error", error: err instanceof Error ? err.message : String(err) }
             }
             setUploadItems([...updated])
         }
@@ -458,17 +469,11 @@ function AdminKontrakterContent() {
         specialNotes: ext.specialNotes ?? "",
     })
 
-    const updateForm = (idx: number, key: keyof ValidationForm, value: any) => {
-        setUploadItems(prev => prev.map((item, i) =>
-            i === idx ? { ...item, form: { ...item.form!, [key]: value } } : item
-        ))
-    }
 
     // ── Masking helpers ───────────────────────────────────────
 
     const awaitMaskConfirm = (idx: number, rawText: string): Promise<string | null> => {
         return new Promise((resolve) => {
-            const { maskPersonalData } = require("@/lib/mask-text")
             const masked: string = maskPersonalData(rawText)
             const types: string[] = []
             if (masked.includes("[CPR-NUMMER]")) types.push("CPR-numre")
@@ -497,348 +502,13 @@ function AdminKontrakterContent() {
 
     // ── Upload: extract all files ─────────────────────────────
 
-    const handleExtract = async () => {
-        if (uploadItems.length === 0) return
-        setUploadPhase("processing")
-
-        const updated = [...uploadItems]
-
-        for (let i = 0; i < updated.length; i++) {
-            updated[i] = { ...updated[i], status: "extracting" }
-            setUploadItems([...updated])
-
-            try {
-                // Udtræk tekst klient-side og vis maskeringsdialog
-                const { extractTextFromFile } = await import("@/lib/ai")
-                const rawText = await extractTextFromFile(updated[i].file)
-                const maskedText = await awaitMaskConfirm(i, rawText)
-
-                // Gem råteksten til preview (kun DOCX/TXT)
-                if (rawText && !updated[i].file.name.toLowerCase().endsWith(".pdf")) {
-                    updated[i] = { ...updated[i], previewText: rawText }
-                    setUploadItems([...updated])
-                }
-
-                if (maskedText === null) {
-                    // Bruger annullerede
-                    updated[i] = { ...updated[i], status: "error", error: "Maskering afbrudt" }
-                    setUploadItems([...updated])
-                    continue
-                }
-
-                // Send maskeret tekst til API
-                const fd = new FormData()
-                fd.append("maskedText", maskedText)
-                const res = await fetch("/api/contracts/extract", { method: "POST", body: fd })
-                const json = await res.json()
-
-                if (!res.ok || !json.ok) {
-                    updated[i] = { ...updated[i], status: "error", error: json.error ?? "Fejl" }
-                } else {
-                    const ext = json.data
-
-                    // Employer: exact → fuzzy fallback
-                    const exactEmployer = ext.employerName
-                        ? employers.find(e => e.name.toLowerCase() === ext.employerName.toLowerCase())
-                        : undefined
-                    const fuzzyEmployer = !exactEmployer && ext.employerName
-                        ? employers
-                            .map(e => ({ e, score: tokenOverlapScore(e.name, ext.employerName!) }))
-                            .filter(x => x.score >= 0.5)
-                            .sort((a, b) => b.score - a.score)[0]?.e
-                        : undefined
-                    const matchedEmployer = exactEmployer ?? fuzzyEmployer
-                    const confidence: UploadItem["employerMatchConfidence"] =
-                        exactEmployer ? "exact" : fuzzyEmployer ? "fuzzy" : "none"
-
-                    // Parent suggestion fra lokal DB
-                    const parentSuggestion = ext.employerName
-                        ? employers
-                            .filter(e => e.id !== matchedEmployer?.id)
-                            .map(e => ({ e, score: tokenOverlapScore(e.name, ext.employerName!) }))
-                            .filter(x => x.score >= 0.3)
-                            .sort((a, b) => b.score - a.score)[0]?.e
-                        : undefined
-
-                    // DFI-søgning: brug moderselskabsnavn fra header/footer først, ellers employer-navn
-                    let dfiMatches: DfiCompany[] = []
-                    const dfiSearchName = ext.parentCompanyName ?? ext.employerName
-                    if (dfiSearchName) {
-                        const tokens = nameTokens(dfiSearchName)
-                        const searchTerm = tokens[0] ?? dfiSearchName.split(" ")[0]
-                        try {
-                            const dfiRes = await fetch(`/api/dfi/company?name=${encodeURIComponent(searchTerm)}`)
-                            const dfiJson = await dfiRes.json()
-                            if (dfiRes.ok) {
-                                dfiMatches = dfiJson.companies ?? []
-                            } else {
-                                console.warn("DFI fejl:", dfiJson.error)
-                            }
-                        } catch (e) {
-                            console.warn("DFI kald fejlede:", e)
-                        }
-                    }
-
-                    // Auto-forslag til DFI-moderselskab: tag altid bedste DFI-match når resultater findes
-                    const dfiParentSuggestion: DfiCompany | undefined = dfiSearchName && dfiMatches.length > 0
-                        ? (dfiMatches
-                            .map(c => ({ c, score: tokenOverlapScore(c.name, dfiSearchName) }))
-                            .sort((a, b) => b.score - a.score)[0]?.c ?? dfiMatches[0])
-                        : undefined
-
-                    // Rights holder: exact match, then fuzzy
-                    const exactRH = rightsHolders.find(r =>
-                        ext.rightsHolderName && r.full_name.toLowerCase() === ext.rightsHolderName.toLowerCase()
-                    )
-                    const rhFuzzyMatches: RhMatch[] = !exactRH && ext.rightsHolderName
-                        ? rightsHolders
-                            .map(r => ({ id: r.id, full_name: r.full_name, score: tokenOverlapScore(r.full_name, ext.rightsHolderName!) }))
-                            .filter(x => x.score >= 0.4)
-                            .sort((a, b) => b.score - a.score)
-                        : []
-                    const rhConfidence: UploadItem["rhMatchConfidence"] =
-                        exactRH ? "exact" : rhFuzzyMatches.length > 0 ? "fuzzy" : "none"
-
-                    updated[i] = {
-                        ...updated[i],
-                        status: "done",
-                        extracted: ext,
-                        form: initForm(ext),
-                        sources: ext._sources ? normaliseSources(ext._sources) : undefined,
-                        ...(matchedEmployer && { employerId: matchedEmployer.id }),
-                        employerMatchConfidence: confidence,
-                        // DB-parent bruges kun når AI ikke fandt et eksplicit moderselskabsnavn
-                        ...(parentSuggestion && !ext.parentCompanyName && { parentEmployerId: parentSuggestion.id }),
-                        dfiMatches,
-                        // DFI-forslag vises altid når der er resultater
-                        ...(dfiParentSuggestion && { selectedDfiParent: dfiParentSuggestion }),
-                        // Kun auto-vælg ved eksakt match — fuzzy kræver manuel bekræftelse
-                        ...(exactRH && { rightsHolderId: exactRH.id }),
-                        rhFuzzyMatches,
-                        rhMatchConfidence: rhConfidence,
-                    }
-                }
-            } catch (err: any) {
-                updated[i] = { ...updated[i], status: "error", error: err.message }
-            }
-
-            setUploadItems([...updated])
-        }
-    }
 
     // ── Update extracted field in review ──────────────────────
 
-    const updateExtracted = (idx: number, key: string, value: any) => {
-        setUploadItems(prev => prev.map((item, i) =>
-            i === idx ? { ...item, extracted: { ...item.extracted!, [key]: value } } : item
-        ))
-    }
 
-    const updateItem = (idx: number, patch: Partial<UploadItem>) => {
-        setUploadItems(prev => prev.map((item, i) => i === idx ? { ...item, ...patch } : item))
-    }
 
     // ── Save all reviewed contracts ───────────────────────────
 
-    const handleSaveAll = async (saveAsValidated: boolean = false) => {
-        if (!orgId) { toast.error("Organisation ikke indlæst — prøv at genindlæse siden"); return }
-        setSaving(true)
-        const supabase = createClient()
-        const saved: ContractRow[] = []
-
-        try {
-            for (const item of uploadItems) {
-                if (item.status !== "done" || !item.extracted) continue
-
-                const ext = item.extracted
-
-                // Opret/find employer
-                let employerId = item.employerId ?? null
-                if (!employerId && ext.employerName) {
-                    const existing = employers.find(e =>
-                        e.name.toLowerCase() === ext.employerName!.toLowerCase()
-                    )
-                    if (existing) {
-                        employerId = existing.id
-                    } else {
-                        const { data: newEmp, error: empErr } = await supabase
-                            .from("employers")
-                            .insert({ name: ext.employerName })
-                            .select()
-                            .single()
-                        if (empErr) throw new Error(`Arbejdsgiver fejl: ${empErr.message}`)
-                        if (newEmp) {
-                            employerId = newEmp.id
-                            setEmployers(prev => [...prev, { id: newEmp.id, name: newEmp.name, parent_id: null, dfi_company_id: null }]
-                                .sort((a, b) => a.name.localeCompare(b.name, "da")))
-                        }
-                    }
-                }
-
-                // Resolve moderselskab-ID — enten fra DB eller opret fra DFI
-                let resolvedParentId = item.parentEmployerId ?? null
-                if (!resolvedParentId && item.selectedDfiParent) {
-                    // Tjek om et employer med dette DFI-ID allerede findes
-                    const existingByDfi = employers.find(e => e.dfi_company_id === item.selectedDfiParent!.id)
-                    if (existingByDfi) {
-                        resolvedParentId = existingByDfi.id
-                    } else {
-                        // Opret moderselskab fra DFI-data
-                        const { data: newParent, error: parentErr } = await supabase
-                            .from("employers")
-                            .insert({ name: item.selectedDfiParent.name, dfi_company_id: item.selectedDfiParent.id })
-                            .select()
-                            .single()
-                        if (parentErr) throw new Error(`Moderselskab fejl: ${parentErr.message}`)
-                        if (newParent) {
-                            resolvedParentId = newParent.id
-                            setEmployers(prev => [...prev, { id: newParent.id, name: newParent.name, parent_id: null, dfi_company_id: newParent.dfi_company_id ?? null }]
-                                .sort((a, b) => a.name.localeCompare(b.name, "da")))
-                        }
-                    }
-                }
-
-                // Sæt/opdater parent_id på employer hvis angivet
-                if (employerId && resolvedParentId) {
-                    const emp = employers.find(e => e.id === employerId)
-                    if (!emp || !emp.parent_id) {
-                        await supabase.from("employers")
-                            .update({ parent_id: resolvedParentId })
-                            .eq("id", employerId)
-                    }
-                }
-
-                // Opret/find rettighedshaver
-                let rhId: string | null = null
-                if (item.rightsHolderId && item.rightsHolderId !== "__new__" && item.rightsHolderId !== "__unselected__") {
-                    // Eksisterende person valgt
-                    rhId = item.rightsHolderId
-                } else if (item.rightsHolderId === "__new__" && ext.rightsHolderName) {
-                    // Bruger har eksplicit valgt at oprette ny
-                    const { data: newRh, error: rhErr } = await supabase
-                        .from("rettighedshavere")
-                        .insert({ full_name: ext.rightsHolderName })
-                        .select()
-                        .single()
-                    if (rhErr) throw new Error(`Rettighedshaver fejl: ${rhErr.message}`)
-                    if (newRh) {
-                        rhId = newRh.id
-                        await supabase.from("org_affiliations").insert({
-                            org_id: orgId,
-                            rights_holder_id: newRh.id,
-                            is_member: false,
-                        })
-                        setRightsHolders(prev => [...prev, { id: newRh.id, full_name: newRh.full_name }]
-                            .sort((a, b) => a.full_name.localeCompare(b.full_name, "da")))
-                    }
-                }
-                // undefined / "__unselected__" → gem uden rettighedshaver (kan kobles senere)
-
-                // Upload PDF til Storage
-                const filePath = `${orgId}/${Date.now()}_${item.file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`
-                const { error: storageErr } = await supabase.storage
-                    .from("kontrakter")
-                    .upload(filePath, item.file, { contentType: item.file.type })
-                if (storageErr) throw new Error(`Upload fejl: ${storageErr.message}`)
-
-                const f = item.form
-                const contractStatus = saveAsValidated ? "valideret" : "kladde"
-
-                // Gem kontrakt
-                const { data: newContract, error: contractErr } = await supabase
-                    .from("contracts")
-                    .insert({
-                        org_id: orgId,
-                        employer_id: employerId,
-                        rights_holder_id: rhId,
-                        type: ext.contractType ?? "a-løn",
-                        overenskomst: ext.overenskomst ?? null,
-                        status: contractStatus,
-                        pdf_url: filePath,
-                        working_title: ext.workTitle ?? null,
-                        contract_date: ext.contractDate ?? null,
-                        start_date: f?.startDate || ext.startDate || null,
-                        end_date: f?.endDate || ext.endDate || null,
-                    })
-                    .select()
-                    .single()
-                if (contractErr) throw new Error(`Kontrakt fejl: ${contractErr.message}`)
-
-                if (newContract) {
-                    const { data: { user } } = await supabase.auth.getUser()
-                    const extractedData = f ? {
-                        producerName: f.producerName || undefined,
-                        productionType: f.productionType || undefined,
-                        salary: f.salary ? Number(f.salary) : undefined,
-                        salaryUnit: f.salaryUnit || "monthly",
-                        startDate: f.startDate || undefined,
-                        endDate: f.endDate || undefined,
-                        pensionPercent: f.pensionPercent ? Number(f.pensionPercent) : undefined,
-                        pensionSupplement: f.pensionSupplement ? Number(f.pensionSupplement) : undefined,
-                        personalSupplement: f.personalSupplement ? Number(f.personalSupplement) : undefined,
-                        otherSupplements: f.otherSupplements || undefined,
-                        workingWeeks: f.workingWeeks ? Number(f.workingWeeks) : undefined,
-                        svod: f.svod, copydan: f.copydan, royalty: f.royalty,
-                        royaltyPercent: f.royaltyPercent ? Number(f.royaltyPercent) : undefined,
-                        aiDataMiningClause: f.aiDataMiningClause,
-                        distribution: f.distribution ? f.distribution.split(",").map(s => s.trim()).filter(Boolean) : undefined,
-                        collectiveAgreement: f.collectiveAgreement,
-                        collectiveAgreementName: f.collectiveAgreementName || undefined,
-                        collectiveAgreementByReference: f.collectiveAgreementByReference,
-                        isFreelanceContract: f.isFreelanceContract,
-                        gender: f.gender || undefined,
-                        holidayPayRate: f.holidayPayRate ? Number(f.holidayPayRate) : undefined,
-                        betaRate: f.betaRate ? Number(f.betaRate) : undefined,
-                        specialNotes: f.specialNotes || undefined,
-                    } : ext
-
-                    const { error: valErr } = await supabase.from("contract_validations").insert({
-                        contract_id: newContract.id,
-                        org_id: orgId,
-                        holiday_pay_rate: f ? (f.holidayPayRate ? Number(f.holidayPayRate) : null) : (ext.holidayPayRate ?? null),
-                        beta_rate: f ? (f.betaRate ? Number(f.betaRate) : null) : (ext.betaRate ?? null),
-                        has_credit_clause: ext.hasCreditClause ?? false,
-                        has_termination_clause: ext.hasTerminationClause ?? false,
-                        termination_days_editor: ext.terminationDaysEditor ?? null,
-                        termination_days_producer: ext.terminationDaysProducer ?? null,
-                        has_indemnification: ext.hasIndemnification ?? false,
-                        has_overenskomst_incorporation: ext.hasOverenskomstIncorporation ?? false,
-                        extracted_data: extractedData,
-                        ...(saveAsValidated && { validated_by: user?.id ?? null, validated_at: new Date().toISOString() }),
-                    })
-                    if (valErr) throw new Error(`Validering fejl: ${valErr.message}`)
-
-                    saved.push({
-                        id: newContract.id,
-                        type: newContract.type,
-                        overenskomst: newContract.overenskomst,
-                        status: newContract.status,
-                        pdf_url: newContract.pdf_url,
-                        contract_date: newContract.contract_date,
-                        start_date: newContract.start_date,
-                        end_date: newContract.end_date,
-                        created_at: newContract.created_at,
-                        employer_id: newContract.employer_id,
-                        rights_holder_id: newContract.rights_holder_id,
-                        working_title: newContract.working_title,
-                        employer_name: ext.employerName ?? null,
-                        rights_holder_name: ext.rightsHolderName ?? null,
-                        work_title: null,
-                    })
-                }
-            }
-
-            setContracts(prev => [...saved, ...prev])
-            setShowUpload(false)
-            setUploadItems([])
-            setUploadPhase("select")
-            toast.success(`${saved.length} kontrakt${saved.length !== 1 ? "er" : ""} gemt`)
-        } catch (err: any) {
-            toast.error(err.message ?? "Gem fejlede")
-        } finally {
-            setSaving(false)
-        }
-    }
 
     // ── Delete ────────────────────────────────────────────────
 
@@ -911,8 +581,8 @@ function AdminKontrakterContent() {
             setEditContract(null)
             setEditForm(null)
             toast.success(newStatus === "valideret" ? "Kontrakt valideret" : "Kontrakt gemt")
-        } catch (err: any) {
-            toast.error(err.message ?? "Opdatering fejlede")
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Opdatering fejlede")
         } finally {
             setEditSaving(false)
         }
@@ -936,8 +606,6 @@ function AdminKontrakterContent() {
         return list
     }, [contracts, filterStatus, filterType, search])
 
-    const doneCount = uploadItems.filter(i => i.status === "done").length
-    const totalCount = uploadItems.length
 
     if (loading) return <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Henter...</div>
 
@@ -1273,7 +941,7 @@ function AdminKontrakterContent() {
                         </DialogDescription>
                     </DialogHeader>
                     <p className="text-xs text-muted-foreground">
-                        Automatisk maskering er ikke 100% pålidelig. Brug "Rediger" for at kontrollere teksten inden afsendelse.
+                        Automatisk maskering er ikke 100% pålidelig. Brug &quot;Rediger&quot; for at kontrollere teksten inden afsendelse.
                     </p>
                     <DialogFooter className="flex-col sm:flex-row gap-2">
                         <Button variant="outline" onClick={() => { setShowMaskEditor(true); setMaskDialog(null) }}>
@@ -1330,79 +998,6 @@ export default function AdminKontrakterPage() {
 
 // ── DOCX tekst-viewer med highlight-support ───────────────────
 
-function DocxTextViewer({ text, highlights, activeHighlight }: {
-    text: string
-    highlights: string[]
-    activeHighlight: string | null
-}) {
-    const containerRef = useRef<HTMLDivElement>(null)
-
-    const html = useMemo(() => {
-        if (!text) return ""
-
-        // Normaliser highlights — split || og flatten
-        const expandHighlight = (hl: string): string[] =>
-            hl.split("||").map(s => s.trim()).filter(s => s.length >= 4)
-
-        const allHighlights = [...new Set([...highlights, activeHighlight].filter(Boolean) as string[])]
-        if (allHighlights.length === 0) return escapeHtml(text)
-
-        type Range = { start: number; end: number; active: boolean }
-        const ranges: Range[] = []
-
-        for (const hl of allHighlights) {
-            if (!hl) continue
-            const isActive = hl === activeHighlight
-            const terms = expandHighlight(hl)
-
-            let found = false
-            for (const term of terms) {
-                // Prøv progressive kortere versioner af hvert term
-                for (const needle of [term.slice(0, 80), term.slice(0, 50), term.slice(0, 30)]) {
-                    if (needle.length < 4) continue
-                    const idx = text.toLowerCase().indexOf(needle.toLowerCase())
-                    if (idx === -1) continue
-                    ranges.push({ start: idx, end: idx + needle.length, active: isActive })
-                    found = true
-                    break
-                }
-                if (found) break
-            }
-        }
-
-        if (ranges.length === 0) return escapeHtml(text)
-
-        ranges.sort((a, b) => a.start - b.start)
-
-        let result = ""
-        let cursor = 0
-        for (const { start, end, active } of ranges) {
-            if (start < cursor) continue
-            result += escapeHtml(text.slice(cursor, start))
-            const cls = active
-                ? "bg-green-200 dark:bg-green-800 outline outline-2 outline-green-500 rounded"
-                : "bg-yellow-200 dark:bg-yellow-800 rounded"
-            result += `<mark class="${cls}" data-active="${active}">${escapeHtml(text.slice(start, end))}</mark>`
-            cursor = end
-        }
-        result += escapeHtml(text.slice(cursor))
-        return result
-    }, [text, highlights, activeHighlight])
-
-    useEffect(() => {
-        if (!containerRef.current || !activeHighlight) return
-        const el = containerRef.current.querySelector("mark[data-active='true']")
-        el?.scrollIntoView({ behavior: "smooth", block: "center" })
-    }, [activeHighlight, html])
-
-    return (
-        <div
-            ref={containerRef}
-            className="h-full overflow-y-auto p-4 text-xs leading-relaxed font-mono text-foreground/80 whitespace-pre-wrap"
-            dangerouslySetInnerHTML={{ __html: html }}
-        />
-    )
-}
 
 function escapeHtml(s: string): string {
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")

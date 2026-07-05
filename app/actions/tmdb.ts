@@ -186,3 +186,21 @@ export async function findTMDBMatch(title: string, year?: number | null) {
     return { poster_url: null, tmdb_id: null };
   }
 }
+
+export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number) {
+  try {
+    const res = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=da-DK`);
+    if (!res.ok) {
+      const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`);
+      if (!resEn.ok) throw new Error(`TMDB returned status ${resEn.status}`);
+      const data = await resEn.json();
+      return { success: true, episodes: (data.episodes || []) as any[] };
+    }
+    const data = await res.json();
+    return { success: true, episodes: (data.episodes || []) as any[] };
+  } catch (err: unknown) {
+    console.error("TMDB season episodes error:", err);
+    return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] };
+  }
+}
+

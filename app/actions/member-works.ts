@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
+import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -17,7 +18,12 @@ type MemberWorkData = {
   year: number | null;
   duration_minutes?: number | null;
   episode_count?: number | null;
+  season_count?: number | null;
+  season_number?: number | null;
+  episode_number?: number | null;
+  selected_episodes?: number[] | null;
   genre?: string | null;
+  director?: string | null;
   description?: string | null;
   poster_url?: string | null;
   dfi_metadata?: DfiMetadata | null;
@@ -162,7 +168,7 @@ async function createWorkRequest(params: {
 async function fetchMemberAssignment(db: ReturnType<typeof createServiceClient>, workId: string, rightsHolderId: string) {
   const { data } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
     .eq("work_id", workId)
     .eq("rights_holder_id", rightsHolderId)
     .order("created_at", { ascending: false })
@@ -183,6 +189,7 @@ export async function addWorkForMember(params: {
     duration_minutes?: number | null;
     episode_count?: number | null;
     genre?: string | null;
+    director?: string | null;
     description?: string | null;
     poster_url?: string | null;
   };
@@ -221,7 +228,7 @@ export async function addWorkForMember(params: {
       const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
       if (details.success && details.film) {
         dfiMetadata = details.film as DfiMetadata;
-        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+        posterUrl = details.posterDataUrl ?? extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
       }
     } catch (e) {
       console.error("DFI lookup error in member-works action:", e);
@@ -282,7 +289,7 @@ export async function addWorkForMember(params: {
   // Hent det oprettede assignment
   const { data: fresh } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description)")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description)")
     .eq("work_id", workId)
     .eq("rights_holder_id", params.rightsHolderId)
     .order("created_at", { ascending: false })
@@ -301,7 +308,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -316,6 +323,8 @@ export async function linkExistingWorkForMember(params: {
   role: string;
   comment?: string;
   coEditors?: ProposedCoEditor[];
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
@@ -323,16 +332,44 @@ export async function linkExistingWorkForMember(params: {
 
   const { data: work, error: workError } = await db
     .from("works")
-    .select("id, title, type, year, status")
+    .select("id, title, type, year, parent_work_id, season_number, episode_number, status, duration_minutes, episode_count, season_count, genre, director, description, poster_url, dfi_id, tmdb_id, dfi_metadata")
     .eq("id", params.workId)
     .eq("org_id", orgId)
     .single();
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
 
+  let targetWorkId = params.workId;
+
+  // Hvis det er en serie og der er angivet sæson, find eller generer afsnit
+  const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
+  if (isSeries && params.seasonNumber) {
+    if (work.parent_work_id === null) {
+      // Sørg for at afsnit er genereret for denne sæson
+      const genRes = await generateEpisodesForSeries({
+        parentWork: work as any,
+        seasonNumber: params.seasonNumber,
+      });
+      if (genRes.success) {
+        // Find det specifikke afsnitsværk
+        const { data: epWork } = await db
+          .from("works")
+          .select("id")
+          .eq("parent_work_id", work.id)
+          .eq("season_number", params.seasonNumber)
+          .eq("episode_number", params.episodeNumber ?? 1)
+          .maybeSingle();
+
+        if (epWork) {
+          targetWorkId = epWork.id;
+        }
+      }
+    }
+  }
+
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
-      { work_id: params.workId, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
+      { work_id: targetWorkId, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
       { onConflict: "work_id,rights_holder_id,role" }
     );
   if (assignErr) return { success: false, error: assignErr.message };
@@ -385,7 +422,7 @@ export async function addWorkForMemberWithApproval(params: {
       const details = await getDFIFilmDetails(Number(params.workData.dfi_id));
       if (details.success && details.film) {
         dfiMetadata = details.film as DfiMetadata;
-        posterUrl = extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
+        posterUrl = details.posterDataUrl ?? extractDfiPosterUrl(dfiMetadata) ?? posterUrl;
       }
     } catch (error) {
       console.error("DFI lookup error in addWorkForMemberWithApproval:", error);
@@ -410,31 +447,137 @@ export async function addWorkForMemberWithApproval(params: {
     dfi_metadata: dfiMetadata,
   };
 
-  const insertPayload = {
-    org_id: orgId,
-    status: requiresApproval ? "til_godkendelse" : "godkendt",
-    ...enrichedWorkData,
-  };
+  const isSeries = params.workData.type === "tv-serie" || params.workData.type === "dokumentar-serie";
+  let finalWorkId: string;
+  let parentWork: any = null;
 
-  const { data: work, error: workError } = await db
-    .from("works")
-    .insert(insertPayload)
-    .select("id, title, type, year, status")
-    .single();
-  if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
+  if (isSeries) {
+    // 1. Forsøg at finde eksisterende overordnet serieværk
+    if (enrichedWorkData.dfi_id) {
+      const { data } = await db.from("works").select("*").eq("dfi_id", enrichedWorkData.dfi_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      parentWork = data;
+    } else if (enrichedWorkData.tmdb_id) {
+      const { data } = await db.from("works").select("*").eq("tmdb_id", enrichedWorkData.tmdb_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      parentWork = data;
+    } else {
+      const { data } = await db.from("works").select("*").eq("title", enrichedWorkData.title).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      parentWork = data;
+    }
 
-  const { error: assignErr } = await db
-    .from("work_assignments")
-    .upsert(
-      { work_id: work.id, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
-      { onConflict: "work_id,rights_holder_id,role" }
-    );
-  if (assignErr) return { success: false, error: assignErr.message };
+    // 2. Opret overordnet serieværk, hvis det ikke findes
+    if (!parentWork) {
+      const parentPayload = {
+        org_id: orgId,
+        status: requiresApproval ? "til_godkendelse" : "godkendt",
+        title: enrichedWorkData.title,
+        type: enrichedWorkData.type,
+        year: enrichedWorkData.year,
+        duration_minutes: enrichedWorkData.duration_minutes ?? null,
+        episode_count: enrichedWorkData.episode_count ?? null,
+        season_count: enrichedWorkData.season_count ?? null,
+        genre: enrichedWorkData.genre ?? null,
+        director: enrichedWorkData.director ?? null,
+        description: enrichedWorkData.description ?? null,
+        poster_url: enrichedWorkData.poster_url ?? null,
+        dfi_id: enrichedWorkData.dfi_id ?? null,
+        tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
+      };
+
+      const { data, error: parentError } = await db
+        .from("works")
+        .insert(parentPayload)
+        .select("*")
+        .single();
+      if (parentError || !data) return { success: false, error: parentError?.message ?? "Kunne ikke oprette serieværk." };
+      parentWork = data;
+    }
+
+    // 3. Generer episoder for den givne sæson
+    const seasonNum = params.workData.season_number ?? 1;
+    const genRes = await generateEpisodesForSeries({
+      parentWork: parentWork as any,
+      seasonNumber: seasonNum,
+      totalEpisodes: params.workData.episode_count,
+    });
+    if (!genRes.success) return { success: false, error: genRes.error };
+
+    // Hent de genererede episoder
+    const { data: episodes } = await db
+      .from("works")
+      .select("*")
+      .eq("parent_work_id", parentWork.id)
+      .eq("season_number", seasonNum);
+
+    // Find de specifikke afsnit at tildele medlemmet
+    let targetEpisodes = [];
+    if (params.workData.selected_episodes && params.workData.selected_episodes.length > 0) {
+      targetEpisodes = (episodes ?? []).filter(e => params.workData.selected_episodes!.includes(e.episode_number));
+    } else if (params.workData.episode_number) {
+      targetEpisodes = (episodes ?? []).filter(e => e.episode_number === params.workData.episode_number);
+    } else {
+      targetEpisodes = episodes ?? [];
+    }
+
+    if (targetEpisodes.length === 0) {
+      return { success: false, error: "Ingen afsnit fundet til tildeling." };
+    }
+
+    // Opret assignments for alle målafsnit
+    const assignmentsToInsert = targetEpisodes.map(ep => ({
+      work_id: ep.id,
+      org_id: orgId,
+      rights_holder_id: params.rightsHolderId,
+      role: params.role,
+    }));
+
+    const { error: assignErr } = await db
+      .from("work_assignments")
+      .upsert(assignmentsToInsert, { onConflict: "work_id,rights_holder_id,role" });
+    if (assignErr) return { success: false, error: assignErr.message };
+
+    finalWorkId = targetEpisodes[0].id;
+  } else {
+    // Enkeltværk flow
+    const insertPayload = {
+      org_id: orgId,
+      status: requiresApproval ? "til_godkendelse" : "godkendt",
+      title: enrichedWorkData.title,
+      type: enrichedWorkData.type,
+      year: enrichedWorkData.year,
+      duration_minutes: enrichedWorkData.duration_minutes ?? null,
+      episode_count: enrichedWorkData.episode_count ?? null,
+      genre: enrichedWorkData.genre ?? null,
+      director: enrichedWorkData.director ?? null,
+      description: enrichedWorkData.description ?? null,
+      poster_url: enrichedWorkData.poster_url ?? null,
+      dfi_id: enrichedWorkData.dfi_id ?? null,
+      tmdb_id: enrichedWorkData.tmdb_id ?? null,
+      dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
+    };
+
+    const { data: work, error: workError } = await db
+      .from("works")
+      .insert(insertPayload)
+      .select("id")
+      .single();
+    if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
+
+    const { error: assignErr } = await db
+      .from("work_assignments")
+      .upsert(
+        { work_id: work.id, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
+        { onConflict: "work_id,rights_holder_id,role" }
+      );
+    if (assignErr) return { success: false, error: assignErr.message };
+
+    finalWorkId = work.id;
+  }
 
   if (requiresApproval) {
     const requestId = await createWorkRequest({
       db,
-      workId: work.id,
+      workId: isSeries && parentWork ? parentWork.id : finalWorkId,
       userId: user.id,
       rightsHolderId: params.rightsHolderId,
       source: "Mine værker - oprettelse",
@@ -449,14 +592,15 @@ export async function addWorkForMemberWithApproval(params: {
       },
       comment: params.comment,
     });
-    const fresh = await fetchMemberAssignment(db, work.id, params.rightsHolderId);
+    const fresh = await fetchMemberAssignment(db, finalWorkId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
-    return { success: true, pending: true, requestId, workId: work.id, assignment: fresh };
+    return { success: true, pending: true, requestId, workId: finalWorkId, assignment: fresh };
   }
 
-  const fresh = await fetchMemberAssignment(db, work.id, params.rightsHolderId);
-
+  const fresh = await fetchMemberAssignment(db, finalWorkId, params.rightsHolderId);
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/admin/vaerker");
   return { success: true, assignment: fresh };
 }
 
