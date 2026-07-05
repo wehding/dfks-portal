@@ -22,6 +22,8 @@ export interface DbEmployer {
     contact_email: string | null
     contact_phone: string | null
     website: string | null
+    associeret: boolean
+    parent_id: string | null
     created_at: string
 }
 
@@ -64,7 +66,7 @@ export async function getGroupMembers(groupName: string): Promise<DbEmployerWith
             valid_from,
             employers (
                 id, name, cvr, address,
-                contact_name, contact_email, contact_phone, website,
+                contact_name, contact_email, contact_phone, website, associeret, parent_id,
                 created_at
             )
         `)
@@ -93,11 +95,12 @@ export async function getNonGroupEmployers(): Promise<DbEmployer[]> {
 
     const { data, error } = await supabase
         .from("employers")
-        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, created_at")
+        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, parent_id, created_at")
         .order("name")
     if (error || !data) return []
     const idSet = new Set(ids)
-    return (data as DbEmployer[]).filter(e => !idSet.has(e.id))
+    // Ekskludér underselskaber (parent_id IS NOT NULL) — de er bundet via moderselskabet
+    return (data as DbEmployer[]).filter(e => !idSet.has(e.id) && !e.parent_id)
 }
 
 // ── Upsert + add to group ─────────────────────────────────────────────────────
@@ -206,6 +209,77 @@ export async function removeFromGroup(employerId: string, groupName: string): Pr
     return !error
 }
 
+/**
+ * Slår op om et firma er underselskab af et ProF-medlem.
+ * Returnerer moderselskabets navn hvis fundet, ellers null.
+ */
+export async function findParentMember(companyName: string): Promise<string | null> {
+    const supabase = createClient()
+    // Find firma ved navn (case-insensitiv)
+    const { data: company } = await supabase
+        .from("employers")
+        .select("id, name, parent_id")
+        .ilike("name", companyName.trim())
+        .maybeSingle()
+    if (!company?.parent_id) return null
+    // Hent moderselskab
+    const { data: parent } = await supabase
+        .from("employers")
+        .select("id, name")
+        .eq("id", company.parent_id)
+        .single()
+    if (!parent) return null
+    // Tjek om moderselskabet er aktivt ProF-medlem
+    const { count } = await supabase
+        .from("employer_registries")
+        .select("*", { count: "exact", head: true })
+        .eq("employer_id", parent.id)
+        .is("valid_to", null)
+    return (count ?? 0) > 0 ? parent.name : null
+}
+
+/** Tilknyt et underselskab til et moderselskab */
+export async function setParentEmployer(childId: string, parentId: string | null): Promise<boolean> {
+    const supabase = createClient()
+    const { error } = await supabase
+        .from("employers")
+        .update({ parent_id: parentId })
+        .eq("id", childId)
+    return !error
+}
+
+/** Hent alle underselskaber for et givet moderselskab */
+export async function getSubsidiaries(parentId: string): Promise<DbEmployer[]> {
+    const supabase = createClient()
+    const { data } = await supabase
+        .from("employers")
+        .select("id, name, cvr, address, contact_name, contact_email, contact_phone, website, associeret, parent_id, created_at")
+        .eq("parent_id", parentId)
+        .order("name")
+    return (data ?? []) as DbEmployer[]
+}
+
+/** Sæt associeret-status på en employer */
+export async function setAssocieret(employerId: string, associeret: boolean): Promise<boolean> {
+    const supabase = createClient()
+    const { error } = await supabase
+        .from("employers")
+        .update({ associeret })
+        .eq("id", employerId)
+    return !error
+}
+
+/** Tjek om en employer er i mindst én anden aktiv gruppe */
+export async function getActiveGroupCount(employerId: string): Promise<number> {
+    const supabase = createClient()
+    const { count } = await supabase
+        .from("employer_registries")
+        .select("*", { count: "exact", head: true })
+        .eq("employer_id", employerId)
+        .is("valid_to", null)
+    return count ?? 0
+}
+
 /** Move employer from one group to another */
 export async function moveToGroup(
     employerId: string,
@@ -258,13 +332,15 @@ export async function bulkImportToGroup(
         const existingId = existingMap.get(nameLc)
 
         if (existingId) {
-            // Update contact info
-            await supabase.from("employers").update({
-                contact_name: row.contact_name ?? null,
-                contact_email: row.contact_email ?? null,
-                contact_phone: row.contact_phone ?? null,
-                website: row.website ?? null,
-            }).eq("id", existingId)
+            // Opdater kun felter der har en ny ikke-null-værdi — slet ikke eksisterende data
+            const patch: Record<string, string | null> = {}
+            if (row.contact_name  != null) patch.contact_name  = row.contact_name
+            if (row.contact_email != null) patch.contact_email = row.contact_email
+            if (row.contact_phone != null) patch.contact_phone = row.contact_phone
+            if (row.website       != null) patch.website       = row.website
+            if (Object.keys(patch).length) {
+                await supabase.from("employers").update(patch).eq("id", existingId)
+            }
 
             if (!memberSet.has(existingId)) {
                 await addToGroup(existingId, groupName)

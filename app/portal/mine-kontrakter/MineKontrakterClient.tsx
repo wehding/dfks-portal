@@ -1,15 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2 } from "lucide-react";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip } from "lucide-react";
 import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
+import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/contextual-help";
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null } | null;
+type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string };
 export type Contract = {
   id: string;
   type: string | null;
@@ -23,6 +25,7 @@ export type Contract = {
   works: { id: string; title: string; year: number | null } | null;
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
+  contract_attachments: Attachment[];
 };
 
 const STATUS_MAP: Record<string, { label: string; bg: string; color: string }> = {
@@ -96,6 +99,8 @@ export default function MineKontrakterClient({
   const [viewLoading, setViewLoading] = useState(false);
   const [workSearch, setWorkSearch] = useState("");
   const [linkingSaving, setLinkingSaving] = useState(false);
+  const [isAddingAllonge, setIsAddingAllonge] = useState(false);
+  const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
 
   const total     = contracts.length;
   const godkendte = contracts.filter(c => c.status === "valideret").length;
@@ -147,6 +152,14 @@ export default function MineKontrakterClient({
       setMsg({ type: "error", text: res.error ?? "Fejl ved kobling" });
     }
     setLinkingSaving(false);
+  }
+
+  async function openAttachment(attachment: Attachment) {
+    if (!attachment.pdf_url) return;
+    setOpeningAttachmentId(attachment.id);
+    const res = await getContractSignedUrl(attachment.pdf_url);
+    setOpeningAttachmentId(null);
+    if (res.url) window.open(res.url, "_blank");
   }
 
   return (
@@ -284,6 +297,7 @@ export default function MineKontrakterClient({
               works: uploadWorkId ? { id: uploadWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null } : null,
               employers: null,
               contract_validations: null,
+              contract_attachments: [],
             }, ...prev]);
             setIsUploading(false);
             setMsg({ type: "success", text: "Kontrakt indsendt til DFKS." });
@@ -421,6 +435,43 @@ export default function MineKontrakterClient({
                 )}
               </div>
 
+              {/* Allonger */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-medium text-gray-500">Allonger</p>
+                  <button
+                    onClick={() => setIsAddingAllonge(true)}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50"
+                  >
+                    <Paperclip className="h-3 w-3" /> Tilføj allonge
+                  </button>
+                </div>
+                {selectedContract.contract_attachments.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic">Ingen allonger endnu</p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {selectedContract.contract_attachments.map(a => (
+                      <button
+                        key={a.id}
+                        onClick={() => openAttachment(a)}
+                        disabled={openingAttachmentId === a.id}
+                        className="flex items-center justify-between text-left text-sm px-3 py-2 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                          <span className="font-medium text-gray-900 truncate">{a.title ?? "Allonge"}</span>
+                        </span>
+                        <span className="text-xs text-gray-500 shrink-0 ml-2">
+                          {openingAttachmentId === a.id
+                            ? <Loader2 className="h-3 w-3 animate-spin" />
+                            : a.created_at.substring(0, 10)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Slet */}
               <button
                 onClick={() => handleDelete(selectedContract.id)}
@@ -440,6 +491,21 @@ export default function MineKontrakterClient({
         intro="Praktisk forklaring af upload, kobling og validering."
         topics={MINE_KONTRAKTER_HELP}
       />
+
+      {/* Tilføj allonge-dialog */}
+      {isAddingAllonge && selectedContract && (
+        <AddAlongeDialog
+          contractId={selectedContract.id}
+          onClose={() => setIsAddingAllonge(false)}
+          onUploaded={(attachment) => {
+            const updatedContract = { ...selectedContract, contract_attachments: [attachment, ...selectedContract.contract_attachments] };
+            setSelectedContract(updatedContract);
+            setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract : c));
+            setIsAddingAllonge(false);
+            setMsg({ type: "success", text: "Allonge tilføjet" });
+          }}
+        />
+      )}
     </div>
   );
 }

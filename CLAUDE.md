@@ -22,6 +22,15 @@ Portalen har fire adskilte moduler:
 
 **Validering → Arkiv** er en envejsstrøm. En kontrakt lander i arkivet *efter* den er valideret — aldrig direkte.
 
+### Allonger til egne kontrakter (medlemsportal)
+Medlemmer kan selv uploade allonger (forlængelser, ekstra uger) til deres egne kontrakter i `/portal/mine-kontrakter` — i kontrakt-detalje-overlayet, uafhængigt af selve kontraktuploaden. Dette kan ske når som helst efter kontrakten er uploadet, uanset kontraktens status (kladde/valideret/arkiveret), fordi allonger typisk kommer senere og kan påvirke arbejdsuger/løn.
+
+- `contract_attachments.type = 'allonge'` bruges til dette — til forskel fra `'bilag'`/`'andet'`.
+- Server actions: `app/actions/member-attachments.ts` (`uploadMemberAttachment`, `deleteMemberAttachment`).
+- UI: `app/portal/mine-kontrakter/AddAlongeDialog.tsx` + allonge-listen i `MineKontrakterClient.tsx`.
+- **Vigtigt:** AI-udtræk af allongens indhold og aggregering ind i `contract_validations.extracted_data` er **ikke** implementeret endnu. Felterne `contract_attachments.ai_status`/`ai_result` er forberedt til dette, men ubrugte — antag ikke at allonge-data allerede indgår i rettighedsbetaling eller statistik.
+- Admin-siden (`app/admin/validering/page.tsx`) henter allerede `contract_attachments(*)` med, så nye allonger er automatisk synlige der.
+
 ---
 
 ## Stack
@@ -91,7 +100,7 @@ Google text-embedding-004 (768 dim) — primær embedding-udbyder
     /mine-vaerker
     /okonomi
   /actions                    ← Server actions
-    /dfi.ts · member-contracts.ts · member-profile.ts · member-works.ts · tmdb.ts
+    /dfi.ts · member-contracts.ts · member-attachments.ts · member-profile.ts · member-works.ts · tmdb.ts
   /indbetalinger              ← Indbetalinger (member)
   /invite                     ← Invite-side
 /components
@@ -245,6 +254,7 @@ Alle migrationer kørt i Supabase SQL Editor. Filer i `supabase/migrations/`.
 | 20260605 | `case_learnings` |
 | 20260609 | `knowledge_chunks` (vector(768)) |
 | 20260611 | `contracts` member-felter, member onboarding |
+| 20260703 | `contract_attachments` udvidet: `ai_status`, `ai_result` (forberedt til senere AI-udtræk); ny RLS-policy så medlemmer selv kan uploade allonger til egne kontrakter |
 
 ---
 

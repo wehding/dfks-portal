@@ -15,6 +15,7 @@ import { hentKontekst } from "@/lib/retrieval"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 import { MAIL_FORMAT_PROMPT } from "@/lib/mail-format-prompt"
+import { findParentMember } from "@/lib/db/employers"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -616,12 +617,26 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         producerOverenskomst === "false" ? "Nej (registreret i DFKS-database)" :
         "Ukendt"
 
+    // Tjek om producenten er underselskab af et ProF-medlem
+    let parentMemberName: string | null = null
+    if (producerName && producerOverenskomst !== "true") {
+        try {
+            parentMemberName = await findParentMember(producerName)
+        } catch { /* ignorér — fortsætter uden */ }
+    }
+
+    // Hvis producenten er underselskab, behandles de som overenskomstbundne
+    const effectiveOverenskomstStatus = parentMemberName
+        ? `Ja — underselskab af ${parentMemberName} (ProF-medlem)`
+        : overenskomstStatus
+
     const contextBlock = (contractType || productionType || producerName) ? `
 KONTRAKTTYPE: ${contractType ?? "ukendt"}
 PRODUKTIONSTYPE: ${productionType ?? "ukendt"}
 DISTRIBUTIONSKANALER: ${distributionChannels.length ? distributionChannels.join(", ") : "ukendt"}
 PRODUCER: ${producerName ?? "ukendt"}
-PRODUCER OVERENSKOMSTBUNDET: ${overenskomstStatus}
+PRODUCER OVERENSKOMSTBUNDET: ${effectiveOverenskomstStatus}
+${parentMemberName ? `VIGTIGT: Producenten er underselskab af ${parentMemberName} som er ProF-medlem. Producenten er derfor juridisk forpligtet af overenskomsterne på samme måde som moderselskabet.` : ""}
 ${focusAreas.length > 0 ? `FOKUSOMRÅDER: ${focusAreas.join(", ")}` : ""}
 ${notes ? `SÆRLIGE BEMÆRKNINGER: ${notes}` : ""}
 
