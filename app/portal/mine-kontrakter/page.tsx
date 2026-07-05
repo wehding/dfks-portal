@@ -97,7 +97,7 @@ export default async function MineKontrakterPage() {
     )
   ) as { id: string; title: string; year: number | null; type: string }[];
 
-  const normalizedContracts: Contract[] = (contracts as RawContract[]).map(contract => ({
+  const normalizedContracts: Contract[] = ((contracts ?? []) as RawContract[]).map(contract => ({
     ...contract,
     works: firstRelation(contract.works),
     employers: firstRelation(contract.employers),
