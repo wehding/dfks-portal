@@ -38,42 +38,76 @@ interface WorkCorrectionForm {
   type: string;
   year: string;
   duration_minutes: string;
+  season_count: string;
   episode_count: string;
   genre: string;
+  director: string;
   description: string;
 }
 
-interface Assignment {
+function isSeriesType(type: string) {
+  return type === "tv-serie" || type === "dokumentar-serie";
+}
+
+type RequestComment = {
+  id: string;
+  author_role: "member" | "admin";
+  message: string;
+  created_at: string;
+};
+
+type ChangeRequest = {
+  id: string;
+  status: "pending" | "approved" | "rejected";
+  source?: string | null;
+  admin_comment?: string | null;
+  proposed_data?: Record<string, unknown> | null;
+  work_change_request_comments?: RequestComment[] | null;
+};
+
+type Work = {
+  id: string;
+  title: string;
+  type: string | null;
+  year: number | null;
+  duration_minutes: number | null;
+  season_count?: number | null;
+  episode_count: number | null;
+  genre: string | null;
+  director: string | null;
+  status: string | null;
+  dfi_id: string | null;
+  tmdb_id: number | string | null;
+  poster_url: string | null;
+  description: string | null;
+  work_change_requests?: ChangeRequest[] | null;
+};
+
+type Assignment = {
   id: string;
   role: string | null;
   work_id?: string;
   rights_holder_id?: string | null;
-  works?: {
-    id: string;
-    title: string;
-    type: string;
-    year: number | null;
-    duration_minutes: number | null;
-    episode_count: number | null;
-    genre: string | null;
-    status: string;
-    dfi_id: string | null;
-    tmdb_id: number | null;
-    poster_url: string | null;
-    description: string | null;
-    work_change_requests?: any[];
-  } | null;
+  works?: Work | null;
   rettighedshavere?: {
-    id: string;
+    id?: string;
     full_name: string;
   } | null;
-}
+};
+
+type AdminRequestSummary = {
+  id: string;
+  kind: string;
+  status: string;
+  message: string;
+  createdAt: string;
+};
 
 interface EditWorkModalProps {
   isOpen: boolean;
   onClose: () => void;
-  assignment: any;
-  allAssignments: any[];
+  assignment: Assignment;
+  allAssignments: Assignment[];
   onWorkUpdated: (message: string, success: boolean, updatedRole?: string, targetId?: string) => void;
   locale: string;
 }
@@ -86,37 +120,39 @@ function displayRole(role: string | null | undefined) {
   return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
 }
 
-function workToCorrectionForm(w: any): WorkCorrectionForm {
+function workToCorrectionForm(w: Work): WorkCorrectionForm {
   return {
     title: w.title ?? "",
     type: w.type ?? "spillefilm",
     year: w.year != null ? String(w.year) : "",
     duration_minutes: w.duration_minutes != null ? String(w.duration_minutes) : "",
+    season_count: w.season_count != null ? String(w.season_count) : "",
     episode_count: w.episode_count != null ? String(w.episode_count) : "",
     genre: w.genre ?? "",
+    director: w.director ?? "",
     description: w.description ?? "",
   };
 }
 
-function requestKindLabel(request: any) {
+function requestKindLabel(request: ChangeRequest) {
   const kind = request.proposed_data?.kind;
   if (kind === "creation") return "Nyt værk";
   if (kind === "co_editors") return "Medklippere";
   return "Rettelse";
 }
 
-function requestStatusLabel(status: string) {
+function requestStatusLabel(status: ChangeRequest["status"]) {
   if (status === "pending") return "Afventer";
   if (status === "approved") return "Godkendt";
   return "Afvist";
 }
 
-function adminRequestSummaries(work: any) {
+function adminRequestSummaries(work: Work | null | undefined): AdminRequestSummary[] {
   return (work?.work_change_requests ?? [])
-    .flatMap((request: any) => {
+    .flatMap((request): AdminRequestSummary[] => {
       const comments = (request.work_change_request_comments ?? [])
-        .filter((comment: any) => comment.author_role === "admin")
-        .map((comment: any) => ({
+        .filter(comment => comment.author_role === "admin")
+        .map(comment => ({
           id: `${request.id}-${comment.id}`,
           kind: requestKindLabel(request),
           status: requestStatusLabel(request.status),
@@ -137,7 +173,7 @@ function adminRequestSummaries(work: any) {
           ]
         : [];
     })
-    .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 }
 
 function numberOrNull(val: string) {
@@ -154,15 +190,14 @@ export function EditWorkModal({
   locale,
 }: EditWorkModalProps) {
   const { t } = useI18n();
-  const supabase = createClient();
 
   const [editRole, setEditRole]                         = useState("");
   const [showWorkCorrection, setShowWorkCorrection]     = useState(false);
   const [workCorrection, setWorkCorrection]             = useState<WorkCorrectionForm | null>(null);
   const [workCorrectionComment, setWorkCorrectionComment] = useState("");
   const [editCoEditors, setEditCoEditors]               = useState<CoEditorDraft[]>([]);
-  const [isSavingEdit, setIsSavingEdit]                 = useState(false);
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
+  const [commentError, setCommentError]                 = useState(false);
 
   useEffect(() => {
     if (isOpen && assignment) {
@@ -170,6 +205,7 @@ export function EditWorkModal({
       setShowWorkCorrection(false);
       setWorkCorrection(assignment.works ? workToCorrectionForm(assignment.works) : null);
       setWorkCorrectionComment("");
+      setCommentError(false);
       setEditCoEditors(
         (allAssignments ?? [])
           .filter(other => other.work_id === assignment.works?.id)
@@ -185,19 +221,9 @@ export function EditWorkModal({
     }
   }, [isOpen, assignment, allAssignments]);
 
-  const handleSaveEdit = async () => {
-    setIsSavingEdit(true);
-    const { error } = await supabase.from("work_assignments").update({ role: editRole }).eq("id", assignment.id);
-    if (!error) {
-      onWorkUpdated(t("common.saved"), true, editRole, assignment.id);
-    } else {
-      onWorkUpdated(error.message, false);
-    }
-    setIsSavingEdit(false);
-  };
-
   const handleSendWorkCorrection = async () => {
     if (!assignment.works || !workCorrection) return;
+    if (!workCorrectionComment.trim()) { setCommentError(true); return; }
     setIsSendingCorrection(true);
     try {
       const res = await submitWorkDataCorrection({
@@ -208,8 +234,10 @@ export function EditWorkModal({
           type: workCorrection.type,
           year: numberOrNull(workCorrection.year),
           duration_minutes: numberOrNull(workCorrection.duration_minutes),
+          season_count: numberOrNull(workCorrection.season_count),
           episode_count: numberOrNull(workCorrection.episode_count),
           genre: workCorrection.genre || null,
+          director: workCorrection.director || null,
           description: workCorrection.description || null,
         },
         comment: workCorrectionComment,
@@ -219,16 +247,76 @@ export function EditWorkModal({
       });
       if (!res.success) throw new Error(t("works.createFailed"));
       onWorkUpdated(t("works.correctionSent"), true);
-    } catch (err: any) {
-      onWorkUpdated(err.message || t("works.createFailed"), false);
+    } catch (err: unknown) {
+      onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
     } finally {
       setIsSendingCorrection(false);
+    }
+  };
+
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const handleSaveEdit = async () => {
+    setIsSavingEdit(true);
+    const supabase = createClient();
+
+    const coEditorChanges = editCoEditors.filter(
+      editor => !editor.locked || editor.action === "remove" || editor.action === "change"
+    );
+
+    if (coEditorChanges.length > 0 && !workCorrectionComment.trim()) {
+      setCommentError(true);
+      setIsSavingEdit(false);
+      return;
+    }
+
+    try {
+      let ownRoleError = null;
+      if (editRole !== displayRole(assignment.role)) {
+        const { error } = await supabase
+          .from("work_assignments")
+          .update({ role: editRole })
+          .eq("id", assignment.id);
+        ownRoleError = error;
+      }
+
+      if (ownRoleError) throw new Error(ownRoleError.message);
+
+      if (coEditorChanges.length > 0) {
+        if (!assignment.works) throw new Error("Værket mangler.");
+        await submitWorkDataCorrection({
+          assignmentId: assignment.id,
+          workId: assignment.works.id,
+          data: {
+            title: assignment.works.title,
+            type: assignment.works.type ?? "spillefilm",
+            year: assignment.works.year,
+            duration_minutes: assignment.works.duration_minutes,
+            season_count: assignment.works.season_count,
+            episode_count: assignment.works.episode_count,
+            genre: assignment.works.genre,
+            director: assignment.works.director,
+            description: assignment.works.description,
+          },
+          comment: workCorrectionComment,
+          coEditors: coEditorChanges,
+        });
+      }
+
+      onWorkUpdated(t("common.saved"), true, editRole, assignment.id);
+    } catch (err: unknown) {
+      onWorkUpdated(err instanceof Error ? err.message : t("common.genericError"), false);
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
   if (!isOpen) return null;
 
   const editAdminSummaries = adminRequestSummaries(assignment.works);
+  const coEditorChanges = editCoEditors.filter(
+    editor => !editor.locked || editor.action === "remove" || editor.action === "change"
+  );
 
   return (
     <Modal onClose={onClose} maxWidth="max-w-2xl">
@@ -239,15 +327,15 @@ export function EditWorkModal({
         </button>
       </div>
       <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        {locale === "da" 
-          ? "Bemærk: Forkerte ændringer i værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af rettighedsmidler. Alle rettelser skal derfor godkendes af en administrator." 
-          : "Note: Incorrect changes in work data can make it difficult to match the work in the system, which can delay or prevent correct payment of rights funds. All corrections must therefore be approved by an administrator."}
+        {locale === "da"
+          ? "Bemærk: Forkerte værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af dine rettighedsmidler. Alle rettelser skal derfor godkendes af administrator."
+          : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
       </div>
       {editAdminSummaries.length > 0 && (
         <div className="mb-5 rounded-lg border border-gray-200 p-4">
           <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.adminComments")}</p>
           <div className="space-y-2">
-            {editAdminSummaries.map((summary: any) => (
+            {editAdminSummaries.map(summary => (
               <div key={summary.id} className="rounded-md bg-gray-50 px-3 py-2 text-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <span className="font-medium text-gray-700">{summary.kind}</span>
@@ -270,14 +358,134 @@ export function EditWorkModal({
           ))}
         </select>
       </div>
+
+      {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
+      <div className="rounded-lg border border-gray-200 p-4 mb-6">
+        <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.coEditors")}</p>
+        <div className="space-y-2">
+          {editCoEditors.map(editor => (
+            <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+              <Input
+                value={editor.name}
+                disabled={editor.locked && editor.action !== "change"}
+                onChange={e =>
+                  setEditCoEditors(prev =>
+                    prev.map(item =>
+                      item.id === editor.id
+                        ? { ...item, name: e.target.value, action: item.locked ? "change" : item.action }
+                        : item
+                    )
+                  )
+                }
+                placeholder={t("works.namePlaceholder")}
+              />
+              <select
+                value={editor.role}
+                disabled={editor.locked && editor.action !== "change"}
+                onChange={e =>
+                  setEditCoEditors(prev =>
+                    prev.map(item =>
+                      item.id === editor.id
+                        ? { ...item, role: e.target.value, action: item.locked ? "change" : item.action }
+                        : item
+                    )
+                  )
+                }
+                className={selectCls}
+              >
+                {ROLES.map(role => (
+                  <option key={role} value={role}>
+                    {role}
+                  </option>
+                ))}
+              </select>
+              {editor.locked ? (
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setEditCoEditors(prev =>
+                        prev.map(item =>
+                          item.id === editor.id
+                            ? { ...item, action: item.action === "change" ? undefined : "change" }
+                            : item
+                        )
+                      )
+                    }
+                  >
+                    {editor.action === "change" ? t("works.lock") : t("works.suggestEdit")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setEditCoEditors(prev =>
+                        prev.map(item =>
+                          item.id === editor.id
+                            ? { ...item, action: item.action === "remove" ? undefined : "remove" }
+                            : item
+                        )
+                      )
+                    }
+                  >
+                    {editor.action === "remove" ? t("works.undo") : t("works.suggestRemove")}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setEditCoEditors(prev => prev.filter(item => item.id !== editor.id))}
+                >
+                  {t("works.removeCoEditor")}
+                </Button>
+              )}
+              {editor.action === "remove" && (
+                <p className="text-xs text-red-600 sm:col-span-3">{t("works.removeNotice")}</p>
+              )}
+            </div>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-3"
+          onClick={() => setEditCoEditors(prev => [...prev, emptyCoEditor()])}
+        >
+          {t("works.addCoEditor")}
+        </Button>
+        <p className="mt-2 text-xs text-gray-500">{t("works.editCoEditorsHint")}</p>
+      </div>
+
+      {/* BEMÆRKNING VED MEDKLIPPER-ÆNDRINGER ELLER MANUEL RETTELSE */}
+      {(coEditorChanges.length > 0 || showWorkCorrection) && (
+        <div className="space-y-1.5 mb-6">
+          <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
+          <Textarea
+            value={workCorrectionComment}
+            onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }}
+            placeholder={locale === "da" ? "Forklar kort hvorfor dataene/medklipperne bør ændres." : "Briefly explain why data/co-editors should be changed."}
+            className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined}
+          />
+          {commentError && (
+            <p className="text-xs text-red-600">
+              {locale === "da" ? "Skriv en bemærkning til admin, før du gemmer." : "Add a note to admin before saving."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* FORESLÅ MANUEL RETTELSE SEKTION */}
       <div className="mb-6 rounded-lg border border-gray-200 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-sm font-semibold text-gray-900">{t("works.manualWorkData")}</p>
             <p className="mt-1 text-xs text-gray-500">
-              {locale === "da" 
-                ? "Foreslå rettelser til titel, type, år, varighed, afsnit, genre eller beskrivelse."
-                : "Suggest corrections to title, type, year, duration, episodes, genre, or description."}
+              {locale === "da"
+                ? "Foreslå rettelser til titel, type, premiereår, varighed, sæson, afsnit, og instruktør."
+                : "Suggest corrections to title, type, premiere year, duration, season, episodes, and director."}
             </p>
           </div>
           <Button
@@ -330,137 +538,36 @@ export function EditWorkModal({
                   inputMode="numeric"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium text-gray-500">{t("works.episodesField")}</Label>
-                <Input
-                  value={workCorrection.episode_count}
-                  onChange={e => setWorkCorrection({ ...workCorrection, episode_count: e.target.value })}
-                  inputMode="numeric"
-                />
-              </div>
+              {isSeriesType(workCorrection.type) && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">Sæson</Label>
+                  <Input
+                    value={workCorrection.season_count}
+                    onChange={e => setWorkCorrection({ ...workCorrection, season_count: e.target.value })}
+                    inputMode="numeric"
+                  />
+                </div>
+              )}
+              {isSeriesType(workCorrection.type) && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-gray-500">{t("works.episodesField")}</Label>
+                  <Input
+                    value={workCorrection.episode_count}
+                    onChange={e => setWorkCorrection({ ...workCorrection, episode_count: e.target.value })}
+                    inputMode="numeric"
+                  />
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.genreField")}</Label>
+              <Label className="text-sm font-medium text-gray-500">Instruktør</Label>
               <Input
-                value={workCorrection.genre}
-                onChange={e => setWorkCorrection({ ...workCorrection, genre: e.target.value })}
+                value={workCorrection.director}
+                onChange={e => setWorkCorrection({ ...workCorrection, director: e.target.value })}
               />
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.descriptionField")}</Label>
-              <Textarea
-                value={workCorrection.description}
-                onChange={e => setWorkCorrection({ ...workCorrection, description: e.target.value })}
-              />
-            </div>
-            <div className="rounded-lg border border-gray-200 p-4">
-              <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.coEditors")}</p>
-              <div className="space-y-2">
-                {editCoEditors.map(editor => (
-                  <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
-                    <Input
-                      value={editor.name}
-                      disabled={editor.locked && editor.action !== "change"}
-                      onChange={e =>
-                        setEditCoEditors(prev =>
-                          prev.map(item =>
-                            item.id === editor.id
-                              ? { ...item, name: e.target.value, action: item.locked ? "change" : item.action }
-                              : item
-                          )
-                        )
-                      }
-                      placeholder={t("works.namePlaceholder")}
-                    />
-                    <select
-                      value={editor.role}
-                      disabled={editor.locked && editor.action !== "change"}
-                      onChange={e =>
-                        setEditCoEditors(prev =>
-                          prev.map(item =>
-                            item.id === editor.id
-                              ? { ...item, role: e.target.value, action: item.locked ? "change" : item.action }
-                              : item
-                          )
-                        )
-                      }
-                      className={selectCls}
-                    >
-                      {ROLES.map(role => (
-                        <option key={role} value={role}>
-                          {role}
-                        </option>
-                      ))}
-                    </select>
-                    {editor.locked ? (
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() =>
-                            setEditCoEditors(prev =>
-                              prev.map(item =>
-                                item.id === editor.id
-                                  ? { ...item, action: item.action === "change" ? undefined : "change" }
-                                  : item
-                              )
-                            )
-                          }
-                        >
-                          {editor.action === "change" ? t("works.lock") : t("works.suggestEdit")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() =>
-                            setEditCoEditors(prev =>
-                              prev.map(item =>
-                                item.id === editor.id
-                                  ? { ...item, action: item.action === "remove" ? undefined : "remove" }
-                                  : item
-                              )
-                            )
-                          }
-                        >
-                          {editor.action === "remove" ? t("works.undo") : t("works.suggestRemove")}
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setEditCoEditors(prev => prev.filter(item => item.id !== editor.id))}
-                      >
-                        {t("works.removeCoEditor")}
-                      </Button>
-                    )}
-                    {editor.action === "remove" && (
-                      <p className="text-xs text-red-600 sm:col-span-3">{t("works.removeNotice")}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-3"
-                onClick={() => setEditCoEditors(prev => [...prev, emptyCoEditor()])}
-              >
-                {t("works.addCoEditor")}
-              </Button>
-              <p className="mt-2 text-xs text-gray-500">{t("works.editCoEditorsHint")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
-              <Textarea
-                value={workCorrectionComment}
-                onChange={e => setWorkCorrectionComment(e.target.value)}
-                placeholder={locale === "da" ? "Forklar kort hvorfor værksdata bør rettes." : "Briefly explain why work data should be corrected."}
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection || !workCorrectionComment.trim()} className="gap-2">
+            <div className="flex justify-end mt-2">
+              <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
                 {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
                 {locale === "da" ? "Send rettelse til admin" : "Send correction to admin"}
               </Button>
@@ -468,12 +575,13 @@ export function EditWorkModal({
           </div>
         )}
       </div>
-      <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
+      <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end mt-4 pt-4 border-t border-gray-100">
         <Button variant="outline" onClick={onClose}>
           {t("common.cancel")}
         </Button>
         <Button onClick={handleSaveEdit} disabled={isSavingEdit} className="gap-2">
-          {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />} {t("common.save")}
+          {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />}
+          {locale === "da" ? "Gem" : "Save"}
         </Button>
       </div>
     </Modal>

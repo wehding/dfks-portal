@@ -26,6 +26,9 @@ import {
   archiveAdminWorks,
   approveAdminWorks,
   createAdminWork,
+  deleteAdminWorkPermanently,
+  deleteAdminWorksPermanently,
+  fetchAdminBroadcasters,
   fetchAdminRightsHolders,
   fetchAdminWorksForReview,
   mergeAdminWorks,
@@ -33,8 +36,8 @@ import {
   updateAdminWorkData,
 } from "@/app/actions/work-management";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
-import { getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
-import { extractDfiPosterUrl, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
+import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -50,7 +53,7 @@ const WORK_TYPE_VALUES = WORK_TYPES.map(type => type.value) as DfiWorkType[];
 
 const CREDIT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 const BROADCASTERS = [
-  "DR",
+  "DR1",
   "DR2",
   "TV 2",
   "TV 3",
@@ -72,18 +75,8 @@ const BROADCASTERS = [
 ];
 const NO_BROADCASTER = "__none__";
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
-
-function dfiText(metadata: DfiMetadata | null | undefined, key: string) {
-  const value = metadata?.[key];
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  return "";
-}
-
-function dfiListText(metadata: DfiMetadata | null | undefined, key: string) {
-  const value = metadata?.[key];
-  if (Array.isArray(value)) return value.map(item => String(item)).join(", ");
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
+type BroadcasterOption = { name: string; logo_path: string | null };
+const FALLBACK_BROADCASTER_OPTIONS: BroadcasterOption[] = BROADCASTERS.map(name => ({ name, logo_path: null }));
 
 function dfiRecord(metadata: DfiMetadata | null | undefined, key: string) {
   const value = metadata?.[key];
@@ -155,13 +148,23 @@ type WorkRow = {
   type: string;
   year: number | null;
   duration_minutes: number | null;
+  season_count: number | null;
   episode_count: number | null;
   genre: string | null;
+  director: string | null;
+  alternative_titles?: string[] | null;
+  production_countries?: string[] | null;
+  production_companies?: string[] | null;
   status: string;
   dfi_id: string | null;
   tmdb_id: string | number | null;
   description: string | null;
   poster_url: string | null;
+  dfi_title?: string | null;
+  dfi_danish_title?: string | null;
+  dfi_original_title?: string | null;
+  dfi_category?: string | null;
+  dfi_type?: string | null;
   dfi_metadata?: DfiMetadata | null;
   work_change_requests?: ChangeRequest[];
   contracts?: ContractLink[];
@@ -174,12 +177,22 @@ type WorkForm = {
   type: string;
   year: string;
   duration_minutes: string;
+  season_count: string;
   episode_count: string;
   genre: string;
+  director: string;
+  alternative_titles: string;
+  production_countries: string;
+  production_companies: string;
   description: string;
   dfi_id: string;
   tmdb_id: string;
   poster_url: string;
+  dfi_title: string;
+  dfi_danish_title: string;
+  dfi_original_title: string;
+  dfi_category: string;
+  dfi_type: string;
   status: string;
   broadcaster: string;
   dfi_metadata?: DfiMetadata | null;
@@ -190,8 +203,18 @@ type AddWorkForm = {
   type: string;
   year: string;
   duration_minutes: string;
+  season_count: string;
   episode_count: string;
   genre: string;
+  director: string;
+  alternative_titles: string;
+  production_countries: string;
+  production_companies: string;
+  dfi_title: string;
+  dfi_danish_title: string;
+  dfi_original_title: string;
+  dfi_category: string;
+  dfi_type: string;
   rightsHolderId: string;
   role: string;
   sharePercent: string;
@@ -211,8 +234,18 @@ type AdminCreateWorkData = {
   type: string;
   year: number | null;
   duration_minutes: number | null;
+  season_count: number | null;
   episode_count: number | null;
   genre: string | null;
+  director: string | null;
+  alternative_titles: string[];
+  production_countries: string[];
+  production_companies: string[];
+  dfi_title: string | null;
+  dfi_danish_title: string | null;
+  dfi_original_title: string | null;
+  dfi_category: string | null;
+  dfi_type: string | null;
   description: null;
   dfi_id: string | null;
   tmdb_id: number | null;
@@ -287,14 +320,20 @@ function displayCreditRole(role: string | null | undefined) {
 const FIELD_LABELS: Record<string, string> = {
   title: "Titel",
   type: "Type",
-  year: "År",
+  year: "Premiereår",
   duration_minutes: "Varighed",
+  season_count: "Sæson",
   episode_count: "Afsnit",
   genre: "Genre",
+  director: "Instruktør",
+  alternative_titles: "Alternative titler",
+  production_countries: "Produktionslande",
+  production_companies: "Produktionsselskaber",
   description: "Beskrivelse",
   dfi_id: "DFI-id",
   tmdb_id: "TMDB-id",
   poster_url: "Poster-url",
+  dfi_original_title: "Arbejdstitel",
   status: "Status",
   memberRole: "Medlemsrolle",
 };
@@ -304,12 +343,21 @@ const DIFF_KEYS = [
   "type",
   "year",
   "duration_minutes",
+  "season_count",
   "episode_count",
   "genre",
+  "director",
+  "alternative_titles",
+  "production_countries",
+  "production_companies",
   "dfi_id",
   "tmdb_id",
-  "poster_url",
+  "dfi_original_title",
 ];
+
+function isSeriesType(type: string) {
+  return type === "tv-serie" || type === "dokumentar-serie";
+}
 
 function requestSummary(request: ChangeRequest) {
   const proposed = request.proposed_data ?? {};
@@ -325,6 +373,7 @@ function requestSummary(request: ChangeRequest) {
 
 function formatDiffValue(value: unknown) {
   if (value === null || value === undefined || value === "") return "-";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "-";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "-";
   if (typeof value === "boolean") return value ? "Ja" : "Nej";
   if (typeof value === "object") return JSON.stringify(value);
@@ -336,13 +385,21 @@ function comparableValue(value: unknown) {
 }
 
 function requestDiffRows(request: ChangeRequest) {
-  const oldData = request.old_data ?? {};
   const proposed = request.proposed_data ?? {};
   const workData = typeof proposed.workData === "object" && proposed.workData ? proposed.workData as Record<string, unknown> : proposed;
 
+  // Ved rettelser er old_data et snapshot af værket. Ved oprettelser er old_data tom,
+  // så vi sammenligner i stedet med det matchede eksisterende værk (localMatch) —
+  // ellers markeres alle felter (også dem der er identiske) som ændringer.
+  const storedOld = request.old_data ?? {};
+  const localMatch = Array.isArray(proposed.localMatches) && proposed.localMatches.length
+    ? proposed.localMatches[0] as Record<string, unknown>
+    : {};
+  const baseline = Object.keys(storedOld).length > 0 ? storedOld : localMatch;
+
   return DIFF_KEYS
     .filter(key => Object.prototype.hasOwnProperty.call(workData, key))
-    .map(key => ({ key, oldValue: oldData[key], newValue: workData[key] }))
+    .map(key => ({ key, oldValue: baseline[key], newValue: workData[key] }))
     .filter(row => comparableValue(row.oldValue) !== comparableValue(row.newValue));
 }
 
@@ -384,7 +441,20 @@ function getWorkBroadcaster(work: WorkRow) {
 
 function posterSrc(posterUrl: string | null | undefined) {
   if (!posterUrl) return null;
-  return posterUrl.startsWith("http") ? posterUrl : `${TMDB_IMG_W185}${posterUrl}`;
+  return posterUrl.startsWith("http") || posterUrl.startsWith("data:image/")
+    ? posterUrl
+    : `${TMDB_IMG_W185}${posterUrl}`;
+}
+
+function splitList(value: string) {
+  return value
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function joinList(value: string[] | null | undefined) {
+  return Array.isArray(value) ? value.join(", ") : "";
 }
 
 function toForm(work: WorkRow): WorkForm {
@@ -393,12 +463,22 @@ function toForm(work: WorkRow): WorkForm {
     type: work.type ?? "",
     year: work.year?.toString() ?? "",
     duration_minutes: work.duration_minutes?.toString() ?? "",
+    season_count: work.season_count?.toString() ?? "",
     episode_count: work.episode_count?.toString() ?? "",
     genre: work.genre ?? "",
+    director: work.director ?? "",
+    alternative_titles: joinList(work.alternative_titles),
+    production_countries: joinList(work.production_countries),
+    production_companies: joinList(work.production_companies),
     description: work.description ?? "",
     dfi_id: work.dfi_id ?? "",
     tmdb_id: work.tmdb_id?.toString() ?? "",
     poster_url: work.poster_url ?? "",
+    dfi_title: work.dfi_title ?? textValue(work.dfi_metadata?.Title),
+    dfi_danish_title: work.dfi_danish_title ?? textValue(work.dfi_metadata?.DanishTitle),
+    dfi_original_title: work.dfi_original_title ?? textValue(work.dfi_metadata?.OriginalTitle),
+    dfi_category: work.dfi_category ?? textValue(work.dfi_metadata?.Category),
+    dfi_type: work.dfi_type ?? textValue(work.dfi_metadata?.Type),
     status: displayStatus(work),
     broadcaster: getWorkBroadcaster(work) ?? NO_BROADCASTER,
     dfi_metadata: work.dfi_metadata ?? null,
@@ -416,13 +496,91 @@ function textValue(value: unknown) {
   return typeof value === "string" ? value : "";
 }
 
+function nonEmptyText(value: unknown) {
+  const text = textValue(value).trim();
+  return text ? text : null;
+}
+
 function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function firstNumber(...values: unknown[]) {
+  for (const value of values) {
+    const number = numberValue(value);
+    if (number !== null) return number;
+    if (typeof value === "string") {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function dfiTextList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") {
+          const record = item as Record<string, unknown>;
+          return nonEmptyText(record.Name) ?? nonEmptyText(record.Title) ?? nonEmptyText(record.Country) ?? "";
+        }
+        return "";
+      })
+      .filter(Boolean);
+  }
+  const text = nonEmptyText(value);
+  return text ? [text] : [];
+}
+
+function mergeLists(...lists: string[][]) {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const list of lists) {
+    for (const item of list) {
+      const normalized = item.trim();
+      const key = normalized.toLowerCase();
+      if (!normalized || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(normalized);
+    }
+  }
+  return merged;
+}
+
+function dfiProductionCompanies(metadata: SearchResult) {
+  return dfiTextList(metadata.ProductionCompanies);
+}
+
+function dfiProductionCountries(metadata: SearchResult) {
+  return dfiTextList(metadata.ProductionCountries);
+}
+
+function dfiAlternativeTitles(metadata: SearchResult) {
+  return mergeLists(
+    dfiTextList(metadata.AltTitle),
+    dfiTextList(metadata.ForeignTitles)
+  );
+}
+
+function dfiFieldValues(metadata: SearchResult) {
+  return {
+    dfi_title: textValue(metadata.Title),
+    dfi_danish_title: textValue(metadata.DanishTitle),
+    dfi_original_title: textValue(metadata.OriginalTitle),
+    dfi_category: textValue(metadata.Category),
+    dfi_type: textValue(metadata.Type),
+  };
+}
+
+function dfiDirector(metadata: SearchResult) {
+  return extractDfiDirectors(metadata).join(", ");
+}
+
 function resultYear(item: SearchResult) {
   const dateYear = textValue(item.release_date).substring(0, 4) || textValue(item.first_air_date).substring(0, 4);
-  const year = Number(item.ProductionYear || item.ReleaseYear || dateYear || 0);
+  const year = extractDfiPremiereYear(item) ?? Number(dateYear || 0);
   return Number.isFinite(year) ? year : 0;
 }
 
@@ -444,8 +602,18 @@ function defaultAddForm(): AddWorkForm {
     type: "spillefilm",
     year: "",
     duration_minutes: "",
+    season_count: "",
     episode_count: "",
     genre: "",
+    director: "",
+    alternative_titles: "",
+    production_countries: "",
+    production_companies: "",
+    dfi_title: "",
+    dfi_danish_title: "",
+    dfi_original_title: "",
+    dfi_category: "",
+    dfi_type: "",
     rightsHolderId: "",
     role: "Klipper",
     sharePercent: "",
@@ -456,6 +624,7 @@ function defaultAddForm(): AddWorkForm {
 export default function VaerksadministrationPage() {
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
+  const [broadcasterOptions, setBroadcasterOptions] = useState<BroadcasterOption[]>(FALLBACK_BROADCASTER_OPTIONS);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -468,6 +637,8 @@ export default function VaerksadministrationPage() {
   const [adminComment, setAdminComment] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [editingDeleteOpen, setEditingDeleteOpen] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [editingArchiveOpen, setEditingArchiveOpen] = useState(false);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -504,6 +675,14 @@ export default function VaerksadministrationPage() {
         setRightsHolders([]);
         setNotice(errorMessage(rightsErr, "Kunne ikke hente rettighedshavere, men værkerne er indlæst."));
       }
+      try {
+        const broadcastersRes = await fetchAdminBroadcasters();
+        if (broadcastersRes.success && broadcastersRes.broadcasters.length > 0) {
+          setBroadcasterOptions(broadcastersRes.broadcasters as BroadcasterOption[]);
+        }
+      } catch (broadcastersErr: unknown) {
+        setNotice(errorMessage(broadcastersErr, "Kunne ikke hente broadcaster-listen fra databasen."));
+      }
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente værker."));
     } finally {
@@ -514,6 +693,14 @@ export default function VaerksadministrationPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const broadcasterLogoMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const broadcaster of broadcasterOptions) {
+      if (broadcaster.name && broadcaster.logo_path) map[broadcaster.name] = broadcaster.logo_path;
+    }
+    return map;
+  }, [broadcasterOptions]);
 
   const filtered = useMemo(() => {
     let list = [...works];
@@ -566,6 +753,16 @@ export default function VaerksadministrationPage() {
 
   const selectedContracts = useMemo(
     () => selectedWorks.flatMap(work => (work.contracts ?? []).map(contract => ({ work, contract }))),
+    [selectedWorks]
+  );
+
+  const totalAssignments = useMemo(
+    () => selectedWorks.reduce((acc, work) => acc + (work.work_assignments?.length ?? 0), 0),
+    [selectedWorks]
+  );
+
+  const totalContracts = useMemo(
+    () => selectedWorks.reduce((acc, work) => acc + (work.contracts?.length ?? 0), 0),
     [selectedWorks]
   );
 
@@ -640,20 +837,6 @@ export default function VaerksadministrationPage() {
     setEditTmdbResults([]);
   };
 
-  const updateDfiMetaField = (key: string, value: unknown) => {
-    setEditForm(prev => {
-      if (!prev) return prev;
-      const currentMeta = prev.dfi_metadata || {};
-      return {
-        ...prev,
-        dfi_metadata: {
-          ...currentMeta,
-          [key]: value
-        }
-      };
-    });
-  };
-
   const handleSaveWork = async () => {
     if (!editing || !editForm) return;
     setSaving(true);
@@ -665,13 +848,23 @@ export default function VaerksadministrationPage() {
           type: editForm.type,
           year: nullableNumber(editForm.year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
+          season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
           genre: editForm.genre || null,
+          director: editForm.director || null,
+          alternative_titles: splitList(editForm.alternative_titles),
+          production_countries: splitList(editForm.production_countries),
+          production_companies: splitList(editForm.production_companies),
           description: editForm.description || null,
           dfi_id: editForm.dfi_id || null,
           tmdb_id: nullableNumber(editForm.tmdb_id),
           poster_url: editForm.poster_url || null,
-          status: editForm.status,
+          dfi_title: editForm.dfi_title || null,
+          dfi_danish_title: editForm.dfi_danish_title || null,
+          dfi_original_title: editForm.dfi_original_title || null,
+          dfi_category: editForm.dfi_category || null,
+          dfi_type: editForm.dfi_type || null,
+          status: editForm.status === "arkiveret" ? "godkendt" : editForm.status,
           dfi_metadata: editForm.dfi_metadata || null,
         },
         broadcaster: editForm.broadcaster === NO_BROADCASTER ? null : editForm.broadcaster,
@@ -772,22 +965,70 @@ export default function VaerksadministrationPage() {
           type: editForm.type,
           year: nullableNumber(editForm.year),
           duration_minutes: nullableNumber(editForm.duration_minutes),
+          season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
           genre: editForm.genre || null,
+          director: editForm.director || null,
+          alternative_titles: splitList(editForm.alternative_titles),
+          production_countries: splitList(editForm.production_countries),
+          production_companies: splitList(editForm.production_companies),
           description: editForm.description || null,
           dfi_id: editForm.dfi_id || null,
           tmdb_id: nullableNumber(editForm.tmdb_id),
           poster_url: editForm.poster_url || null,
+          dfi_title: editForm.dfi_title || null,
+          dfi_danish_title: editForm.dfi_danish_title || null,
+          dfi_original_title: editForm.dfi_original_title || null,
+          dfi_category: editForm.dfi_category || null,
+          dfi_type: editForm.dfi_type || null,
           status,
+          dfi_metadata: editForm.dfi_metadata || null,
         },
         broadcaster: editForm.broadcaster === NO_BROADCASTER ? null : editForm.broadcaster,
       });
-      setNotice(status === "godkendt" ? "Værket er godkendt." : "Værket er slettet.");
+      setNotice(status === "godkendt" ? "Værket er godkendt." : "Værket er arkiveret.");
       setEditForm({ ...editForm, status });
       await load();
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke ændre status."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteEditingPermanently = async () => {
+    if (!editing) return;
+    setSaving(true);
+    try {
+      await deleteAdminWorkPermanently({ workId: editing.id });
+      setNotice("Værket er slettet permanent.");
+      setEditingDeleteOpen(false);
+      setEditing(null);
+      setEditForm(null);
+      setActiveRequestId(null);
+      setImportPreview(null);
+      await load();
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke slette værket permanent."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSelectedPermanently = async () => {
+    if (selectedIds.length === 0) return;
+    setSaving(true);
+    try {
+      await deleteAdminWorksPermanently({ workIds: selectedIds });
+      setNotice(`${selectedIds.length} værk(er) er slettet permanent.`);
+      setBatchDeleteOpen(false);
+      setSelectedIds([]);
+      await load();
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke slette værkerne permanent."));
     } finally {
       setSaving(false);
     }
@@ -888,12 +1129,24 @@ export default function VaerksadministrationPage() {
       const details = await getDFIFilmDetails(Number(result.Id));
       const film = (details.success ? (details as { film?: SearchResult }).film : result) ?? result;
       const type = mapDfiWorkType(film.Category, film.Type, workTypeFallback(editForm.type));
+      const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || editForm.title;
+      const year = extractDfiPremiereYear(film);
+      const dfiPoster = (details.success ? details.posterDataUrl : null) ?? extractDfiPosterUrl(film);
+      const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
       const nextValues: Partial<WorkForm> = {
-        title: textValue(film.Title) || textValue(film.DanishTitle) || editForm.title,
+        title,
         type,
-        year: film.ProductionYear || film.ReleaseYear ? String(film.ProductionYear || film.ReleaseYear) : editForm.year,
+        year: year ? String(year) : editForm.year,
+        duration_minutes: firstNumber(film.LengthInMin) ? String(firstNumber(film.LengthInMin)) : editForm.duration_minutes,
+        genre: textValue(film.Genre) || editForm.genre,
+        director: dfiDirector(film) || editForm.director,
+        alternative_titles: mergeLists(splitList(editForm.alternative_titles), dfiAlternativeTitles(film)).join(", "),
+        production_countries: mergeLists(splitList(editForm.production_countries), dfiProductionCountries(film)).join(", "),
+        production_companies: mergeLists(splitList(editForm.production_companies), dfiProductionCompanies(film)).join(", "),
+        ...dfiFieldValues(film),
         dfi_id: String(result.Id),
-        poster_url: extractDfiPosterUrl(film) ?? editForm.poster_url,
+        poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : editForm.poster_url),
+        dfi_metadata: film as DfiMetadata,
       };
       setImportPreview({ source: "DFI", rows: importDiffRows(editForm, nextValues) });
       setEditForm({
@@ -948,6 +1201,15 @@ export default function VaerksadministrationPage() {
       duration_minutes: result.duration_minutes ? String(result.duration_minutes) : "",
       episode_count: result.episode_count ? String(result.episode_count) : "",
       genre: textValue(result.genre),
+      director: textValue(result.director),
+      alternative_titles: joinList(result.alternative_titles as string[] | null | undefined),
+      production_countries: joinList(result.production_countries as string[] | null | undefined),
+      production_companies: joinList(result.production_companies as string[] | null | undefined),
+      dfi_title: textValue(result.dfi_title),
+      dfi_danish_title: textValue(result.dfi_danish_title),
+      dfi_original_title: textValue(result.dfi_original_title),
+      dfi_category: textValue(result.dfi_category),
+      dfi_type: textValue(result.dfi_type),
     }));
   };
 
@@ -958,9 +1220,15 @@ export default function VaerksadministrationPage() {
     const type = mapDfiWorkType(result.Category, result.Type);
     setAddForm(form => ({
       ...form,
-      title: textValue(result.Title) || textValue(result.DanishTitle),
+      title: textValue(result.Title) || textValue(result.DanishTitle) || textValue(result.OriginalTitle),
       type,
-      year: result.ProductionYear || result.ReleaseYear ? String(result.ProductionYear || result.ReleaseYear) : "",
+      year: extractDfiPremiereYear(result) ? String(extractDfiPremiereYear(result)) : "",
+      genre: textValue(result.Genre),
+      director: dfiDirector(result),
+      alternative_titles: dfiAlternativeTitles(result).join(", "),
+      production_countries: dfiProductionCountries(result).join(", "),
+      production_companies: dfiProductionCompanies(result).join(", "),
+      ...dfiFieldValues(result),
     }));
   };
 
@@ -987,8 +1255,18 @@ export default function VaerksadministrationPage() {
         type: addForm.type,
         year: nullableNumber(addForm.year),
         duration_minutes: nullableNumber(addForm.duration_minutes),
+        season_count: nullableNumber(addForm.season_count),
         episode_count: nullableNumber(addForm.episode_count),
-        genre: addForm.genre || null,
+          genre: addForm.genre || null,
+          director: addForm.director || null,
+          alternative_titles: splitList(addForm.alternative_titles),
+          production_countries: splitList(addForm.production_countries),
+          production_companies: splitList(addForm.production_companies),
+          dfi_title: addForm.dfi_title || null,
+          dfi_danish_title: addForm.dfi_danish_title || null,
+          dfi_original_title: addForm.dfi_original_title || null,
+          dfi_category: addForm.dfi_category || null,
+          dfi_type: addForm.dfi_type || null,
         description: null,
         dfi_id: null as string | null,
         tmdb_id: null as number | null,
@@ -999,12 +1277,23 @@ export default function VaerksadministrationPage() {
       if (pickedSource === "dfi" && pickedResult) {
         const details = await getDFIFilmDetails(Number(pickedResult.Id));
         const film = (details.success ? (details as { film?: SearchResult }).film : pickedResult) ?? pickedResult;
+        const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || data.title;
+        const year = extractDfiPremiereYear(film) ?? data.year;
+        const dfiPoster = (details.success ? details.posterDataUrl : null) ?? extractDfiPosterUrl(film);
+        const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
         data = {
           ...data,
-          title: textValue(film.Title) || textValue(film.DanishTitle) || data.title,
-          year: numberValue(film.ProductionYear) || numberValue(film.ReleaseYear) || data.year,
+          title,
+          year,
+          duration_minutes: firstNumber(film.LengthInMin) ?? data.duration_minutes,
+          genre: textValue(film.Genre) || data.genre,
+          director: dfiDirector(film) || data.director,
+          alternative_titles: mergeLists(data.alternative_titles, dfiAlternativeTitles(film)),
+          production_countries: mergeLists(data.production_countries, dfiProductionCountries(film)),
+          production_companies: mergeLists(data.production_companies, dfiProductionCompanies(film)),
+          ...dfiFieldValues(film),
           dfi_id: String(pickedResult.Id),
-          poster_url: extractDfiPosterUrl(film),
+          poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : null),
           dfi_metadata: film as DfiMetadata,
         };
       }
@@ -1107,6 +1396,10 @@ export default function VaerksadministrationPage() {
           <CheckCircle2 className="h-4 w-4" />
           Godkend valgte
         </Button>
+        <Button variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)} disabled={saving || selectedIds.length === 0}>
+          <AlertTriangle className="h-4 w-4" />
+          Slet permanent
+        </Button>
       </div>
 
       {selectedIds.length > 0 && (
@@ -1114,11 +1407,15 @@ export default function VaerksadministrationPage() {
           <span className="text-sm font-medium">{selectedIds.length} valgt</span>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setArchiveOpen(true)}>
             <Trash2 className="h-4 w-4" />
-            Slet / arkiver
+            Arkiver
           </Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => { setMasterId(selectedIds[0] ?? ""); setMergeOpen(true); }} disabled={selectedIds.length < 2}>
             <GitMerge className="h-4 w-4" />
             Flet dubletter
+          </Button>
+          <Button size="sm" variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)}>
+            <AlertTriangle className="h-4 w-4" />
+            Slet permanent
           </Button>
         </div>
       )}
@@ -1132,7 +1429,7 @@ export default function VaerksadministrationPage() {
               </TableHead>
               <TableHead><SortButton label="Værk" activeMark={sortMark("title")} onClick={() => handleSort("title")} /></TableHead>
               <TableHead><SortButton label="Type" activeMark={sortMark("type")} onClick={() => handleSort("type")} /></TableHead>
-              <TableHead><SortButton label="År" activeMark={sortMark("year")} onClick={() => handleSort("year")} /></TableHead>
+              <TableHead><SortButton label="Premiereår" activeMark={sortMark("year")} onClick={() => handleSort("year")} /></TableHead>
               <TableHead><SortButton label="Data" activeMark={sortMark("data")} onClick={() => handleSort("data")} /></TableHead>
               <TableHead><SortButton label="Broadcast/stream" activeMark={sortMark("broadcaster")} onClick={() => handleSort("broadcaster")} /></TableHead>
               <TableHead><SortButton label="Status" activeMark={sortMark("status")} onClick={() => handleSort("status")} /></TableHead>
@@ -1144,6 +1441,7 @@ export default function VaerksadministrationPage() {
             ) : filtered.map(work => {
               const status = displayStatus(work);
               const broadcaster = getWorkBroadcaster(work);
+              const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
               const poster = posterSrc(work.poster_url);
               const pendingCount = (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
               return (
@@ -1170,7 +1468,7 @@ export default function VaerksadministrationPage() {
                             </Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">{work.description ? work.description.slice(0, 90) : "Ingen beskrivelse"}</p>
+                        {work.description ? <p className="text-xs text-muted-foreground">{work.description.slice(0, 90)}</p> : null}
                       </div>
                     </div>
                   </TableCell>
@@ -1181,7 +1479,18 @@ export default function VaerksadministrationPage() {
                     <div>Varighed: {work.duration_minutes ?? "-"} · Afsnit: {work.episode_count ?? "-"} · Genre: {work.genre ?? "-"}</div>
                     <div>Kontrakter: {work.contracts?.length ?? 0} · Poster: {work.poster_url ? "ja" : "nej"}</div>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{broadcaster ?? "-"}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {broadcaster ? (
+                      broadcasterLogo ? (
+                        <div className="flex items-center">
+                          <span className="inline-flex h-6 w-14 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
+                          </span>
+                        </div>
+                      ) : broadcaster
+                    ) : "-"}
+                  </TableCell>
                   <TableCell>
                     <Badge variant="outline" className={STATUS_CLASS[status] ?? ""}>
                       {status === "til_godkendelse" ? <Clock className="mr-1 h-3 w-3" /> : <CheckCircle2 className="mr-1 h-3 w-3" />}
@@ -1195,7 +1504,7 @@ export default function VaerksadministrationPage() {
         </Table>
       </div>
 
-      <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); } }}>
+      <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); setEditingArchiveOpen(false); } }}>
         <DialogContent className="max-h-[92vh] w-[min(1360px,calc(100vw-2rem))] !max-w-none sm:!max-w-none overflow-y-auto overflow-x-hidden">
           <DialogHeader><DialogTitle>Rediger værk</DialogTitle></DialogHeader>
           {editing && editForm && (
@@ -1217,8 +1526,11 @@ export default function VaerksadministrationPage() {
                   </Badge>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button type="button" variant="outline" onClick={() => setEditingArchiveOpen(true)} disabled={saving}>
+                    Arkiver værk
+                  </Button>
                   <Button type="button" variant="destructive" onClick={() => setEditingDeleteOpen(true)} disabled={saving}>
-                    Slet værk
+                    Slet permanent
                   </Button>
                   <Button type="button" onClick={handleSaveWork} disabled={saving}>
                     {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -1313,6 +1625,31 @@ export default function VaerksadministrationPage() {
               </InfoPanel>
               <div className="space-y-4">
                 <InfoPanel title="Værksdata">
+                  <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start">
+                    {posterSrc(editForm.poster_url) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={posterSrc(editForm.poster_url) as string}
+                        alt={editForm.title ? `${editForm.title} poster` : "Poster"}
+                        className="h-40 w-auto shrink-0 rounded-md border object-contain"
+                      />
+                    ) : null}
+                    <div className="grid flex-1 gap-4 sm:grid-cols-2">
+                      <DiffField diff={activeDiffMap.title}>
+                        <Field label="Titel"><Input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} /></Field>
+                      </DiffField>
+                      <DiffField diff={activeDiffMap.type}>
+                        <Field label="Værktype">
+                        <Select value={editForm.type} onValueChange={type => setEditForm({ ...editForm, type })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        </Field>
+                      </DiffField>
+                    </div>
+                  </div>
                   {activeRequest && (
                     <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                       Viser foreslåede ændringer fra <span className="font-medium">{activeRequest.rettighedshavere?.full_name ?? "ukendt bruger"}</span>.
@@ -1320,30 +1657,39 @@ export default function VaerksadministrationPage() {
                     </div>
                   )}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    <DiffField diff={activeDiffMap.title}>
-                      <Field label="Titel"><Input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} /></Field>
-                    </DiffField>
-                    <DiffField diff={activeDiffMap.type}>
-                      <Field label="Type">
-                      <Select value={editForm.type} onValueChange={type => setEditForm({ ...editForm, type })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                      </Field>
-                    </DiffField>
                     <DiffField diff={activeDiffMap.year}>
-                      <Field label="År"><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value })} /></Field>
+                      <Field label="Premiereår"><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
                     </DiffField>
-                    <DiffField diff={activeDiffMap.episode_count}>
-                      <Field label="Afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
-                    </DiffField>
+                    {isSeriesType(editForm.type) && (
+                      <DiffField diff={activeDiffMap.season_count}>
+                        <Field label="Sæson"><Input value={editForm.season_count} onChange={e => setEditForm({ ...editForm, season_count: e.target.value })} /></Field>
+                      </DiffField>
+                    )}
+                    {isSeriesType(editForm.type) && (
+                      <DiffField diff={activeDiffMap.episode_count}>
+                        <Field label="Afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
+                      </DiffField>
+                    )}
                     <DiffField diff={activeDiffMap.genre}>
                       <Field label="Genre"><Input value={editForm.genre} onChange={e => setEditForm({ ...editForm, genre: e.target.value })} /></Field>
+                    </DiffField>
+                    <DiffField diff={activeDiffMap.director}>
+                      <Field label="Instruktør"><Input value={editForm.director} onChange={e => setEditForm({ ...editForm, director: e.target.value })} /></Field>
+                    </DiffField>
+                    <DiffField diff={activeDiffMap.dfi_original_title}>
+                      <Field label="Arbejdstitel"><Input value={editForm.dfi_original_title} onChange={e => setEditForm({ ...editForm, dfi_original_title: e.target.value })} /></Field>
+                    </DiffField>
+                    <DiffField diff={activeDiffMap.alternative_titles}>
+                      <Field label="Alternative titler"><Input value={editForm.alternative_titles} onChange={e => setEditForm({ ...editForm, alternative_titles: e.target.value })} /></Field>
+                    </DiffField>
+                    <DiffField diff={activeDiffMap.production_countries}>
+                      <Field label="Produktionslande"><Input value={editForm.production_countries} onChange={e => setEditForm({ ...editForm, production_countries: e.target.value })} /></Field>
+                    </DiffField>
+                    <DiffField diff={activeDiffMap.production_companies}>
+                      <Field label="Produktionsselskaber"><Input value={editForm.production_companies} onChange={e => setEditForm({ ...editForm, production_companies: e.target.value })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.dfi_id}>
                       <Field label="DFI-id"><Input value={editForm.dfi_id} onChange={e => setEditForm({ ...editForm, dfi_id: e.target.value })} /></Field>
@@ -1351,15 +1697,22 @@ export default function VaerksadministrationPage() {
                     <DiffField diff={activeDiffMap.tmdb_id}>
                       <Field label="TMDB-id"><Input value={editForm.tmdb_id} onChange={e => setEditForm({ ...editForm, tmdb_id: e.target.value })} /></Field>
                     </DiffField>
-                    <DiffField diff={activeDiffMap.poster_url}>
-                      <Field label="Poster-url"><Input value={editForm.poster_url} onChange={e => setEditForm({ ...editForm, poster_url: e.target.value })} /></Field>
-                    </DiffField>
                     <Field label="Broadcast/stream">
                       <Select value={editForm.broadcaster} onValueChange={broadcaster => setEditForm({ ...editForm, broadcaster })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                          {BROADCASTERS.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                          {broadcasterOptions.map(broadcaster => (
+                            <SelectItem key={broadcaster.name} value={broadcaster.name}>
+                              <span className="flex items-center gap-2">
+                                {broadcaster.logo_path && (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
+                                )}
+                                <span>{broadcaster.name}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </Field>
@@ -1376,7 +1729,25 @@ export default function VaerksadministrationPage() {
                             try {
                               const res = await getDFIFilmDetails(Number(editForm.dfi_id));
                               if (res.success && res.film) {
-                                setEditForm({ ...editForm, dfi_metadata: res.film });
+                                const film = res.film as SearchResult;
+                                const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || editForm.title;
+                                const year = extractDfiPremiereYear(film);
+                                const dfiPoster = (res.success ? res.posterDataUrl : null) ?? extractDfiPosterUrl(film);
+                                const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
+                                setEditForm({
+                                  ...editForm,
+                                  title,
+                                  year: year ? String(year) : editForm.year,
+                                  duration_minutes: firstNumber(film.LengthInMin) ? String(firstNumber(film.LengthInMin)) : editForm.duration_minutes,
+                                  genre: textValue(film.Genre) || editForm.genre,
+                                  director: dfiDirector(film) || editForm.director,
+                                  alternative_titles: mergeLists(splitList(editForm.alternative_titles), dfiAlternativeTitles(film)).join(", "),
+                                  production_countries: mergeLists(splitList(editForm.production_countries), dfiProductionCountries(film)).join(", "),
+                                  production_companies: mergeLists(splitList(editForm.production_companies), dfiProductionCompanies(film)).join(", "),
+                                  ...dfiFieldValues(film),
+                                  poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : editForm.poster_url),
+                                  dfi_metadata: film as DfiMetadata,
+                                });
                                 setNotice("DFI metadata hentet.");
                               } else {
                                 setNotice("Kunne ikke hente DFI metadata.");
@@ -1393,104 +1764,10 @@ export default function VaerksadministrationPage() {
                         </Button>
                       </div>
                     )}
-
-                    {editForm.dfi_metadata && (
-                      <>
-                        <Field label="Original Titel (DFI)">
-                          <Input
-                            value={dfiText(editForm.dfi_metadata, "OriginalTitle")}
-                            onChange={e => updateDfiMetaField("OriginalTitle", e.target.value)}
-                          />
-                        </Field>
-                        <Field label="Alternative Titler (kommasepareret)">
-                          <Input
-                            value={dfiListText(editForm.dfi_metadata, "AltTitle")}
-                            onChange={e =>
-                              updateDfiMetaField(
-                                "AltTitle",
-                                e.target.value.split(",").map((t: string) => t.trim()).filter(Boolean)
-                              )
-                            }
-                          />
-                        </Field>
-                        <Field label="Udgivelsesår Slut (DFI)">
-                          <Input
-                            type="number"
-                            value={dfiText(editForm.dfi_metadata, "ReleaseYearEnd")}
-                            onChange={e => updateDfiMetaField("ReleaseYearEnd", parseInt(e.target.value) || null)}
-                          />
-                        </Field>
-                        <Field label="Spilletid (DFI minutter)">
-                          <Input
-                            type="number"
-                            value={dfiText(editForm.dfi_metadata, "LengthInMin")}
-                            onChange={e => updateDfiMetaField("LengthInMin", parseInt(e.target.value) || null)}
-                          />
-                        </Field>
-                        <Field label="Genre (DFI)">
-                          <Input
-                            value={dfiText(editForm.dfi_metadata, "Genre")}
-                            onChange={e => updateDfiMetaField("Genre", e.target.value)}
-                          />
-                        </Field>
-                      </>
-                    )}
                   </div>
 
                   {editForm.dfi_metadata && (
                     <div className="mt-5 space-y-4 border-t pt-4">
-                      {/* Checkboxes for fil status */}
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">DFI fil-tilgængelighed</Label>
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 text-sm">
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!editForm.dfi_metadata.HasPoster}
-                              onChange={e => updateDfiMetaField("HasPoster", e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            <span>Has Poster</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!editForm.dfi_metadata.HasStills}
-                              onChange={e => updateDfiMetaField("HasStills", e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            <span>Has Stills</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!editForm.dfi_metadata.HasVideo}
-                              onChange={e => updateDfiMetaField("HasVideo", e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            <span>Has Video</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!editForm.dfi_metadata.HasManus}
-                              onChange={e => updateDfiMetaField("HasManus", e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            <span>Has Manus</span>
-                          </label>
-                          <label className="flex items-center gap-2 cursor-pointer select-none">
-                            <input
-                              type="checkbox"
-                              checked={!!editForm.dfi_metadata.HasAdditionalData}
-                              onChange={e => updateDfiMetaField("HasAdditionalData", e.target.checked)}
-                              className="h-4 w-4"
-                            />
-                            <span>Has Add. Data</span>
-                          </label>
-                        </div>
-                      </div>
-
                       {/* Parent / Children seriehierarki */}
                       {(dfiRecord(editForm.dfi_metadata, "Parent") || dfiArray(editForm.dfi_metadata, "Children").length > 0) && (
                         <div className="grid gap-4 sm:grid-cols-2 text-sm bg-muted/40 rounded border p-3 mt-3">
@@ -1582,10 +1859,17 @@ export default function VaerksadministrationPage() {
                 </InfoPanel>
               </div>
               <InfoPanel title="Tilknyttede kontrakter">
-                {(editing.contracts ?? []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Ingen kontrakter tilknyttet.</p>
-                ) : (editing.contracts ?? []).map(contract => (
-                  <div key={contract.id} className="rounded border px-3 py-2 text-sm">
+                <button
+                  type="button"
+                  onClick={() => { window.location.href = `/admin/kontrakter?new=1&work=${editing.id}`; }}
+                  className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
+                >
+                  {(editing.contracts ?? []).length === 0
+                    ? "Ingen kontrakter tilknyttet — klik for at tilføje en kontrakt i kontraktadmin."
+                    : "Klik for at tilføje en kontrakt i kontraktadmin."}
+                </button>
+                {(editing.contracts ?? []).map(contract => (
+                  <div key={contract.id} className="mt-2 rounded border px-3 py-2 text-sm">
                     <div className="font-medium">{contract.rettighedshavere?.full_name ?? "Ukendt medlem"}</div>
                     <div className="text-xs text-muted-foreground">{contract.type ?? "Kontrakt"} · {contract.status ?? "ukendt status"}</div>
                   </div>
@@ -1612,7 +1896,7 @@ export default function VaerksadministrationPage() {
                       selected={null}
                       getKey={item => String(item.Id)}
                       getTitle={item => textValue(item.Title) || textValue(item.DanishTitle) || "Ukendt"}
-                      getMeta={item => `${item.ProductionYear || item.ReleaseYear || "-"} · ${textValue(item.Category)}`}
+                      getMeta={item => `${extractDfiPremiereYear(item) ?? "-"} · ${textValue(item.Category)}`}
                       onSelect={applyDfiToEdit}
                     />
                     <SearchColumn
@@ -1642,9 +1926,104 @@ export default function VaerksadministrationPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Slet valgte værker permanent</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+              <div className="mb-1 flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                Permanent sletning
+              </div>
+              <p>
+                Du er ved at slette {selectedWorks.length} værk(er) permanent fra værkdatabasen. Dette kan ikke fortrydes.
+              </p>
+              <ul className="mt-2 max-h-32 overflow-y-auto list-disc pl-5 text-xs text-red-800">
+                {selectedWorks.map(w => (
+                  <li key={w.id}>{w.title}</li>
+                ))}
+              </ul>
+            </div>
+            {(totalAssignments > 0 || totalContracts > 0) && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <div className="mb-1 flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" />
+                  Værkerne har relationer
+                </div>
+                <p>
+                  Der er i alt {totalAssignments} rettighedshaver-tilknytning(er) og {totalContracts} kontrakt(er) tilknyttet de valgte værker.
+                </p>
+                <p className="mt-1">
+                  Sletning fjerner rettighedshaver-tilknytninger og afkobler kontrakter fra de valgte værker.
+                </p>
+              </div>
+            )}
+            <p className="text-muted-foreground">
+              Brug Arkiver værk, hvis historik og relationer skal bevares.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchDeleteOpen(false)}>Annuller</Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSelectedPermanently}
+              disabled={saving}
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Slet permanent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={editingDeleteOpen} onOpenChange={setEditingDeleteOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Slet værk</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Slet værk permanent</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+              <div className="mb-1 flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                Permanent sletning
+              </div>
+              <p>
+                Du er ved at slette “{editing?.title ?? "værket"}” fuldstændigt fra værkdatabasen.
+              </p>
+            </div>
+            {((editing?.work_assignments?.length ?? 0) > 0 || (editing?.contracts?.length ?? 0) > 0) && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <div className="mb-1 flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" />
+                  Værket har relationer
+                </div>
+                <p>
+                  {editing?.work_assignments?.length ?? 0} rettighedshaver{(editing?.work_assignments?.length ?? 0) === 1 ? "" : "e"} og {editing?.contracts?.length ?? 0} kontrakt{(editing?.contracts?.length ?? 0) === 1 ? "" : "er"} er tilknyttet værket.
+                </p>
+                <p className="mt-1">
+                  Sletning fjerner rettighedshaver-tilknytninger og afkobler kontrakter fra værket.
+                </p>
+              </div>
+            )}
+            <p className="text-muted-foreground">
+              Brug Arkiver værk, hvis historik og relationer skal bevares.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingDeleteOpen(false)}>Annuller</Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteEditingPermanently}
+              disabled={saving}
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Slet permanent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editingArchiveOpen} onOpenChange={setEditingArchiveOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Arkiver værk</DialogTitle></DialogHeader>
           <div className="space-y-3 text-sm">
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
               <div className="mb-1 flex items-center gap-2 font-medium">
@@ -1652,25 +2031,22 @@ export default function VaerksadministrationPage() {
                 Værket bliver arkiveret
               </div>
               <p>
-                Du er ved at slette “{editing?.title ?? "værket"}”. Der er {editing?.contracts?.length ?? 0} kontrakt{(editing?.contracts?.length ?? 0) === 1 ? "" : "er"} tilknyttet værket.
+                “{editing?.title ?? "Værket"}” får status arkiveret. Kontrakter, rettighedshavere og historik bevares.
               </p>
             </div>
-            <p className="text-muted-foreground">
-              Værket slettes ikke permanent. Det får status arkiveret og kan ses igen ved at vælge statusfilteret Arkiveret.
-            </p>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingDeleteOpen(false)}>Annuller</Button>
+            <Button variant="outline" onClick={() => setEditingArchiveOpen(false)}>Annuller</Button>
             <Button
               variant="destructive"
               onClick={async () => {
-                setEditingDeleteOpen(false);
+                setEditingArchiveOpen(false);
                 await handleSetEditingStatus("arkiveret");
               }}
               disabled={saving}
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Slet værk
+              Arkiver værk
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1723,7 +2099,7 @@ export default function VaerksadministrationPage() {
                       selected={pickedSource === "dfi" ? pickedResult : null}
                       getKey={item => String(item.Id)}
                       getTitle={item => textValue(item.Title) || textValue(item.DanishTitle) || "Ukendt"}
-                      getMeta={item => `${item.ProductionYear || item.ReleaseYear || "-"} · ${textValue(item.Category)}`}
+                      getMeta={item => `${extractDfiPremiereYear(item) ?? "-"} · ${textValue(item.Category)}`}
                       onSelect={pickDfiResult}
                     />
                     <SearchColumn
@@ -1751,7 +2127,7 @@ export default function VaerksadministrationPage() {
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Titel"><Input value={addForm.title} onChange={e => setAddForm({ ...addForm, title: e.target.value })} /></Field>
-                  <Field label="Type">
+                  <Field label="Værktype">
                     <Select value={addForm.type} onValueChange={type => setAddForm({ ...addForm, type })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -1759,16 +2135,32 @@ export default function VaerksadministrationPage() {
                       </SelectContent>
                     </Select>
                   </Field>
-                  <Field label="År"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
+                  <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
                   <Field label="Afsnit"><Input value={addForm.episode_count} onChange={e => setAddForm({ ...addForm, episode_count: e.target.value })} /></Field>
                   <Field label="Genre"><Input value={addForm.genre} onChange={e => setAddForm({ ...addForm, genre: e.target.value })} /></Field>
+                  <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
+                  <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
+                  <Field label="Produktionslande"><Input value={addForm.production_countries} onChange={e => setAddForm({ ...addForm, production_countries: e.target.value })} /></Field>
+                  <Field label="Produktionsselskaber"><Input value={addForm.production_companies} onChange={e => setAddForm({ ...addForm, production_companies: e.target.value })} /></Field>
+                  <Field label="DanishTitle"><Input value={addForm.dfi_danish_title} onChange={e => setAddForm({ ...addForm, dfi_danish_title: e.target.value })} /></Field>
+                  <Field label="Original / work Title"><Input value={addForm.dfi_original_title} onChange={e => setAddForm({ ...addForm, dfi_original_title: e.target.value })} /></Field>
                   <Field label="Broadcast/stream">
                     <Select value={addForm.broadcaster} onValueChange={broadcaster => setAddForm({ ...addForm, broadcaster })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                        {BROADCASTERS.map(broadcaster => <SelectItem key={broadcaster} value={broadcaster}>{broadcaster}</SelectItem>)}
+                        {broadcasterOptions.map(broadcaster => (
+                          <SelectItem key={broadcaster.name} value={broadcaster.name}>
+                            <span className="flex items-center gap-2">
+                              {broadcaster.logo_path && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
+                              )}
+                              <span>{broadcaster.name}</span>
+                            </span>
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </Field>

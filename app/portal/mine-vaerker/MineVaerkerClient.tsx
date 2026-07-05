@@ -1,12 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { Film, Plus, Search, Loader2, X, RefreshCw, Trash2, Check } from "lucide-react";
+import { Film, Plus, Search, X, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { removeWorkAssignments } from "@/app/actions/member-works";
@@ -15,17 +13,9 @@ import { useI18n } from "@/lib/i18n";
 import { DfiImportWizard } from "./components/DfiImportWizard";
 import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
+import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/contextual-help";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
-const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
-const ROLES        = ["B-klipper", "Klipper", "Konceptuerende klipper"];
-const WORK_TYPES   = [
-  { value: "kortfilm", label: "Kortfilm" },
-  { value: "spillefilm", label: "Spillefilm" },
-  { value: "tv-serie", label: "Tv-serie" },
-  { value: "dokumentar-serie", label: "Dokumentar-serie" },
-  { value: "dokumentarfilm", label: "Dokumentarfilm" },
-];
 
 type Work = {
   id: string;
@@ -34,7 +24,10 @@ type Work = {
   year: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
+  season_number?: number | null;
+  episode_number?: number | null;
   genre: string | null;
+  director: string | null;
   status: string | null;
   dfi_id: string | null;
   tmdb_id: number | string | null;
@@ -47,18 +40,6 @@ export type Assignment = { id: string; role: string | null; contract_id: string 
 export type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null };
 type WorkProductionNumber = { tv_station: string | null; number: string | null };
 export type BroadcasterLogo = { name: string; logo_path: string | null };
-type WorkCorrectionForm = {
-  title: string;
-  type: string;
-  year: string;
-  duration_minutes: string;
-  episode_count: string;
-  genre: string;
-  description: string;
-};
-
-type ManualWorkForm = Omit<WorkCorrectionForm, "description">;
-
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
 
 type RequestComment = {
@@ -77,66 +58,27 @@ type ChangeRequest = {
   work_change_request_comments?: RequestComment[];
 };
 
-type LocalWorkResult = Work & {
-  work_assignments?: {
-    id: string;
-    role: string | null;
-    rights_holder_id?: string | null;
-    rettighedshavere?: { id: string; full_name: string } | null;
-  }[];
-};
-
-type CoEditorDraft = {
-  id: string;
-  name: string;
-  role: string;
-  assignmentId?: string | null;
-  rightsHolderId?: string | null;
-  locked?: boolean;
-  action?: "add" | "remove" | "change";
-};
-
-type DfiPersonCredit = {
-  Id?: number | string | null;
-  Name?: string | null;
-  TypeCode?: string | null;
-  Type?: string | null;
-  Function?: string | null;
-  Credit?: string | null;
-};
-
-type DfiSearchResult = {
-  Id?: number | string | null;
-  Title?: string | null;
-  DanishTitle?: string | null;
-  ProductionYear?: number | null;
-  ReleaseYear?: number | null;
-  Category?: string | null;
-  PersonCredits?: DfiPersonCredit[];
-};
-
-type TmdbSearchResult = {
-  id: number;
-  media_type?: string;
-  title?: string | null;
-  name?: string | null;
-  release_date?: string | null;
-  first_air_date?: string | null;
-  poster_path?: string | null;
-};
-
-type SearchItem = DfiSearchResult | TmdbSearchResult;
-type ResultColumnDef = {
-  label: string;
-  items: SearchItem[];
-  getKey: (x: SearchItem) => string;
-  isSelected: (x: SearchItem) => boolean;
-  onSelect: (x: SearchItem) => void;
-  getTitle: (x: SearchItem) => string;
-  getMeta: (x: SearchItem) => string;
-  getPoster: (x: SearchItem) => string | null;
-};
 type SortValue = string | number;
+
+const MINE_VAERKER_HELP: HelpTopic[] = [
+  {
+    title: "Tilføj værk",
+    body: "Brug søgning først, så systemet kan genbruge værker, der allerede findes. Hvis værket er en serie, kan du vælge præcis de afsnit, du har klippet, inden du sender oprettelsen.",
+    tips: ["Lokale match kobler dig direkte på det eksisterende værk.", "DFI/TMDB-oprettelser og manuelle oprettelser kan kræve administratorgodkendelse."],
+  },
+  {
+    title: "Importer fra DFI",
+    body: "DFI-guiden finder dine krediteringer og frasorterer værker, der allerede er knyttet til dig. Lokale værker bliver koblet til dig uden at overskrive eksisterende data.",
+  },
+  {
+    title: "Kontraktstatus",
+    body: "Mangler kontrakt betyder, at systemet ikke kan se en godkendt kontrakt på værket endnu. Klik på mærket for at uploade en kontrakt direkte til værket.",
+  },
+  {
+    title: "Rettelser og admin-kommentarer",
+    body: "Når du retter værksdata, sendes ændringen til administrator. Klik på værket for at se status, kommentarer og hvilken type request kommentaren handler om.",
+  },
+];
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
@@ -165,52 +107,6 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
   };
   const type = canonical[key] ?? null;
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
-}
-
-function isSeriesType(t: string | null | undefined) {
-  const label = typeLabel(t ?? "", "da").toLowerCase();
-  return label === "tv-serie" || label === "dokumentarserie" || label === "dokumentar-serie";
-}
-
-function formatEpisodeLabel(episodeNumber?: number | null, title?: string | null) {
-  if (!episodeNumber) return "–";
-  const season = Math.floor(episodeNumber / 1000);
-  const episode = episodeNumber % 1000;
-  if (season > 0 && episode > 0) return `S${season}E${episode}`;
-  if (title?.trim()) return title;
-  return `E${episodeNumber}`;
-}
-
-function numberOrNull(value: string) {
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function workToCorrectionForm(work: Work): WorkCorrectionForm {
-  return {
-    title: work.title ?? "",
-    type: work.type ?? "fiktion",
-    year: work.year ? String(work.year) : "",
-    duration_minutes: work.duration_minutes ? String(work.duration_minutes) : "",
-    episode_count: work.episode_count ? String(work.episode_count) : "",
-    genre: work.genre ?? "",
-    description: work.description ?? "",
-  };
-}
-
-function emptyManualWorkForm(): ManualWorkForm {
-  return {
-    title: "",
-    type: "spillefilm",
-    year: "",
-    duration_minutes: "",
-    episode_count: "",
-    genre: "",
-  };
-}
-
-function emptyCoEditor(): CoEditorDraft {
-  return { id: crypto.randomUUID(), name: "", role: "Klipper", action: "add" };
 }
 
 function displayRole(role: string | null | undefined) {
@@ -265,49 +161,6 @@ function pendingRequestLabel(work: Work | null) {
   return (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
 }
 
-function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
-  return (work?.work_assignments ?? []).map(assignment => ({
-    id: assignment.id,
-    name: assignment.rettighedshavere?.full_name ?? "Ukendt medklipper",
-    role: displayRole(assignment.role),
-    assignmentId: assignment.id,
-    rightsHolderId: assignment.rights_holder_id ?? assignment.rettighedshavere?.id ?? null,
-    locked: true,
-  }));
-}
-
-function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
-  const credits = Array.isArray(film.PersonCredits) ? film.PersonCredits : [];
-  return credits
-    .filter((credit: DfiPersonCredit) => {
-      const code = String(credit.TypeCode ?? "").toLowerCase();
-      const text = `${credit.Type ?? ""} ${credit.Function ?? ""} ${credit.Credit ?? ""}`.toLowerCase();
-      return code.includes("klip") || code.includes("edit") || text.includes("klip") || text.includes("edit");
-    })
-    .map((credit: DfiPersonCredit) => ({
-      id: crypto.randomUUID(),
-      name: credit.Name ?? "",
-      role: "Klipper",
-      action: "add" as const,
-    }))
-    .filter((editor: CoEditorDraft) => editor.name.trim());
-}
-
-// Fælles select-stil
-const selectCls = "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400";
-
-// Modal-wrapper
-function Modal({ onClose, maxWidth = "max-w-xl", children }: { onClose: () => void; maxWidth?: string; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3 sm:p-6"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={`bg-white rounded-xl border border-gray-200 w-full ${maxWidth} max-h-[90vh] overflow-y-auto p-4 sm:p-7`}>
-        {children}
-      </div>
-    </div>
-  );
-}
-
 export default function MineVaerkerClient({
   initialAssignments, allAssignments, broadcasters, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
 }: {
@@ -347,6 +200,7 @@ export default function MineVaerkerClient({
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -383,7 +237,17 @@ export default function MineVaerkerClient({
       if (sortKey === "year")  { av = wa?.year  ?? 0; bv = wb?.year  ?? 0; }
       if (sortKey === "type")  { av = typeLabel(wa?.type ?? "", locale); bv = typeLabel(wb?.type ?? "", locale); }
       if (sortKey === "role") { av = displayRole(a.role); bv = displayRole(b.role); }
-      if (sortKey === "episode") { av = a.episodes?.episode_number ?? 0; bv = b.episodes?.episode_number ?? 0; }
+      if (sortKey === "episode") {
+        const sa = wa?.season_number ?? 0;
+        const sb = wb?.season_number ?? 0;
+        if (sa !== sb) {
+          av = sa;
+          bv = sb;
+        } else {
+          av = wa?.episode_number ?? 0;
+          bv = wb?.episode_number ?? 0;
+        }
+      }
       if (sortKey === "coEditors") { av = (coEditorMap[wa?.id ?? ""] ?? []).join(", "); bv = (coEditorMap[wb?.id ?? ""] ?? []).join(", "); }
       if (sortKey === "contract") { av = contractedWorkIds.includes(wa?.id ?? "") ? 1 : 0; bv = contractedWorkIds.includes(wb?.id ?? "") ? 1 : 0; }
       if (typeof av === "string" || typeof bv === "string") {
@@ -411,7 +275,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, episode_count, genre, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -450,8 +314,6 @@ export default function MineVaerkerClient({
     }
   };
 
-  const editAdminSummaries = adminRequestSummaries(editAssignment?.works ?? null);
-
   // ── Render ─────────────────────────────────────────────────
 
   return (
@@ -464,6 +326,7 @@ export default function MineVaerkerClient({
           <p className="text-sm text-gray-500 mt-1">{t("works.registeredSubtitle")}</p>
         </div>
         <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+          <HelpButton onClick={() => setHelpOpen(true)} />
           <Button variant="outline" onClick={openWizard} className="w-full gap-2 sm:w-auto">
             <RefreshCw className="h-4 w-4" /> {t("works.importFromDfi")}
           </Button>
@@ -537,7 +400,7 @@ export default function MineVaerkerClient({
               <SelectContent>
                 <SelectItem value="date">Tilføjet dato</SelectItem>
                 <SelectItem value="title">Værktitel</SelectItem>
-                <SelectItem value="year">År</SelectItem>
+                <SelectItem value="year">Premiereår</SelectItem>
                 <SelectItem value="type">Type</SelectItem>
                 <SelectItem value="contract">Kontraktstatus</SelectItem>
               </SelectContent>
@@ -577,7 +440,9 @@ export default function MineVaerkerClient({
         ) : filtered.map(a => {
           const w = a.works;
           if (!w) return null;
-          const posterSrc = w.poster_url ? (w.poster_url.startsWith("http") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`) : null;
+          const posterSrc = w.poster_url
+            ? (w.poster_url.startsWith("http") || w.poster_url.startsWith("data:image/") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`)
+            : null;
           const hasContract = contractedWorkIds.includes(w.id);
           const adminComment = latestAdminComment(w);
           const pendingLabel = pendingRequestLabel(w);
@@ -629,7 +494,19 @@ export default function MineVaerkerClient({
               <div className="text-sm text-gray-500">{w.year ?? "–"}</div>
               <div className="text-sm text-gray-500">{typeLabel(w.type, locale)}</div>
               <div className="text-sm text-gray-500">{displayRole(a.role)}</div>
-              <div className="text-sm text-gray-500">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</div>
+              <div className="text-sm text-gray-500">
+                {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
+                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                    S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
+                  </span>
+                ) : w.episode_number !== undefined && w.episode_number !== null ? (
+                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                    E{String(w.episode_number).padStart(2, "0")}
+                  </span>
+                ) : (
+                  "–"
+                )}
+              </div>
               <div className="text-xs text-gray-500 truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
                 {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
               </div>
@@ -706,7 +583,19 @@ export default function MineVaerkerClient({
                     </div>
                     <div>
                       <p className="font-medium text-gray-400">{t("works.episodes")}</p>
-                      <p className="mt-0.5 text-gray-700">{formatEpisodeLabel(a.episodes?.episode_number, a.episodes?.title)}</p>
+                      <p className="mt-0.5 text-gray-700">
+                        {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
+                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700 font-mono">
+                            S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
+                          </span>
+                        ) : w.episode_number !== undefined && w.episode_number !== null ? (
+                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700 font-mono">
+                            E{String(w.episode_number).padStart(2, "0")}
+                          </span>
+                        ) : (
+                          "–"
+                        )}
+                      </p>
                     </div>
                   </div>
 
@@ -776,6 +665,14 @@ export default function MineVaerkerClient({
           locale={locale}
         />
       )}
+
+      <ContextualHelp
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        title="Hjælp til Mine værker"
+        intro="Kort overblik over de vigtigste handlinger på siden."
+        topics={MINE_VAERKER_HELP}
+      />
     </div>
   );
 }

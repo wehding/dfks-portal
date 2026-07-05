@@ -7,6 +7,15 @@ import { revalidatePath } from "next/cache";
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 
+type ContractExtractData = {
+  contractType?: string | null;
+  isFreelanceContract?: boolean | null;
+  overenskomst?: string | null;
+  contractDate?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
 export async function uploadMemberContract(formData: FormData) {
   const supabase = await createClient();
   const db = createServiceClient();
@@ -52,7 +61,7 @@ export async function uploadMemberContract(formData: FormData) {
   }
 
   // Kald eksisterende AI-extract route (genbruger al Claude-logik)
-  let aiData: Record<string, any> = {};
+  let aiData: ContractExtractData = {};
   try {
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
     const extractForm = new FormData();
@@ -64,12 +73,12 @@ export async function uploadMemberContract(formData: FormData) {
     });
 
     if (res.ok) {
-      aiData = await res.json();
+      aiData = await res.json() as ContractExtractData;
     } else {
       console.warn("Extract route returnerede:", res.status);
     }
-  } catch (err: any) {
-    console.error("AI-udtræk fejl:", err.message);
+  } catch (err: unknown) {
+    console.error("AI-udtræk fejl:", err instanceof Error ? err.message : err);
     // Fortsæt uden AI-data — kontrakten gemmes stadig
   }
 
@@ -132,7 +141,7 @@ export async function saveUploadedContract(params: {
 
   if (dbErr || !saved) return { success: false, error: dbErr?.message ?? "Kunne ikke gemme kontrakten" };
 
-  await db.from("contract_validations").insert({
+  const { error: validationError } = await db.from("contract_validations").insert({
     contract_id: saved.id,
     org_id: params.orgId,
     notes: JSON.stringify({
@@ -147,6 +156,12 @@ export async function saveUploadedContract(params: {
       submittedByMember: true,
     }),
   });
+
+  if (validationError) {
+    await db.from("contracts").delete().eq("id", saved.id);
+    await db.storage.from(BUCKET).remove([params.filePath]);
+    return { success: false, error: validationError.message };
+  }
 
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, contract: saved };

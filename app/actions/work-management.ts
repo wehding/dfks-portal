@@ -14,8 +14,16 @@ type WorkCorrectionData = {
   type: string;
   year: number | null;
   duration_minutes: number | null;
+  season_count?: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
   genre: string | null;
+  director?: string | null;
+  alternative_titles?: string[];
+  production_countries?: string[];
+  production_companies?: string[];
   description: string | null;
 };
 
@@ -25,6 +33,11 @@ type AdminWorkData = WorkCorrectionData & {
   poster_url: string | null;
   status: string;
   dfi_metadata?: DfiMetadata | null;
+  dfi_title?: string | null;
+  dfi_danish_title?: string | null;
+  dfi_original_title?: string | null;
+  dfi_category?: string | null;
+  dfi_type?: string | null;
 };
 
 type CreateWorkData = WorkCorrectionData & {
@@ -32,6 +45,11 @@ type CreateWorkData = WorkCorrectionData & {
   tmdb_id?: number | null;
   poster_url?: string | null;
   dfi_metadata?: DfiMetadata | null;
+  dfi_title?: string | null;
+  dfi_danish_title?: string | null;
+  dfi_original_title?: string | null;
+  dfi_category?: string | null;
+  dfi_type?: string | null;
 };
 
 type ProposedCoEditor = {
@@ -61,8 +79,16 @@ const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
   "type",
   "year",
   "duration_minutes",
+  "season_count",
   "episode_count",
+  "parent_work_id",
+  "season_number",
+  "episode_number",
   "genre",
+  "director",
+  "alternative_titles",
+  "production_countries",
+  "production_companies",
   "description",
 ];
 
@@ -73,11 +99,31 @@ const ADMIN_EDITABLE_KEYS: (keyof AdminWorkData)[] = [
   "poster_url",
   "status",
   "dfi_metadata",
+  "dfi_title",
+  "dfi_danish_title",
+  "dfi_original_title",
+  "dfi_category",
+  "dfi_type",
 ];
 
 function cleanText(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function cleanTextList(value: string[] | null | undefined) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const item of value) {
+    const text = cleanText(item);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    cleaned.push(text);
+  }
+  return cleaned;
 }
 
 function cleanWorkType(value: string) {
@@ -91,8 +137,16 @@ function normalizeData(data: WorkCorrectionData): WorkCorrectionData {
     type: cleanWorkType(data.type),
     year: data.year,
     duration_minutes: data.duration_minutes,
+    season_count: data.season_count,
     episode_count: data.episode_count,
+    parent_work_id: cleanText(data.parent_work_id),
+    season_number: data.season_number,
+    episode_number: data.episode_number,
     genre: cleanText(data.genre),
+    director: cleanText(data.director),
+    alternative_titles: cleanTextList(data.alternative_titles),
+    production_countries: cleanTextList(data.production_countries),
+    production_companies: cleanTextList(data.production_companies),
     description: cleanText(data.description),
   };
 }
@@ -105,6 +159,11 @@ function normalizeAdminData(data: AdminWorkData): AdminWorkData {
     poster_url: cleanText(data.poster_url),
     status: cleanText(data.status) ?? "godkendt",
     dfi_metadata: data.dfi_metadata ?? null,
+    dfi_title: cleanText(data.dfi_title),
+    dfi_danish_title: cleanText(data.dfi_danish_title),
+    dfi_original_title: cleanText(data.dfi_original_title),
+    dfi_category: cleanText(data.dfi_category),
+    dfi_type: cleanText(data.dfi_type),
   };
 }
 
@@ -114,6 +173,10 @@ function cleanSharePercent(value: number | null | undefined) {
 
 function isMissingSharePercentError(error: { message?: string; code?: string } | null | undefined) {
   return error?.code === "42703" || error?.message?.includes("share_percent");
+}
+
+function isMissingRelationError(error: { message?: string; code?: string } | null | undefined) {
+  return error?.code === "42P01";
 }
 
 async function retryWithoutSharePercent<T>(
@@ -265,7 +328,7 @@ export async function submitWorkDataCorrection(params: {
 
   const { data: work, error: workError } = await db
     .from("works")
-    .select("id, org_id, title, type, year, duration_minutes, episode_count, genre, description, status")
+    .select("id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, description, status")
     .eq("id", params.workId)
     .single();
 
@@ -334,6 +397,99 @@ export async function fetchAdminWorksForReview() {
   return { success: true, works: data ?? [] };
 }
 
+export async function deleteAdminWorkPermanently(params: { workId: string }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const workId = cleanText(params.workId);
+  if (!workId) throw new Error("Værket mangler.");
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const { data: work, error: workError } = await db
+    .from("works")
+    .select("id")
+    .eq("id", workId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+
+  if (workError) throw new Error(workError.message);
+  if (!work) throw new Error("Værket findes ikke.");
+
+  const { error: contractUpdateError } = await db
+    .from("contracts")
+    .update({ work_id: null })
+    .eq("work_id", workId)
+    .eq("org_id", orgId);
+  if (contractUpdateError) throw new Error(contractUpdateError.message);
+
+  const { error: airingUpdateError } = await db
+    .from("work_airings")
+    .update({ work_id: null })
+    .eq("work_id", workId)
+    .eq("org_id", orgId);
+  if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+
+  const { error: deleteError } = await db
+    .from("works")
+    .delete()
+    .eq("id", workId)
+    .eq("org_id", orgId);
+  if (deleteError) throw new Error(deleteError.message);
+
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true };
+}
+
+export async function deleteAdminWorksPermanently(params: { workIds: string[] }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const workIds = params.workIds.map(id => cleanText(id)).filter(Boolean);
+  if (workIds.length === 0) throw new Error("Ingen værker valgt.");
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+
+  const { data: works, error: worksError } = await db
+    .from("works")
+    .select("id")
+    .in("id", workIds)
+    .eq("org_id", orgId);
+
+  if (worksError) throw new Error(worksError.message);
+  const foundIds = works?.map(w => w.id) ?? [];
+  if (foundIds.length === 0) throw new Error("Ingen af de valgte værker blev fundet.");
+
+  const { error: contractUpdateError } = await db
+    .from("contracts")
+    .update({ work_id: null })
+    .in("work_id", foundIds)
+    .eq("org_id", orgId);
+  if (contractUpdateError) throw new Error(contractUpdateError.message);
+
+  const { error: airingUpdateError } = await db
+    .from("work_airings")
+    .update({ work_id: null })
+    .in("work_id", foundIds)
+    .eq("org_id", orgId);
+  if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+
+  const { error: deleteError } = await db
+    .from("works")
+    .delete()
+    .in("id", foundIds)
+    .eq("org_id", orgId);
+  if (deleteError) throw new Error(deleteError.message);
+
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true, deletedCount: foundIds.length };
+}
+
 export async function fetchAdminRightsHolders() {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -353,6 +509,24 @@ export async function fetchAdminRightsHolders() {
     .sort((a, b) => a.full_name.localeCompare(b.full_name, "da-DK"));
 
   return { success: true, rightsHolders };
+}
+
+export async function fetchAdminBroadcasters() {
+  const { supabase } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const db = createServiceClient();
+  const { data, error } = await db
+    .from("broadcasters")
+    .select("name, logo_path")
+    .order("name", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  const broadcasters = (data ?? [])
+    .filter((row): row is { name: string; logo_path: string | null } => Boolean(row.name));
+
+  return { success: true, broadcasters };
 }
 
 export async function fetchPendingWorkReviewCount() {
@@ -557,6 +731,11 @@ export async function createAdminWork(params: {
         tmdb_id: params.data.tmdb_id ?? null,
         poster_url: posterUrl,
         dfi_metadata: params.data.dfi_metadata ?? null,
+        dfi_title: cleanText(params.data.dfi_title),
+        dfi_danish_title: cleanText(params.data.dfi_danish_title),
+        dfi_original_title: cleanText(params.data.dfi_original_title),
+        dfi_category: cleanText(params.data.dfi_category),
+        dfi_type: cleanText(params.data.dfi_type),
         status: "godkendt",
       })
       .select("id")
@@ -568,6 +747,11 @@ export async function createAdminWork(params: {
     const updates: Partial<CreateWorkData> = {};
     if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
     if (params.data.dfi_metadata) updates.dfi_metadata = params.data.dfi_metadata;
+    if (params.data.dfi_title) updates.dfi_title = cleanText(params.data.dfi_title);
+    if (params.data.dfi_danish_title) updates.dfi_danish_title = cleanText(params.data.dfi_danish_title);
+    if (params.data.dfi_original_title) updates.dfi_original_title = cleanText(params.data.dfi_original_title);
+    if (params.data.dfi_category) updates.dfi_category = cleanText(params.data.dfi_category);
+    if (params.data.dfi_type) updates.dfi_type = cleanText(params.data.dfi_type);
     if (Object.keys(updates).length > 0) {
       const { error } = await db
         .from("works")

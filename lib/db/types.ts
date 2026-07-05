@@ -230,12 +230,26 @@ export interface DbWork {
     year: number | null
     duration_minutes: number | null
     episode_count: number | null
+    season_count: number | null
+    parent_work_id: string | null
+    season_number: number | null
+    episode_number: number | null
     genre: string | null
+    director: string | null
+    alternative_titles: string[]
+    production_countries: string[]
+    production_companies: string[]
+    dfi_title: string | null
+    dfi_danish_title: string | null
+    dfi_original_title: string | null
+    dfi_category: string | null
+    dfi_type: string | null
     status: string
     dfi_id: string | null
     tmdb_id: number | null
     description: string | null
     poster_url: string | null
+    dfi_metadata: any | null
     created_at: string
 }
 

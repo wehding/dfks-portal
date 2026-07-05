@@ -1,0 +1,76 @@
+"use client";
+
+import { HelpCircle, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+export type HelpTopic = {
+  title: string;
+  body: string;
+  tips?: string[];
+};
+
+type ContextualHelpProps = {
+  title: string;
+  intro: string;
+  topics: HelpTopic[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+export function HelpButton({ onClick, label = "Hjælp" }: { onClick: () => void; label?: string }) {
+  return (
+    <Button type="button" variant="outline" onClick={onClick} className="gap-2">
+      <HelpCircle className="h-4 w-4" />
+      {label}
+    </Button>
+  );
+}
+
+export function ContextualHelp({ title, intro, topics, open, onOpenChange }: ContextualHelpProps) {
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/35"
+      onClick={event => {
+        if (event.target === event.currentTarget) onOpenChange(false);
+      }}
+    >
+      <aside className="ml-auto flex h-full w-full max-w-md flex-col border-l border-gray-200 bg-white shadow-xl">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+            <p className="mt-1 text-sm text-gray-500">{intro}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            aria-label="Luk hjælp"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+          {topics.map(topic => (
+            <section key={topic.title} className="rounded-lg border border-gray-200 bg-white p-4">
+              <h3 className="text-sm font-semibold text-gray-900">{topic.title}</h3>
+              <p className="mt-1 text-sm leading-6 text-gray-600">{topic.body}</p>
+              {topic.tips && topic.tips.length > 0 && (
+                <ul className="mt-3 space-y-2 text-sm text-gray-600">
+                  {topic.tips.map(tip => (
+                    <li key={tip} className="flex gap-2">
+                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-900" />
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ))}
+        </div>
+      </aside>
+    </div>
+  );
+}

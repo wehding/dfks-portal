@@ -5,6 +5,26 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import MineKontrakterClient from "./MineKontrakterClient";
+import type { Contract } from "./MineKontrakterClient";
+
+type WorkRelation = { id: string; title: string; year: number | null; type: string };
+type WorkAssignmentRow = { works: WorkRelation | WorkRelation[] | null };
+type RawContract = Omit<Contract, "works" | "employers"> & {
+  works: Contract["works"] | Contract["works"][];
+  employers: Contract["employers"] | Contract["employers"][];
+};
+
+function getWorkRelation(row: WorkAssignmentRow) {
+  return Array.isArray(row.works) ? row.works[0] ?? null : row.works;
+}
+
+function isWorkRelation(work: WorkRelation | null): work is WorkRelation {
+  return Boolean(work);
+}
+
+function firstRelation<T>(value: T | T[] | null) {
+  return Array.isArray(value) ? value[0] ?? null : value;
+}
 
 export default async function MineKontrakterPage() {
   const supabase = await createClient();
@@ -37,17 +57,23 @@ export default async function MineKontrakterPage() {
 
   const uniqueWorks = Object.values(
     Object.fromEntries(
-      (myWorks ?? [])
-        .map((a: any) => a.works)
-        .filter(Boolean)
-        .map((w: any) => [w.id, w])
+      ((myWorks ?? []) as WorkAssignmentRow[])
+        .map(getWorkRelation)
+        .filter(isWorkRelation)
+        .map(w => [w.id, w])
     )
   ) as { id: string; title: string; year: number | null; type: string }[];
+
+  const normalizedContracts: Contract[] = ((contracts ?? []) as RawContract[]).map(contract => ({
+    ...contract,
+    works: firstRelation(contract.works),
+    employers: firstRelation(contract.employers),
+  }));
 
   return (
     <Suspense>
       <MineKontrakterClient
-        initialContracts={(contracts ?? []) as any}
+        initialContracts={normalizedContracts}
         myWorks={uniqueWorks}
       />
     </Suspense>

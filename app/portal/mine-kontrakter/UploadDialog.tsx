@@ -22,10 +22,24 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 type Props = {
   onClose: () => void;
-  onUploaded: (contract: any) => void;
+  onUploaded: (contract: UploadedContract) => void;
   workId?: string;
   workTitle?: string;
 };
+
+type UploadedContract = {
+  id: string;
+  type: string | null;
+  status: string;
+  pdf_url: string | null;
+  created_at: string | null;
+  working_title?: string | null;
+  work_id?: string | null;
+};
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : "Ukendt fejl";
+}
 
 export default function UploadDialog({ onClose, onUploaded, workId, workTitle }: Props) {
   const [file, setFile] = useState<File | null>(null);
@@ -115,14 +129,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
         if (result.duration && result.duration > 0) { setDuration(String(result.duration)); filled.add("duration"); }
         setAiFields(filled);
         if (filled.size > 0) toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`);
-      } catch (e: any) {
-        if (!cancelled) toast.error(`Screening fejlede: ${e.message}`);
+      } catch (e: unknown) {
+        if (!cancelled) toast.error(`Screening fejlede: ${errorText(e)}`);
       } finally {
         if (!cancelled) setScreening(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [file]);
+  }, [file, workTitle]);
 
   const canSubmit = !!file && !!title && !screening && !saving &&
     (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean));
@@ -161,8 +175,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
       if (!res.success) { toast.error(res.error ?? "Kunne ikke gemme kontrakten"); setSaving(false); return; }
       toast.success("Kontrakt indsendt til DFKS");
       onUploaded(res.contract);
-    } catch (e: any) {
-      toast.error(e.message ?? "Fejl ved upload");
+    } catch (e: unknown) {
+      toast.error(errorText(e) || "Fejl ved upload");
     } finally {
       setSaving(false);
     }
