@@ -27,6 +27,7 @@ import {
   approveAdminWorks,
   createAdminWork,
   deleteAdminWorkPermanently,
+  deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
   fetchAdminRightsHolders,
   fetchAdminWorksForReview,
@@ -636,6 +637,7 @@ export default function VaerksadministrationPage() {
   const [adminComment, setAdminComment] = useState("");
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [editingDeleteOpen, setEditingDeleteOpen] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [editingArchiveOpen, setEditingArchiveOpen] = useState(false);
   const [duplicatesOpen, setDuplicatesOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -751,6 +753,16 @@ export default function VaerksadministrationPage() {
 
   const selectedContracts = useMemo(
     () => selectedWorks.flatMap(work => (work.contracts ?? []).map(contract => ({ work, contract }))),
+    [selectedWorks]
+  );
+
+  const totalAssignments = useMemo(
+    () => selectedWorks.reduce((acc, work) => acc + (work.work_assignments?.length ?? 0), 0),
+    [selectedWorks]
+  );
+
+  const totalContracts = useMemo(
+    () => selectedWorks.reduce((acc, work) => acc + (work.contracts?.length ?? 0), 0),
     [selectedWorks]
   );
 
@@ -1000,6 +1012,23 @@ export default function VaerksadministrationPage() {
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke slette værket permanent."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteSelectedPermanently = async () => {
+    if (selectedIds.length === 0) return;
+    setSaving(true);
+    try {
+      await deleteAdminWorksPermanently({ workIds: selectedIds });
+      setNotice(`${selectedIds.length} værk(er) er slettet permanent.`);
+      setBatchDeleteOpen(false);
+      setSelectedIds([]);
+      await load();
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke slette værkerne permanent."));
     } finally {
       setSaving(false);
     }
@@ -1367,6 +1396,10 @@ export default function VaerksadministrationPage() {
           <CheckCircle2 className="h-4 w-4" />
           Godkend valgte
         </Button>
+        <Button variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)} disabled={saving || selectedIds.length === 0}>
+          <AlertTriangle className="h-4 w-4" />
+          Slet permanent
+        </Button>
       </div>
 
       {selectedIds.length > 0 && (
@@ -1379,6 +1412,10 @@ export default function VaerksadministrationPage() {
           <Button size="sm" variant="outline" className="gap-2" onClick={() => { setMasterId(selectedIds[0] ?? ""); setMergeOpen(true); }} disabled={selectedIds.length < 2}>
             <GitMerge className="h-4 w-4" />
             Flet dubletter
+          </Button>
+          <Button size="sm" variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)}>
+            <AlertTriangle className="h-4 w-4" />
+            Slet permanent
           </Button>
         </div>
       )}
@@ -1886,6 +1923,56 @@ export default function VaerksadministrationPage() {
               );
             })()
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Slet valgte værker permanent</DialogTitle></DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+              <div className="mb-1 flex items-center gap-2 font-medium">
+                <AlertTriangle className="h-4 w-4" />
+                Permanent sletning
+              </div>
+              <p>
+                Du er ved at slette {selectedWorks.length} værk(er) permanent fra værkdatabasen. Dette kan ikke fortrydes.
+              </p>
+              <ul className="mt-2 max-h-32 overflow-y-auto list-disc pl-5 text-xs text-red-800">
+                {selectedWorks.map(w => (
+                  <li key={w.id}>{w.title}</li>
+                ))}
+              </ul>
+            </div>
+            {(totalAssignments > 0 || totalContracts > 0) && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                <div className="mb-1 flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" />
+                  Værkerne har relationer
+                </div>
+                <p>
+                  Der er i alt {totalAssignments} rettighedshaver-tilknytning(er) og {totalContracts} kontrakt(er) tilknyttet de valgte værker.
+                </p>
+                <p className="mt-1">
+                  Sletning fjerner rettighedshaver-tilknytninger og afkobler kontrakter fra de valgte værker.
+                </p>
+              </div>
+            )}
+            <p className="text-muted-foreground">
+              Brug Arkiver værk, hvis historik og relationer skal bevares.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBatchDeleteOpen(false)}>Annuller</Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteSelectedPermanently}
+              disabled={saving}
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Slet permanent
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

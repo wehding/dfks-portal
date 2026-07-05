@@ -443,6 +443,53 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
   return { success: true };
 }
 
+export async function deleteAdminWorksPermanently(params: { workIds: string[] }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const workIds = params.workIds.map(id => cleanText(id)).filter(Boolean);
+  if (workIds.length === 0) throw new Error("Ingen værker valgt.");
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+
+  const { data: works, error: worksError } = await db
+    .from("works")
+    .select("id")
+    .in("id", workIds)
+    .eq("org_id", orgId);
+
+  if (worksError) throw new Error(worksError.message);
+  const foundIds = works?.map(w => w.id) ?? [];
+  if (foundIds.length === 0) throw new Error("Ingen af de valgte værker blev fundet.");
+
+  const { error: contractUpdateError } = await db
+    .from("contracts")
+    .update({ work_id: null })
+    .in("work_id", foundIds)
+    .eq("org_id", orgId);
+  if (contractUpdateError) throw new Error(contractUpdateError.message);
+
+  const { error: airingUpdateError } = await db
+    .from("work_airings")
+    .update({ work_id: null })
+    .in("work_id", foundIds)
+    .eq("org_id", orgId);
+  if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+
+  const { error: deleteError } = await db
+    .from("works")
+    .delete()
+    .in("id", foundIds)
+    .eq("org_id", orgId);
+  if (deleteError) throw new Error(deleteError.message);
+
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true, deletedCount: foundIds.length };
+}
+
 export async function fetchAdminRightsHolders() {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);

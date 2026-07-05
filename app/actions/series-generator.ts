@@ -2,7 +2,8 @@
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
-import { parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
+import { getDFIFilmDetails } from "@/app/actions/dfi";
+import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
 
 export async function generateEpisodesForSeries(params: {
@@ -77,6 +78,25 @@ export async function generateEpisodesForSeries(params: {
     const isEpisodeChildren = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
 
     if (isEpisodeChildren) {
+      // Hent detaljer for alle børn i parallel for at berige deres data
+      const childDetailsMap = new Map<number, any>();
+      try {
+        const promises = children.map(async (c: any) => {
+          if (!c.Id) return;
+          try {
+            const det = await getDFIFilmDetails(Number(c.Id));
+            if (det.success && det.film) {
+              childDetailsMap.set(Number(c.Id), det.film);
+            }
+          } catch (e) {
+            console.error(`Kunne ikke hente DFI detaljer for barn ${c.Id}:`, e);
+          }
+        });
+        await Promise.all(promises);
+      } catch (err) {
+        console.error("Fejl ved parallel DFI-børnehentning:", err);
+      }
+
       for (const child of children) {
         const info = parseDfiEpisodeTitleInfo(child.Title);
         if (info) {
@@ -85,6 +105,12 @@ export async function generateEpisodesForSeries(params: {
             ? `${parentWork.title} - S${sStr}E${eStr}: ${info.subtitle}` 
             : `${parentWork.title} - S${sStr}E${eStr}`;
 
+          const fullChild = childDetailsMap.get(Number(child.Id)) || child;
+          const director = extractDfiDirectors(fullChild).join(", ") || parentWork.director;
+          const year = extractDfiPremiereYear(fullChild) || parentWork.year;
+          const description = fullChild.Synopsis || fullChild.ShortSynopsis || parentWork.description;
+          const duration = fullChild.Duration ? Number(fullChild.Duration) : parentWork.duration_minutes;
+
           episodesToInsert.push({
             org_id: parentWork.org_id,
             parent_work_id: parentWork.id,
@@ -92,15 +118,15 @@ export async function generateEpisodesForSeries(params: {
             episode_number: info.episodeNumber,
             title,
             type: parentWork.type,
-            year: parentWork.year,
-            duration_minutes: parentWork.duration_minutes,
-            genre: parentWork.genre,
-            director: parentWork.director,
-            description: parentWork.description,
-            poster_url: parentWork.poster_url,
+            year,
+            duration_minutes: duration,
+            genre: fullChild.Category || parentWork.genre,
+            director,
+            description,
+            poster_url: extractDfiPosterUrl(fullChild) || parentWork.poster_url,
             status: parentWork.status,
-            dfi_id: String(child.Id),
-            dfi_metadata: child,
+            dfi_id: child.Id ? String(child.Id) : null,
+            dfi_metadata: fullChild,
           });
         }
       }

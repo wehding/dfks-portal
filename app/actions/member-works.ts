@@ -7,6 +7,7 @@ import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
+import type { DbWork } from "@/lib/db/types";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 
@@ -325,6 +326,7 @@ export async function linkExistingWorkForMember(params: {
   coEditors?: ProposedCoEditor[];
   seasonNumber?: number | null;
   episodeNumber?: number | null;
+  selectedEpisodes?: number[] | null;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
@@ -338,7 +340,7 @@ export async function linkExistingWorkForMember(params: {
     .single();
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
 
-  let targetWorkId = params.workId;
+  let targetWorkIds = [params.workId];
 
   // Hvis det er en serie og der er angivet sæson, find eller generer afsnit
   const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
@@ -346,30 +348,42 @@ export async function linkExistingWorkForMember(params: {
     if (work.parent_work_id === null) {
       // Sørg for at afsnit er genereret for denne sæson
       const genRes = await generateEpisodesForSeries({
-        parentWork: work as any,
+        parentWork: work as unknown as DbWork,
         seasonNumber: params.seasonNumber,
       });
       if (genRes.success) {
-        // Find det specifikke afsnitsværk
-        const { data: epWork } = await db
+        const selectedEpisodeNumbers = (params.selectedEpisodes ?? []).filter(Number.isFinite);
+        let episodeQuery = db
           .from("works")
           .select("id")
           .eq("parent_work_id", work.id)
-          .eq("season_number", params.seasonNumber)
-          .eq("episode_number", params.episodeNumber ?? 1)
-          .maybeSingle();
+          .eq("season_number", params.seasonNumber);
 
-        if (epWork) {
-          targetWorkId = epWork.id;
+        if (selectedEpisodeNumbers.length > 0) {
+          episodeQuery = episodeQuery.in("episode_number", selectedEpisodeNumbers);
+        } else if (params.episodeNumber) {
+          episodeQuery = episodeQuery.eq("episode_number", params.episodeNumber);
+        }
+
+        const { data: epWorks } = await episodeQuery;
+        if (epWorks && epWorks.length > 0) {
+          targetWorkIds = epWorks.map(ep => ep.id);
         }
       }
     }
   }
 
+  const assignments = targetWorkIds.map(workId => ({
+    work_id: workId,
+    org_id: orgId,
+    rights_holder_id: params.rightsHolderId,
+    role: params.role,
+  }));
+
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
-      { work_id: targetWorkId, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
+      assignments,
       { onConflict: "work_id,rights_holder_id,role" }
     );
   if (assignErr) return { success: false, error: assignErr.message };
@@ -393,7 +407,7 @@ export async function linkExistingWorkForMember(params: {
     return { success: true, pending: true, requestId, assignment: fresh };
   }
 
-  const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
+  const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
 
   return { success: true, assignment: fresh };
 }
@@ -449,7 +463,7 @@ export async function addWorkForMemberWithApproval(params: {
 
   const isSeries = params.workData.type === "tv-serie" || params.workData.type === "dokumentar-serie";
   let finalWorkId: string;
-  let parentWork: any = null;
+  let parentWork: DbWork | null = null;
 
   if (isSeries) {
     // 1. Forsøg at finde eksisterende overordnet serieværk
@@ -493,10 +507,12 @@ export async function addWorkForMemberWithApproval(params: {
       parentWork = data;
     }
 
+    if (!parentWork) return { success: false, error: "Kunne ikke finde eller oprette serieværk." };
+
     // 3. Generer episoder for den givne sæson
     const seasonNum = params.workData.season_number ?? 1;
     const genRes = await generateEpisodesForSeries({
-      parentWork: parentWork as any,
+      parentWork,
       seasonNumber: seasonNum,
       totalEpisodes: params.workData.episode_count,
     });

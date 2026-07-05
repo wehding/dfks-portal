@@ -1,16 +1,16 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2 } from "lucide-react";
 import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/contextual-help";
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null } | null;
-type Contract = {
+export type Contract = {
   id: string;
   type: string | null;
   overenskomst: string | null;
@@ -57,6 +57,25 @@ function getValidation(c: Contract): Validation {
 
 type MyWork = { id: string; title: string; year: number | null; type: string };
 
+const MINE_KONTRAKTER_HELP: HelpTopic[] = [
+  {
+    title: "Upload kontrakt",
+    body: "Upload PDF eller DOCX. Systemet forsøger at udfylde titel, kategori, kreditering og datoer automatisk, men du skal altid kontrollere felterne før indsendelse.",
+  },
+  {
+    title: "Koblet værk",
+    body: "En kontrakt bør være koblet til det værk, den handler om. Kommer du fra Mine værker via Mangler kontrakt, er værket forvalgt.",
+  },
+  {
+    title: "Validering",
+    body: "Afventer validering betyder, at DFKS endnu ikke har godkendt kontraktens oplysninger. Når den er valideret, vises rettighedsmarkeringerne på kontrakten.",
+  },
+  {
+    title: "Rettigheder",
+    body: "Overenskomst og kreditering viser, om kontrakten indeholder de vigtigste punkter for korrekt registrering og udbetaling.",
+  },
+];
+
 export default function MineKontrakterClient({
   initialContracts,
   myWorks = [],
@@ -66,14 +85,12 @@ export default function MineKontrakterClient({
 }) {
   const [contracts, setContracts] = useState(initialContracts);
   const searchParams = useSearchParams();
-  const [isUploading, setIsUploading] = useState(false);
+  const [isUploading, setIsUploading] = useState(searchParams.get("upload") === "true");
   const uploadWorkId    = searchParams.get("workId") ?? undefined;
   const uploadWorkTitle = searchParams.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
-  useEffect(() => {
-    if (searchParams.get("upload") === "true") setIsUploading(true);
-  }, [searchParams]);
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
@@ -141,9 +158,12 @@ export default function MineKontrakterClient({
           <h1 className="text-2xl font-bold text-gray-900">Mine Kontrakter</h1>
           <p className="text-sm text-gray-500 mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
         </div>
-        <Button onClick={() => setIsUploading(true)} className="gap-2">
-          <Upload className="h-4 w-4" /> Upload kontrakt
-        </Button>
+        <div className="flex gap-2">
+          <HelpButton onClick={() => setHelpOpen(true)} />
+          <Button onClick={() => setIsUploading(true)} className="gap-2">
+            <Upload className="h-4 w-4" /> Upload kontrakt
+          </Button>
+        </div>
       </div>
 
       {/* Statistik */}
@@ -251,7 +271,20 @@ export default function MineKontrakterClient({
           workTitle={uploadWorkTitle}
           onClose={() => setIsUploading(false)}
           onUploaded={(saved) => {
-            setContracts(prev => [{ id: saved.id, type: saved.type, overenskomst: null, status: saved.status, contract_date: null, start_date: null, end_date: null, pdf_url: saved.pdf_url, created_at: saved.created_at, works: null, employers: null, contract_validations: null }, ...prev]);
+            setContracts(prev => [{
+              id: saved.id,
+              type: saved.type,
+              overenskomst: null,
+              status: saved.status,
+              contract_date: null,
+              start_date: null,
+              end_date: null,
+              pdf_url: saved.pdf_url,
+              created_at: saved.created_at,
+              works: uploadWorkId ? { id: uploadWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null } : null,
+              employers: null,
+              contract_validations: null,
+            }, ...prev]);
             setIsUploading(false);
             setMsg({ type: "success", text: "Kontrakt indsendt til DFKS." });
           }}
@@ -316,11 +349,11 @@ export default function MineKontrakterClient({
                   <div>
                     <p className="text-xs font-medium text-gray-500 mb-2">Rettigheder</p>
                     <div className="flex gap-2 flex-wrap">
-                      {[
+                      {([
                         { key: "has_overenskomst_incorporation", label: "Overenskomst" },
                         { key: "has_credit_clause",              label: "Kreditering" },
-                      ].map(r => {
-                        const has = (val as any)[r.key] === true;
+                      ] as const).map(r => {
+                        const has = val[r.key] === true;
                         return (
                           <span key={r.key} className="text-xs font-semibold px-2.5 py-0.5 rounded-full"
                             style={{ backgroundColor: has ? "#18181b" : "#f4f4f5", color: has ? "white" : "#71717a" }}>
@@ -399,6 +432,14 @@ export default function MineKontrakterClient({
           </div>
         </div>
       )}
+
+      <ContextualHelp
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        title="Hjælp til Mine kontrakter"
+        intro="Praktisk forklaring af upload, kobling og validering."
+        topics={MINE_KONTRAKTER_HELP}
+      />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { useI18n } from "@/lib/i18n";
 import { DfiImportWizard } from "./components/DfiImportWizard";
 import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
+import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/contextual-help";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 
@@ -59,6 +60,26 @@ type ChangeRequest = {
 
 type SortValue = string | number;
 
+const MINE_VAERKER_HELP: HelpTopic[] = [
+  {
+    title: "Tilføj værk",
+    body: "Brug søgning først, så systemet kan genbruge værker, der allerede findes. Hvis værket er en serie, kan du vælge præcis de afsnit, du har klippet, inden du sender oprettelsen.",
+    tips: ["Lokale match kobler dig direkte på det eksisterende værk.", "DFI/TMDB-oprettelser og manuelle oprettelser kan kræve administratorgodkendelse."],
+  },
+  {
+    title: "Importer fra DFI",
+    body: "DFI-guiden finder dine krediteringer og frasorterer værker, der allerede er knyttet til dig. Lokale værker bliver koblet til dig uden at overskrive eksisterende data.",
+  },
+  {
+    title: "Kontraktstatus",
+    body: "Mangler kontrakt betyder, at systemet ikke kan se en godkendt kontrakt på værket endnu. Klik på mærket for at uploade en kontrakt direkte til værket.",
+  },
+  {
+    title: "Rettelser og admin-kommentarer",
+    body: "Når du retter værksdata, sendes ændringen til administrator. Klik på værket for at se status, kommentarer og hvilken type request kommentaren handler om.",
+  },
+];
+
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
   const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "short" | "animation"> = {
@@ -86,15 +107,6 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
   };
   const type = canonical[key] ?? null;
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
-}
-
-function formatEpisodeLabel(episodeNumber?: number | null, title?: string | null) {
-  if (!episodeNumber) return "–";
-  const season = Math.floor(episodeNumber / 1000);
-  const episode = episodeNumber % 1000;
-  if (season > 0 && episode > 0) return `S${season}E${episode}`;
-  if (title?.trim()) return title;
-  return `E${episodeNumber}`;
 }
 
 function displayRole(role: string | null | undefined) {
@@ -188,6 +200,7 @@ export default function MineVaerkerClient({
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -313,6 +326,7 @@ export default function MineVaerkerClient({
           <p className="text-sm text-gray-500 mt-1">{t("works.registeredSubtitle")}</p>
         </div>
         <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
+          <HelpButton onClick={() => setHelpOpen(true)} />
           <Button variant="outline" onClick={openWizard} className="w-full gap-2 sm:w-auto">
             <RefreshCw className="h-4 w-4" /> {t("works.importFromDfi")}
           </Button>
@@ -651,6 +665,14 @@ export default function MineVaerkerClient({
           locale={locale}
         />
       )}
+
+      <ContextualHelp
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        title="Hjælp til Mine værker"
+        intro="Kort overblik over de vigtigste handlinger på siden."
+        topics={MINE_VAERKER_HELP}
+      />
     </div>
   );
 }

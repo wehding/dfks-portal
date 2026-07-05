@@ -10,7 +10,7 @@ import { Modal } from "./Modal";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -96,6 +96,15 @@ interface DfiSearchResult {
   DanishTitle?: string;
 }
 
+type DfiFilm = DfiSearchResult & {
+  Id: number | string;
+  OriginalTitle?: string | null;
+  Comment?: string | null;
+  Duration?: number | string | null;
+  Parent?: { Id?: number | string | null; Title?: string | null } | null;
+  Children?: Array<{ Id?: number | string | null; Title?: string | null }>;
+};
+
 interface TmdbSearchResult {
   id: number;
   title?: string;
@@ -106,6 +115,10 @@ interface TmdbSearchResult {
   poster_path?: string | null;
   overview?: string | null;
 }
+
+type TmdbDetails = TmdbSearchResult & {
+  seasons?: Array<{ season_number: number; episode_count?: number | null }>;
+};
 
 type SearchItem = LocalWorkResult | DfiSearchResult | TmdbSearchResult;
 
@@ -214,6 +227,79 @@ function numberOrNull(val: string) {
   return isNaN(n) ? null : n;
 }
 
+function asDfiFilm(film: DfiSearchResult | DfiFilm): DfiFilm {
+  return film as DfiFilm;
+}
+
+function dfiNumericId(value: number | string | null | undefined) {
+  const id = Number(value);
+  return Number.isFinite(id) ? id : null;
+}
+
+function dfiResultFromFilm(film: DfiFilm, fallback: DfiSearchResult): DfiSearchResult {
+  const id = dfiNumericId(film.Id) ?? fallback.Id;
+  return {
+    ...fallback,
+    Id: id,
+    Title: film.Title || film.DanishTitle || fallback.Title,
+    DanishTitle: film.DanishTitle || fallback.DanishTitle,
+    Category: film.Category || fallback.Category,
+    Type: film.Type || fallback.Type,
+    ReleaseYear: film.ReleaseYear || fallback.ReleaseYear,
+    ProductionYear: film.ProductionYear || fallback.ProductionYear,
+    Synopsis: film.Synopsis || fallback.Synopsis,
+    ShortSynopsis: film.ShortSynopsis || fallback.ShortSynopsis,
+    PersonCredits: film.PersonCredits || fallback.PersonCredits,
+  };
+}
+
+function countDfiEpisodes(film: DfiFilm) {
+  const commentCount = parseDfiEpisodeCount(film.Comment || film.Synopsis || "");
+  if (commentCount) return commentCount;
+  const children = Array.isArray(film.Children) ? film.Children : [];
+  const episodeChildren = children.filter(child => parseDfiEpisodeTitleInfo(child.Title ?? ""));
+  return episodeChildren.length || null;
+}
+
+function findDfiEpisodeNumber(parentFilm: DfiFilm, childFilm: DfiFilm) {
+  const childId = dfiNumericId(childFilm.Id);
+  const children = Array.isArray(parentFilm.Children) ? parentFilm.Children : [];
+  const matchingChild = children.find(child => childId && dfiNumericId(child.Id) === childId);
+  const parsed = parseDfiEpisodeTitleInfo(matchingChild?.Title ?? childFilm.Title ?? "");
+  if (parsed?.episodeNumber) return parsed.episodeNumber;
+  const index = matchingChild ? children.indexOf(matchingChild) : -1;
+  return index >= 0 ? index + 1 : null;
+}
+
+async function resolveDfiSelection(result: DfiSearchResult) {
+  const details = await getDFIFilmDetails(Number(result.Id));
+  const firstFilm = asDfiFilm((details.success ? (details as { film?: DfiSearchResult }).film : result) ?? result);
+  const parentId = dfiNumericId(firstFilm.Parent?.Id);
+
+  if (!parentId) {
+    return {
+      film: firstFilm,
+      result: dfiResultFromFilm(firstFilm, result),
+      posterDataUrl: details.success ? details.posterDataUrl ?? null : null,
+      selectedEpisode: null as number | null,
+    };
+  }
+
+  const parentDetails = await getDFIFilmDetails(parentId);
+  const parentFilm = asDfiFilm((parentDetails.success ? (parentDetails as { film?: DfiSearchResult }).film : undefined) ?? {
+    ...result,
+    Id: parentId,
+    Title: firstFilm.Parent?.Title || result.Title,
+  });
+
+  return {
+    film: parentFilm,
+    result: dfiResultFromFilm(parentFilm, { ...result, Id: parentId }),
+    posterDataUrl: (parentDetails.success ? parentDetails.posterDataUrl ?? null : null) ?? (details.success ? details.posterDataUrl ?? null : null),
+    selectedEpisode: findDfiEpisodeNumber(parentFilm, firstFilm),
+  };
+}
+
 export function AddWorkModal({
   isOpen,
   onClose,
@@ -258,9 +344,9 @@ export function AddWorkModal({
         try {
           const det = await getTMDBWorkDetails(tmdbResult.id, "tv");
           if (det.success && det.details) {
-            const d = det.details as any;
+            const d = det.details as TmdbDetails;
             const sNum = parseInt(addSeason) || 1;
-            const season = d.seasons?.find((s: any) => s.season_number === sNum);
+            const season = d.seasons?.find(s => s.season_number === sNum);
             const count = season ? season.episode_count : null;
             if (count) {
               setDetectedEpisodeCount(count);
@@ -274,6 +360,24 @@ export function AddWorkModal({
     };
     updateTmdbEpisodes();
   }, [addSeason, pickedSource, pickedResult]);
+
+  useEffect(() => {
+    if (manualMode && (manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie")) {
+      const count = parseInt(manualWork.episode_count) || null;
+      setDetectedEpisodeCount(count);
+      if (count) {
+        setSelectedEpisodes(prev => {
+          const filtered = prev.filter(x => x <= count);
+          if (filtered.length === 0) {
+            return Array.from({ length: count }, (_, i) => i + 1);
+          }
+          return filtered;
+        });
+      } else {
+        setSelectedEpisodes([]);
+      }
+    }
+  }, [manualMode, manualWork.episode_count, manualWork.type]);
 
   const resetAddState = () => {
     setManualMode(false);
@@ -331,6 +435,10 @@ export function AddWorkModal({
     setPickedSource("local");
     setManualMode(false);
     setAddCoEditors(localWorkToCoEditors(work));
+    const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
+    const count = isSeries ? work.episode_count ?? null : null;
+    setDetectedEpisodeCount(count);
+    setSelectedEpisodes(count ? Array.from({ length: count }, (_, idx) => idx + 1) : []);
   };
 
   const pickDfiResult = async (result: DfiSearchResult) => {
@@ -341,21 +449,22 @@ export function AddWorkModal({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     try {
-      const det = await getDFIFilmDetails(Number(result.Id));
-      const film = det.success ? (det as { film?: DfiSearchResult }).film ?? result : result;
+      const resolved = await resolveDfiSelection(result);
+      const film = resolved.film;
+      const targetResult = resolved.result;
+      setPickedResult(targetResult);
+
       const editors = extractDfiCoEditors(film);
       if (editors.length) setAddCoEditors(editors);
 
-      const comment = (film as any).Comment || (film as any).Synopsis || "";
-      let count = parseDfiEpisodeCount(comment);
-      if (!count && (film as any).Children) {
-        const children = (film as any).Children as any[];
-        const isEp = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
-        if (isEp) count = children.length;
-      }
+      const count = countDfiEpisodes(film);
       if (count) {
         setDetectedEpisodeCount(count);
-        setSelectedEpisodes(Array.from({ length: count }, (_, i) => i + 1));
+        if (resolved.selectedEpisode) {
+          setSelectedEpisodes([resolved.selectedEpisode]);
+        } else {
+          setSelectedEpisodes(Array.from({ length: count }, (_, i) => i + 1));
+        }
       }
     } catch (e) {
       console.error(e);
@@ -373,6 +482,7 @@ export function AddWorkModal({
     if ((!manualMode && (!pickedResult || !pickedSource)) || !rightsHolderId) return;
     setIsSaving(true);
     try {
+      const selectedSeasonNumber = showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
       if (pickedSource === "local" && pickedResult) {
         const localResult = pickedResult as LocalWorkResult;
         const res = await linkExistingWorkForMember({
@@ -381,8 +491,9 @@ export function AddWorkModal({
           role: addRole,
           comment: addComment,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
-          seasonNumber: numberOrNull(addSeason),
+          seasonNumber: selectedSeasonNumber,
           episodeNumber: numberOrNull(addEpisode),
+          selectedEpisodes,
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
         onWorkAdded(
@@ -407,7 +518,7 @@ export function AddWorkModal({
             year: numberOrNull(manualWork.year),
             duration_minutes: numberOrNull(manualWork.duration_minutes),
             episode_count: numberOrNull(manualWork.episode_count),
-            season_number: numberOrNull(addSeason),
+            season_number: selectedSeasonNumber,
             episode_number: numberOrNull(addEpisode),
             selected_episodes: selectedEpisodes,
             genre: manualWork.genre || null,
@@ -423,11 +534,17 @@ export function AddWorkModal({
 
       if (pickedSource === "dfi" && pickedResult) {
         const dfiResult = pickedResult as DfiSearchResult;
-        const det = await getDFIFilmDetails(dfiResult.Id);
-        const film = (det.success ? (det as { film?: DfiSearchResult }).film : dfiResult) ?? dfiResult;
+        const resolved = await resolveDfiSelection(dfiResult);
+        const film = resolved.film;
         const type = mapDfiWorkType(film.Category, film.Type);
-        const dfiPoster = (det.success ? det.posterDataUrl : null) ?? extractDfiPosterUrl(film);
+        const dfiPoster = resolved.posterDataUrl ?? extractDfiPosterUrl(film);
         const director = extractDfiDirectors(film).join(", ") || null;
+        const selectedDfiEpisodes = selectedEpisodes.length > 0
+          ? selectedEpisodes
+          : resolved.selectedEpisode
+          ? [resolved.selectedEpisode]
+          : [];
+        const dfiEpisodeCount = detectedEpisodeCount ?? countDfiEpisodes(film);
         const res = await addWorkForMemberWithApproval({
           rightsHolderId,
           role: addRole,
@@ -436,17 +553,18 @@ export function AddWorkModal({
           overrideLocalMatch: localResults.length > 0,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
           workData: {
-            dfi_id: String(dfiResult.Id),
+            dfi_id: String(film.Id),
             title: film.Title || film.DanishTitle || "Ukendt",
             type,
             year: extractDfiPremiereYear(film),
             director,
-            season_number: numberOrNull(addSeason),
+            season_number: selectedSeasonNumber,
             episode_number: numberOrNull(addEpisode),
-            selected_episodes: selectedEpisodes,
-            episode_count: detectedEpisodeCount,
+            selected_episodes: selectedDfiEpisodes,
+            episode_count: dfiEpisodeCount,
             description: film.Synopsis || film.ShortSynopsis || null,
             poster_url: dfiPoster,
+            dfi_metadata: film as unknown as DfiMetadata,
           },
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
@@ -477,7 +595,7 @@ export function AddWorkModal({
             title,
             type: tmdbResult.media_type === "tv" ? "tv-serie" : "spillefilm",
             year,
-            season_number: numberOrNull(addSeason),
+            season_number: selectedSeasonNumber,
             episode_number: numberOrNull(addEpisode),
             selected_episodes: selectedEpisodes,
             episode_count: detectedEpisodeCount,
@@ -504,7 +622,7 @@ export function AddWorkModal({
       (pickedSource === "local"
         ? (pickedResult as LocalWorkResult).type === "tv-serie" || (pickedResult as LocalWorkResult).type === "dokumentar-serie"
         : pickedSource === "dfi"
-        ? ((pickedResult as DfiSearchResult).Type || (pickedResult as DfiSearchResult).Category || "").toLowerCase().includes("serie")
+        ? ["tv-serie", "dokumentar-serie"].includes(mapDfiWorkType((pickedResult as DfiSearchResult).Category, (pickedResult as DfiSearchResult).Type)) || detectedEpisodeCount !== null
         : (pickedResult as TmdbSearchResult).media_type === "tv"));
 
   if (!isOpen) return null;
