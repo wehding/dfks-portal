@@ -395,12 +395,20 @@ export async function fetchAdminWorksForReview() {
   );
 
   if (error) throw new Error(error.message);
-  const visibleWorks = (data ?? []).filter(work => {
-    const isSeriesParent =
+  const rows = data ?? [];
+  // Skjul KUN tekniske serie-parents der faktisk har afsnit (children). Et childless
+  // serie-værk (fx ældre data hvor brugeren er tildelt direkte på serien) er et rigtigt
+  // værk og skal vises — ellers bliver det usynligt i admin selvom det har tildelinger/beskeder.
+  const parentIdsWithChildren = new Set(
+    rows.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
+  );
+  const visibleWorks = rows.filter(work => {
+    const isTechnicalSeriesParent =
       (work.type === "tv-serie" || work.type === "dokumentar-serie") &&
       work.parent_work_id === null &&
-      work.episode_number === null;
-    return !isSeriesParent;
+      work.episode_number === null &&
+      parentIdsWithChildren.has(work.id);
+    return !isTechnicalSeriesParent;
   });
   return { success: true, works: visibleWorks };
 }
