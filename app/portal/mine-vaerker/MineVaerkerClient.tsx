@@ -182,7 +182,7 @@ export default function MineVaerkerClient({
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("date");
+  const [sortKey, setSortKey]   = useState<SortKey>("year");
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);

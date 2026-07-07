@@ -70,6 +70,18 @@ export async function searchTMDBPerson(name: string) {
   }
 }
 
+export async function getTMDBPersonCombinedCredits(personId: number) {
+  try {
+    const res = await tmdbFetch(`/person/${personId}/combined_credits?language=da-DK`);
+    if (!res.ok) throw new Error(`TMDB combined credits status ${res.status}`);
+    const data = await res.json();
+    return { success: true, crew: data.crew || [], cast: data.cast || [] };
+  } catch (err) {
+    console.error("TMDB combined credits error:", err);
+    return { success: false, error: "Kunne ikke hente credits fra TMDB", crew: [], cast: [] };
+  }
+}
+
 export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
   const type = mediaType === "tv" ? "tv" : "movie";
   try {

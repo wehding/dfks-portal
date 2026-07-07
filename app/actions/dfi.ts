@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBMatch } from "@/app/actions/tmdb";
+import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits } from "@/app/actions/tmdb";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
 
 // DFI org_id bruges ved import — DFKS default
@@ -472,6 +472,226 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       else importedCount++;
     } catch (err: unknown) {
       errors.push(`Systemfejl for ${filmTitle}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
+    }
+  }
+
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/vaerker");
+
+  return {
+    success: errors.length === 0 || importedCount > 0 || linkedExistingCount > 0,
+    importedCount,
+    linkedExistingCount,
+    errors: errors.length > 0 ? errors : null,
+  };
+}
+
+export type OnboardingCredit = {
+  id: string;
+  title: string;
+  year: number | null;
+  role: string;
+  category: string;
+  source: "dfi" | "tmdb";
+  raw: any;
+};
+
+function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYear: number | null) {
+  const normA = normalizeTitle(aTitle);
+  const normB = normalizeTitle(bTitle);
+  if (!normA || !normB) return false;
+  if (normA !== normB) return false;
+  if (aYear && bYear) {
+    return Math.abs(aYear - bYear) <= 1;
+  }
+  return true;
+}
+
+export async function searchOnboardingCredits(
+  firstName?: string,
+  lastName?: string,
+  fullName?: string
+) {
+  const nameToSearch = fullName || `${firstName ?? ""} ${lastName ?? ""}`.trim();
+  console.log("[Onboarding search] Navn:", nameToSearch);
+
+  const credits: OnboardingCredit[] = [];
+  let dfiPersonId: number | null = null;
+  let tmdbPersonId: number | null = null;
+
+  // 1. Søg i DFI
+  try {
+    const dfiPersonRes = await searchDFIPerson(firstName, lastName, fullName);
+    if (dfiPersonRes.success && dfiPersonRes.results?.length > 0) {
+      const p = dfiPersonRes.results[0];
+      dfiPersonId = p.Id;
+      const dfiCreditsRes = await getDFIPersonCredits(p.Id);
+      if (dfiCreditsRes.success && dfiCreditsRes.credits) {
+        const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
+        uniqueDfi.forEach((c: any) => {
+          credits.push({
+            id: `dfi-${c.Id}`,
+            title: c.Title || c.DanishTitle || "Ukendt",
+            year: extractDfiPremiereYear(c) || null,
+            role: c.Description || c.Type || "Klipper",
+            category: c.Category || "Film",
+            source: "dfi",
+            raw: c
+          });
+        });
+      }
+    }
+  } catch (err) {
+    console.error("DFI onboarding search error:", err);
+  }
+
+  // 2. Søg i TMDB
+  try {
+    const tmdbPersonRes = await searchTMDBPerson(nameToSearch);
+    if (tmdbPersonRes.success && tmdbPersonRes.results?.length > 0) {
+      const p = tmdbPersonRes.results[0];
+      tmdbPersonId = p.id;
+      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(p.id);
+      if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
+        const tmdbCrew = tmdbCreditsRes.crew as any[];
+        const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
+        
+        editors.forEach((c: any) => {
+          const title = c.title || c.name || "Ukendt";
+          const releaseDate = c.release_date || c.first_air_date || "";
+          const year = Number.parseInt(releaseDate.substring(0, 4), 10) || null;
+          
+          const exists = credits.some(d => isSameCredit(d.title, d.year, title, year));
+          if (!exists) {
+            credits.push({
+              id: `tmdb-${c.id}`,
+              title,
+              year,
+              role: c.job || "Klipper",
+              category: c.media_type === "tv" ? "TV-serie" : "Spillefilm",
+              source: "tmdb",
+              raw: c
+            });
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error("TMDB onboarding search error:", err);
+  }
+
+  credits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+
+  return {
+    success: credits.length > 0,
+    credits,
+    dfiPersonId,
+    tmdbPersonId
+  };
+}
+
+export async function importApprovedOnboardingWorks(
+  dfiPersonId: number | null,
+  tmdbPersonId: number | null,
+  approvedCredits: OnboardingCredit[]
+) {
+  let context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>;
+  try {
+    context = await currentRightsHolderAndOrg();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Du skal være logget ind for at importere.";
+    return { success: false, error: message };
+  }
+  const { db, rightsHolderId, orgId } = context;
+
+  // Gem dfi_person_id og tmdb_id på rettighedshaveren
+  if (dfiPersonId) {
+    await db
+      .from("rettighedshavere")
+      .update({ dfi_person_id: dfiPersonId })
+      .eq("id", rightsHolderId);
+  }
+
+  const dfiCredits = approvedCredits.filter(c => c.source === "dfi").map(c => c.raw as DfiCredit);
+  const tmdbCredits = approvedCredits.filter(c => c.source === "tmdb");
+
+  let importedCount = 0;
+  let linkedExistingCount = 0;
+  const errors: string[] = [];
+
+  // 1. Importer DFI credits
+  if (dfiCredits.length > 0 && dfiPersonId) {
+    const dfiRes = await importApprovedDFIWorks(dfiPersonId, dfiCredits);
+    if (dfiRes.success) {
+      importedCount += dfiRes.importedCount ?? 0;
+      linkedExistingCount += dfiRes.linkedExistingCount ?? 0;
+    }
+    if (dfiRes.errors) {
+      errors.push(...dfiRes.errors);
+    }
+  }
+
+  // 2. Importer TMDB credits
+  for (const credit of tmdbCredits) {
+    const tmdbId = credit.raw.id;
+    const title = credit.title;
+    const year = credit.year;
+    const type = credit.category === "TV-serie" ? "serie" : "film";
+    const posterUrl = credit.raw.poster_path ? `https://image.tmdb.org/t/p/w185${credit.raw.poster_path}` : null;
+
+    try {
+      const { data: existing } = await db
+        .from("works")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("tmdb_id", tmdbId)
+        .maybeSingle();
+
+      let workId = existing?.id ?? null;
+
+      if (!workId) {
+        const { data: newWork, error: insertErr } = await db
+          .from("works")
+          .insert({
+            title,
+            type,
+            year,
+            org_id: orgId,
+            description: credit.raw.overview || null,
+            poster_url: posterUrl,
+            tmdb_id: tmdbId,
+            status: "godkendt",
+          })
+          .select("id")
+          .single();
+
+        if (insertErr || !newWork) {
+          errors.push(`Fejl ved oprettelse af TMDB værk ${title}: ${insertErr?.message}`);
+          continue;
+        }
+        workId = newWork.id;
+        importedCount++;
+      } else {
+        linkedExistingCount++;
+      }
+
+      const { error: assignErr } = await db
+        .from("work_assignments")
+        .upsert(
+          {
+            work_id: workId,
+            org_id: orgId,
+            rights_holder_id: rightsHolderId,
+            role: credit.role || "Klipper",
+          },
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+
+      if (assignErr) {
+        errors.push(`Fejl ved kreditering af TMDB værk ${title}: ${assignErr.message}`);
+      }
+    } catch (err: unknown) {
+      errors.push(`Systemfejl for TMDB værk ${title}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
     }
   }
 

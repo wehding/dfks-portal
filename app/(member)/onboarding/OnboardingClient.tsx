@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
+import { searchOnboardingCredits, importApprovedOnboardingWorks, type OnboardingCredit } from "@/app/actions/dfi";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Search } from "lucide-react";
 
@@ -27,14 +27,18 @@ export default function OnboardingClient({
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
 
-  // DFI-tilstand
+  // DFI & TMDB-tilstand
   const [dfiPersonId, setDfiPersonId] = useState<number | null>(null);
-  const [dfiCredits, setDfiCredits] = useState<any[]>([]);
-  const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<number, boolean>>({});
+  const [tmdbPersonId, setTmdbPersonId] = useState<number | null>(null);
+  const [dfiCredits, setDfiCredits] = useState<OnboardingCredit[]>([]);
+  const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<string, boolean>>({});
   const [dfiSearchQuery, setDfiSearchQuery] = useState("");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [dfiError, setDfiError] = useState<string | null>(null);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
+
+  // Import timer
+  const [importSeconds, setImportSeconds] = useState(0);
 
   // Formulardata præ-udfyldt fra rettighedshaveren
   const existingName = rh?.full_name || "";
@@ -75,23 +79,18 @@ export default function OnboardingClient({
     setDfiError(null);
     setDfiCredits([]);
     setDfiPersonId(null);
+    setTmdbPersonId(null);
     try {
-      const searchResult = await searchDFIPerson(undefined, undefined, dfiSearchQuery);
-      if (searchResult.success && searchResult.results?.length > 0) {
-        const person = searchResult.results[0];
-        setDfiPersonId(person.Id);
-        const creditsResult = await getDFIPersonCredits(person.Id);
-        if (creditsResult.success && creditsResult.credits) {
-          const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-          setDfiCredits(unique);
-          const sel: Record<number, boolean> = {};
-          unique.forEach((c: any) => { sel[c.Id] = true; });
-          setSelectedDfiCredits(sel);
-        } else {
-          setDfiError("Fandt profil, men kunne ikke hente film for personen.");
-        }
+      const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
+      if (searchResult.success && searchResult.credits?.length > 0) {
+        setDfiPersonId(searchResult.dfiPersonId);
+        setTmdbPersonId(searchResult.tmdbPersonId);
+        setDfiCredits(searchResult.credits);
+        const sel: Record<string, boolean> = {};
+        searchResult.credits.forEach((c) => { sel[c.id] = true; });
+        setSelectedDfiCredits(sel);
       } else {
-        setDfiError(`Ingen personer fundet med navnet "${dfiSearchQuery}" i DFI Filmdatabasen.`);
+        setDfiError(`Ingen film fundet for "${dfiSearchQuery}" i DFI eller TMDb.`);
       }
     } catch {
       setDfiError("Der opstod en fejl under søgningen.");
@@ -102,22 +101,22 @@ export default function OnboardingClient({
 
   const handleNextStep = async () => {
     if (step === 2) {
-      // Automatisk DFI-søgning når vi forlader trin 2
       setIsSearchingDfi(true);
       setDfiError(null);
+
+      // Krav 1: Sæt det indtastede navn i søgefeltet som default
+      const fullName = `${formData.first_name} ${formData.last_name}`.trim();
+      setDfiSearchQuery(fullName);
+
       try {
-        const searchResult = await searchDFIPerson(formData.first_name, formData.last_name);
-        if (searchResult.success && searchResult.results?.length > 0) {
-          const person = searchResult.results[0];
-          setDfiPersonId(person.Id);
-          const creditsResult = await getDFIPersonCredits(person.Id);
-          if (creditsResult.success && creditsResult.credits) {
-            const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-            setDfiCredits(unique);
-            const sel: Record<number, boolean> = {};
-            unique.forEach((c: any) => { sel[c.Id] = true; });
-            setSelectedDfiCredits(sel);
-          }
+        const searchResult = await searchOnboardingCredits(formData.first_name, formData.last_name);
+        if (searchResult.success && searchResult.credits?.length > 0) {
+          setDfiPersonId(searchResult.dfiPersonId);
+          setTmdbPersonId(searchResult.tmdbPersonId);
+          setDfiCredits(searchResult.credits);
+          const sel: Record<string, boolean> = {};
+          searchResult.credits.forEach((c) => { sel[c.id] = true; });
+          setSelectedDfiCredits(sel);
         }
       } catch {
         setDfiError("Kunne ikke kontakte DFI Filmdatabasen.");
@@ -126,12 +125,17 @@ export default function OnboardingClient({
         setStep(3);
       }
     } else if (step === 3) {
-      const approved = dfiCredits.filter((c) => selectedDfiCredits[c.Id]);
-      if (approved.length > 0 && dfiPersonId) {
+      const approved = dfiCredits.filter((c) => selectedDfiCredits[c.id]);
+      if (approved.length > 0) {
         setIsImportingDfi(true);
+        setImportSeconds(0);
+        const timerInterval = setInterval(() => {
+          setImportSeconds((s) => s + 1);
+        }, 1000);
         try {
-          await importApprovedDFIWorks(dfiPersonId, approved);
+          await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
         } catch { /* ignorer importfejl */ } finally {
+          clearInterval(timerInterval);
           setIsImportingDfi(false);
           setStep(4);
         }
@@ -144,6 +148,49 @@ export default function OnboardingClient({
   };
 
   const progress = ((step - 1) / (STEPS.length - 1)) * 100;
+
+  if (isImportingDfi) {
+    const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
+    return (
+      <div style={{
+        minHeight: "100vh",
+        backgroundColor: "var(--background)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+      }}>
+        <div style={{ width: "100%", maxWidth: "540px", textAlign: "center", display: "flex", flexDirection: "column", gap: "24px", padding: "40px", backgroundColor: "var(--surface-container-lowest)", borderRadius: "var(--radius-lg)", border: "1px solid var(--outline-variant)", boxShadow: "0px 4px 12px rgba(15, 23, 42, 0.08)" }}>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <Loader2 size={48} style={{ animation: "spin 2s linear infinite", color: "var(--primary)" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>
+              Importerer film og serier...
+            </h2>
+            <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: 0 }}>
+              Vi henter detaljeret metadata for dine {approvedCount} valgte titler fra DFI og TMDb.
+            </p>
+          </div>
+
+          <div style={{ padding: "20px", backgroundColor: "var(--surface-container-low)", borderRadius: "8px", border: "1px solid var(--outline-variant)" }}>
+            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--primary)", fontFamily: "monospace" }}>
+              {Math.floor(importSeconds / 60)}:{(importSeconds % 60).toString().padStart(2, '0')}
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px" }}>
+              Tid gået
+            </div>
+          </div>
+
+          {approvedCount >= 5 && (
+            <p style={{ fontSize: "13px", color: "#B45309", fontWeight: 600, margin: 0, lineHeight: 1.6 }}>
+              ⚠️ Vær tålmodig. Du har klippet mange film! Dette kan tage lidt tid.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -206,14 +253,14 @@ export default function OnboardingClient({
                   Velkommen til DFKS Rettighedssystem
                 </h1>
                 <p style={{ color: "var(--on-surface-variant)", fontSize: "16px", lineHeight: 1.7, margin: 0 }}>
-                  Vi hjælper dig igennem en kort opsætning, så du er klar til at administrere
+                  Vi hjælper dig igennem a kort opsætning, så du er klar til at administrere
                   dine rettigheder, kontrakter og udbetalinger.
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
                 {[
                   { icon: "📋", text: "Bekræft dine personlige oplysninger" },
-                  { icon: "🎬", text: "Importer dine film fra DFI Filmdatabasen" },
+                  { icon: "🎬", text: "Importer dine film fra DFI Filmdatabasen og TMDb" },
                   { icon: "🔒", text: "Vælg dine privatlivsindstillinger" },
                 ].map((item) => (
                   <div key={item.text} style={{
@@ -303,20 +350,20 @@ export default function OnboardingClient({
             </div>
           )}
 
-          {/* Trin 3: DFI Værker */}
+          {/* Trin 3: DFI & TMDB Værker */}
           {step === 3 && (
             <div style={{ padding: "40px" }}>
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>
-                🎬 Dine film og serier i DFI
+                🎬 Dine film og serier i DFI & TMDb
               </h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
-                Vi har slået dit navn op i DFI Filmdatabasen. Bekræft de titler, du har medvirket til at skabe.
+                Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
 
               <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
                 <input
                   type="text"
-                  placeholder="Søg under et andet navn i DFI..."
+                  placeholder="Søg under et andet navn..."
                   value={dfiSearchQuery}
                   onChange={(e) => setDfiSearchQuery(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleManualDfiSearch(); }}
@@ -341,7 +388,7 @@ export default function OnboardingClient({
               {isSearchingDfi ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>
                   <Loader2 size={36} style={{ animation: "spin 1s linear infinite", color: "var(--primary)" }} />
-                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i DFI Filmdatabasen...</div>
+                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i DFI og TMDb...</div>
                 </div>
               ) : dfiCredits.length > 0 ? (
                 <div>
@@ -352,8 +399,8 @@ export default function OnboardingClient({
                     <button
                       onClick={() => {
                         const allSelected = Object.values(selectedDfiCredits).every((v) => v);
-                        const next: Record<number, boolean> = {};
-                        dfiCredits.forEach((c) => { next[c.Id] = !allSelected; });
+                        const next: Record<string, boolean> = {};
+                        dfiCredits.forEach((c) => { next[c.id] = !allSelected; });
                         setSelectedDfiCredits(next);
                       }}
                       style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
@@ -369,28 +416,42 @@ export default function OnboardingClient({
                     display: "flex", flexDirection: "column", padding: "4px",
                   }}>
                     {dfiCredits.map((c, i) => (
-                      <label key={`${c.Id}-${i}`} style={{
+                      <label key={`${c.id}-${i}`} style={{
                         display: "flex", alignItems: "flex-start", gap: "12px",
                         padding: "12px 16px",
                         borderBottom: "1px solid var(--outline-variant)",
                         cursor: "pointer",
-                        backgroundColor: selectedDfiCredits[c.Id] ? "var(--surface-container-high)" : "transparent",
+                        backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                         userSelect: "none",
                       }}>
                         <input
                           type="checkbox"
-                          checked={selectedDfiCredits[c.Id] || false}
-                          onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.Id]: e.target.checked }))}
+                          checked={selectedDfiCredits[c.id] || false}
+                          onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.id]: e.target.checked }))}
                           style={{ width: "16px", height: "16px", marginTop: "3px", accentColor: "var(--primary)" }}
                         />
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                          <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                            {c.Title} {c.ReleaseYear ? `(${c.ReleaseYear})` : ""}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
+                            <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                              {c.title} {c.year ? `(${c.year})` : ""}
+                            </div>
+                            <span style={{
+                              fontSize: "9px",
+                              fontWeight: 700,
+                              textTransform: "uppercase",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                              backgroundColor: c.source === "dfi" ? "#EFF6FF" : "#F3F4F6",
+                              color: c.source === "dfi" ? "#2563EB" : "#4B5563",
+                              border: c.source === "dfi" ? "1px solid #BFDBFE" : "1px solid #E5E7EB",
+                            }}>
+                              {c.source}
+                            </span>
                           </div>
                           <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", display: "flex", gap: "8px" }}>
-                            <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.Description || c.Type || "Medvirkende"}</span>
+                            <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.role}</span>
                             <span>•</span>
-                            <span>{c.Category}</span>
+                            <span>{c.category}</span>
                           </div>
                         </div>
                       </label>
@@ -408,8 +469,8 @@ export default function OnboardingClient({
                   <div style={{ fontSize: "36px" }}>🔍</div>
                   <div style={{ fontWeight: 600, fontSize: "15px", color: "var(--on-surface)" }}>Ingen film fundet automatisk</div>
                   <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", margin: 0, lineHeight: 1.6, maxWidth: "400px" }}>
-                    Vi kunne ikke finde dig i DFI Filmdatabasen under navnet <strong>{formData.first_name} {formData.last_name}</strong>.
-                    Brug søgefeltet ovenfor, eller fortsæt hvis du ikke har film registreret i DFI endnu.
+                    Vi kunne ikke finde dig i DFI eller TMDb under navnet <strong>{formData.first_name} {formData.last_name}</strong>.
+                    Brug søgefeltet ovenfor, eller fortsæt hvis du ikke har film registreret endnu.
                   </p>
                 </div>
               )}
@@ -519,11 +580,7 @@ export default function OnboardingClient({
                 disabled={isSearchingDfi || isImportingDfi}
                 style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
               >
-                {isImportingDfi ? (
-                  <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Importerer...</>
-                ) : (
-                  <>Fortsæt <ArrowRight size={16} /></>
-                )}
+                Fortsæt <ArrowRight size={16} />
               </button>
             ) : (
               <button
