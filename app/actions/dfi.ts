@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits } from "@/app/actions/tmdb";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -523,6 +523,19 @@ function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYea
   return true;
 }
 
+function isDfiSeriesParent(c: any): boolean {
+  const category = String(c.Category || "").toLowerCase();
+  const type = String(c.Type || "").toLowerCase();
+  const isSeries = category.includes("serie") || type.includes("serie");
+  
+  if (!isSeries) return false;
+  
+  const hasParent = Boolean(c.Parent?.Id);
+  const hasEpisodeInfo = Boolean(parseDfiEpisodeTitleInfo(c.Title ?? ""));
+  
+  return !hasParent && !hasEpisodeInfo;
+}
+
 export async function searchOnboardingCredits(
   firstName?: string,
   lastName?: string,
@@ -555,7 +568,9 @@ export async function searchOnboardingCredits(
       const dfiCreditsRes = await getDFIPersonCredits(p.Id);
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-        const filteredDfi = uniqueDfi.filter((c: any) => isRightBearingRole(c.Description || c.Type));
+        const filteredDfi = uniqueDfi
+          .filter((c: any) => isRightBearingRole(c.Description || c.Type))
+          .filter((c: any) => !isDfiSeriesParent(c));
         rawDfiCredits.push(...filteredDfi);
       }
     }

@@ -355,7 +355,7 @@ export default function OnboardingClient({
                 <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "6px" }}>
                   <span style={{ fontSize: "16px" }}>🔒</span>
                   <p style={{ fontSize: "12px", color: "#065F46", margin: 0, lineHeight: 1.5 }}>
-                    <strong>Sikkerhed & Kryptering:</strong> Dit CPR-nummer og kontonummer krypteres automatisk i din browser, før de sendes afsted, og opbevares i krypteret form i vores database. Al kommunikation og dataoverførsel sker over en fuldt krypteret og sikret forbindelse.
+                    <strong>Sikkerhed & Kryptering:</strong> Dit CPR-nummer og kontonummer krypteres automatisk i din browser, før de sendes afsted, og opbevares i krypteret form i vores database.
                   </p>
                 </div>
               </div>
