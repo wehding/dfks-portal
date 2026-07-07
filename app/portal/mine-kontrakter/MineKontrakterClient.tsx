@@ -2,8 +2,8 @@
 
 import React, { useState } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip } from "lucide-react";
-import { deleteMemberContract, getContractSignedUrl, linkContractToWork } from "@/app/actions/member-contracts";
-import { useSearchParams } from "next/navigation";
+import { addMemberContractComment, deleteMemberContract, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { useRouter, useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/co
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null } | null;
 type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string };
+type ContractComment = { id: string; author_role: "member" | "admin"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
 export type Contract = {
   id: string;
   type: string | null;
@@ -26,6 +27,7 @@ export type Contract = {
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
   contract_attachments: Attachment[];
+  contract_comments: ContractComment[];
 };
 
 const STATUS_MAP: Record<string, { label: string; bg: string; color: string }> = {
@@ -58,6 +60,14 @@ function getValidation(c: Contract): Validation {
   return v;
 }
 
+function normalizeContract(contract: Contract): Contract {
+  return {
+    ...contract,
+    contract_attachments: contract.contract_attachments ?? [],
+    contract_comments: contract.contract_comments ?? [],
+  };
+}
+
 type MyWork = { id: string; title: string; year: number | null; type: string };
 
 const MINE_KONTRAKTER_HELP: HelpTopic[] = [
@@ -87,10 +97,11 @@ export default function MineKontrakterClient({
   myWorks?: MyWork[];
 }) {
   const [contracts, setContracts] = useState(initialContracts);
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const [isUploading, setIsUploading] = useState(searchParams.get("upload") === "true");
-  const uploadWorkId    = searchParams.get("workId") ?? undefined;
-  const uploadWorkTitle = searchParams.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
+  const [isUploading, setIsUploading] = useState(searchParams?.get("upload") === "true");
+  const uploadWorkId    = searchParams?.get("workId") ?? undefined;
+  const uploadWorkTitle = searchParams?.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -101,6 +112,9 @@ export default function MineKontrakterClient({
   const [linkingSaving, setLinkingSaving] = useState(false);
   const [isAddingAllonge, setIsAddingAllonge] = useState(false);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(20);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentSaving, setCommentSaving] = useState(false);
 
   const total     = contracts.length;
   const godkendte = contracts.filter(c => c.status === "valideret").length;
@@ -115,6 +129,27 @@ export default function MineKontrakterClient({
       (c.overenskomst ?? "").toLowerCase().includes(t)
     );
   });
+  const visibleContracts = filtered.slice(0, pageSize);
+
+  async function handleAddComment() {
+    if (!selectedContract || !commentDraft.trim()) return;
+    setCommentSaving(true);
+    const res = await addMemberContractComment(selectedContract.id, commentDraft);
+    setCommentSaving(false);
+    if (!res.success || !("comment" in res) || !res.comment) {
+      setMsg({ type: "error", text: res.error ?? "Kunne ikke gemme kommentar" });
+      return;
+    }
+    const comment = res.comment as ContractComment;
+    const updatedContract = {
+      ...selectedContract,
+      contract_comments: [...selectedContract.contract_comments, comment],
+    };
+    setSelectedContract(updatedContract);
+    setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract : c));
+    setCommentDraft("");
+    setMsg({ type: "success", text: "Kommentar sendt til DFKS." });
+  }
 
   async function handleDelete(id: string) {
     if (!confirm("Er du sikker på at du vil slette denne kontrakt?")) return;
@@ -129,13 +164,40 @@ export default function MineKontrakterClient({
   }
 
   async function openContract(contract: Contract) {
-    setSelectedContract(contract);
+    setSelectedContract(normalizeContract(contract));
     setViewUrl(null);
+    void markCommentsRead(contract);
     if (!contract.pdf_url) return;
     setViewLoading(true);
     const res = await getContractSignedUrl(contract.pdf_url);
     setViewUrl(res.url ?? null);
     setViewLoading(false);
+  }
+
+  async function markCommentsRead(contract: Contract) {
+    const hasUnread = (contract.contract_comments ?? []).some(
+      c => c.author_role === "admin" && !c.member_read_at
+    );
+    if (!hasUnread) return;
+    const now = new Date().toISOString();
+    const patchComments = (c: Contract): Contract => ({
+      ...c,
+      contract_comments: (c.contract_comments ?? []).map(comment =>
+        comment.author_role === "admin" && !comment.member_read_at
+          ? { ...comment, member_read_at: now }
+          : comment
+      ),
+    });
+    setSelectedContract(prev => (prev && prev.id === contract.id ? patchComments(prev) : prev));
+    setContracts(prev => prev.map(c => (c.id === contract.id ? patchComments(c) : c)));
+    const res = await markContractCommentsRead(contract.id);
+    if (res.success) window.dispatchEvent(new CustomEvent("contracts-updated"));
+  }
+
+  function goToAddWork() {
+    const params = new URLSearchParams({ add: "1" });
+    if (workSearch.trim()) params.set("q", workSearch.trim());
+    router.push(`/portal/mine-vaerker?${params.toString()}`);
   }
 
   async function handleLinkWork(workId: string | null) {
@@ -209,16 +271,32 @@ export default function MineKontrakterClient({
       <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
 
         {/* Søgefelt */}
-        <div className="px-5 py-3.5 border-b border-gray-100">
+        <div className="flex flex-col gap-3 px-5 py-3.5 border-b border-gray-100 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative max-w-xs">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
             <Input
               placeholder="Søg i kontrakter..."
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-8 h-8 text-sm w-72"
+              className="pl-8 pr-8 h-8 text-sm w-72"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-700"
+                aria-label="Tøm søgefelt"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
+          <label className="flex items-center gap-2 text-sm text-gray-500">
+            Vis
+            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
+              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
         </div>
 
         {/* Kolonnehoveder */}
@@ -238,7 +316,7 @@ export default function MineKontrakterClient({
             <FileText className="mx-auto h-10 w-10 text-gray-300 mb-3" />
             <p>{contracts.length === 0 ? "Ingen kontrakter endnu. Klik 'Upload kontrakt' for at starte." : "Ingen resultater."}</p>
           </div>
-        ) : filtered.map(c => {
+        ) : visibleContracts.map(c => {
           const val = getValidation(c);
           return (
             <div
@@ -298,6 +376,7 @@ export default function MineKontrakterClient({
               employers: null,
               contract_validations: null,
               contract_attachments: [],
+              contract_comments: [],
             }, ...prev]);
             setIsUploading(false);
             setMsg({ type: "success", text: "Kontrakt indsendt til DFKS." });
@@ -423,7 +502,14 @@ export default function MineKontrakterClient({
                           </button>
                         ))}
                       {myWorks.filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase())).length === 0 && (
-                        <p className="text-sm text-gray-400 italic px-2 py-1.5">Ingen værker fundet</p>
+                        <div className="space-y-2 px-2 py-1.5">
+                          <p className="text-sm text-gray-400 italic">Ingen værker fundet</p>
+                          {workSearch.trim() && (
+                            <Button type="button" variant="outline" size="sm" onClick={goToAddWork} className="w-full">
+                              Tilføj værk
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
                     {linkingSaving && (
@@ -446,11 +532,11 @@ export default function MineKontrakterClient({
                     <Paperclip className="h-3 w-3" /> Tilføj allonge
                   </button>
                 </div>
-                {selectedContract.contract_attachments.length === 0 ? (
+                {(selectedContract.contract_attachments ?? []).length === 0 ? (
                   <p className="text-sm text-gray-400 italic">Ingen allonger endnu</p>
                 ) : (
                   <div className="flex flex-col gap-1.5">
-                    {selectedContract.contract_attachments.map(a => (
+                    {(selectedContract.contract_attachments ?? []).map(a => (
                       <button
                         key={a.id}
                         onClick={() => openAttachment(a)}
@@ -470,6 +556,35 @@ export default function MineKontrakterClient({
                     ))}
                   </div>
                 )}
+              </div>
+
+              {/* Kommentarer */}
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-2">Kommentarer</p>
+                <div className="max-h-44 space-y-2 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                  {(selectedContract.contract_comments ?? []).length === 0 ? (
+                    <p className="px-1 py-2 text-sm italic text-gray-400">Ingen kommentarer endnu</p>
+                  ) : (selectedContract.contract_comments ?? []).map(comment => (
+                    <div key={comment.id} className="rounded-md bg-white px-3 py-2 text-sm">
+                      <div className="mb-1 text-xs text-gray-500">
+                        {comment.author_role === "admin" ? "DFKS" : "Dig"} · {new Date(comment.created_at).toLocaleString("da-DK")}
+                      </div>
+                      <p className="text-gray-800">{comment.message}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    value={commentDraft}
+                    onChange={e => setCommentDraft(e.target.value)}
+                    placeholder="Skriv en kommentar til DFKS..."
+                    className="min-h-20 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                  />
+                  <Button onClick={handleAddComment} disabled={commentSaving || !commentDraft.trim()} className="w-full">
+                    {commentSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Send kommentar
+                  </Button>
+                </div>
               </div>
 
               {/* Slet */}

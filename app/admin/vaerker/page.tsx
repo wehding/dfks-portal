@@ -31,6 +31,7 @@ import {
   fetchAdminBroadcasters,
   fetchAdminRightsHolders,
   fetchAdminWorksForReview,
+  markWorkRequestCommentsRead,
   mergeAdminWorks,
   reviewWorkDataCorrection,
   updateAdminWorkData,
@@ -103,6 +104,8 @@ type CommentRow = {
   author_role: "member" | "admin";
   message: string;
   created_at: string;
+  member_read_at?: string | null;
+  admin_read_at?: string | null;
 };
 
 type ChangeRequest = {
@@ -283,6 +286,13 @@ function hasPendingRequest(work: WorkRow) {
   return (work.work_change_requests ?? []).some(request => request.status === "pending");
 }
 
+function unreadMemberMessageCount(work: WorkRow) {
+  return (work.work_change_requests ?? []).reduce((sum, request) =>
+    sum + (request.work_change_request_comments ?? []).filter(
+      comment => comment.author_role === "member" && !comment.admin_read_at
+    ).length, 0);
+}
+
 function displayStatus(work: WorkRow) {
   if (hasPendingRequest(work) || work.status === "til_godkendelse") return "til_godkendelse";
   if (work.status === "aktiv") return "godkendt";
@@ -306,6 +316,7 @@ function requestKindLabel(request: ChangeRequest) {
   if (proposed.kind === "creation") return "Oprettelse";
   if (proposed.kind === "co_editors") return "Medklippere";
   if (proposed.kind === "correction") return "Rettelse";
+  if (proposed.kind === "message") return "Besked";
   return request.source;
 }
 
@@ -628,6 +639,7 @@ export default function VaerksadministrationPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [pageSize, setPageSize] = useState(20);
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -704,7 +716,8 @@ export default function VaerksadministrationPage() {
 
   const filtered = useMemo(() => {
     let list = [...works];
-    if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
+    if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
+    else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(work =>
@@ -724,8 +737,8 @@ export default function VaerksadministrationPage() {
         title: [a.title ?? "", b.title ?? ""],
         type: [workTypeLabel(a.type), workTypeLabel(b.type)],
         data: [
-          `${a.dfi_id ?? ""} ${a.tmdb_id ?? ""} ${a.duration_minutes ?? ""} ${a.episode_count ?? ""} ${a.genre ?? ""}`,
-          `${b.dfi_id ?? ""} ${b.tmdb_id ?? ""} ${b.duration_minutes ?? ""} ${b.episode_count ?? ""} ${b.genre ?? ""}`,
+          `${a.dfi_id ?? ""} ${a.tmdb_id ?? ""} ${a.duration_minutes ?? ""} ${a.season_count ?? ""} ${a.episode_count ?? ""}`,
+          `${b.dfi_id ?? ""} ${b.tmdb_id ?? ""} ${b.duration_minutes ?? ""} ${b.season_count ?? ""} ${b.episode_count ?? ""}`,
         ],
         broadcaster: [getWorkBroadcaster(a) ?? "", getWorkBroadcaster(b) ?? ""],
         status: [statusSortValue(a), statusSortValue(b)],
@@ -735,6 +748,7 @@ export default function VaerksadministrationPage() {
     });
     return list;
   }, [works, filterStatus, search, sortKey, sortDir]);
+  const visibleWorks = filtered.slice(0, pageSize);
 
   const stats = useMemo(() => {
     const activeWorks = works.filter(work => displayStatus(work) !== "arkiveret");
@@ -815,8 +829,34 @@ export default function VaerksadministrationPage() {
 
   const sortMark = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : "";
 
+  const markWorkMessagesRead = async (work: WorkRow) => {
+    const unreadRequestIds = (work.work_change_requests ?? [])
+      .filter(request => (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
+      .map(request => request.id);
+    if (unreadRequestIds.length === 0) return;
+    const now = new Date().toISOString();
+    const patch = (w: WorkRow): WorkRow => ({
+      ...w,
+      work_change_requests: (w.work_change_requests ?? []).map(request =>
+        unreadRequestIds.includes(request.id)
+          ? {
+              ...request,
+              work_change_request_comments: (request.work_change_request_comments ?? []).map(c =>
+                c.author_role === "member" && !c.admin_read_at ? { ...c, admin_read_at: now } : c
+              ),
+            }
+          : request
+      ),
+    });
+    setWorks(prev => prev.map(w => (w.id === work.id ? patch(w) : w)));
+    setEditing(prev => (prev && prev.id === work.id ? patch(prev) : prev));
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id)));
+    if (results.some(r => r.success)) notifyWorksUpdated();
+  };
+
   const openEdit = (work: WorkRow) => {
     const pendingRequest = (work.work_change_requests ?? []).find(request => request.status === "pending") ?? null;
+    void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
     setAssignmentDrafts(Object.fromEntries((work.work_assignments ?? []).map(assignment => [
@@ -1377,7 +1417,17 @@ export default function VaerksadministrationPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8 pr-8" value={search} onChange={e => setSearch(e.target.value)} />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+              aria-label="Tøm søgefelt"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
@@ -1386,25 +1436,28 @@ export default function VaerksadministrationPage() {
             <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
             <SelectItem value="godkendt">Godkendt</SelectItem>
             <SelectItem value="arkiveret">Arkiveret</SelectItem>
+            <SelectItem value="beskeder">Beskeder</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
           Find dubletter
         </Button>
-        <Button variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving || selectedIds.length === 0}>
-          <CheckCircle2 className="h-4 w-4" />
-          Godkend valgte
-        </Button>
-        <Button variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)} disabled={saving || selectedIds.length === 0}>
-          <AlertTriangle className="h-4 w-4" />
-          Slet permanent
-        </Button>
+        <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+          Vis
+          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
+            {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
       </div>
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
           <span className="text-sm font-medium">{selectedIds.length} valgt</span>
+          <Button size="sm" variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving}>
+            <CheckCircle2 className="h-4 w-4" />
+            Godkend valgte
+          </Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setArchiveOpen(true)}>
             <Trash2 className="h-4 w-4" />
             Arkiver
@@ -1438,7 +1491,7 @@ export default function VaerksadministrationPage() {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</TableCell></TableRow>
-            ) : filtered.map(work => {
+            ) : visibleWorks.map(work => {
               const status = displayStatus(work);
               const broadcaster = getWorkBroadcaster(work);
               const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
@@ -1462,9 +1515,14 @@ export default function VaerksadministrationPage() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <button onClick={() => openEdit(work)} className="text-left font-medium underline-offset-4 hover:underline">{work.title}</button>
+                          {unreadMemberMessageCount(work) > 0 && (
+                            <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
+                              {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
+                            </Badge>
+                          )}
                           {pendingCount > 0 && (
                             <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                              {pendingCount} pending request{pendingCount === 1 ? "" : "s"}
+                              Skal godkendes
                             </Badge>
                           )}
                         </div>
@@ -1476,8 +1534,17 @@ export default function VaerksadministrationPage() {
                   <TableCell className="text-sm tabular-nums text-muted-foreground">{work.year ?? "-"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     <div>DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"}</div>
-                    <div>Varighed: {work.duration_minutes ?? "-"} · Afsnit: {work.episode_count ?? "-"} · Genre: {work.genre ?? "-"}</div>
-                    <div>Kontrakter: {work.contracts?.length ?? 0} · Poster: {work.poster_url ? "ja" : "nej"}</div>
+                    <div>
+                      Varighed: {work.duration_minutes ?? "-"}
+                      {isSeriesType(work.type) && <> · Sæson: {work.season_count ?? "-"} · Afsnit: {work.episode_count ?? "-"}</>}
+                    </div>
+                    <div>Kontrakter: {work.contracts?.length ?? 0}</div>
+                    {(() => {
+                      const coEditors = (work.work_assignments ?? [])
+                        .map(a => a.rettighedshavere?.full_name)
+                        .filter((name): name is string => Boolean(name));
+                      return coEditors.length > 0 ? <div>Medklippere: {coEditors.join(", ")}</div> : null;
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {broadcaster ? (
@@ -2060,6 +2127,7 @@ export default function VaerksadministrationPage() {
               <InfoPanel title="Søg i lokal database, DFI og TMDB">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
+                    autoFocus
                     placeholder="Søg titel i lokal database, DFI og TMDB..."
                     value={addQuery}
                     onChange={e => setAddQuery(e.target.value)}

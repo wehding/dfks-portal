@@ -393,9 +393,9 @@ Se MEMORY.md for fuld beskrivelse. Kort:
 
 ## Når du er i tvivl
 
-Spørg Martin. Han har dyb domæneviden om den danske filmindustri og ved præcis hvilke klausuler der er normale vs. kritiske.
+Martin har dyb domæneviden om den danske filmindustri og ved præcis hvilke klausuler der er normale vs. kritiske — træk på ham som ressource ved tvivl. Han skal **ikke** godkende ændringer før merge.
 
-### Hvad du IKKE må ændre uden Martins godkendelse
+### Vær ekstra varsom med (dobbelttjek grundigt — men kræver ikke godkendelse)
 - Domæneviden (royaltysatser, kontrakttyper, lovgivning)
 - "Rør ikke"-regler under Arkitekturbeslutninger
 - Modulernes formål og adskillelse
@@ -408,5 +408,4 @@ Arbejd aldrig direkte på master.
 Opret altid en sidebranch før ændringer: `feat/...`, `fix/...` eller `refactor/...`.
 Push altid sidebranchen og lav Pull Request ind i master.
 Direkte push til master er ikke tilladt.
-Ved domæneændringer eller tvivl: spørg Martin før merge.
 Lav altid PRs mod `wehding/dfks-portal` som base repository — aldrig mod upstream.

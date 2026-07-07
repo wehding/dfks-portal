@@ -136,6 +136,7 @@ async function createWorkRequest(params: {
   oldData?: Record<string, unknown>;
   proposedData: Record<string, unknown>;
   comment: string;
+  status?: "pending" | "approved" | "rejected";
 }) {
   const orgId = await currentOrgId(params.db, params.userId);
   const { data: request, error: requestError } = await params.db
@@ -148,22 +149,46 @@ async function createWorkRequest(params: {
       source: params.source,
       old_data: params.oldData ?? {},
       proposed_data: params.proposedData,
-      status: "pending",
+      status: params.status ?? "pending",
     })
     .select("id")
     .single();
 
   if (requestError || !request?.id) throw new Error(requestError?.message ?? "Kunne ikke oprette request.");
 
-  const message = params.comment.trim() || "Ingen bemærkning.";
-  const { error: commentError } = await params.db.from("work_change_request_comments").insert({
+  const trimmed = params.comment.trim();
+  const now = new Date().toISOString();
+  const baseComment = {
     request_id: request.id,
     author_user_id: params.userId,
     author_role: "member",
-    message,
+    message: trimmed || "Ingen bemærkning.",
+  };
+  let { error: commentError } = await params.db.from("work_change_request_comments").insert({
+    ...baseComment,
+    member_read_at: now,
+    // Kun reelle beskeder tæller som ulæst for admin (pending besked).
+    // Tom bemærkning markeres som læst, så den ikke giver falsk besked-badge.
+    admin_read_at: trimmed ? null : now,
   });
+  // Fallback hvis read-markør-kolonnerne endnu ikke er migreret ind i DB'en
+  // (migration 20260706190000). Så crasher work-add ikke før migrationen er kørt.
+  if (commentError && /read_at|schema cache/i.test(commentError.message)) {
+    ({ error: commentError } = await params.db.from("work_change_request_comments").insert(baseComment));
+  }
   if (commentError) throw new Error(commentError.message);
   return request.id as string;
+}
+
+// Fjerner afsnits-suffiks fra en afsnitstitel for at få seriens grundtitel.
+// "Frontlinjen - S01E01: Vi kommer med fred" -> "Frontlinjen"
+// "Frontlinjen 1:6 - Vi kommer med fred"     -> "Frontlinjen"
+function deriveSeriesBaseTitle(title: string | null | undefined): string {
+  return (title ?? "")
+    .replace(/\s*[-–—]?\s*S\d+E\d+.*$/i, "")
+    .replace(/\s*\d+:\d+\s*[-–—:].*$/i, "")
+    .replace(/\s*[-–—:]\s*$/, "")
+    .trim();
 }
 
 async function fetchMemberAssignment(db: ReturnType<typeof createServiceClient>, workId: string, rightsHolderId: string) {
@@ -309,7 +334,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -342,35 +367,101 @@ export async function linkExistingWorkForMember(params: {
 
   let targetWorkIds = [params.workId];
 
-  // Hvis det er en serie og der er angivet sæson, find eller generer afsnit
+  // Hvis det er en serie, skal medlemmet tilknyttes konkrete afsnit.
   const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
-  if (isSeries && params.seasonNumber) {
-    if (work.parent_work_id === null) {
-      // Sørg for at afsnit er genereret for denne sæson
-      const genRes = await generateEpisodesForSeries({
-        parentWork: work as unknown as DbWork,
-        seasonNumber: params.seasonNumber,
-      });
-      if (genRes.success) {
-        const selectedEpisodeNumbers = (params.selectedEpisodes ?? []).filter(Number.isFinite);
-        let episodeQuery = db
-          .from("works")
-          .select("id")
-          .eq("parent_work_id", work.id)
-          .eq("season_number", params.seasonNumber);
+  const selectedEpisodeNumbers = (params.selectedEpisodes ?? []).filter(Number.isFinite);
 
-        if (selectedEpisodeNumbers.length > 0) {
-          episodeQuery = episodeQuery.in("episode_number", selectedEpisodeNumbers);
-        } else if (params.episodeNumber) {
-          episodeQuery = episodeQuery.eq("episode_number", params.episodeNumber);
-        }
-
-        const { data: epWorks } = await episodeQuery;
-        if (epWorks && epWorks.length > 0) {
-          targetWorkIds = epWorks.map(ep => ep.id);
-        }
-      }
+  if (isSeries && work.parent_work_id === null && work.episode_number === null) {
+    // Ægte serie-parent → generér og tilknyt de valgte afsnit.
+    if (!params.seasonNumber) {
+      return { success: false, error: "Vælg mindst ét afsnit." };
     }
+    if (selectedEpisodeNumbers.length === 0 && !params.episodeNumber) {
+      return { success: false, error: "Vælg mindst ét afsnit." };
+    }
+
+    const genRes = await generateEpisodesForSeries({
+      parentWork: work as unknown as DbWork,
+      seasonNumber: params.seasonNumber,
+    });
+    if (!genRes.success) return { success: false, error: genRes.error };
+
+    let episodeQuery = db
+      .from("works")
+      .select("id")
+      .eq("parent_work_id", work.id)
+      .eq("season_number", params.seasonNumber);
+
+    if (selectedEpisodeNumbers.length > 0) {
+      episodeQuery = episodeQuery.in("episode_number", selectedEpisodeNumbers);
+    } else if (params.episodeNumber) {
+      episodeQuery = episodeQuery.eq("episode_number", params.episodeNumber);
+    }
+
+    const { data: epWorks } = await episodeQuery;
+    if (epWorks && epWorks.length > 0) {
+      targetWorkIds = epWorks.map(ep => ep.id);
+    }
+    if (targetWorkIds.length === 0 || targetWorkIds.includes(params.workId)) {
+      return { success: false, error: "Ingen afsnit fundet til tildeling." };
+    }
+  } else if (isSeries && work.episode_number !== null) {
+    // Brugeren valgte et enkelt afsnit-værk → tilknyt de valgte afsnitsnumre.
+    // Eksisterende søsken-afsnit (samme DFI/TMDB-serie) genbruges; manglende oprettes.
+    const seasonNum = params.seasonNumber ?? work.season_number ?? 1;
+    const wanted = selectedEpisodeNumbers.length > 0
+      ? selectedEpisodeNumbers
+      : params.episodeNumber
+      ? [params.episodeNumber]
+      : [work.episode_number];
+
+    let siblingQuery = db
+      .from("works")
+      .select("id, episode_number")
+      .eq("org_id", orgId)
+      .in("type", ["tv-serie", "dokumentar-serie"])
+      .not("episode_number", "is", null);
+    if (work.dfi_id) siblingQuery = siblingQuery.eq("dfi_id", work.dfi_id);
+    else if (work.tmdb_id) siblingQuery = siblingQuery.eq("tmdb_id", work.tmdb_id);
+    else siblingQuery = siblingQuery.eq("id", work.id);
+
+    const { data: siblings } = await siblingQuery;
+    const existingByNum = new Map<number, string>();
+    for (const s of siblings ?? []) if (s.episode_number != null) existingByNum.set(s.episode_number, s.id);
+
+    const ids: string[] = [];
+    const missing: number[] = [];
+    for (const n of wanted) {
+      const existing = existingByNum.get(n);
+      if (existing) ids.push(existing);
+      else missing.push(n);
+    }
+
+    // Opret manglende afsnit som selvstændige afsnit-værker (samme metadata).
+    if (missing.length > 0) {
+      const baseTitle = deriveSeriesBaseTitle(work.title);
+      const sStr = String(seasonNum).padStart(2, "0");
+      const rows = missing.map(n => ({
+        org_id: orgId,
+        status: "godkendt",
+        title: `${baseTitle} - S${sStr}E${String(n).padStart(2, "0")}`,
+        type: work.type,
+        year: work.year,
+        season_number: seasonNum,
+        episode_number: n,
+        genre: work.genre ?? null,
+        director: work.director ?? null,
+        poster_url: work.poster_url ?? null,
+        dfi_id: work.dfi_id ?? null,
+        tmdb_id: work.tmdb_id ?? null,
+        dfi_metadata: work.dfi_metadata ?? null,
+      }));
+      const { data: created, error: createErr } = await db.from("works").insert(rows).select("id");
+      if (createErr) return { success: false, error: createErr.message };
+      for (const c of created ?? []) ids.push(c.id);
+    }
+
+    targetWorkIds = ids.length > 0 ? ids : [work.id];
   }
 
   const assignments = targetWorkIds.map(workId => ({
@@ -400,11 +491,27 @@ export async function linkExistingWorkForMember(params: {
       proposedData: { kind: "co_editors", coEditors },
       comment: params.comment ?? "",
     });
-    await db.from("works").update({ status: "til_godkendelse" }).eq("id", params.workId);
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
     return { success: true, pending: true, requestId, assignment: fresh };
+  }
+
+  // Genbrug af eksisterende værk kræver ikke godkendelse. Men skrev brugeren en
+  // besked, oprettes en auto-godkendt besked-request så den vises som pending besked.
+  if ((params.comment ?? "").trim()) {
+    await createWorkRequest({
+      db,
+      workId: targetWorkIds[0] ?? params.workId,
+      userId: user.id,
+      rightsHolderId: params.rightsHolderId,
+      source: "Mine værker - besked",
+      oldData: { work },
+      proposedData: { kind: "message" },
+      comment: params.comment ?? "",
+      status: "approved",
+    });
+    revalidatePath("/admin/vaerker");
   }
 
   const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
@@ -426,7 +533,9 @@ export async function addWorkForMemberWithApproval(params: {
   const orgId = await currentOrgId(db, user.id);
   const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
   const coEditors = normalizeCoEditors(params.coEditors);
-  const requiresApproval = params.overrideLocalMatch || similarWorks.length > 0 || coEditors.length > 0;
+  // Godkendelse kræves KUN når værket allerede findes i databasen (dublet-tilføjelse
+  // via DFI/TMDB/manuelt). Helt nye, umatchede værker godkendes automatisk.
+  const requiresApproval = similarWorks.length > 0;
   let dfiMetadata = params.workData.dfi_metadata ?? null;
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? null;
@@ -464,6 +573,7 @@ export async function addWorkForMemberWithApproval(params: {
   const isSeries = params.workData.type === "tv-serie" || params.workData.type === "dokumentar-serie";
   let finalWorkId: string;
   let parentWork: DbWork | null = null;
+  let parentWasCreated = false;
 
   if (isSeries) {
     // 1. Forsøg at finde eksisterende overordnet serieværk
@@ -505,6 +615,7 @@ export async function addWorkForMemberWithApproval(params: {
         .single();
       if (parentError || !data) return { success: false, error: parentError?.message ?? "Kunne ikke oprette serieværk." };
       parentWork = data;
+      parentWasCreated = true;
     }
 
     if (!parentWork) return { success: false, error: "Kunne ikke finde eller oprette serieværk." };
@@ -532,7 +643,7 @@ export async function addWorkForMemberWithApproval(params: {
     } else if (params.workData.episode_number) {
       targetEpisodes = (episodes ?? []).filter(e => e.episode_number === params.workData.episode_number);
     } else {
-      targetEpisodes = episodes ?? [];
+      return { success: false, error: "Vælg mindst ét afsnit." };
     }
 
     if (targetEpisodes.length === 0) {
@@ -553,6 +664,21 @@ export async function addWorkForMemberWithApproval(params: {
     if (assignErr) return { success: false, error: assignErr.message };
 
     finalWorkId = targetEpisodes[0].id;
+
+    if (parentWasCreated) {
+      const targetEpisodeIds = targetEpisodes.map(ep => ep.id);
+      const { error: detachErr } = await db
+        .from("works")
+        .update({ parent_work_id: null })
+        .in("id", targetEpisodeIds);
+      if (detachErr) return { success: false, error: detachErr.message };
+
+      const { error: deleteParentErr } = await db
+        .from("works")
+        .delete()
+        .eq("id", parentWork.id);
+      if (deleteParentErr) return { success: false, error: deleteParentErr.message };
+    }
   } else {
     // Enkeltværk flow
     const insertPayload = {
@@ -593,7 +719,7 @@ export async function addWorkForMemberWithApproval(params: {
   if (requiresApproval) {
     const requestId = await createWorkRequest({
       db,
-      workId: isSeries && parentWork ? parentWork.id : finalWorkId,
+      workId: finalWorkId,
       userId: user.id,
       rightsHolderId: params.rightsHolderId,
       source: "Mine værker - oprettelse",
@@ -614,10 +740,40 @@ export async function addWorkForMemberWithApproval(params: {
     return { success: true, pending: true, requestId, workId: finalWorkId, assignment: fresh };
   }
 
+  let coEditorsRequestId: string | null = null;
+  if (coEditors.length > 0) {
+    coEditorsRequestId = await createWorkRequest({
+      db,
+      workId: finalWorkId,
+      userId: user.id,
+      rightsHolderId: params.rightsHolderId,
+      source: "Mine værker - medklippere",
+      proposedData: {
+        kind: "co_editors",
+        coEditors,
+        source: params.source,
+      },
+      comment: params.comment,
+    });
+  } else if (params.comment.trim()) {
+    // Ingen godkendelse nødvendig, men brugeren skrev en besked →
+    // opret en auto-godkendt besked-request så den vises som pending besked.
+    await createWorkRequest({
+      db,
+      workId: finalWorkId,
+      userId: user.id,
+      rightsHolderId: params.rightsHolderId,
+      source: "Mine værker - besked",
+      proposedData: { kind: "message", source: params.source },
+      comment: params.comment,
+      status: "approved",
+    });
+  }
+
   const fresh = await fetchMemberAssignment(db, finalWorkId, params.rightsHolderId);
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
-  return { success: true, assignment: fresh };
+  return { success: true, assignment: fresh, coEditorsPending: Boolean(coEditorsRequestId), coEditorsRequestId };
 }
 
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {

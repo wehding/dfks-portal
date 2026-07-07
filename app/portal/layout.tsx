@@ -77,6 +77,15 @@ const ROLE_MODULES: Record<string, string[]> = {
     viewer:      ["kontrakter", "statistik"],
 }
 
+type WorkRequestCounterRow = {
+    work_change_request_comments?: Array<{ author_role: string; member_read_at: string | null }>
+}
+
+type ContractCommentCounterRow = {
+    author_role: string
+    member_read_at: string | null
+}
+
 export default function PortalLayout({
     children,
 }: {
@@ -87,6 +96,10 @@ export default function PortalLayout({
     const router = useRouter()
     const [roleList, setRoleList] = useState<string[]>([])
     const [pendingCount, setPendingCount] = useState<number>(0)
+    const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
+    const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
+    const [workMessageCount, setWorkMessageCount] = useState<number>(0)
+    const [contractMessageCount, setContractMessageCount] = useState<number>(0)
 
     useEffect(() => {
         const supabase = createClient()
@@ -95,12 +108,36 @@ export default function PortalLayout({
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
             const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-            const { count } = await supabase
-                .from("contracts")
-                .select("id", { count: "exact", head: true })
-                .eq("org_id", orgId)
-                .eq("status", "kladde")
-            setPendingCount(count ?? 0)
+            const [contractsRes, worksRes, contractMessagesRes] = await Promise.all([
+                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
+                supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
+                supabase.from("contract_comments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("author_role", "member").is("admin_read_at", null),
+            ])
+            setPendingCount(contractsRes.count ?? 0)
+            setPendingWorksCount(worksRes.count ?? 0)
+            setPendingContractMessagesCount(contractMessagesRes.count ?? 0)
+
+            const { data: requests } = await supabase
+                .from("work_change_requests")
+                .select("id, work_change_request_comments(id, author_role, member_read_at)")
+                .eq("requested_by_user_id", user.id)
+            setWorkMessageCount(((requests ?? []) as WorkRequestCounterRow[]).reduce((sum, request) => {
+                const comments = request.work_change_request_comments ?? []
+                return sum + comments.filter(comment => comment.author_role === "admin" && !comment.member_read_at).length
+            }, 0))
+
+            const { data: rh } = await supabase
+                .from("rettighedshavere")
+                .select("id")
+                .eq("user_id", user.id)
+                .maybeSingle()
+            if (rh?.id) {
+                const { data: comments } = await supabase
+                    .from("contract_comments")
+                    .select("id, author_role, member_read_at, contracts!inner(rights_holder_id)")
+                    .eq("contracts.rights_holder_id", rh.id)
+                setContractMessageCount(((comments ?? []) as ContractCommentCounterRow[]).filter(comment => comment.author_role === "admin" && !comment.member_read_at).length)
+            }
         }
 
         supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -200,12 +237,22 @@ export default function PortalLayout({
                                                     asChild
                                                     isActive={
                                                         pathname === item.href ||
-                                                        pathname.startsWith(`${item.href}/`)
+                                                        (pathname?.startsWith(`${item.href}/`) ?? false)
                                                     }
                                                 >
                                                     <Link href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
+                                                        {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
+                                                            <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                                                {workMessageCount}
+                                                            </span>
+                                                        )}
+                                                        {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
+                                                            <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                                                {contractMessageCount}
+                                                            </span>
+                                                        )}
                                                     </Link>
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
@@ -228,16 +275,21 @@ export default function PortalLayout({
                                                     asChild
                                                     isActive={
                                                         pathname === item.href ||
-                                                        pathname.startsWith(`${item.href}/`) ||
-                                                        (item.key === "kontrakter" && pathname.startsWith("/admin/validering"))
+                                                        (pathname?.startsWith(`${item.href}/`) ?? false) ||
+                                                        (item.key === "kontrakter" && (pathname?.startsWith("/admin/validering") ?? false))
                                                     }
                                                 >
                                                     <Link href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
-                                                        {item.key === "kontrakter" && pendingCount > 0 && (
+                                                        {item.key === "kontrakter" && (pendingCount + pendingContractMessagesCount) > 0 && (
                                                             <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
-                                                                {pendingCount}
+                                                                {pendingCount + pendingContractMessagesCount}
+                                                            </span>
+                                                        )}
+                                                        {item.key === "vaerker" && pendingWorksCount > 0 && (
+                                                            <span className="ml-auto inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
+                                                                {pendingWorksCount}
                                                             </span>
                                                         )}
                                                     </Link>
@@ -261,6 +313,16 @@ export default function PortalLayout({
                                                 <Link href={item.href}>
                                                     <item.icon className="h-4 w-4" />
                                                     <span>{item.label}</span>
+                                                    {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
+                                                        <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                                            {workMessageCount}
+                                                        </span>
+                                                    )}
+                                                    {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
+                                                        <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
+                                                            {contractMessageCount}
+                                                        </span>
+                                                    )}
                                                 </Link>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>

@@ -185,3 +185,17 @@ export function parseDfiEpisodeTitleInfo(title: string | null | undefined) {
   return null;
 }
 
+
+/**
+ * Fjerner "oversigt" fra DFI parent-titler (fx serie-oversigter).
+ * "Velkommen til frontlinjen - oversigt" -> "Velkommen til frontlinjen".
+ * No-op hvis "oversigt" ikke er i titlen.
+ */
+export function cleanDfiTitle(title: string | null | undefined): string {
+  return (title ?? "")
+    .replace(/\s*[-–—:]\s*oversigt\s*$/i, "")
+    .replace(/\boversigt\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s*[-–—:]\s*$/, "")
+    .trim();
+}

@@ -33,6 +33,11 @@ interface CoEditorDraft {
   action?: "add" | "remove" | "change";
 }
 
+type CoEditorSuggestion = {
+  id: string;
+  full_name: string;
+};
+
 interface WorkCorrectionForm {
   title: string;
   type: string;
@@ -196,6 +201,7 @@ export function EditWorkModal({
   const [workCorrection, setWorkCorrection]             = useState<WorkCorrectionForm | null>(null);
   const [workCorrectionComment, setWorkCorrectionComment] = useState("");
   const [editCoEditors, setEditCoEditors]               = useState<CoEditorDraft[]>([]);
+  const [coEditorSuggestions, setCoEditorSuggestions]   = useState<Record<string, CoEditorSuggestion[]>>({});
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
   const [commentError, setCommentError]                 = useState(false);
 
@@ -206,6 +212,7 @@ export function EditWorkModal({
       setWorkCorrection(assignment.works ? workToCorrectionForm(assignment.works) : null);
       setWorkCorrectionComment("");
       setCommentError(false);
+      setCoEditorSuggestions({});
       setEditCoEditors(
         (allAssignments ?? [])
           .filter(other => other.work_id === assignment.works?.id)
@@ -220,6 +227,24 @@ export function EditWorkModal({
       );
     }
   }, [isOpen, assignment, allAssignments]);
+
+  const searchCoEditors = async (editorId: string, query: string) => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setCoEditorSuggestions(prev => ({ ...prev, [editorId]: [] }));
+      return;
+    }
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("rettighedshavere")
+      .select("id, full_name")
+      .ilike("full_name", `%${q}%`)
+      .limit(6);
+    const existingIds = new Set(editCoEditors.map(editor => editor.rightsHolderId).filter(Boolean));
+    const suggestions = ((data ?? []) as CoEditorSuggestion[])
+      .filter(suggestion => !existingIds.has(suggestion.id));
+    setCoEditorSuggestions(prev => ({ ...prev, [editorId]: suggestions }));
+  };
 
   const handleSendWorkCorrection = async () => {
     if (!assignment.works || !workCorrection) return;
@@ -365,20 +390,47 @@ export function EditWorkModal({
         <div className="space-y-2">
           {editCoEditors.map(editor => (
             <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
-              <Input
-                value={editor.name}
-                disabled={editor.locked && editor.action !== "change"}
-                onChange={e =>
-                  setEditCoEditors(prev =>
-                    prev.map(item =>
-                      item.id === editor.id
-                        ? { ...item, name: e.target.value, action: item.locked ? "change" : item.action }
-                        : item
-                    )
-                  )
-                }
-                placeholder={t("works.namePlaceholder")}
-              />
+              <div className="relative">
+                <Input
+                  value={editor.name}
+                  disabled={editor.locked && editor.action !== "change"}
+                  onChange={e => {
+                      const value = e.target.value;
+                      setEditCoEditors(prev =>
+                        prev.map(item =>
+                          item.id === editor.id
+                            ? { ...item, name: value, rightsHolderId: null, action: item.locked ? "change" : item.action }
+                            : item
+                        )
+                      );
+                      searchCoEditors(editor.id, value);
+                    }}
+                  placeholder={t("works.namePlaceholder")}
+                />
+                {(coEditorSuggestions[editor.id] ?? []).length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full rounded-md border border-gray-200 bg-white shadow-sm">
+                    {(coEditorSuggestions[editor.id] ?? []).map(suggestion => (
+                      <button
+                        key={suggestion.id}
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+                        onClick={() => {
+                          setEditCoEditors(prev =>
+                            prev.map(item =>
+                              item.id === editor.id
+                                ? { ...item, name: suggestion.full_name, rightsHolderId: suggestion.id, action: item.locked ? "change" : item.action }
+                                : item
+                            )
+                          );
+                          setCoEditorSuggestions(prev => ({ ...prev, [editor.id]: [] }));
+                        }}
+                      >
+                        {suggestion.full_name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <select
                 value={editor.role}
                 disabled={editor.locked && editor.action !== "change"}

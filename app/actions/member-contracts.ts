@@ -16,6 +16,23 @@ type ContractExtractData = {
   endDate?: string | null;
 };
 
+const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
+
+async function currentUser() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return user;
+}
+
+async function assertAdminForOrg(db: ReturnType<typeof createServiceClient>, userId: string, orgId: string) {
+  const { data } = await db
+    .from("user_org_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("org_id", orgId);
+  return (data ?? []).some(row => ADMIN_ROLES.includes(row.role));
+}
+
 export async function uploadMemberContract(formData: FormData) {
   const supabase = await createClient();
   const db = createServiceClient();
@@ -223,5 +240,173 @@ export async function deleteMemberContract(contractId: string) {
   await db.from("contracts").delete().eq("id", contractId);
 
   revalidatePath("/portal/mine-kontrakter");
+  return { success: true };
+}
+
+export async function deleteAdminContractsPermanently(contractIds: string[]) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const ids = [...new Set(contractIds.filter(Boolean))];
+  if (ids.length === 0) return { success: false, error: "Ingen kontrakter valgt" };
+
+  const db = createServiceClient();
+  const { data: rows, error: fetchErr } = await db
+    .from("contracts")
+    .select("id, org_id, pdf_url")
+    .in("id", ids);
+  if (fetchErr) return { success: false, error: fetchErr.message };
+
+  const found = rows ?? [];
+  if (found.length === 0) return { success: false, error: "Ingen af kontrakterne blev fundet" };
+
+  // Admin skal have rettigheder i hver org kontrakterne tilhører
+  const orgIds = [...new Set(found.map(row => row.org_id))];
+  for (const orgId of orgIds) {
+    if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  }
+
+  // Masse-sletning af mere end 20 kontrakter kræver superadmin (server-side spærre)
+  if (found.length > 20) {
+    const { data: superRows } = await db
+      .from("user_org_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "superadmin")
+      .limit(1);
+    if (!superRows || superRows.length === 0) {
+      return { success: false, error: "Kun superadmin kan slette mere end 20 kontrakter ad gangen." };
+    }
+  }
+
+  const pdfs = found.map(row => row.pdf_url).filter((url): url is string => Boolean(url));
+  if (pdfs.length > 0) await db.storage.from(BUCKET).remove(pdfs);
+
+  // Slet i batches så store cascade-sletninger ikke rammer statement-timeout
+  const foundIds = found.map(row => row.id);
+  for (let i = 0; i < foundIds.length; i += 50) {
+    const chunk = foundIds.slice(i, i + 50);
+    const { error } = await db.from("contracts").delete().in("id", chunk);
+    if (error) return { success: false, error: error.message };
+  }
+
+  revalidatePath("/admin/kontrakter");
+  return { success: true, deletedCount: foundIds.length };
+}
+
+export async function addMemberContractComment(contractId: string, message: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const text = message.trim();
+  if (!text) return { success: false, error: "Skriv en kommentar først." };
+
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .single();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil" };
+
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id")
+    .eq("id", contractId)
+    .single();
+  if (!contract || contract.rights_holder_id !== rh.id) return { success: false, error: "Kontrakt ikke fundet" };
+
+  const { data: comment, error } = await db
+    .from("contract_comments")
+    .insert({
+      org_id: contract.org_id,
+      contract_id: contract.id,
+      author_user_id: user.id,
+      author_role: "member",
+      message: text,
+      member_read_at: new Date().toISOString(),
+    })
+    .select("id, author_role, message, created_at, member_read_at, admin_read_at")
+    .single();
+
+  if (error || !comment) return { success: false, error: error?.message ?? "Kunne ikke gemme kommentaren" };
+  revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/admin/kontrakter");
+  return { success: true, comment };
+}
+
+export async function addAdminContractComment(contractId: string, message: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const text = message.trim();
+  if (!text) return { success: false, error: "Skriv et svar først." };
+
+  const db = createServiceClient();
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id")
+    .eq("id", contractId)
+    .single();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+
+  const { data: comment, error } = await db
+    .from("contract_comments")
+    .insert({
+      org_id: contract.org_id,
+      contract_id: contract.id,
+      author_user_id: user.id,
+      author_role: "admin",
+      message: text,
+      admin_read_at: new Date().toISOString(),
+    })
+    .select("id, author_role, message, created_at, member_read_at, admin_read_at")
+    .single();
+
+  if (error || !comment) return { success: false, error: error?.message ?? "Kunne ikke gemme svaret" };
+  revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/admin/kontrakter");
+  return { success: true, comment };
+}
+
+export async function markContractCommentsRead(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const db = createServiceClient();
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id")
+    .eq("id", contractId)
+    .single();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+
+  const now = new Date().toISOString();
+
+  // Afgør om den der læser er medlem (rettighedshaver) eller admin
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const isMember = Boolean(rh && rh.id === contract.rights_holder_id);
+  const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
+
+  if (!isMember && !isAdmin) return { success: false, error: "Ikke autoriseret" };
+
+  // Medlem markerer admin-beskeder læst; admin markerer medlem-beskeder læst.
+  const query = db
+    .from("contract_comments")
+    .update(isMember ? { member_read_at: now } : { admin_read_at: now })
+    .eq("contract_id", contractId)
+    .eq("author_role", isMember ? "admin" : "member")
+    .is(isMember ? "member_read_at" : "admin_read_at", null);
+
+  const { error } = await query;
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/admin/kontrakter");
   return { success: true };
 }

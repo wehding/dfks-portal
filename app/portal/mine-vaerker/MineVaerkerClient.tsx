@@ -6,8 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { removeWorkAssignments } from "@/app/actions/member-works";
+import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { DfiImportWizard } from "./components/DfiImportWizard";
@@ -47,6 +48,8 @@ type RequestComment = {
   author_role: "member" | "admin";
   message: string;
   created_at: string;
+  member_read_at?: string | null;
+  admin_read_at?: string | null;
 };
 
 type ChangeRequest = {
@@ -117,6 +120,7 @@ function requestKindLabel(request: ChangeRequest) {
   const kind = request.proposed_data?.kind;
   if (kind === "creation") return "Nyt værk";
   if (kind === "co_editors") return "Medklippere";
+  if (kind === "message") return "Besked";
   return "Rettelse";
 }
 
@@ -201,14 +205,24 @@ export default function MineVaerkerClient({
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [pageSize, setPageSize] = useState(20);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
   const [wizardOpen, setWizardOpen]         = useState(false);
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
+  const [initialAddQuery, setInitialAddQuery] = useState("");
 
   const supabase = createClient();
   const router   = useRouter();
+  const searchParams = useSearchParams();
+
+  React.useEffect(() => {
+    if (searchParams?.get("add") === "1") {
+      setInitialAddQuery(searchParams?.get("q") ?? "");
+      setIsAdding(true);
+    }
+  }, [searchParams]);
 
   const categories = [
     { value: "all", da: "Alle", en: "All" },
@@ -258,6 +272,7 @@ export default function MineVaerkerClient({
       if (av > bv) return sortDir === "asc" ?  1 : -1;
       return 0;
     });
+  const visibleAssignments = filtered.slice(0, pageSize);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -283,7 +298,42 @@ export default function MineVaerkerClient({
 
   const openEdit = (a: Assignment) => {
     setEditAssignment(a);
+    void markRequestCommentsRead(a);
   };
+
+  async function markRequestCommentsRead(a: Assignment) {
+    const requests = a.works?.work_change_requests ?? [];
+    const unreadRequestIds = requests
+      .filter(r => (r.work_change_request_comments ?? []).some(c => c.author_role === "admin" && !c.member_read_at))
+      .map(r => r.id);
+    if (unreadRequestIds.length === 0) return;
+
+    const now = new Date().toISOString();
+    const patchAssignment = (item: Assignment): Assignment => {
+      if (item.id !== a.id || !item.works) return item;
+      return {
+        ...item,
+        works: {
+          ...item.works,
+          work_change_requests: (item.works.work_change_requests ?? []).map(r =>
+            unreadRequestIds.includes(r.id)
+              ? {
+                  ...r,
+                  work_change_request_comments: (r.work_change_request_comments ?? []).map(c =>
+                    c.author_role === "admin" && !c.member_read_at ? { ...c, member_read_at: now } : c
+                  ),
+                }
+              : r
+          ),
+        },
+      };
+    };
+    setAssignments(prev => prev.map(patchAssignment));
+    setEditAssignment(prev => (prev ? patchAssignment(prev) : prev));
+
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id)));
+    if (results.some(r => r.success)) window.dispatchEvent(new CustomEvent("contracts-updated"));
+  }
 
   const closeEdit = () => {
     setEditAssignment(null);
@@ -391,9 +441,25 @@ export default function MineVaerkerClient({
               placeholder={t("works.searchPlaceholder")}
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="h-9 w-full pl-8 text-sm md:w-56"
+              className="h-9 w-full pl-8 pr-8 text-sm md:w-56"
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-700"
+                aria-label="Tøm søgefelt"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
           </div>
+          <label className="flex items-center gap-2 text-sm text-gray-500">
+            Vis
+            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
+              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
           <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
             <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
@@ -437,7 +503,7 @@ export default function MineVaerkerClient({
             <Film className="mx-auto h-10 w-10 text-gray-300 mb-3" />
             <p>{assignments.length === 0 ? t("works.emptyHint") : t("works.noSearchResults")}</p>
           </div>
-        ) : filtered.map(a => {
+        ) : visibleAssignments.map(a => {
           const w = a.works;
           if (!w) return null;
           const posterSrc = w.poster_url
@@ -614,7 +680,7 @@ export default function MineVaerkerClient({
 
         {/* Footer */}
         <div className="px-5 py-3 text-xs text-gray-400 border-t border-gray-100">
-          {filtered.length} {t("works.of")} {assignments.length} {t("works.worksLower")}
+          {Math.min(filtered.length, pageSize)} {t("works.of")} {filtered.length} {t("works.worksLower")}
         </div>
       </div>
 
@@ -626,6 +692,7 @@ export default function MineVaerkerClient({
         onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
         reloadAssignments={reloadAssignments}
         locale={locale}
+        initialQuery={initialAddQuery}
       />
 
       {/* ── DFI-guiden ─────────────────────────────────────────────── */}

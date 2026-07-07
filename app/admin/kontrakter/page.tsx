@@ -4,10 +4,12 @@ import { useEffect, useState, useMemo, Suspense, useRef } from "react"
 import Link from "next/link"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
-    CheckCircle2, AlertCircle, Loader2, X, Pencil,
+    CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
+    AlertTriangle,
 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
+import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead } from "@/app/actions/member-contracts"
 import { maskPersonalData } from "@/lib/mask-text"
 import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -17,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -46,6 +49,16 @@ type ContractRow = {
     rights_holder_name: string | null
     working_title: string | null
     work_title: string | null
+    contract_comments: ContractComment[]
+}
+
+type ContractComment = {
+    id: string
+    author_role: "member" | "admin"
+    message: string
+    created_at: string
+    member_read_at?: string | null
+    admin_read_at?: string | null
 }
 
 type EditForm = {
@@ -63,6 +76,8 @@ type EditForm = {
 type DfiCompany = { id: number; name: string }
 type Employer = { id: string; name: string; parent_id: string | null; dfi_company_id: number | null }
 type RightsHolder = { id: string; full_name: string }
+type SortKey = "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status"
+type SortDir = "asc" | "desc"
 
 // ── Fuzzy name matching ───────────────────────────────────────
 
@@ -156,6 +171,16 @@ const OVERENSKOMST_LABELS: Record<string, string> = {
     "ingen": "Ingen",
 }
 
+function normalizeDuplicateKey(value: string | null | undefined) {
+    return (value ?? "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9æøå\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
 function AdminKontrakterContent() {
     const { t } = useI18n()
     const [contracts, setContracts] = useState<ContractRow[]>([])
@@ -166,6 +191,17 @@ function AdminKontrakterContent() {
     const [search, setSearch] = useState("")
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
+    const [pageSize, setPageSize] = useState(20)
+    const [sortKey, setSortKey] = useState<SortKey>("status")
+    const [sortDir, setSortDir] = useState<SortDir>("asc")
+    const [selectedIds, setSelectedIds] = useState<string[]>([])
+    const [batchDeleteOpen, setBatchDeleteOpen] = useState(false)
+    const [isSuperadmin, setIsSuperadmin] = useState(false)
+    const [bulkDeleteStep, setBulkDeleteStep] = useState(0) // 0 = lukket, 1-3 = advarselstrin
+    const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState("")
+    const [duplicatesOpen, setDuplicatesOpen] = useState(false)
+    const [adminReply, setAdminReply] = useState("")
+    const [replySaving, setReplySaving] = useState(false)
 
     // View dialog
     const [viewContract, setViewContract] = useState<ContractRow | null>(null)
@@ -220,11 +256,11 @@ function AdminKontrakterContent() {
                 // Forsøg at slå op i user_org_roles (men blokér ikke hvis tom)
                 const { data: roleRows } = await supabase
                     .from("user_org_roles")
-                    .select("org_id")
+                    .select("org_id, role")
                     .eq("user_id", user.id)
-                    .limit(1)
                 if (roleRows?.[0]?.org_id) resolvedOrgId = roleRows[0].org_id
                 setOrgId(resolvedOrgId)
+                setIsSuperadmin((roleRows ?? []).some(r => r.role === "superadmin"))
 
                 const [contractsRes, employersRes, rhRes] = await Promise.all([
                     supabase
@@ -249,7 +285,22 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    setContracts((contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { title?: string | null } | null }>).map((r) => ({
+                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { title?: string | null } | null }>
+                    const commentsByContract: Record<string, ContractComment[]> = {}
+                    if (rawContracts.length > 0) {
+                        const commentsRes = await supabase
+                            .from("contract_comments")
+                            .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+                            .in("contract_id", rawContracts.map(r => r.id))
+                            .order("created_at", { ascending: true })
+                        if (commentsRes.data) {
+                            for (const comment of commentsRes.data as unknown as Array<ContractComment & { contract_id: string }>) {
+                                if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = []
+                                commentsByContract[comment.contract_id].push(comment)
+                            }
+                        }
+                    }
+                    setContracts(rawContracts.map((r) => ({
                         id: r.id,
                         type: r.type,
                         overenskomst: r.overenskomst,
@@ -265,6 +316,7 @@ function AdminKontrakterContent() {
                         rights_holder_name: r.rettighedshavere?.full_name ?? null,
                         working_title: r.working_title ?? null,
                         work_title: r.works?.title ?? null,
+                        contract_comments: commentsByContract[r.id] ?? [],
                     })))
                 }
                 if (employersRes.data) setEmployers(employersRes.data)
@@ -417,6 +469,7 @@ function AdminKontrakterContent() {
                         employer_id: employerId, rights_holder_id: rhId,
                         working_title: newContract.working_title,
                         employer_name: ext.employerName ?? null, rights_holder_name: ext.rightsHolderName ?? null, work_title: null,
+                        contract_comments: [],
                     })
                 }
 
@@ -523,10 +576,52 @@ function AdminKontrakterContent() {
         toast.success("Kontrakt slettet")
     }
 
+    const handleApproveSelected = async () => {
+        if (selectedIds.length === 0) return
+        setSaving(true)
+        const supabase = createClient()
+        try {
+            const { error } = await supabase
+                .from("contracts")
+                .update({ status: "valideret" })
+                .in("id", selectedIds)
+            if (error) throw new Error(error.message)
+            setContracts(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, status: "valideret" } : c))
+            toast.success(`${selectedIds.length} kontrakt(er) er godkendt`)
+            setSelectedIds([])
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Kunne ikke godkende kontrakter")
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const handleDeleteSelectedPermanently = async () => {
+        if (selectedIds.length === 0) return
+        setSaving(true)
+        try {
+            const idsToDelete = [...selectedIds]
+            const res = await deleteAdminContractsPermanently(idsToDelete)
+            if (!res.success) throw new Error(res.error ?? "Kunne ikke slette kontrakter")
+            setContracts(prev => prev.filter(c => !idsToDelete.includes(c.id)))
+            toast.success(`${res.deletedCount ?? idsToDelete.length} kontrakt(er) er slettet permanent`)
+            setSelectedIds([])
+            setBatchDeleteOpen(false)
+            setBulkDeleteStep(0)
+            setBulkDeleteConfirmText("")
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Kunne ikke slette kontrakter")
+        } finally {
+            setSaving(false)
+        }
+    }
+
     // ── Edit ──────────────────────────────────────────────────
 
     const openEdit = (c: ContractRow) => {
         setEditContract(c)
+        setAdminReply("")
+        void markAdminCommentsRead(c)
         setEditForm({
             type: c.type,
             overenskomst: c.overenskomst ?? "ingen",
@@ -538,6 +633,26 @@ function AdminKontrakterContent() {
             rights_holder_id: c.rights_holder_id ?? "",
             working_title: c.working_title ?? "",
         })
+    }
+
+    const markAdminCommentsRead = async (c: ContractRow) => {
+        const hasUnread = c.contract_comments.some(
+            comment => comment.author_role === "member" && !comment.admin_read_at
+        )
+        if (!hasUnread) return
+        const now = new Date().toISOString()
+        const patch = (row: ContractRow): ContractRow => ({
+            ...row,
+            contract_comments: row.contract_comments.map(comment =>
+                comment.author_role === "member" && !comment.admin_read_at
+                    ? { ...comment, admin_read_at: now }
+                    : comment
+            ),
+        })
+        setContracts(prev => prev.map(row => (row.id === c.id ? patch(row) : row)))
+        setEditContract(prev => (prev && prev.id === c.id ? patch(prev) : prev))
+        const res = await markContractCommentsRead(c.id)
+        if (res.success) window.dispatchEvent(new CustomEvent("contracts-updated"))
     }
 
     const handleSaveEdit = async (statusOverride?: "kladde" | "valideret" | "arkiveret") => {
@@ -588,11 +703,31 @@ function AdminKontrakterContent() {
         }
     }
 
+    const handleAdminReply = async () => {
+        if (!editContract || !adminReply.trim()) return
+        setReplySaving(true)
+        const res = await addAdminContractComment(editContract.id, adminReply)
+        setReplySaving(false)
+        if (!res.success || !("comment" in res) || !res.comment) {
+            toast.error(res.error ?? "Kunne ikke gemme svar")
+            return
+        }
+        const comment = res.comment as ContractComment
+        setContracts(prev => prev.map(c => c.id === editContract.id ? {
+            ...c,
+            contract_comments: [...c.contract_comments, comment],
+        } : c))
+        setEditContract(prev => prev ? { ...prev, contract_comments: [...prev.contract_comments, comment] } : prev)
+        setAdminReply("")
+        toast.success("Svar sendt")
+    }
+
     // ── Filter ────────────────────────────────────────────────
 
     const filtered = useMemo(() => {
-        let list = contracts
-        if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
+        let list = [...contracts]
+        if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
+        else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
         if (filterType !== "all") list = list.filter(c => c.type === filterType)
         if (search) {
             const q = search.toLowerCase()
@@ -603,8 +738,69 @@ function AdminKontrakterContent() {
                 c.employer_name?.toLowerCase().includes(q)
             )
         }
+        list.sort((a, b) => {
+            const direction = sortDir === "asc" ? 1 : -1
+            const period = (c: ContractRow) => c.start_date ?? c.contract_date ?? c.created_at ?? ""
+            const values: Record<SortKey, [string, string]> = {
+                production: [a.work_title ?? a.working_title ?? "", b.work_title ?? b.working_title ?? ""],
+                rightsHolder: [a.rights_holder_name ?? "", b.rights_holder_name ?? ""],
+                employer: [a.employer_name ?? "", b.employer_name ?? ""],
+                type: [a.type ?? "", b.type ?? ""],
+                overenskomst: [OVERENSKOMST_LABELS[a.overenskomst ?? ""] ?? a.overenskomst ?? "", OVERENSKOMST_LABELS[b.overenskomst ?? ""] ?? b.overenskomst ?? ""],
+                period: [period(a), period(b)],
+                status: [STATUS_LABELS[a.status] ?? a.status, STATUS_LABELS[b.status] ?? b.status],
+            }
+            const [left, right] = values[sortKey]
+            return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction
+        })
         return list
-    }, [contracts, filterStatus, filterType, search])
+    }, [contracts, filterStatus, filterType, search, sortDir, sortKey])
+    const visibleContracts = filtered.slice(0, pageSize)
+    const selectedContracts = useMemo(
+        () => contracts.filter(contract => selectedIds.includes(contract.id)),
+        [contracts, selectedIds]
+    )
+    const allFilteredSelected = filtered.length > 0 && filtered.every(contract => selectedIds.includes(contract.id))
+    const duplicateGroups = useMemo(() => {
+        const groups = new Map<string, ContractRow[]>()
+        for (const contract of contracts) {
+            const titleKey = normalizeDuplicateKey(contract.work_title ?? contract.working_title)
+            if (!titleKey) continue
+            const key = [
+                titleKey,
+                normalizeDuplicateKey(contract.rights_holder_name),
+                normalizeDuplicateKey(contract.employer_name),
+                contract.type ?? "",
+            ].join("|")
+            const group = groups.get(key) ?? []
+            group.push(contract)
+            groups.set(key, group)
+        }
+        return Array.from(groups.values()).filter(group => group.length > 1)
+    }, [contracts])
+
+    const handleSort = (key: SortKey) => {
+        if (sortKey === key) {
+            setSortDir(dir => dir === "asc" ? "desc" : "asc")
+            return
+        }
+        setSortKey(key)
+        setSortDir("asc")
+    }
+
+    const sortMark = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : ""
+    const toggleSelected = (id: string) => {
+        setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
+    }
+    const toggleAllFiltered = () => {
+        setSelectedIds(allFilteredSelected ? [] : filtered.map(contract => contract.id))
+    }
+
+    const SortButton = ({ label, sortId }: { label: string; sortId: SortKey }) => (
+        <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => handleSort(sortId)}>
+            {label}{sortMark(sortId) && <span>{sortMark(sortId)}</span>}
+        </button>
+    )
 
 
     if (loading) return <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Henter...</div>
@@ -631,10 +827,20 @@ function AdminKontrakterContent() {
             />
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap items-center gap-3">
                 <div className="relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg titel, klipper, producent..." className="w-[280px] pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+                    <Input placeholder="Søg titel, klipper, producent..." className="w-[280px] pl-8 pr-8" value={search} onChange={e => setSearch(e.target.value)} />
+                    {search && (
+                        <button
+                            type="button"
+                            onClick={() => setSearch("")}
+                            className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+                            aria-label="Tøm søgefelt"
+                        >
+                            <X className="h-4 w-4 rounded-full border border-current p-0.5" />
+                        </button>
+                    )}
                 </div>
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
                     <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
@@ -643,6 +849,7 @@ function AdminKontrakterContent() {
                         <SelectItem value="kladde">Kladde</SelectItem>
                         <SelectItem value="valideret">Valideret</SelectItem>
                         <SelectItem value="arkiveret">Arkiveret</SelectItem>
+                        <SelectItem value="beskeder">Beskeder</SelectItem>
                     </SelectContent>
                 </Select>
                 <Select value={filterType} onValueChange={setFilterType}>
@@ -653,34 +860,95 @@ function AdminKontrakterContent() {
                         <SelectItem value="leverandør">Leverandør</SelectItem>
                     </SelectContent>
                 </Select>
+                <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
+                    <Search className="h-4 w-4" />
+                    Find dubletter
+                </Button>
+                <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+                    Vis
+                    <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
+                        {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+                    </select>
+                </label>
             </div>
+
+            {selectedIds.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
+                    <span className="text-sm font-medium">{selectedIds.length} valgt</span>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving}>
+                        <CheckCircle2 className="h-4 w-4" />
+                        Godkend valgte
+                    </Button>
+                    <Button
+                        size="sm"
+                        variant="destructive"
+                        className="gap-2"
+                        onClick={() => {
+                            if (selectedIds.length > 20) {
+                                if (!isSuperadmin) {
+                                    toast.error("Kun superadmin kan slette mere end 20 kontrakter ad gangen.")
+                                    return
+                                }
+                                setBulkDeleteConfirmText("")
+                                setBulkDeleteStep(1)
+                            } else {
+                                setBatchDeleteOpen(true)
+                            }
+                        }}
+                        disabled={saving}
+                    >
+                        <AlertTriangle className="h-4 w-4" />
+                        Slet permanent
+                    </Button>
+                </div>
+            )}
 
             {/* Table */}
             <div className="rounded-lg border">
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead>Produktion</TableHead>
-                            <TableHead>Klipper</TableHead>
-                            <TableHead>Producent</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead>Overenskomst</TableHead>
-                            <TableHead>Periode</TableHead>
-                            <TableHead>Status</TableHead>
+                            <TableHead className="w-10">
+                                <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4" aria-label="Vælg alle kontrakter" />
+                            </TableHead>
+                            <TableHead><SortButton label="Produktion" sortId="production" /></TableHead>
+                            <TableHead><SortButton label="Klipper" sortId="rightsHolder" /></TableHead>
+                            <TableHead><SortButton label="Producent" sortId="employer" /></TableHead>
+                            <TableHead><SortButton label="Type" sortId="type" /></TableHead>
+                            <TableHead><SortButton label="Overenskomst" sortId="overenskomst" /></TableHead>
+                            <TableHead><SortButton label="Periode" sortId="period" /></TableHead>
+                            <TableHead><SortButton label="Status" sortId="status" /></TableHead>
                             <TableHead className="w-[60px]" />
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {filtered.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={8} className="py-8 text-center text-sm text-muted-foreground">
+                                <TableCell colSpan={9} className="py-8 text-center text-sm text-muted-foreground">
                                     {contracts.length === 0 ? "Ingen kontrakter endnu — upload den første" : t("common.noResults")}
                                 </TableCell>
                             </TableRow>
                         ) : (
-                            filtered.map(c => (
+                            visibleContracts.map(c => {
+                                const unreadMemberComments = c.contract_comments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).length
+                                return (
                                 <TableRow key={c.id}>
-                                    <TableCell className="font-medium">{c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                                    <TableCell>
+                                        <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="h-4 w-4" aria-label={`Vælg ${c.work_title ?? c.working_title ?? "kontrakt"}`} />
+                                    </TableCell>
+                                    <TableCell className="font-medium">
+                                        <div className="flex items-center gap-2">
+                                            <button type="button" onClick={() => openEdit(c)} className="text-left underline-offset-4 hover:underline">
+                                                {c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}
+                                            </button>
+                                            {unreadMemberComments > 0 && (
+                                                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+                                                    <MessageSquare className="mr-1 h-3 w-3" />
+                                                    {unreadMemberComments}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                    </TableCell>
                                     <TableCell className="text-sm">{c.rights_holder_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
                                     <TableCell className="text-sm text-muted-foreground">{c.employer_name ?? "—"}</TableCell>
                                     <TableCell className="text-sm">{c.type === "a-løn" ? "A-løn" : "Leverandør"}</TableCell>
@@ -718,7 +986,8 @@ function AdminKontrakterContent() {
                                         </DropdownMenu>
                                     </TableCell>
                                 </TableRow>
-                            ))
+                                )
+                            })
                         )}
                     </TableBody>
                 </Table>
@@ -843,75 +1112,97 @@ function AdminKontrakterContent() {
                         <DialogDescription>{editContract?.work_title ?? editContract?.working_title ?? editContract?.employer_name ?? "Kontrakt"}</DialogDescription>
                     </DialogHeader>
                     {editForm && (
-                        <div className="grid grid-cols-2 gap-4 py-2">
-                            <div className="space-y-1">
-                                <Label className="text-xs">Klipper / rettighedshaver</Label>
-                                <Select value={editForm.rights_holder_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, rights_holder_id: v === "__none__" ? "" : v }))}>
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="__none__">—</SelectItem>
-                                        {rightsHolders.map(r => <SelectItem key={r.id} value={r.id}>{r.full_name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                        <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Klipper / rettighedshaver</Label>
+                                    <Select value={editForm.rights_holder_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, rights_holder_id: v === "__none__" ? "" : v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__none__">—</SelectItem>
+                                            {rightsHolders.map(r => <SelectItem key={r.id} value={r.id}>{r.full_name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Producent (juridisk)</Label>
+                                    <Select value={editForm.employer_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, employer_id: v === "__none__" ? "" : v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="__none__">—</SelectItem>
+                                            {employers.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Type</Label>
+                                    <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="a-løn">A-løn</SelectItem>
+                                            <SelectItem value="leverandør">Leverandør</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Overenskomst</Label>
+                                    <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
+                                            <SelectItem value="faf">FAF (fiktion)</SelectItem>
+                                            <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
+                                            <SelectItem value="ingen">Ingen</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Status</Label>
+                                    <Select value={editForm.status} onValueChange={v => setEditForm(f => f && ({ ...f, status: v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="kladde">Kladde</SelectItem>
+                                            <SelectItem value="valideret">Valideret</SelectItem>
+                                            <SelectItem value="arkiveret">Arkiveret</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Kontraktdato</Label>
+                                    <Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Startdato</Label>
+                                    <Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Slutdato</Label>
+                                    <Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} />
+                                </div>
+                                <div className="col-span-2 space-y-1">
+                                    <Label className="text-xs">Arbejdstitel</Label>
+                                    <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
+                                </div>
                             </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Producent (juridisk)</Label>
-                                <Select value={editForm.employer_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, employer_id: v === "__none__" ? "" : v }))}>
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="__none__">—</SelectItem>
-                                        {employers.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Type</Label>
-                                <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="a-løn">A-løn</SelectItem>
-                                        <SelectItem value="leverandør">Leverandør</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Overenskomst</Label>
-                                <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
-                                        <SelectItem value="faf">FAF (fiktion)</SelectItem>
-                                        <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
-                                        <SelectItem value="ingen">Ingen</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Status</Label>
-                                <Select value={editForm.status} onValueChange={v => setEditForm(f => f && ({ ...f, status: v }))}>
-                                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="kladde">Kladde</SelectItem>
-                                        <SelectItem value="valideret">Valideret</SelectItem>
-                                        <SelectItem value="arkiveret">Arkiveret</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Kontraktdato</Label>
-                                <Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Startdato</Label>
-                                <Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} />
-                            </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs">Slutdato</Label>
-                                <Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} />
-                            </div>
-                            <div className="col-span-2 space-y-1">
-                                <Label className="text-xs">Arbejdstitel</Label>
-                                <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
+                            <div className="rounded-md border p-3">
+                                <p className="mb-2 text-sm font-medium">Kommentarer</p>
+                                <div className="max-h-40 space-y-2 overflow-y-auto">
+                                    {editContract?.contract_comments.length ? editContract.contract_comments.map(comment => (
+                                        <div key={comment.id} className="rounded bg-muted px-3 py-2 text-sm">
+                                            <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin" : "Bruger"} · {new Date(comment.created_at).toLocaleString("da-DK")}</div>
+                                            <div>{comment.message}</div>
+                                        </div>
+                                    )) : (
+                                        <p className="text-sm text-muted-foreground">Ingen kommentarer.</p>
+                                    )}
+                                </div>
+                                <div className="mt-3 space-y-2">
+                                    <Textarea value={adminReply} onChange={e => setAdminReply(e.target.value)} placeholder="Svar brugeren..." />
+                                    <Button type="button" variant="outline" onClick={handleAdminReply} disabled={replySaving || !adminReply.trim()}>
+                                        {replySaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                        Send svar
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     )}
@@ -971,6 +1262,131 @@ function AdminKontrakterContent() {
                     <DialogFooter>
                         <Button variant="outline" onClick={() => { setShowMaskEditor(false); handleMaskCancel() }}>Annuller</Button>
                         <Button onClick={() => { setShowMaskEditor(false); handleMaskConfirm() }}>Send til AI-udtræk</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={duplicatesOpen} onOpenChange={setDuplicatesOpen}>
+                <DialogContent className="sm:max-w-3xl md:max-w-3xl lg:max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Find dubletter</DialogTitle>
+                        <DialogDescription>Mulige dubletter baseret på produktion, klipper, producent og kontrakttype.</DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[60vh] space-y-3 overflow-auto">
+                        {duplicateGroups.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">Ingen sandsynlige dubletter fundet.</p>
+                        ) : duplicateGroups.map((group, index) => (
+                            <div key={index} className="rounded-lg border p-3">
+                                <div className="mb-2 text-sm font-medium">Mulig dubletgruppe {index + 1}</div>
+                                <div className="space-y-2">
+                                    {group.map(contract => (
+                                        <label key={contract.id} className="flex items-center gap-3 rounded border px-3 py-2 text-sm">
+                                            <input type="checkbox" checked={selectedIds.includes(contract.id)} onChange={() => toggleSelected(contract.id)} className="h-4 w-4" />
+                                            <span className="font-medium">{contract.work_title ?? contract.working_title ?? "Kontrakt"}</span>
+                                            <span className="text-muted-foreground">
+                                                {contract.rights_holder_name ?? "-"} · {contract.employer_name ?? "-"} · {contract.type === "a-løn" ? "A-løn" : "Leverandør"}
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDuplicatesOpen(false)}>Luk</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Slet valgte kontrakter permanent</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm">
+                        <div className="rounded-md border border-red-300 bg-red-50 p-3 text-red-900">
+                            <div className="mb-1 flex items-center gap-2 font-medium">
+                                <AlertTriangle className="h-4 w-4" />
+                                Permanent sletning
+                            </div>
+                            <p>
+                                Du er ved at slette {selectedContracts.length} kontrakt(er) permanent. Dette kan ikke fortrydes.
+                            </p>
+                            <ul className="mt-2 max-h-32 overflow-y-auto list-disc pl-5 text-xs text-red-800">
+                                {selectedContracts.map(contract => (
+                                    <li key={contract.id}>{contract.work_title ?? contract.working_title ?? "Kontrakt"}</li>
+                                ))}
+                            </ul>
+                        </div>
+                        <p className="text-muted-foreground">
+                            PDF-filer for de valgte kontrakter slettes også fra storage, hvis de findes.
+                        </p>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setBatchDeleteOpen(false)}>Annuller</Button>
+                        <Button variant="destructive" onClick={handleDeleteSelectedPermanently} disabled={saving}>
+                            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Slet permanent
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Masse-sletning >20: kun superadmin, 3 sekventielle advarsler, sidste med indtastning */}
+            <Dialog open={bulkDeleteStep > 0} onOpenChange={open => { if (!open) { setBulkDeleteStep(0); setBulkDeleteConfirmText("") } }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-red-700">
+                            <AlertTriangle className="h-5 w-5" />
+                            Advarsel {bulkDeleteStep}/3 — masse-sletning
+                        </DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3 text-sm">
+                        {bulkDeleteStep === 1 && (
+                            <p>
+                                Du er ved at slette <strong>{selectedIds.length}</strong> kontrakter permanent (mere end 20 ad gangen).
+                                Dette kan <strong>ikke</strong> fortrydes, og PDF-filerne slettes også. Er du sikker?
+                            </p>
+                        )}
+                        {bulkDeleteStep === 2 && (
+                            <p>
+                                Bekræft igen: alle <strong>{selectedIds.length}</strong> kontrakter og deres bilag/allonger,
+                                valideringer og kommentarer slettes for altid. Der er ingen fortrydelse.
+                            </p>
+                        )}
+                        {bulkDeleteStep === 3 && (
+                            <div className="space-y-2">
+                                <p>
+                                    Sidste bekræftelse. Skriv <strong>SLET</strong> nedenfor for at slette
+                                    de {selectedIds.length} kontrakter permanent.
+                                </p>
+                                <Input
+                                    value={bulkDeleteConfirmText}
+                                    onChange={e => setBulkDeleteConfirmText(e.target.value)}
+                                    placeholder="Skriv SLET"
+                                    autoFocus
+                                />
+                            </div>
+                        )}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => { setBulkDeleteStep(0); setBulkDeleteConfirmText("") }} disabled={saving}>
+                            Annuller
+                        </Button>
+                        {bulkDeleteStep < 3 ? (
+                            <Button variant="destructive" onClick={() => setBulkDeleteStep(bulkDeleteStep + 1)}>
+                                Fortsæt
+                            </Button>
+                        ) : (
+                            <Button
+                                variant="destructive"
+                                onClick={handleDeleteSelectedPermanently}
+                                disabled={saving || bulkDeleteConfirmText.trim().toUpperCase() !== "SLET"}
+                            >
+                                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Slet {selectedIds.length} permanent
+                            </Button>
+                        )}
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
