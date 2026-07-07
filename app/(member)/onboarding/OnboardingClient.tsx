@@ -46,12 +46,14 @@ export default function OnboardingClient({
   const [formData, setFormData] = useState({
     first_name: nameParts[0] || "",
     last_name: nameParts.slice(1).join(" ") || "",
+    email: rh?.email || user?.email || "",
     phone: rh?.phone || "",
     address: rh?.address || "",
     zip: "",
     city: "",
     cpr: rh?.cpr_no || "",
     bank_account: rh?.bank_account || "",
+    gender: rh?.gender || "ikke_oplyst",
   });
 
   const handleField = (field: string, value: string) =>
@@ -101,6 +103,12 @@ export default function OnboardingClient({
 
   const handleNextStep = async () => {
     if (step === 2) {
+      // Krav 1: Validering af fornavn, efternavn og e-mail
+      if (!formData.first_name.trim() || !formData.last_name.trim() || !formData.email.trim()) {
+        alert("Venligst udfyld fornavn, efternavn og e-mailadresse for at gå videre.");
+        return;
+      }
+
       setIsSearchingDfi(true);
       setDfiError(null);
 
@@ -314,15 +322,12 @@ export default function OnboardingClient({
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
                     E-mail
                   </label>
-                  <div style={{
-                    width: "100%", padding: "10px 12px",
-                    borderRadius: "var(--radius-default)",
-                    border: "1px solid var(--outline-variant)",
-                    backgroundColor: "var(--surface-container-low)",
-                    color: "var(--on-surface-variant)", fontSize: "14px",
-                  }}>
-                    {loginEmail}
-                  </div>
+                  <input
+                    value={formData.email}
+                    onChange={(e) => handleField("email", e.target.value)}
+                    placeholder="din.email@eksempel.dk"
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                  />
                 </div>
               </div>
 
@@ -345,6 +350,13 @@ export default function OnboardingClient({
                       />
                     </div>
                   ))}
+                </div>
+
+                <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "6px" }}>
+                  <span style={{ fontSize: "16px" }}>🔒</span>
+                  <p style={{ fontSize: "12px", color: "#065F46", margin: 0, lineHeight: 1.5 }}>
+                    <strong>Sikkerhed & Kryptering:</strong> Dit CPR-nummer og kontonummer krypteres automatisk i din browser, før de sendes afsted, og opbevares i krypteret form i vores database. Al kommunikation og dataoverførsel sker over en fuldt krypteret og sikret forbindelse.
+                  </p>
                 </div>
               </div>
             </div>
@@ -472,43 +484,76 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
                 Bestem, hvordan vi må bruge dine oplysninger.
               </p>
-              <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
-                <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
-                  <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
-                      Hjælp alle klippere til at forhandle bedre løn
+              
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {/* Lønstatistik Checkbox */}
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
+                  <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
+                    <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
+                        Hjælp alle klippere til at forhandle bedre løn
+                      </div>
+                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: "0 0 10px" }}>
+                        Når du deler dine anonymiserede løndata, kan vi beregne realistiske branchegennemsnit — opdelt på genre.
+                        Det er konkret viden til din næste lønforhandling.
+                      </p>
+                      <div style={{ fontSize: "12px", color: "var(--tertiary)", fontStyle: "italic", fontWeight: 500 }}>
+                        🔒 Dine data behandles altid anonymiseret og aggregeret.
+                      </div>
                     </div>
-                    <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: "0 0 10px" }}>
-                      Når du deler dine anonymiserede løndata, kan vi beregne realistiske branchegennemsnit — opdelt på genre.
-                      Det er konkret viden til din næste lønforhandling.
-                    </p>
-                    <div style={{ fontSize: "12px", color: "var(--tertiary)", fontStyle: "italic", fontWeight: 500 }}>
-                      🔒 Dine data behandles altid anonymiseret og aggregeret.
+                  </div>
+                  <label style={{
+                    display: "flex", alignItems: "center", gap: "12px",
+                    padding: "16px 24px", cursor: "pointer",
+                    backgroundColor: "var(--surface-container-low)",
+                    borderTop: "1px solid var(--outline-variant)",
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={shareStatistics}
+                      onChange={(e) => setShareStatistics(e.target.checked)}
+                      style={{ width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                        Jeg bidrager til fælles lønstatistik
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "2px" }}>
+                        Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Kønsoplysninger Dropdown */}
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                    <div style={{ fontSize: "28px", flexShrink: 0 }}>👥</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "6px" }}>
+                        Oplysning om køn (valgfrit)
+                      </div>
+                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.6, margin: "0 0 16px" }}>
+                        Vi anvender kønsoplysninger til at udarbejde anonymiseret statistik over fordeling af rettigheder, diversitet og lønforhold i filmbranchen.
+                      </p>
+                      
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "8px", color: "var(--on-surface-variant)" }}>
+                        Vælg køn
+                      </label>
+                      <select
+                        value={formData.gender}
+                        onChange={(e) => handleField("gender", e.target.value)}
+                        style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)", outline: "none" }}
+                      >
+                        <option value="ikke_oplyst">Vil ikke oplyse</option>
+                        <option value="kvinde">Kvinde</option>
+                        <option value="mand">Mand</option>
+                        <option value="andet">Andet / Non-binær</option>
+                      </select>
                     </div>
                   </div>
                 </div>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: "12px",
-                  padding: "16px 24px", cursor: "pointer",
-                  backgroundColor: "var(--surface-container-low)",
-                  borderTop: "1px solid var(--outline-variant)",
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={shareStatistics}
-                    onChange={(e) => setShareStatistics(e.target.checked)}
-                    style={{ width: "18px", height: "18px", accentColor: "var(--primary)" }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                      Jeg bidrager til fælles lønstatistik
-                    </div>
-                    <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "2px" }}>
-                      Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
-                    </div>
-                  </div>
-                </label>
               </div>
             </div>
           )}
@@ -526,8 +571,9 @@ export default function OnboardingClient({
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
                 {[
                   { label: "Navn", value: `${formData.first_name} ${formData.last_name}`.trim() },
-                  { label: "E-mail", value: loginEmail },
+                  { label: "E-mail", value: formData.email },
                   { label: "By", value: formData.city || "Ikke angivet" },
+                  { label: "Køn (statistik)", value: formData.gender === "kvinde" ? "Kvinde" : formData.gender === "mand" ? "Mand" : formData.gender === "andet" ? "Andet / Non-binær" : "Ikke oplyst" },
                   { label: "CPR registreret", value: formData.cpr ? "✅ Ja" : "❌ Mangler" },
                   { label: "NemKonto", value: formData.bank_account ? "✅ Registreret" : "❌ Mangler" },
                   { label: "Lønstatistik", value: shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },

@@ -21,10 +21,12 @@ export async function completeOnboarding(formData: FormData) {
     .from("rettighedshavere")
     .update({
       full_name: fullName || undefined,
+      email: (formData.get("email") as string) || undefined,
       phone: (formData.get("phone") as string) || null,
       address: (formData.get("address") as string) || null,
       cpr_no: encryptValue(formData.get("cpr")),
       bank_account: encryptValue(formData.get("bank_account")),
+      gender: (formData.get("gender") as string) || null,
       opt_out_statistics: formData.get("opt_out_statistics") === "true",
       onboarding_completed: true,
     })
