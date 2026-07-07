@@ -576,6 +576,28 @@ function AdminKontrakterContent() {
         toast.success("Kontrakt slettet")
     }
 
+    const handleMarkSelectedMessagesRead = async () => {
+        const toMark = contracts.filter(c => selectedIds.includes(c.id) && c.contract_comments.some(m => m.author_role === "member" && !m.admin_read_at))
+        if (toMark.length === 0) { toast.info("Ingen ulæste beskeder blandt de valgte"); return }
+        setSaving(true)
+        try {
+            const results = await Promise.all(toMark.map(c => markContractCommentsRead(c.id)))
+            const failed = results.find(r => !r.success)
+            if (failed) throw new Error(failed.error ?? "Kunne ikke markere beskeder læst")
+            const now = new Date().toISOString()
+            setContracts(prev => prev.map(c => selectedIds.includes(c.id)
+                ? { ...c, contract_comments: c.contract_comments.map(m => m.author_role === "member" && !m.admin_read_at ? { ...m, admin_read_at: now } : m) }
+                : c))
+            toast.success(`Beskeder markeret som læst på ${toMark.length} kontrakt(er)`)
+            setSelectedIds([])
+            window.dispatchEvent(new CustomEvent("contracts-updated"))
+        } catch (err: unknown) {
+            toast.error(err instanceof Error ? err.message : "Kunne ikke markere beskeder læst")
+        } finally {
+            setSaving(false)
+        }
+    }
+
     const handleApproveSelected = async () => {
         if (selectedIds.length === 0) return
         setSaving(true)
@@ -879,6 +901,10 @@ function AdminKontrakterContent() {
                         <CheckCircle2 className="h-4 w-4" />
                         Godkend valgte
                     </Button>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
+                        <MessageSquare className="h-4 w-4" />
+                        Besked læst
+                    </Button>
                     <Button
                         size="sm"
                         variant="destructive"
@@ -931,6 +957,7 @@ function AdminKontrakterContent() {
                         ) : (
                             visibleContracts.map(c => {
                                 const unreadMemberComments = c.contract_comments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).length
+                                const latestUnread = c.contract_comments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).slice(-1)[0]
                                 return (
                                 <TableRow key={c.id}>
                                     <TableCell>
@@ -948,6 +975,9 @@ function AdminKontrakterContent() {
                                                 </Badge>
                                             )}
                                         </div>
+                                        {latestUnread && (
+                                            <p className="mt-0.5 max-w-[280px] truncate text-xs text-blue-700">{latestUnread.message.split("\n")[0]}</p>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">{c.rights_holder_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
                                     <TableCell className="text-sm text-muted-foreground">{c.employer_name ?? "—"}</TableCell>
@@ -1111,6 +1141,11 @@ function AdminKontrakterContent() {
                         </DialogTitle>
                         <DialogDescription>{editContract?.work_title ?? editContract?.working_title ?? editContract?.employer_name ?? "Kontrakt"}</DialogDescription>
                     </DialogHeader>
+                    {editContract?.pdf_url && (
+                        <Button type="button" variant="outline" size="sm" className="w-fit gap-2" onClick={() => editContract && openPdf(editContract)}>
+                            <Eye className="h-3.5 w-3.5" />Se kontrakt
+                        </Button>
+                    )}
                     {editForm && (
                         <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2">
                             <div className="grid grid-cols-2 gap-4">
@@ -1189,7 +1224,7 @@ function AdminKontrakterContent() {
                                 <div className="max-h-40 space-y-2 overflow-y-auto">
                                     {editContract?.contract_comments.length ? editContract.contract_comments.map(comment => (
                                         <div key={comment.id} className="rounded bg-muted px-3 py-2 text-sm">
-                                            <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin" : "Bruger"} · {new Date(comment.created_at).toLocaleString("da-DK")}</div>
+                                            <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin · " : ""}{new Date(comment.created_at).toLocaleString("da-DK")}</div>
                                             <div>{comment.message}</div>
                                         </div>
                                     )) : (

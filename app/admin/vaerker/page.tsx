@@ -8,6 +8,7 @@ import {
   Film,
   GitMerge,
   Loader2,
+  MessageSquare,
   Plus,
   Search,
   Trash2,
@@ -292,6 +293,16 @@ function unreadMemberMessageCount(work: WorkRow) {
     sum + (request.work_change_request_comments ?? []).filter(
       comment => comment.author_role === "member" && !comment.admin_read_at
     ).length, 0);
+}
+
+// Seneste ulæste medlems-besked på et værk (til liste-preview).
+function latestUnreadMemberMessage(work: WorkRow): string | null {
+  const unread = (work.work_change_requests ?? [])
+    .flatMap(request => request.work_change_request_comments ?? [])
+    .filter(comment => comment.author_role === "member" && !comment.admin_read_at)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const last = unread[unread.length - 1];
+  return last ? last.message.split("\n")[0] : null;
 }
 
 function displayStatus(work: WorkRow) {
@@ -859,7 +870,11 @@ export default function VaerksadministrationPage() {
   };
 
   const openEdit = (work: WorkRow) => {
-    const pendingRequest = (work.work_change_requests ?? []).find(request => request.status === "pending") ?? null;
+    // Auto-åbn den request der har en ulæst besked; ellers første pending request.
+    const requestWithUnread = (work.work_change_requests ?? []).find(request =>
+      (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at)
+    );
+    const pendingRequest = requestWithUnread ?? (work.work_change_requests ?? []).find(request => request.status === "pending") ?? null;
     void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
@@ -1016,6 +1031,26 @@ export default function VaerksadministrationPage() {
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke godkende værker."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkSelectedMessagesRead = async () => {
+    const selected = works.filter(w => selectedIds.includes(w.id));
+    const requestIds = selected.flatMap(w => (w.work_change_requests ?? [])
+      .filter(r => (r.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
+      .map(r => r.id));
+    if (requestIds.length === 0) { setNotice("Ingen ulæste beskeder blandt de valgte."); return; }
+    setSaving(true);
+    try {
+      await Promise.all(requestIds.map(id => markWorkRequestCommentsRead(id)));
+      setNotice(`Beskeder markeret som læst på ${selected.length} værk(er).`);
+      setSelectedIds([]);
+      await load();
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke markere beskeder læst."));
     } finally {
       setSaving(false);
     }
@@ -1485,6 +1520,10 @@ export default function VaerksadministrationPage() {
             <CheckCircle2 className="h-4 w-4" />
             Godkend valgte
           </Button>
+          <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
+            <MessageSquare className="h-4 w-4" />
+            Besked læst
+          </Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setArchiveOpen(true)}>
             <Trash2 className="h-4 w-4" />
             Arkiver
@@ -1553,7 +1592,11 @@ export default function VaerksadministrationPage() {
                             </Badge>
                           )}
                         </div>
-                        {work.description ? <p className="text-xs text-muted-foreground">{work.description.slice(0, 90)}</p> : null}
+                        {(() => {
+                          const msg = latestUnreadMemberMessage(work);
+                          if (msg) return <p className="max-w-[320px] truncate text-xs text-blue-700">{msg}</p>;
+                          return work.description ? <p className="text-xs text-muted-foreground">{work.description.slice(0, 90)}</p> : null;
+                        })()}
                       </div>
                     </div>
                   </TableCell>
