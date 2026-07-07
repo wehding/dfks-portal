@@ -206,7 +206,7 @@ export default function OnboardingClient({
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: "8px" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/dfks-logo.png" alt="DFKS" style={{ height: "48px", objectFit: "contain" }} />
+          <img src="/logo.png" alt="DFKS" style={{ height: "48px", objectFit: "contain" }} />
         </div>
 
         {/* Fremskridtsindikator */}
