@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, UserMinus, Eye } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -61,6 +61,21 @@ export default function RettighedshavereAdminPage() {
     const [portalLoading, setPortalLoading] = useState(false)
     const [portalLink, setPortalLink] = useState<string | null>(null)
 
+    // Rettighedshaver detaljer dialog states
+    const [detailsTarget, setDetailsTarget] = useState<RettighedshaverWithAffiliation | null>(null)
+    const [contracts, setContracts] = useState<any[]>([])
+    const [works, setWorks] = useState<any[]>([])
+    const [detailsLoading, setDetailsLoading] = useState(false)
+
+    const [contractSearch, setContractSearch] = useState("")
+    const [contractSort, setContractSort] = useState<"date" | "title" | "status">("date")
+    const [contractFilter, setContractFilter] = useState<string>("alle")
+
+    const [workSearch, setWorkSearch] = useState("")
+    const [workSort, setWorkSort] = useState<"title" | "year">("title")
+    const [workFilter, setWorkFilter] = useState<string>("alle")
+    const [activeTab, setActiveTab] = useState<"contracts" | "works">("contracts")
+
     useEffect(() => {
         const supabase = createClient()
         supabase.auth.getUser().then(({ data: { user } }) => {
@@ -69,6 +84,107 @@ export default function RettighedshavereAdminPage() {
             load(oid)
         })
     }, [])
+
+    useEffect(() => {
+        if (detailsTarget) {
+            loadDetails(detailsTarget.id)
+        } else {
+            setContracts([])
+            setWorks([])
+        }
+    }, [detailsTarget])
+
+    async function loadDetails(rhId: string) {
+        setDetailsLoading(true)
+        const supabase = createClient()
+        
+        const { data: cData } = await supabase
+            .from("contracts")
+            .select("id, title, type, status, created_at, employer_name")
+            .eq("rights_holder_id", rhId)
+            .order("created_at", { ascending: false })
+            
+        setContracts(cData ?? [])
+
+        const { data: wData } = await supabase
+            .from("work_assignments")
+            .select("id, role, share_percent, works(id, title, type, year, director, status)")
+            .eq("rights_holder_id", rhId)
+            
+        setWorks(wData ?? [])
+        setDetailsLoading(false)
+    }
+
+    async function handleDeleteContract(contractId: string) {
+        const confirm = window.confirm("Er du sikker på, at du vil slette denne kontrakt permanent fra systemet? Denne handling kan ikke fortrydes.")
+        if (!confirm) return
+        
+        const supabase = createClient()
+        await supabase.from("work_assignments").update({ contract_id: null }).eq("contract_id", contractId)
+        
+        const { error } = await supabase.from("contracts").delete().eq("id", contractId)
+        
+        if (error) {
+            toast.error("Kunne ikke slette kontrakt: " + error.message)
+        } else {
+            toast.success("Kontrakt slettet")
+            if (detailsTarget) loadDetails(detailsTarget.id)
+        }
+    }
+
+    async function handleRemoveAssignment(assignmentId: string) {
+        const confirm = window.confirm("Er du sikker på, at du vil fjerne medlemmets tildeling til dette værk? Selve værket slettes ikke.")
+        if (!confirm) return
+        
+        const supabase = createClient()
+        const { error } = await supabase.from("work_assignments").delete().eq("id", assignmentId)
+        
+        if (error) {
+            toast.error("Kunne ikke fjerne tildeling: " + error.message)
+        } else {
+            toast.success("Tildeling fjernet")
+            if (detailsTarget) loadDetails(detailsTarget.id)
+        }
+    }
+
+    async function handleDeleteWork(workId: string) {
+        const confirm = window.confirm("Er du sikker på, at du vil slette dette værk permanent fra hele systemet? Dette vil fjerne det for alle tilknyttede brugere.")
+        if (!confirm) return
+        
+        const supabase = createClient()
+        await supabase.from("contracts").update({ work_id: null }).eq("work_id", workId)
+        
+        const { error } = await supabase.from("works").delete().eq("id", workId)
+        
+        if (error) {
+            toast.error("Kunne ikke slette værk: " + error.message)
+        } else {
+            toast.success("Værk slettet permanent")
+            if (detailsTarget) loadDetails(detailsTarget.id)
+        }
+    }
+
+    async function handleDeleteAllWorks() {
+        if (works.length === 0) return
+        const confirm = window.confirm(`Er du sikker på, at du vil slette ALLE ${works.length} værker permanent fra systemet, som dette medlem er tilknyttet? Dette vil slette værkerne helt.`)
+        if (!confirm) return
+        
+        const supabase = createClient()
+        const workIds = works.map(w => w.works?.id).filter(Boolean)
+        
+        if (workIds.length === 0) return
+        
+        await supabase.from("contracts").update({ work_id: null }).in("work_id", workIds)
+        
+        const { error } = await supabase.from("works").delete().in("id", workIds)
+        
+        if (error) {
+            toast.error("Kunne ikke slette alle værker: " + error.message)
+        } else {
+            toast.success("Alle værker slettet")
+            if (detailsTarget) loadDetails(detailsTarget.id)
+        }
+    }
 
     async function load(oid: string) {
         setLoading(true)
@@ -251,7 +367,7 @@ export default function RettighedshavereAdminPage() {
                             const hasLogin = !!rh.user_id
                             return (
                                 <TableRow key={rh.id}>
-                                    <TableCell className="font-medium">{rh.full_name}</TableCell>
+                                    <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => setDetailsTarget(rh)}>{rh.full_name}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{aff?.member_no ?? "—"}</TableCell>
@@ -280,6 +396,9 @@ export default function RettighedshavereAdminPage() {
                                                 </Button>
                                             </DropdownMenuTrigger>
                                             <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onClick={() => setDetailsTarget(rh)}>
+                                                    <Eye className="h-3.5 w-3.5 mr-2" />Vis detaljer
+                                                </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => openEdit(rh)}>
                                                     <Pencil className="h-3.5 w-3.5 mr-2" />Rediger
                                                 </DropdownMenuItem>
@@ -442,6 +561,283 @@ export default function RettighedshavereAdminPage() {
                             </Button>
                         )}
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Medlem detaljer dialog (Kontrakter & Værker) */}
+            <Dialog open={!!detailsTarget} onOpenChange={open => { if (!open) setDetailsTarget(null) }}>
+                <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-6 overflow-hidden">
+                    <DialogHeader className="flex-shrink-0">
+                        <DialogTitle className="text-xl font-bold flex items-center justify-between">
+                            <span>{detailsTarget?.full_name}</span>
+                            <Badge variant="outline" className="text-xs ml-2">
+                                {detailsTarget?.email ?? "Ingen email"}
+                            </Badge>
+                        </DialogTitle>
+                        <DialogDescription>
+                            Oversigt og administration af medlemmets tilknyttede kontrakter og værker.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    {/* Fanevælger */}
+                    <div className="flex border-b border-gray-200 mt-4 flex-shrink-0">
+                        <button
+                          className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "contracts" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"}`}
+                          onClick={() => setActiveTab("contracts")}
+                        >
+                          Kontrakter ({contracts.length})
+                        </button>
+                        <button
+                          className={`px-4 py-2 text-sm font-semibold border-b-2 transition-colors ${activeTab === "works" ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"}`}
+                          onClick={() => setActiveTab("works")}
+                        >
+                          Værker ({works.length})
+                        </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto py-4">
+                        {detailsLoading ? (
+                            <div className="py-20 text-center text-muted-foreground"><Loader2 className="inline h-6 w-6 animate-spin mr-2" />Henter data...</div>
+                        ) : activeTab === "contracts" ? (
+                            // Fanen: Kontrakter
+                            <div className="space-y-4">
+                                <div className="flex flex-wrap gap-2 items-center justify-between bg-gray-50 p-3 rounded-lg">
+                                    <div className="flex gap-2 items-center flex-1 min-w-[200px]">
+                                        <Search className="h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            placeholder="Søg kontrakt..."
+                                            value={contractSearch}
+                                            onChange={e => setContractSearch(e.target.value)}
+                                            className="h-8 text-xs bg-white"
+                                        />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Select value={contractFilter} onValueChange={setContractFilter}>
+                                            <SelectTrigger className="h-8 text-xs w-28 bg-white"><SelectValue placeholder="Filter" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="alle">Alle</SelectItem>
+                                                <SelectItem value="godkendt">Godkendt</SelectItem>
+                                                <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
+                                                <SelectItem value="kladde">Kladde</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <Select value={contractSort} onValueChange={v => setContractSort(v as any)}>
+                                            <SelectTrigger className="h-8 text-xs w-32 bg-white"><SelectValue placeholder="Sorter" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="date">Nyeste først</SelectItem>
+                                                <SelectItem value="title">Titel A-Å</SelectItem>
+                                                <SelectItem value="status">Status</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                {(() => {
+                                    const filteredContracts = contracts
+                                        .filter(c => {
+                                            if (contractFilter !== "alle" && c.status !== contractFilter) return false
+                                            if (contractSearch) {
+                                                const q = contractSearch.toLowerCase()
+                                                return (
+                                                    c.title?.toLowerCase().includes(q) ||
+                                                    c.employer_name?.toLowerCase().includes(q)
+                                                )
+                                            }
+                                            return true
+                                        })
+                                        .sort((a, b) => {
+                                            if (contractSort === "title") return (a.title || "").localeCompare(b.title || "")
+                                            if (contractSort === "status") return (a.status || "").localeCompare(b.status || "")
+                                            return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+                                        });
+
+                                    if (filteredContracts.length === 0) {
+                                        return <p className="text-center text-sm py-10 text-muted-foreground">Ingen kontrakter fundet</p>;
+                                    }
+
+                                    return (
+                                        <div className="border rounded-lg overflow-hidden bg-white">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead className="text-xs">Titel / Selskab</TableHead>
+                                                        <TableHead className="text-xs">Type</TableHead>
+                                                        <TableHead className="text-xs">Oprettet</TableHead>
+                                                        <TableHead className="text-xs">Status</TableHead>
+                                                        <TableHead className="w-16"></TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {filteredContracts.map((c: any) => (
+                                                        <TableRow key={c.id}>
+                                                            <TableCell>
+                                                                <div className="font-semibold text-xs text-gray-900">{c.title}</div>
+                                                                <div className="text-[10px] text-gray-500">{c.employer_name || "Ukendt producent"}</div>
+                                                            </TableCell>
+                                                            <TableCell className="text-xs capitalize">{c.type}</TableCell>
+                                                            <TableCell className="text-xs text-muted-foreground">{c.created_at ? new Date(c.created_at).toLocaleDateString("da-DK") : "—"}</TableCell>
+                                                            <TableCell>
+                                                                <Badge variant={c.status === "godkendt" ? "default" : c.status === "til_godkendelse" ? "secondary" : "outline"} className="text-[10px] py-0.5">
+                                                                    {c.status}
+                                                                </Badge>
+                                                            </TableCell>
+                                                            <TableCell>
+                                                                <Button
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                                    onClick={() => handleDeleteContract(c.id)}
+                                                                >
+                                                                    <Trash2 className="h-4 w-4" />
+                                                                </Button>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        ) : (
+                            // Fanen: Værker
+                            <div className="space-y-4">
+                                <div className="flex flex-wrap gap-2 items-center justify-between bg-gray-50 p-3 rounded-lg">
+                                    <div className="flex gap-2 items-center flex-1 min-w-[200px]">
+                                        <Search className="h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            placeholder="Søg værk..."
+                                            value={workSearch}
+                                            onChange={e => setWorkSearch(e.target.value)}
+                                            className="h-8 text-xs bg-white"
+                                        />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <Select value={workFilter} onValueChange={workFilter => setWorkFilter(workFilter)}>
+                                            <SelectTrigger className="h-8 text-xs w-28 bg-white"><SelectValue placeholder="Filter" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="alle">Alle</SelectItem>
+                                                <SelectItem value="film">Kun film</SelectItem>
+                                                <SelectItem value="serie">Kun serier</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        <Select value={workSort} onValueChange={v => setWorkSort(v as any)}>
+                                            <SelectTrigger className="h-8 text-xs w-32 bg-white"><SelectValue placeholder="Sorter" /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="title">Titel A-Å</SelectItem>
+                                                <SelectItem value="year">Årstal</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        {works.length > 0 && (
+                                            <Button
+                                                variant="destructive"
+                                                size="sm"
+                                                className="h-8 text-xs gap-1"
+                                                onClick={handleDeleteAllWorks}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                                Slet alle værker helt
+                                            </Button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {(() => {
+                                    const filteredWorks = works
+                                        .filter(wa => {
+                                            const w = wa.works
+                                            if (!w) return false
+                                            if (workFilter === "film" && w.type.includes("serie")) return false
+                                            if (workFilter === "serie" && !w.type.includes("serie")) return false
+                                            if (workSearch) {
+                                                const q = workSearch.toLowerCase()
+                                                return (
+                                                    w.title?.toLowerCase().includes(q) ||
+                                                    w.director?.toLowerCase().includes(q) ||
+                                                    wa.role?.toLowerCase().includes(q)
+                                                )
+                                            }
+                                            return true
+                                        })
+                                        .sort((a, b) => {
+                                            const wa = a.works
+                                            const wb = b.works
+                                            if (!wa || !wb) return 0
+                                            if (workSort === "year") return (wb.year ?? 0) - (wa.year ?? 0)
+                                            return (wa.title || "").localeCompare(wb.title || "")
+                                        });
+
+                                    if (filteredWorks.length === 0) {
+                                        return <p className="text-center text-sm py-10 text-muted-foreground">Ingen værker fundet</p>;
+                                    }
+
+                                    return (
+                                        <div className="border rounded-lg overflow-hidden bg-white">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead className="text-xs">Titel</TableHead>
+                                                        <TableHead className="text-xs">Type</TableHead>
+                                                        <TableHead className="text-xs">Rolle / Varighed</TableHead>
+                                                        <TableHead className="text-xs">Status</TableHead>
+                                                        <TableHead className="w-20"></TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {filteredWorks.map((wa: any) => {
+                                                        const w = wa.works;
+                                                        if (!w) return null;
+                                                        return (
+                                                            <TableRow key={wa.id}>
+                                                                <TableCell>
+                                                                    <div className="font-semibold text-xs text-gray-900">{w.title}</div>
+                                                                    <div className="text-[10px] text-gray-500">
+                                                                        {w.director ? `Instruktør: ${w.director}` : ""} {w.year ? `(${w.year})` : ""}
+                                                                    </div>
+                                                                </TableCell>
+                                                                <TableCell className="text-xs capitalize">{w.type}</TableCell>
+                                                                <TableCell>
+                                                                    <div className="text-xs font-semibold text-blue-700">{wa.role || "Klipper"}</div>
+                                                                    <div className="text-[10px] text-muted-foreground">{wa.share_percent ? `Ejerandel: ${wa.share_percent}%` : ""}</div>
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <Badge variant={w.status === "godkendt" ? "default" : w.status === "til_godkendelse" ? "secondary" : "outline"} className="text-[10px] py-0.5">
+                                                                        {w.status || "aktiv"}
+                                                                    </Badge>
+                                                                </TableCell>
+                                                                <TableCell>
+                                                                    <div className="flex gap-1">
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            className="h-7 w-7 text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                                                                            title="Fjern kun tildeling"
+                                                                            onClick={() => handleRemoveAssignment(wa.id)}
+                                                                        >
+                                                                            <UserMinus className="h-4 w-4" />
+                                                                        </Button>
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                                            title="Slet værk helt fra databasen"
+                                                                            onClick={() => handleDeleteWork(w.id)}
+                                                                        >
+                                                                            <Trash2 className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </div>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        );
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        )}
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
