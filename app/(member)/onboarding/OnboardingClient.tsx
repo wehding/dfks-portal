@@ -415,7 +415,6 @@ export default function OnboardingClient({
                     backgroundColor: "var(--surface-container-low)",
                     display: "flex", flexDirection: "column",
                     boxShadow: "inset 0 2px 4px rgba(0, 0, 0, 0.05)",
-                    overflow: "hidden"
                   }}>
                     {dfiCredits.map((c, i) => (
                       <label key={`${c.id}-${i}`} style={{
