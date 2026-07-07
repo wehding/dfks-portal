@@ -409,20 +409,23 @@ export default function OnboardingClient({
                     </button>
                   </div>
                   <div style={{
-                    maxHeight: "300px", overflowY: "auto",
-                    border: "1px solid var(--outline-variant)",
-                    borderRadius: "var(--radius-md)",
+                    maxHeight: "350px", overflowY: "auto",
+                    border: "2px solid #9CA3AF",
+                    borderRadius: "8px",
                     backgroundColor: "var(--surface-container-low)",
-                    display: "flex", flexDirection: "column", padding: "4px",
+                    display: "flex", flexDirection: "column",
+                    boxShadow: "inset 0 2px 4px rgba(0, 0, 0, 0.05)",
+                    overflow: "hidden"
                   }}>
                     {dfiCredits.map((c, i) => (
                       <label key={`${c.id}-${i}`} style={{
                         display: "flex", alignItems: "flex-start", gap: "12px",
-                        padding: "12px 16px",
-                        borderBottom: "1px solid var(--outline-variant)",
+                        padding: "14px 16px",
+                        borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid #D1D5DB",
                         cursor: "pointer",
                         backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                         userSelect: "none",
+                        transition: "background-color 0.2s ease",
                       }}>
                         <input
                           type="checkbox"
@@ -431,22 +434,8 @@ export default function OnboardingClient({
                           style={{ width: "16px", height: "16px", marginTop: "3px", accentColor: "var(--primary)" }}
                         />
                         <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
-                            <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                              {c.title} {c.year ? `(${c.year})` : ""}
-                            </div>
-                            <span style={{
-                              fontSize: "9px",
-                              fontWeight: 700,
-                              textTransform: "uppercase",
-                              padding: "2px 6px",
-                              borderRadius: "4px",
-                              backgroundColor: c.source === "lokal" ? "#ECFDF5" : c.source === "dfi" ? "#EFF6FF" : "#F3F4F6",
-                              color: c.source === "lokal" ? "#059669" : c.source === "dfi" ? "#2563EB" : "#4B5563",
-                              border: c.source === "lokal" ? "1px solid #A7F3D0" : c.source === "dfi" ? "1px solid #BFDBFE" : "1px solid #E5E7EB",
-                            }}>
-                              {c.source}
-                            </span>
+                          <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                            {c.title} {c.year ? `(${c.year})` : ""}
                           </div>
                           <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", display: "flex", gap: "8px" }}>
                             <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.role}</span>

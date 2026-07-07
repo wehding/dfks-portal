@@ -496,6 +496,22 @@ export type OnboardingCredit = {
   raw: any;
 };
 
+function isRightBearingRole(role: string | null | undefined): boolean {
+  if (!role) return true;
+  const r = role.toLowerCase().trim();
+  const excluded = [
+    "color grading",
+    "kolorist",
+    "teaser klipper",
+    "grading",
+    "colorist",
+    "trailer klipper",
+    "dft",
+    "colorist assistant"
+  ];
+  return !excluded.some(ex => r.includes(ex));
+}
+
 function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYear: number | null) {
   const normA = normalizeTitle(aTitle);
   const normB = normalizeTitle(bTitle);
@@ -539,7 +555,8 @@ export async function searchOnboardingCredits(
       const dfiCreditsRes = await getDFIPersonCredits(p.Id);
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-        rawDfiCredits.push(...uniqueDfi);
+        const filteredDfi = uniqueDfi.filter((c: any) => isRightBearingRole(c.Description || c.Type));
+        rawDfiCredits.push(...filteredDfi);
       }
     }
   } catch (err) {
@@ -556,7 +573,8 @@ export async function searchOnboardingCredits(
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
         const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
-        rawTmdbCredits.push(...editors);
+        const filteredTmdb = editors.filter(c => isRightBearingRole(c.job));
+        rawTmdbCredits.push(...filteredTmdb);
       }
     }
   } catch (err) {
@@ -579,7 +597,7 @@ export async function searchOnboardingCredits(
       if (myAssignments) {
         myAssignments.forEach((a: any) => {
           const w = a.works;
-          if (w) {
+          if (w && isRightBearingRole(a.role)) {
             localWorksMap.set(w.id, { work: w, role: a.role });
             if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
             if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
