@@ -235,6 +235,11 @@ Følsomme data **maskes** inden API-kald via `lib/mask-text.ts`: CPR · bankkont
 - Rolle sættes via SQL: `update auth.users set raw_user_meta_data = raw_user_meta_data || '{"role": "admin"}' where email = '...'`
 - DFKS org_id: `3dfcad23-03ce-4de0-82f2-6566dfcd88a5`
 
+### 8. Vercel Hobby-begrænsninger på Cron Jobs
+- **Kritisk:** Vercel Hobby-konti tillader kun cron-jobs, der kører højst én gang i døgnet.
+- Derfor er cron-jobbet til jobprocessoren `/api/contracts/jobs/process` sat til `"0 5 * * *"` (hver dag kl. 5) i `vercel.json` i stedet for hvert 5. minut (`*/5 * * * *`).
+- **Når der opgraderes til Vercel Pro:** Husk at ændre dette interval i `vercel.json` tilbage til `"*/5 * * * *"` (hvert 5. minut) eller hurtigere, for at sikre hurtig behandling af kontrakter i køen.
+
 ---
 
 ## Database — kørt i produktion
