@@ -32,7 +32,7 @@ export default function OnboardingClient({
   const [tmdbPersonId, setTmdbPersonId] = useState<number | null>(null);
   const [dfiCredits, setDfiCredits] = useState<OnboardingCredit[]>([]);
   const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<string, boolean>>({});
-  const [dfiSearchQuery, setDfiSearchQuery] = useState("");
+  const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [dfiError, setDfiError] = useState<string | null>(null);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
@@ -441,9 +441,9 @@ export default function OnboardingClient({
                               textTransform: "uppercase",
                               padding: "2px 6px",
                               borderRadius: "4px",
-                              backgroundColor: c.source === "dfi" ? "#EFF6FF" : "#F3F4F6",
-                              color: c.source === "dfi" ? "#2563EB" : "#4B5563",
-                              border: c.source === "dfi" ? "1px solid #BFDBFE" : "1px solid #E5E7EB",
+                              backgroundColor: c.source === "lokal" ? "#ECFDF5" : c.source === "dfi" ? "#EFF6FF" : "#F3F4F6",
+                              color: c.source === "lokal" ? "#059669" : c.source === "dfi" ? "#2563EB" : "#4B5563",
+                              border: c.source === "lokal" ? "1px solid #A7F3D0" : c.source === "dfi" ? "1px solid #BFDBFE" : "1px solid #E5E7EB",
                             }}>
                               {c.source}
                             </span>
