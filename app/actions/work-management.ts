@@ -992,7 +992,7 @@ export async function reviewWorkDataCorrection(params: {
 
 const WORK_ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
-export async function markWorkRequestCommentsRead(requestId: string) {
+export async function markWorkRequestCommentsRead(requestId: string, viewerRole: "admin" | "member" = "member") {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
@@ -1005,26 +1005,28 @@ export async function markWorkRequestCommentsRead(requestId: string) {
     .single();
   if (!request) return { success: false, error: "Anmodning ikke fundet" };
 
-  const isMember = request.requested_by_user_id === user.id;
-  let isAdmin = false;
-  if (!isMember) {
+  // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem der
+  // oprettede requesten — ellers fejler mark-læst når admin selv er medlemmet.
+  if (viewerRole === "admin") {
     const { data: roles } = await db
       .from("user_org_roles")
       .select("role")
       .eq("user_id", user.id)
       .eq("org_id", request.org_id);
-    isAdmin = (roles ?? []).some(r => WORK_ADMIN_ROLES.includes(r.role));
+    if (!(roles ?? []).some(r => WORK_ADMIN_ROLES.includes(r.role))) return { success: false, error: "Ikke autoriseret" };
+  } else if (request.requested_by_user_id !== user.id) {
+    return { success: false, error: "Ikke autoriseret" };
   }
-  if (!isMember && !isAdmin) return { success: false, error: "Ikke autoriseret" };
 
   const now = new Date().toISOString();
+  const asMember = viewerRole === "member";
   // Medlem markerer admin-beskeder læst; admin markerer medlem-beskeder læst.
   const { error } = await db
     .from("work_change_request_comments")
-    .update(isMember ? { member_read_at: now } : { admin_read_at: now })
+    .update(asMember ? { member_read_at: now } : { admin_read_at: now })
     .eq("request_id", requestId)
-    .eq("author_role", isMember ? "admin" : "member")
-    .is(isMember ? "member_read_at" : "admin_read_at", null);
+    .eq("author_role", asMember ? "admin" : "member")
+    .is(asMember ? "member_read_at" : "admin_read_at", null);
 
   if (error) return { success: false, error: error.message };
 

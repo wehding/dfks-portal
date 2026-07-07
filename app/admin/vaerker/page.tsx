@@ -865,16 +865,16 @@ export default function VaerksadministrationPage() {
     });
     setWorks(prev => prev.map(w => (w.id === work.id ? patch(w) : w)));
     setEditing(prev => (prev && prev.id === work.id ? patch(prev) : prev));
-    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id)));
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
     if (results.some(r => r.success)) notifyWorksUpdated();
   };
 
   const openEdit = (work: WorkRow) => {
-    // Auto-åbn den request der har en ulæst besked; ellers første pending request.
+    // Auto-åbn KUN en request med en ulæst besked (så nye beskeder ses).
+    // Allerede sete/godkendte rettelser popper ikke op — dem klikker man selv på.
     const requestWithUnread = (work.work_change_requests ?? []).find(request =>
       (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at)
-    );
-    const pendingRequest = requestWithUnread ?? (work.work_change_requests ?? []).find(request => request.status === "pending") ?? null;
+    ) ?? null;
     void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
@@ -888,7 +888,7 @@ export default function VaerksadministrationPage() {
       },
     ])));
     setNewAssignment({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
-    setActiveRequestId(pendingRequest?.id ?? null);
+    setActiveRequestId(requestWithUnread?.id ?? null);
     setAdminComment("");
     setImportPreview(null);
     setEditLookupQuery(work.title ?? "");
@@ -954,9 +954,9 @@ export default function VaerksadministrationPage() {
     }
   };
 
-  const handleReview = async (decision: "approved" | "rejected") => {
-    if (!activeRequestId) return;
-    const reviewedRequestId = activeRequestId;
+  const handleReview = async (decision: "approved" | "rejected", requestId?: string) => {
+    const reviewedRequestId = requestId ?? activeRequestId;
+    if (!reviewedRequestId) return;
     const editingWorkId = editing?.id;
     setSaving(true);
     try {
@@ -970,7 +970,16 @@ export default function VaerksadministrationPage() {
         const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
         if (updatedEditing) {
           setEditing(updatedEditing);
-          setEditForm(form => form ? { ...form, status: displayStatus(updatedEditing) } : form);
+          setEditForm(toForm(updatedEditing));
+          setAssignmentDrafts(Object.fromEntries((updatedEditing.work_assignments ?? []).map(assignment => [
+            assignment.id,
+            {
+              id: assignment.id,
+              rightsHolderId: assignment.rettighedshavere?.id,
+              role: displayCreditRole(assignment.role),
+              sharePercent: assignment.share_percent === null || assignment.share_percent === undefined ? "" : String(assignment.share_percent),
+            },
+          ])));
         }
       }
       setActiveRequestId(null);
@@ -1044,7 +1053,7 @@ export default function VaerksadministrationPage() {
     if (requestIds.length === 0) { setNotice("Ingen ulæste beskeder blandt de valgte."); return; }
     setSaving(true);
     try {
-      await Promise.all(requestIds.map(id => markWorkRequestCommentsRead(id)));
+      await Promise.all(requestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
       setNotice(`Beskeder markeret som læst på ${selected.length} værk(er).`);
       setSelectedIds([]);
       await load();
@@ -1647,11 +1656,11 @@ export default function VaerksadministrationPage() {
           {editing && editForm && (
             (() => {
               const requests = editing.work_change_requests ?? [];
-              const pendingRequests = requests.filter(request => request.status === "pending");
-              const activeRequest = requests.find(request => request.id === activeRequestId)
-                ?? pendingRequests[0]
-                ?? null;
-              const activeDiffMap = requestDiffMap(activeRequest);
+              const activeRequest = requests.find(request => request.id === activeRequestId) ?? null;
+              // Kun PENDING rettelser markerer datafelterne. Allerede godkendte/afviste
+              // rettelser vises stadig i request-panelet, men "popper" ikke op ved felterne.
+              const activeDiffMap = activeRequest?.status === "pending" ? requestDiffMap(activeRequest) : {};
+              const pendingReviewRequest = requests.find(request => request.status === "pending") ?? null;
               const summary = activeRequest ? requestSummary(activeRequest) : null;
               return (
             <div className="space-y-5">
@@ -1669,10 +1678,17 @@ export default function VaerksadministrationPage() {
                   <Button type="button" variant="destructive" onClick={() => setEditingDeleteOpen(true)} disabled={saving}>
                     Slet permanent
                   </Button>
-                  <Button type="button" onClick={handleSaveWork} disabled={saving}>
-                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Gem værk
-                  </Button>
+                  {pendingReviewRequest ? (
+                    <Button type="button" onClick={() => handleReview("approved", pendingReviewRequest.id)} disabled={saving}>
+                      {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Godkend rettelser
+                    </Button>
+                  ) : (
+                    <Button type="button" onClick={handleSaveWork} disabled={saving}>
+                      {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Gem værk
+                    </Button>
+                  )}
                   <Button type="button" variant="outline" onClick={() => { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); }}>
                     Annuller
                   </Button>
@@ -1710,7 +1726,7 @@ export default function VaerksadministrationPage() {
                           </div>
                           <Badge variant="outline">{requestKindLabel(activeRequest)}</Badge>
                         </div>
-                        {requestDiffRows(activeRequest).length > 0 && (
+                        {activeRequest.status === "pending" && requestDiffRows(activeRequest).length > 0 && (
                           <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">
                             {requestDiffRows(activeRequest).length} feltændring{requestDiffRows(activeRequest).length === 1 ? "" : "er"} er markeret i Værksdata nedenfor.
                           </p>

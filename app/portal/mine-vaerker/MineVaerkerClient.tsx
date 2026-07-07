@@ -331,7 +331,7 @@ export default function MineVaerkerClient({
     setAssignments(prev => prev.map(patchAssignment));
     setEditAssignment(prev => (prev ? patchAssignment(prev) : prev));
 
-    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id)));
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id, "member")));
     if (results.some(r => r.success)) window.dispatchEvent(new CustomEvent("contracts-updated"));
   }
 

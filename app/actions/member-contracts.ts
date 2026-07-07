@@ -415,7 +415,7 @@ export async function addAdminContractComment(contractId: string, message: strin
   return { success: true, comment };
 }
 
-export async function markContractCommentsRead(contractId: string) {
+export async function markContractCommentsRead(contractId: string, viewerRole: "admin" | "member" = "member") {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
 
@@ -429,24 +429,23 @@ export async function markContractCommentsRead(contractId: string) {
 
   const now = new Date().toISOString();
 
-  // Afgør om den der læser er medlem (rettighedshaver) eller admin
-  const { data: rh } = await db
-    .from("rettighedshavere")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
-  const isMember = Boolean(rh && rh.id === contract.rights_holder_id);
-  const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
+  // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem
+  // brugeren er — ellers fejler mark-læst når admin selv er rettighedshaveren.
+  if (viewerRole === "admin") {
+    if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  } else {
+    const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
+    if (!rh || rh.id !== contract.rights_holder_id) return { success: false, error: "Ikke autoriseret" };
+  }
 
-  if (!isMember && !isAdmin) return { success: false, error: "Ikke autoriseret" };
-
+  const asMember = viewerRole === "member";
   // Medlem markerer admin-beskeder læst; admin markerer medlem-beskeder læst.
   const query = db
     .from("contract_comments")
-    .update(isMember ? { member_read_at: now } : { admin_read_at: now })
+    .update(asMember ? { member_read_at: now } : { admin_read_at: now })
     .eq("contract_id", contractId)
-    .eq("author_role", isMember ? "admin" : "member")
-    .is(isMember ? "member_read_at" : "admin_read_at", null);
+    .eq("author_role", asMember ? "admin" : "member")
+    .is(asMember ? "member_read_at" : "admin_read_at", null);
 
   const { error } = await query;
   if (error) return { success: false, error: error.message };

@@ -11,6 +11,7 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead } from "@/app/actions/member-contracts"
 import { ContractAiDataEditor } from "./ContractAiDataEditor"
+import { ContractDocViewer } from "./ContractDocViewer"
 import { maskPersonalData } from "@/lib/mask-text"
 import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -207,6 +208,7 @@ function AdminKontrakterContent() {
     // View dialog
     const [viewContract, setViewContract] = useState<ContractRow | null>(null)
     const [viewPdfUrl, setViewPdfUrl] = useState<string | null>(null)
+    const [editDocUrl, setEditDocUrl] = useState<string | null>(null)
 
     // Edit dialog
     const [editContract, setEditContract] = useState<ContractRow | null>(null)
@@ -582,7 +584,7 @@ function AdminKontrakterContent() {
         if (toMark.length === 0) { toast.info("Ingen ulæste beskeder blandt de valgte"); return }
         setSaving(true)
         try {
-            const results = await Promise.all(toMark.map(c => markContractCommentsRead(c.id)))
+            const results = await Promise.all(toMark.map(c => markContractCommentsRead(c.id, "admin")))
             const failed = results.find(r => !r.success)
             if (failed) throw new Error(failed.error ?? "Kunne ikke markere beskeder læst")
             const now = new Date().toISOString()
@@ -645,6 +647,14 @@ function AdminKontrakterContent() {
         setEditContract(c)
         setAdminReply("")
         void markAdminCommentsRead(c)
+        // Auto-hent dokument-URL så kontrakten vises til venstre uden knap-tryk
+        setEditDocUrl(null)
+        if (c.pdf_url) {
+            const supabase = createClient()
+            supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 3600).then(({ data }) => {
+                if (data?.signedUrl) setEditDocUrl(data.signedUrl)
+            })
+        }
         setEditForm({
             type: c.type,
             overenskomst: c.overenskomst ?? "ingen",
@@ -674,7 +684,7 @@ function AdminKontrakterContent() {
         })
         setContracts(prev => prev.map(row => (row.id === c.id ? patch(row) : row)))
         setEditContract(prev => (prev && prev.id === c.id ? patch(prev) : prev))
-        const res = await markContractCommentsRead(c.id)
+        const res = await markContractCommentsRead(c.id, "admin")
         if (res.success) window.dispatchEvent(new CustomEvent("contracts-updated"))
     }
 
@@ -1135,20 +1145,21 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { setEditContract(null); setEditForm(null) } }}>
-                <DialogContent className="sm:max-w-[720px]">
+                <DialogContent className="w-[min(1180px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Pencil className="h-4 w-4" />Rediger kontrakt
                         </DialogTitle>
                         <DialogDescription>{editContract?.work_title ?? editContract?.working_title ?? editContract?.employer_name ?? "Kontrakt"}</DialogDescription>
                     </DialogHeader>
-                    {editContract?.pdf_url && (
-                        <Button type="button" variant="outline" size="sm" className="w-fit gap-2" onClick={() => editContract && openPdf(editContract)}>
-                            <Eye className="h-3.5 w-3.5" />Se kontrakt
-                        </Button>
-                    )}
                     {editForm && (
-                        <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2">
+                        <div className="grid gap-4 md:grid-cols-[1.05fr_1fr]">
+                            <div className="hidden h-[72vh] overflow-hidden rounded-md border md:block">
+                                {editContract?.pdf_url
+                                    ? <ContractDocViewer url={editDocUrl} filename={editContract.pdf_url} />
+                                    : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil på kontrakten</div>}
+                            </div>
+                            <div className="max-h-[72vh] space-y-4 overflow-y-auto py-2 pr-1">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-1">
                                     <Label className="text-xs">Klipper / rettighedshaver</Label>
@@ -1244,6 +1255,7 @@ function AdminKontrakterContent() {
                                     </Button>
                                 </div>
                             </div>
+                        </div>
                         </div>
                     )}
                     <DialogFooter>

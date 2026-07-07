@@ -190,7 +190,7 @@ export default function MineKontrakterClient({
     });
     setSelectedContract(prev => (prev && prev.id === contract.id ? patchComments(prev) : prev));
     setContracts(prev => prev.map(c => (c.id === contract.id ? patchComments(c) : c)));
-    const res = await markContractCommentsRead(contract.id);
+    const res = await markContractCommentsRead(contract.id, "member");
     if (res.success) window.dispatchEvent(new CustomEvent("contracts-updated"));
   }
 
