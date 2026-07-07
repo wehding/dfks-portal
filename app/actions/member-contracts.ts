@@ -243,6 +243,51 @@ export async function deleteMemberContract(contractId: string) {
   return { success: true };
 }
 
+export async function getContractValidation(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: contract } = await db.from("contracts").select("id, org_id").eq("id", contractId).single();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  const { data } = await db
+    .from("contract_validations")
+    .select("extracted_data")
+    .eq("contract_id", contractId)
+    .maybeSingle();
+  return { success: true, extractedData: (data?.extracted_data ?? null) as Record<string, unknown> | null };
+}
+
+export async function saveContractValidation(params: { contractId: string; extractedData: Record<string, unknown> }) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: contract } = await db.from("contracts").select("id, org_id").eq("id", params.contractId).single();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+
+  const ed = params.extractedData as Record<string, unknown>;
+  const { error } = await db.from("contract_validations").upsert(
+    {
+      contract_id: params.contractId,
+      org_id: contract.org_id,
+      holiday_pay_rate: (ed.holidayPayRate as number) ?? null,
+      beta_rate: (ed.betaRate as number) ?? null,
+      has_overenskomst_incorporation: !!ed.collectiveAgreement,
+      has_credit_clause: !!ed.creditedRoles,
+      notes: (ed.specialNotes as string) ?? null,
+      extracted_data: ed,
+      validated_by: user.id,
+      validated_at: new Date().toISOString(),
+    },
+    { onConflict: "contract_id" }
+  );
+  if (error) return { success: false, error: error.message };
+  revalidatePath("/admin/kontrakter");
+  revalidatePath("/admin/validering");
+  return { success: true };
+}
+
 export async function deleteAdminContractsPermanently(contractIds: string[]) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };

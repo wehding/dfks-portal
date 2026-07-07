@@ -10,6 +10,7 @@ import {
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead } from "@/app/actions/member-contracts"
+import { ContractAiDataEditor } from "./ContractAiDataEditor"
 import { maskPersonalData } from "@/lib/mask-text"
 import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
@@ -1134,7 +1135,7 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { setEditContract(null); setEditForm(null) } }}>
-                <DialogContent className="sm:max-w-[600px]">
+                <DialogContent className="sm:max-w-[720px]">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <Pencil className="h-4 w-4" />Rediger kontrakt
@@ -1218,6 +1219,10 @@ function AdminKontrakterContent() {
                                     <Label className="text-xs">Arbejdstitel</Label>
                                     <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
                                 </div>
+                            </div>
+                            <div className="rounded-md border p-3">
+                                <p className="mb-2 text-sm font-medium">AI-udtrukket data</p>
+                                {editContract && <ContractAiDataEditor key={editContract.id} contractId={editContract.id} />}
                             </div>
                             <div className="rounded-md border p-3">
                                 <p className="mb-2 text-sm font-medium">Kommentarer</p>
