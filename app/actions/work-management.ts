@@ -1024,3 +1024,32 @@ export async function markWorkRequestCommentsRead(requestId: string) {
   revalidatePath("/admin/vaerker");
   return { success: true };
 }
+
+// Admin-svar på en værk-request UDEN at ændre status (kan bruges på enhver request,
+// også godkendte/beskeder). Godkend/afvis håndteres separat af reviewWorkDataCorrection.
+export async function addAdminWorkRequestComment(params: { requestId: string; message: string }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const message = cleanText(params.message);
+  if (!message) throw new Error("Skriv en besked.");
+
+  const db = createServiceClient();
+  const { data: comment, error } = await db
+    .from("work_change_request_comments")
+    .insert({
+      request_id: params.requestId,
+      author_user_id: user.id,
+      author_role: "admin",
+      message,
+      admin_read_at: new Date().toISOString(),
+    })
+    .select("id, author_role, message, created_at, member_read_at, admin_read_at")
+    .single();
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true, comment };
+}

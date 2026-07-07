@@ -30,6 +30,7 @@ import {
   deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
   fetchAdminRightsHolders,
+  addAdminWorkRequestComment,
   fetchAdminWorksForReview,
   markWorkRequestCommentsRead,
   mergeAdminWorks,
@@ -397,6 +398,9 @@ function comparableValue(value: unknown) {
 
 function requestDiffRows(request: ChangeRequest) {
   const proposed = request.proposed_data ?? {};
+  // Kun reelle data-redigeringer markerer felter. Beskeder og medklipper-requests
+  // ændrer ikke værksdata, så de skal ikke markere noget.
+  if (proposed.kind === "message" || proposed.kind === "co_editors") return [];
   const workData = typeof proposed.workData === "object" && proposed.workData ? proposed.workData as Record<string, unknown> : proposed;
 
   // Ved rettelser er old_data et snapshot af værket. Ved oprettelser er old_data tom,
@@ -958,6 +962,29 @@ export default function VaerksadministrationPage() {
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke behandle rettelsen."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!activeRequestId || !adminComment.trim()) return;
+    const editingWorkId = editing?.id;
+    setSaving(true);
+    try {
+      await addAdminWorkRequestComment({ requestId: activeRequestId, message: adminComment });
+      setAdminComment("");
+      const res = await fetchAdminWorksForReview();
+      if (res.success) {
+        const freshWorks = res.works as WorkRow[];
+        setWorks(freshWorks);
+        const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
+        if (updatedEditing) setEditing(updatedEditing);
+      }
+      setNotice("Svar sendt til bruger.");
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke sende svar."));
     } finally {
       setSaving(false);
     }
@@ -1662,29 +1689,34 @@ export default function VaerksadministrationPage() {
                             <p className="text-sm font-medium">Kommentartråd</p>
                             {(activeRequest.work_change_request_comments ?? []).map(comment => (
                               <div key={comment.id} className="rounded bg-muted px-2 py-1 text-sm">
-                                <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin" : "Bruger"} · {new Date(comment.created_at).toLocaleString("da-DK")}</div>
+                                <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin · " : ""}{new Date(comment.created_at).toLocaleString("da-DK")}</div>
                                 <div>{comment.message}</div>
                               </div>
                             ))}
                           </div>
                         )}
-                        {activeRequest.status !== "approved" && (
-                          <div className="space-y-3">
-                            <Field label="Svar til bruger">
-                              <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} />
-                            </Field>
-                            <div className="flex justify-end gap-2">
-                              <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
-                                <XCircle className="mr-2 h-4 w-4" />
-                                Afvis
-                              </Button>
-                              <Button onClick={() => handleReview("approved")} disabled={saving}>
-                                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Godkend
-                              </Button>
-                            </div>
+                        <div className="space-y-3">
+                          <Field label="Svar til bruger">
+                            <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} placeholder="Skriv et svar til brugeren…" />
+                          </Field>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={handleSendReply} disabled={saving || !adminComment.trim()}>
+                              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Send svar
+                            </Button>
+                            {activeRequest.status === "pending" && (
+                              <>
+                                <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Afvis
+                                </Button>
+                                <Button onClick={() => handleReview("approved")} disabled={saving}>
+                                  Godkend
+                                </Button>
+                              </>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     )}
                   </div>

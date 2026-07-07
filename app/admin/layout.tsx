@@ -77,6 +77,12 @@ const USER_NAV_ITEMS = [
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
 
+// Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
+// amber = afventer godkendelse.
+const MENU_BADGE_BASE = "inline-flex items-center justify-center h-5 min-w-5 rounded-full text-[10px] font-bold px-1"
+const MENU_BADGE_BESKED = `${MENU_BADGE_BASE} bg-blue-100 text-blue-700`
+const MENU_BADGE_GODKEND = `${MENU_BADGE_BASE} bg-amber-100 text-amber-800`
+
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS,
@@ -200,33 +206,25 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
             >
                 <Link href={item.href}>
-                    <item.icon className="h-4 w-4" />
-                    <span>{item.label}</span>
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
                     {item.key === "kontrakter" && (pendingCount > 0 || pendingContractMessagesCount > 0) && (
-                        <span className="ml-auto flex items-center gap-1">
+                        <span className="ml-auto flex shrink-0 items-center gap-1">
                             {pendingContractMessagesCount > 0 && (
-                                <span title="Ulæste beskeder" className="inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-blue-500 text-white text-[10px] font-bold px-1">
-                                    {pendingContractMessagesCount}
-                                </span>
+                                <span title="Ulæste beskeder" className={MENU_BADGE_BESKED}>{pendingContractMessagesCount}</span>
                             )}
                             {pendingCount > 0 && (
-                                <span title="Afventer godkendelse" className="inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
-                                    {pendingCount}
-                                </span>
+                                <span title="Afventer godkendelse" className={MENU_BADGE_GODKEND}>{pendingCount}</span>
                             )}
                         </span>
                     )}
                     {item.key === "vaerker" && (pendingWorksCount > 0 || pendingWorkMessagesCount > 0) && (
-                        <span className="ml-auto flex items-center gap-1">
+                        <span className="ml-auto flex shrink-0 items-center gap-1">
                             {pendingWorkMessagesCount > 0 && (
-                                <span title="Ulæste beskeder" className="inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-blue-500 text-white text-[10px] font-bold px-1">
-                                    {pendingWorkMessagesCount}
-                                </span>
+                                <span title="Ulæste beskeder" className={MENU_BADGE_BESKED}>{pendingWorkMessagesCount}</span>
                             )}
                             {pendingWorksCount > 0 && (
-                                <span title="Afventer godkendelse" className="inline-flex items-center justify-center h-5 min-w-5 rounded-full bg-amber-500 text-white text-[10px] font-bold px-1">
-                                    {pendingWorksCount}
-                                </span>
+                                <span title="Afventer godkendelse" className={MENU_BADGE_GODKEND}>{pendingWorksCount}</span>
                             )}
                         </span>
                     )}
