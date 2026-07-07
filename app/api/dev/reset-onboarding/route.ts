@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     const { data: updatedRows, error: updateError } = await supabase
         .from("rettighedshavere")
         .update({
-            full_name: null,
+            full_name: "",
             phone: null,
             address: null,
             cpr_no: null,
