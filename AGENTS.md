@@ -41,7 +41,7 @@ Når Codex laver en PR, skal beskrivelsen altid indeholde:
 - Hvorfor er det ændret?
 - Hvordan er det testet?
 
-PR'er bør som udgangspunkt oprettes som kladder, indtil brugeren siger, at de er klar til review.
+Opret ALDRIG en Pull Request (inkl. draft/kladde-PR) uden at brugeren eksplicit beder dig om det.
 
 ## Før push
 
@@ -50,4 +50,4 @@ Før Codex foreslår eller udfører push:
 1. Vis kort hvilke filer der er ændret.
 2. Bekræft at arbejdet ligger på en sidebranch.
 3. Undgå push direkte til `master`.
-4. Foreslå PR mod `master`.
+4. Foreslå ikke og opret ikke PR, før brugeren beder om det.
