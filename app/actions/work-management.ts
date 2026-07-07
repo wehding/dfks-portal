@@ -70,6 +70,7 @@ type WorkRequestPayload = Partial<WorkCorrectionData> & {
   localMatches?: unknown[];
   overrideLocalMatch?: boolean;
   assignmentChanges?: ProposedCoEditor[];
+  myEpisodes?: number[];
 };
 
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
@@ -333,6 +334,7 @@ export async function submitWorkDataCorrection(params: {
   data: WorkCorrectionData;
   comment: string;
   coEditors?: ProposedCoEditor[];
+  myEpisodes?: number[];
 }) {
   const comment = params.comment.trim();
   if (!comment) throw new Error("Skriv en bemærkning til admin.");
@@ -365,7 +367,8 @@ export async function submitWorkDataCorrection(params: {
 
   const proposedChanges = changedFields(work, proposed);
   const coEditors = params.coEditors ?? [];
-  if (!Object.keys(proposedChanges).length && !coEditors.length) throw new Error("Der er ingen ændringer at sende til admin.");
+  const hasChanges = Object.keys(proposedChanges).length > 0 || coEditors.length > 0 || (params.myEpisodes ?? []).length > 0;
+  if (!hasChanges) throw new Error("Der er ingen ændringer at sende til admin.");
 
   const orgId = await currentOrgId(db, user.id);
   const { data: request, error: requestError } = await db
@@ -377,7 +380,7 @@ export async function submitWorkDataCorrection(params: {
       requested_by_rights_holder_id: rightsHolder.id,
       source: "Mine værker",
       old_data: work,
-      proposed_data: { kind: "correction", ...proposedChanges, coEditors },
+      proposed_data: { kind: "correction", ...proposedChanges, coEditors, myEpisodes: params.myEpisodes || [] },
       status: "pending",
     })
     .select("id")
@@ -1011,6 +1014,85 @@ export async function reviewWorkDataCorrection(params: {
     if (error) throw new Error(error.message);
     await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.coEditors);
     await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.assignmentChanges);
+
+    // Automatisk generering og tildeling af afsnit
+    const oldWork = request.old_data as any;
+    const isSeries = workUpdates.type === "tv-serie" || workUpdates.type === "dokumentar-serie" || oldWork?.type === "tv-serie" || oldWork?.type === "dokumentar-serie";
+    const epCount = workUpdates.episode_count ? Number(workUpdates.episode_count) : (oldWork?.episode_count ? Number(oldWork.episode_count) : 0);
+
+    if (isSeries && epCount > 0) {
+      const { data: existingEpisodes } = await db
+        .from("works")
+        .select("id, episode_number")
+        .eq("parent_work_id", request.work_id);
+
+      const existingMap = new Map<number, string>();
+      if (existingEpisodes) {
+        existingEpisodes.forEach((e: any) => {
+          if (e.episode_number != null) existingMap.set(Number(e.episode_number), e.id);
+        });
+      }
+
+      const { data: myAssignment } = await db
+        .from("work_assignments")
+        .select("role")
+        .eq("work_id", request.work_id)
+        .eq("rights_holder_id", request.requested_by_rights_holder_id)
+        .maybeSingle();
+
+      const memberRole = myAssignment?.role || "Klipper";
+      const myEpisodes = (proposed.myEpisodes || []) as number[];
+
+      for (let i = 1; i <= epCount; i++) {
+        let epWorkId = existingMap.get(i);
+
+        if (!epWorkId) {
+          const eStr = String(i).padStart(2, "0");
+          const sStr = "01";
+          const epTitle = `${workUpdates.title || oldWork?.title || "Ukendt"} - S${sStr}E${eStr}`;
+
+          const { data: newEp, error: epErr } = await db
+            .from("works")
+            .insert({
+              org_id: request.org_id,
+              parent_work_id: request.work_id,
+              season_number: 1,
+              episode_number: i,
+              title: epTitle,
+              type: workUpdates.type || oldWork?.type || "tv-serie",
+              year: workUpdates.year || oldWork?.year,
+              duration_minutes: workUpdates.duration_minutes || oldWork?.duration_minutes,
+              genre: workUpdates.genre || oldWork?.genre,
+              director: workUpdates.director || oldWork?.director,
+              description: workUpdates.description || oldWork?.description,
+              poster_url: oldWork?.poster_url || null,
+              status: "godkendt",
+            })
+            .select("id")
+            .single();
+
+          if (epErr) {
+            console.error(`Fejl ved automatisk oprettelse af afsnit ${i}:`, epErr);
+          } else {
+            epWorkId = newEp.id;
+          }
+        }
+
+        if (epWorkId && myEpisodes.includes(i)) {
+          await db
+            .from("work_assignments")
+            .upsert(
+              {
+                work_id: epWorkId,
+                org_id: request.org_id,
+                rights_holder_id: request.requested_by_rights_holder_id,
+                role: memberRole,
+              },
+              { onConflict: "work_id,rights_holder_id,role" }
+            );
+        }
+      }
+    }
   }
 
   const adminMessage = cleanText(params.comment) ?? (params.decision === "rejected" ? "Rettelsen er afvist." : null);
