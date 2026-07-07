@@ -586,23 +586,34 @@ export async function searchOnboardingCredits(
   const localDfiIds = new Set<string>();
   const localTmdbIds = new Set<number>();
 
-  // A. Hent eksisterende assignments for denne rettighedshaver
+  // A. Hent eksisterende assignments for denne rettighedshaver (kun hvis søgningen er på eget navn)
   if (rightsHolderId) {
     try {
-      const { data: myAssignments } = await db
-        .from("work_assignments")
-        .select("role, works(*)")
-        .eq("rights_holder_id", rightsHolderId);
-      
-      if (myAssignments) {
-        myAssignments.forEach((a: any) => {
-          const w = a.works;
-          if (w && isRightBearingRole(a.role)) {
-            localWorksMap.set(w.id, { work: w, role: a.role });
-            if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
-            if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
-          }
-        });
+      const { data: rhProfile } = await db
+        .from("rettighedshavere")
+        .select("full_name")
+        .eq("id", rightsHolderId)
+        .maybeSingle();
+
+      const rhName = rhProfile?.full_name ?? "";
+      const isSearchForSelf = normalizeTitle(rhName) === normalizeTitle(nameToSearch);
+
+      if (isSearchForSelf) {
+        const { data: myAssignments } = await db
+          .from("work_assignments")
+          .select("role, works(*)")
+          .eq("rights_holder_id", rightsHolderId);
+        
+        if (myAssignments) {
+          myAssignments.forEach((a: any) => {
+            const w = a.works;
+            if (w && isRightBearingRole(a.role)) {
+              localWorksMap.set(w.id, { work: w, role: a.role });
+              if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
+              if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
+            }
+          });
+        }
       }
     } catch (err) {
       console.error("Local assignments query error:", err);
