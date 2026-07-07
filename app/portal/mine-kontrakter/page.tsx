@@ -13,10 +13,12 @@ type RawContract = Omit<Contract, "works" | "employers"> & {
   works: Contract["works"] | Contract["works"][];
   employers: Contract["employers"] | Contract["employers"][];
   contract_attachments?: Contract["contract_attachments"] | null;
+  contract_comments?: Contract["contract_comments"] | null;
 };
 
-const CONTRACT_SELECT_WITH_ATTACHMENTS = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes), contract_attachments(id, type, title, pdf_url, created_at)";
-const CONTRACT_SELECT_BASE = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes)";
+const CONTRACT_SELECT_WITH_ATTACHMENTS = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)";
+const CONTRACT_SELECT_BASE = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)";
+const CONTRACT_SELECT_LEGACY = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)";
 
 function getWorkRelation(row: WorkAssignmentRow) {
   return Array.isArray(row.works) ? row.works[0] ?? null : row.works;
@@ -36,7 +38,8 @@ function isMissingAttachmentRelationError(error: { message?: string; code?: stri
     (
       error.code === "PGRST200" ||
       error.code === "42P01" ||
-      error.message?.includes("contract_attachments")
+      error.message?.includes("contract_attachments") ||
+      error.message?.includes("contract_comments")
     )
   );
 }
@@ -69,7 +72,16 @@ export default async function MineKontrakterPage() {
         .eq("rights_holder_id", rh.id)
         .order("created_at", { ascending: false });
       if (fallback.error) {
-        console.error("Kunne ikke hente kontrakter:", fallback.error.message);
+        const legacy = await db
+          .from("contracts")
+          .select(CONTRACT_SELECT_LEGACY)
+          .eq("rights_holder_id", rh.id)
+          .order("created_at", { ascending: false });
+        if (legacy.error) {
+          console.error("Kunne ikke hente kontrakter:", legacy.error.message);
+        } else {
+          contracts = legacy.data ?? [];
+        }
       } else {
         contracts = fallback.data ?? [];
       }
@@ -102,6 +114,9 @@ export default async function MineKontrakterPage() {
     works: firstRelation(contract.works),
     employers: firstRelation(contract.employers),
     contract_attachments: Array.isArray(contract.contract_attachments) ? contract.contract_attachments : [],
+    contract_comments: Array.isArray(contract.contract_comments)
+      ? [...contract.contract_comments].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      : [],
   }));
 
   return (

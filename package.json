@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:link": "set -a && . ./.env.local && set +a && supabase link --project-ref icxywdymyaxluaxxcpye",
+    "db:push": "set -a && . ./.env.local && set +a && supabase db push",
+    "db:pull": "set -a && . ./.env.local && set +a && supabase db pull",
+    "db:diff": "set -a && . ./.env.local && set +a && supabase db diff"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -43,6 +47,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "pg": "^8.22.0",
     "shadcn": "^3.8.4",
     "tailwindcss": "^4",
     "tsx": "^4.22.4",

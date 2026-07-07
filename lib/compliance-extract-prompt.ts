@@ -24,7 +24,7 @@ JSON-SKEMA:
   "risk_level": "LAV" | "MELLEM" | "HØJ",
   "should_escalate": true | false,
   "non_covered_pedagogical": true | false,
-  "overenskomst_navn": "de4-fiktion" | "faf-dokumentar" | null,
+  "overenskomst_navn": "de4-fiktion" | "faf-dokumentar" | "dj" | "metal" | null,
   "contract_language": "da" | "en" | "other",
   "royalty_rate": 1.0 | 1.5 | null,
   "loan_calculation": { "amount": number, "basis": "intern beregningsforklaring" } | null,

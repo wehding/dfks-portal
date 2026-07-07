@@ -10,7 +10,7 @@ import { Modal } from "./Modal";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -53,6 +53,8 @@ interface LocalWorkResult {
   year: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
+  season_number: number | null;
+  episode_number: number | null;
   genre: string | null;
   director: string | null;
   status: string;
@@ -78,6 +80,7 @@ interface DfiPersonCredit {
   Type?: string | null;
   Function?: string | null;
   Credit?: string | null;
+  Description?: string | null;
   Name?: string | null;
 }
 
@@ -140,6 +143,7 @@ interface AddWorkModalProps {
   onWorkAdded: (message: string, success: boolean) => void;
   reloadAssignments: () => Promise<void>;
   locale: string;
+  initialQuery?: string;
 }
 
 function emptyManualWorkForm(): ManualWorkForm {
@@ -166,7 +170,7 @@ function searchItemTitle(item: SearchItem | null) {
   if (!item) return "";
   if ("Title" in item) {
     const dfiItem = item as DfiSearchResult;
-    return dfiItem.Title || dfiItem.DanishTitle || "";
+    return cleanDfiTitle(dfiItem.Title || dfiItem.DanishTitle || "");
   }
   if ("media_type" in item || "name" in item) {
     const tmdbItem = item as TmdbSearchResult;
@@ -186,13 +190,23 @@ function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
   }));
 }
 
+// Kun rene klipper/editor-krediteringer — ikke klipassistenter, colorister
+// eller andre postproduktionsroller (DFI TypeCode for klipper er "klip").
+const DFI_EDITOR_CODES = new Set(["klip", "editor", "edit"]);
+const DFI_EDITOR_TYPES = new Set(["klip", "editor"]);
+
 function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
   const credits = Array.isArray(film.PersonCredits) ? film.PersonCredits : [];
   return credits
     .filter(credit => {
-      const code = String(credit.TypeCode ?? "").toLowerCase();
-      const text = `${credit.Type ?? ""} ${credit.Function ?? ""} ${credit.Credit ?? ""}`.toLowerCase();
-      return code.includes("klip") || code.includes("edit") || text.includes("klip") || text.includes("edit");
+      const code = String(credit.TypeCode ?? "").toLowerCase().trim();
+      const type = String(credit.Type ?? "").toLowerCase().trim();
+      // DFI angiver den specifikke rolle i Description (fx "Klipper" vs "Klippeassistent").
+      const roleText = `${credit.Description ?? ""} ${credit.Function ?? ""} ${credit.Credit ?? ""}`.toLowerCase();
+      const isEditorCategory = DFI_EDITOR_CODES.has(code) || DFI_EDITOR_TYPES.has(type);
+      // Kun rene klippere — ikke klipassistenter, colorister, lyd osv.
+      const isAssistantOrOther = /assist|elev|trainee|prakt|farve|color|grade|online|vfx|lyd|sound/.test(`${code} ${type} ${roleText}`);
+      return isEditorCategory && !isAssistantOrOther;
     })
     .map(credit => ({
       id: crypto.randomUUID(),
@@ -261,6 +275,11 @@ function countDfiEpisodes(film: DfiFilm) {
   return episodeChildren.length || null;
 }
 
+function isDfiChildResult(result: DfiSearchResult) {
+  const film = result as DfiFilm;
+  return Boolean(dfiNumericId(film.Parent?.Id)) || Boolean(parseDfiEpisodeTitleInfo(result.Title ?? ""));
+}
+
 function findDfiEpisodeNumber(parentFilm: DfiFilm, childFilm: DfiFilm) {
   const childId = dfiNumericId(childFilm.Id);
   const children = Array.isArray(parentFilm.Children) ? parentFilm.Children : [];
@@ -307,6 +326,7 @@ export function AddWorkModal({
   onWorkAdded,
   reloadAssignments,
   locale,
+  initialQuery = "",
 }: AddWorkModalProps) {
   const { t } = useI18n();
 
@@ -317,14 +337,9 @@ export function AddWorkModal({
   const [addSeason, setAddSeason]             = useState("");
   const [addEpisode, setAddEpisode]           = useState("");
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
   const [addComment, setAddComment]           = useState("");
-
-  useEffect(() => {
-    if (isOpen) {
-      resetAddState();
-    }
-  }, [isOpen]);
 
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
   const [localResults, setLocalResults]       = useState<LocalWorkResult[]>([]);
@@ -333,14 +348,17 @@ export function AddWorkModal({
   const [pickedResult, setPickedResult]       = useState<SearchItem | null>(null);
   const [pickedSource, setPickedSource]       = useState<"local" | "dfi" | "tmdb" | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
+  const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
   const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
   const [showExternalResults, setShowExternalResults] = useState(false);
+  const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
     const updateTmdbEpisodes = async () => {
       if (pickedSource === "tmdb" && pickedResult) {
         const tmdbResult = pickedResult as TmdbSearchResult;
+        setEpisodesLoading(true);
         try {
           const det = await getTMDBWorkDetails(tmdbResult.id, "tv");
           if (det.success && det.details) {
@@ -350,11 +368,13 @@ export function AddWorkModal({
             const count = season ? season.episode_count : null;
             if (count) {
               setDetectedEpisodeCount(count);
-              setSelectedEpisodes(Array.from({ length: count }, (_, idx) => idx + 1));
+              setSelectedEpisodes(prev => prev.filter(x => x <= count));
             }
           }
         } catch (e) {
           console.error(e);
+        } finally {
+          setEpisodesLoading(false);
         }
       }
     };
@@ -366,24 +386,19 @@ export function AddWorkModal({
       const count = parseInt(manualWork.episode_count) || null;
       setDetectedEpisodeCount(count);
       if (count) {
-        setSelectedEpisodes(prev => {
-          const filtered = prev.filter(x => x <= count);
-          if (filtered.length === 0) {
-            return Array.from({ length: count }, (_, i) => i + 1);
-          }
-          return filtered;
-        });
+        setSelectedEpisodes(prev => prev.filter(x => x <= count));
       } else {
         setSelectedEpisodes([]);
       }
     }
   }, [manualMode, manualWork.episode_count, manualWork.type]);
 
-  const resetAddState = () => {
+  const resetAddState = React.useCallback(() => {
+    autoSearchKeyRef.current = "";
     setManualMode(false);
     setHasSearchedAdd(false);
     setManualWork(emptyManualWorkForm());
-    setAddQuery("");
+    setAddQuery(initialQuery);
     setAddComment("");
     setAddCoEditors([]);
     setLocalResults([]);
@@ -396,11 +411,20 @@ export function AddWorkModal({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setShowExternalResults(false);
-  };
+  }, [initialQuery]);
 
-  const handleSearch = async () => {
-    if (!addQuery.trim()) return;
+  useEffect(() => {
+    if (isOpen) {
+      resetAddState();
+    }
+  }, [isOpen, resetAddState]);
+
+  const handleSearch = async (queryOverride?: string) => {
+    const query = (queryOverride ?? addQuery).trim();
+    if (!query) return;
+    if (queryOverride) setAddQuery(query);
     setIsSearching(true);
+    setIsSearchingTmdb(false);
     setHasSearchedAdd(true);
     setShowExternalResults(false);
     setLocalResults([]);
@@ -410,35 +434,111 @@ export function AddWorkModal({
     setPickedSource(null);
     setAddCoEditors([]);
 
-    const [local, dfi, tmdb] = await Promise.all([
-      searchLocalWorksForMember(addQuery).catch(() => ({ success: false, works: [] })),
-      searchDFIFilms(addQuery).catch(() => ({ success: false, results: [] })),
-      searchTMDB(addQuery).catch(() => []),
-    ]);
-
+    const local = await searchLocalWorksForMember(query).catch(() => ({ success: false, works: [] }));
     const locals = ((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8);
     setLocalResults(locals);
-    setDfiResults(((dfi as { results?: DfiSearchResult[] }).results ?? []).slice(0, 8));
-    setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
-    setIsSearching(false);
 
     if (locals.length > 0) {
       setPickedResult(locals[0]);
       setPickedSource("local");
       setManualMode(false);
       setAddCoEditors(localWorkToCoEditors(locals[0]));
+      setIsSearching(false);
+      return;
     }
+
+    const dfi = await searchDFIFilms(query).catch(() => ({ success: false, results: [] }));
+    const dfiParents = (((dfi as { results?: DfiSearchResult[] }).results ?? [])
+      .filter(result => !isDfiChildResult(result)))
+      .slice(0, 8);
+    setDfiResults(dfiParents);
+
+    if (dfiParents.length > 0) {
+      setManualMode(false);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearchingTmdb(true);
+    setShowExternalResults(true);
+    const tmdb = await searchTMDB(query).catch(() => []);
+    const tmdbItems = (Array.isArray(tmdb) ? tmdb : []).slice(0, 8);
+    setTmdbResults(tmdbItems);
+    setIsSearchingTmdb(false);
+    setIsSearching(false);
+
+    if (tmdbItems.length > 0) {
+      setManualMode(false);
+      return;
+    }
+
+    setManualWork(prev => ({ ...prev, title: query }));
   };
 
-  const pickLocalResult = (work: LocalWorkResult) => {
+  const handleTmdbSearch = async () => {
+    if (!addQuery.trim()) return;
+    setIsSearchingTmdb(true);
+    setShowExternalResults(true);
+    setTmdbResults([]);
+    const tmdb = await searchTMDB(addQuery).catch(() => []);
+    setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
+    setIsSearchingTmdb(false);
+  };
+
+  useEffect(() => {
+    if (!isOpen || !initialQuery.trim()) return;
+    const key = initialQuery.trim();
+    if (autoSearchKeyRef.current === key) return;
+    autoSearchKeyRef.current = key;
+    const timer = window.setTimeout(() => {
+      void handleSearch(key);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // handleSearch intentionally reads the current modal state after resetAddState has applied initialQuery.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialQuery]);
+
+  const pickLocalResult = async (work: LocalWorkResult) => {
     setPickedResult(work);
     setPickedSource("local");
     setManualMode(false);
     setAddCoEditors(localWorkToCoEditors(work));
+    setSelectedEpisodes([]);
     const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
-    const count = isSeries ? work.episode_count ?? null : null;
-    setDetectedEpisodeCount(count);
-    setSelectedEpisodes(count ? Array.from({ length: count }, (_, idx) => idx + 1) : []);
+    if (!isSeries) {
+      setDetectedEpisodeCount(null);
+      return;
+    }
+    // Hvis det valgte lokale værk selv er et afsnit, sæt sæsonen automatisk.
+    if (work.season_number) setAddSeason(String(work.season_number));
+    setDetectedEpisodeCount(null);
+    setEpisodesLoading(true);
+    try {
+      // Lokale serier har ofte ikke episode_count gemt — udled antal afsnit fra
+      // TMDB/DFI (som DFI/TMDB-flowet gør), så afsnitsvælgeren kan vises.
+      let count: number | null = work.episode_count ?? null;
+      if (!count && work.tmdb_id) {
+        const det = await getTMDBWorkDetails(work.tmdb_id, "tv");
+        if (det.success && det.details) {
+          const d = det.details as TmdbDetails;
+          const sNum = work.season_number ?? (parseInt(addSeason) || 1);
+          count = d.seasons?.find(s => s.season_number === sNum)?.episode_count ?? null;
+        }
+      }
+      if (!count && work.dfi_id) {
+        const details = await getDFIFilmDetails(Number(work.dfi_id));
+        if (details.success && details.film) count = countDfiEpisodes(asDfiFilm(details.film as DfiFilm));
+      }
+      setDetectedEpisodeCount(count);
+      // Forvælg det afsnit, brugeren klikkede på (hvis det selv er et afsnit).
+      if (work.episode_number && count && work.episode_number <= count) {
+        setSelectedEpisodes([work.episode_number]);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setEpisodesLoading(false);
+    }
   };
 
   const pickDfiResult = async (result: DfiSearchResult) => {
@@ -448,6 +548,7 @@ export function AddWorkModal({
     setAddCoEditors([]);
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
+    setEpisodesLoading(true);
     try {
       const resolved = await resolveDfiSelection(result);
       const film = resolved.film;
@@ -463,19 +564,22 @@ export function AddWorkModal({
         if (resolved.selectedEpisode) {
           setSelectedEpisodes([resolved.selectedEpisode]);
         } else {
-          setSelectedEpisodes(Array.from({ length: count }, (_, i) => i + 1));
+          setSelectedEpisodes([]);
         }
       }
     } catch (e) {
       console.error(e);
       setAddCoEditors([]);
+    } finally {
+      setEpisodesLoading(false);
     }
   };
 
-  const closeAfterSuccess = async () => {
-    await reloadAssignments();
+  const closeAfterSuccess = () => {
+    // Luk vinduet med det samme; genindlæs listen i baggrunden.
     resetAddState();
     onClose();
+    void reloadAssignments();
   };
 
   const handleAddWork = async () => {
@@ -483,6 +587,9 @@ export function AddWorkModal({
     setIsSaving(true);
     try {
       const selectedSeasonNumber = showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
+      if (showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0) {
+        throw new Error(locale === "da" ? "Vælg mindst ét afsnit." : "Select at least one episode.");
+      }
       if (pickedSource === "local" && pickedResult) {
         const localResult = pickedResult as LocalWorkResult;
         const res = await linkExistingWorkForMember({
@@ -554,7 +661,7 @@ export function AddWorkModal({
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
           workData: {
             dfi_id: String(film.Id),
-            title: film.Title || film.DanishTitle || "Ukendt",
+            title: cleanDfiTitle(film.Title || film.DanishTitle || "Ukendt") || "Ukendt",
             type,
             year: extractDfiPremiereYear(film),
             director,
@@ -583,6 +690,12 @@ export function AddWorkModal({
           : d.first_air_date
           ? parseInt(d.first_air_date.substring(0, 4))
           : null;
+        const tmdbDetail = d as TmdbSearchResult & { runtime?: number | null; episode_run_time?: number[] };
+        const durationMinutes = typeof tmdbDetail.runtime === "number" && tmdbDetail.runtime > 0
+          ? tmdbDetail.runtime
+          : Array.isArray(tmdbDetail.episode_run_time) && tmdbDetail.episode_run_time[0]
+          ? tmdbDetail.episode_run_time[0]
+          : null;
         const res = await addWorkForMemberWithApproval({
           rightsHolderId,
           role: addRole,
@@ -595,6 +708,7 @@ export function AddWorkModal({
             title,
             type: tmdbResult.media_type === "tv" ? "tv-serie" : "spillefilm",
             year,
+            duration_minutes: durationMinutes,
             season_number: selectedSeasonNumber,
             episode_number: numberOrNull(addEpisode),
             selected_episodes: selectedEpisodes,
@@ -624,6 +738,101 @@ export function AddWorkModal({
         : pickedSource === "dfi"
         ? ["tv-serie", "dokumentar-serie"].includes(mapDfiWorkType((pickedResult as DfiSearchResult).Category, (pickedResult as DfiSearchResult).Type)) || detectedEpisodeCount !== null
         : (pickedResult as TmdbSearchResult).media_type === "tv"));
+  const selectedEpisodeLabel = selectedEpisodes.length > 0
+    ? selectedEpisodes.join(", ")
+    : numberOrNull(addEpisode)
+    ? String(numberOrNull(addEpisode))
+    : "";
+  const chosenTitle = manualMode ? manualWork.title : searchItemTitle(pickedResult);
+  const chosenSummary = showSeriesFields && selectedEpisodeLabel
+    ? `${chosenTitle}, ${locale === "da" ? "afsnit" : "episodes"} ${selectedEpisodeLabel}`
+    : chosenTitle;
+  const missingSeriesEpisodes = Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
+  const noSearchResults = hasSearchedAdd && !isSearching && !isSearchingTmdb && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0;
+
+  const seriesEpisodePicker = (
+    <div className="mt-3 space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
+          <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
+        </div>
+        {!episodesLoading && detectedEpisodeCount === null && (
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
+            <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />
+          </div>
+        )}
+      </div>
+
+      {episodesLoading && (
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          {locale === "da" ? "Henter afsnit…" : "Loading episodes…"}
+        </div>
+      )}
+
+      {!episodesLoading && detectedEpisodeCount !== null && (
+        <div className="rounded-lg border border-gray-200 p-4 bg-white/50">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
+            <Label className="text-sm font-semibold text-gray-900">
+              {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
+            </Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="h-7 text-xs px-2"
+                onClick={() => setSelectedEpisodes(Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
+              >
+                {locale === "da" ? "Vælg alle" : "Select all"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="h-7 text-xs px-2"
+                onClick={() => setSelectedEpisodes([])}
+              >
+                {locale === "da" ? "Fravælg alle" : "Deselect all"}
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 max-h-40 overflow-y-auto p-1">
+            {Array.from({ length: detectedEpisodeCount }, (_, idx) => {
+              const epNum = idx + 1;
+              const isChecked = selectedEpisodes.includes(epNum);
+              return (
+                <label
+                  key={epNum}
+                  className={`flex items-center justify-center border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
+                    isChecked
+                      ? "border-gray-900 bg-white font-semibold text-gray-900 ring-2 ring-gray-900 ring-offset-2"
+                      : "border-gray-200 bg-white hover:bg-gray-50 text-gray-600"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={isChecked}
+                    onChange={() => {
+                      setSelectedEpisodes(prev =>
+                        prev.includes(epNum)
+                          ? prev.filter(x => x !== epNum)
+                          : [...prev, epNum].sort((a, b) => a - b)
+                      );
+                    }}
+                  />
+                  {epNum}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   if (!isOpen) return null;
 
@@ -638,6 +847,7 @@ export function AddWorkModal({
 
       <div className="flex flex-col gap-2 mb-4 sm:flex-row">
         <Input
+          autoFocus
           placeholder={t("works.addSearchPlaceholder")}
           value={addQuery}
           onChange={e => setAddQuery(e.target.value)}
@@ -645,13 +855,13 @@ export function AddWorkModal({
             if (e.key === "Enter") handleSearch();
           }}
         />
-        <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
+        <Button variant="outline" onClick={() => handleSearch()} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
           {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
         </Button>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {hasSearchedAdd && (
+        {noSearchResults && (
           <Button
             type="button"
             size="sm"
@@ -746,87 +956,12 @@ export function AddWorkModal({
             </div>
           </div>
           <p className="mt-3 text-xs text-gray-500">{t("works.posterHint")}</p>
+          {showSeriesFields && seriesEpisodePicker}
         </div>
       )}
 
-      {showSeriesFields && (
-        <div className="mb-4 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
-              <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
-            </div>
-            {detectedEpisodeCount === null && (
-              <div className="space-y-1.5">
-                <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
-                <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />
-              </div>
-            )}
-          </div>
 
-          {detectedEpisodeCount !== null && (
-            <div className="rounded-lg border border-gray-200 p-4 bg-white/50">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-                <Label className="text-sm font-semibold text-gray-900">
-                  {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
-                </Label>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="h-7 text-xs px-2"
-                    onClick={() => setSelectedEpisodes(Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
-                  >
-                    {locale === "da" ? "Vælg alle" : "Select all"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="xs"
-                    className="h-7 text-xs px-2"
-                    onClick={() => setSelectedEpisodes([])}
-                  >
-                    {locale === "da" ? "Fravælg alle" : "Deselect all"}
-                  </Button>
-                </div>
-              </div>
-              <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 max-h-40 overflow-y-auto p-1">
-                {Array.from({ length: detectedEpisodeCount }, (_, idx) => {
-                  const epNum = idx + 1;
-                  const isChecked = selectedEpisodes.includes(epNum);
-                  return (
-                    <label
-                      key={epNum}
-                      className={`flex items-center justify-center border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
-                        isChecked 
-                          ? "border-gray-900 bg-gray-900 font-semibold text-white" 
-                          : "border-gray-200 bg-white hover:bg-gray-50 text-gray-600"
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={isChecked}
-                        onChange={() => {
-                          setSelectedEpisodes(prev =>
-                            prev.includes(epNum)
-                              ? prev.filter(x => x !== epNum)
-                              : [...prev, epNum].sort((a, b) => a - b)
-                          );
-                        }}
-                      />
-                      {epNum}
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {!manualMode && hasSearchedAdd && !isSearching && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0 && (
+      {!manualMode && noSearchResults && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-900">
           {locale === "da" ? "Titel ikke fundet" : "Title not found"}
         </div>
@@ -839,52 +974,67 @@ export function AddWorkModal({
             {localResults.map(work => {
               const sel = pickedSource === "local" && (pickedResult as LocalWorkResult | null)?.id === work.id;
               return (
-                <button
-                  key={work.id}
-                  type="button"
-                  onClick={() => pickLocalResult(work)}
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                    sel ? "border-gray-900 bg-white" : "border-amber-200 bg-white/70 hover:bg-white"
-                  }`}
-                >
-                  <span className="font-medium text-gray-900">{work.title}</span>
-                  <span className="ml-2 text-xs text-gray-500">
-                    {work.year ?? "-"} · {typeLabel(work.type, locale)}
-                  </span>
-                </button>
+                <React.Fragment key={work.id}>
+                  <button
+                    type="button"
+                    onClick={() => pickLocalResult(work)}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
+                      sel ? "border-gray-900 bg-white" : "border-amber-200 bg-white/70 hover:bg-white"
+                    }`}
+                  >
+                    <span className="font-medium text-gray-900">{work.title}</span>
+                    <span className="ml-2 text-xs text-gray-500">
+                      {work.year ?? "-"} · {typeLabel(work.type, locale)}
+                    </span>
+                    {work.description ? <span className="mt-0.5 block text-xs text-gray-500">{work.description.slice(0, 90)}</span> : null}
+                  </button>
+                  {sel && showSeriesFields && seriesEpisodePicker}
+                </React.Fragment>
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-amber-800">
-            {t("works.existingMatchWarning")}
-          </p>
         </div>
       )}
 
-      {!manualMode && localResults.length > 0 && !showExternalResults && (dfiResults.length > 0 || tmdbResults.length > 0) && (
+      {!manualMode && dfiResults.length > 0 && (
+        <div className="mb-4">
+          <p className="text-xs font-medium text-gray-500 mb-2">DFI ({dfiResults.length})</p>
+          <div className="flex flex-col gap-1.5">
+            {dfiResults.map(item => {
+              const sel = (pickedResult as DfiSearchResult | null)?.Id === item.Id && pickedSource === "dfi";
+              const dfiDescription = item.ShortSynopsis || item.Synopsis || item.Description || "";
+              return (
+                <React.Fragment key={String(item.Id)}>
+                  <button
+                    onClick={() => pickDfiResult(item)}
+                    className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors w-full ${
+                      sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
+                    }`}
+                  >
+                    <p className="font-medium text-gray-900 truncate">{cleanDfiTitle(item.Title ?? item.DanishTitle ?? "")}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{extractDfiPremiereYear(item) ?? "-"} · {item.Category}</p>
+                    {dfiDescription ? <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{dfiDescription.slice(0, 120)}</p> : null}
+                  </button>
+                  {sel && showSeriesFields && seriesEpisodePicker}
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {!manualMode && hasSearchedAdd && !isSearching && !isSearchingTmdb && tmdbResults.length === 0 && !showExternalResults && (localResults.length > 0 || dfiResults.length > 0) && (
         <div className="mt-3 mb-4 flex justify-center">
-          <Button type="button" variant="outline" size="sm" onClick={() => setShowExternalResults(true)}>
-            {locale === "da" ? "Led videre i DFI/TMDB-databasen" : "Search further in DFI/TMDB database"}
+          <Button type="button" variant="outline" size="sm" onClick={handleTmdbSearch} disabled={isSearchingTmdb}>
+            {isSearchingTmdb && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {locale === "da" ? "Led videre på TMDB databasen" : "Search further in the TMDB database"}
           </Button>
         </div>
       )}
 
-      {!manualMode && (dfiResults.length > 0 || tmdbResults.length > 0) && (showExternalResults || localResults.length === 0) && (
+      {!manualMode && tmdbResults.length > 0 && showExternalResults && (
         <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
           {([
-            {
-              label: `DFI (${dfiResults.length})`,
-              items: dfiResults,
-              getKey: (x: SearchItem) => String((x as DfiSearchResult).Id),
-              isSelected: (x: SearchItem) => (pickedResult as DfiSearchResult | null)?.Id === (x as DfiSearchResult).Id && pickedSource === "dfi",
-              onSelect: (x: SearchItem) => pickDfiResult(x as DfiSearchResult),
-              getTitle: (x: SearchItem) => (x as DfiSearchResult).Title ?? "",
-              getMeta: (x: SearchItem) => {
-                const f = x as DfiSearchResult;
-                return `${extractDfiPremiereYear(f) ?? "-"} · ${f.Category}`;
-              },
-              getPoster: () => null,
-            },
             {
               label: `TMDB (${tmdbResults.length})`,
               items: tmdbResults,
@@ -918,23 +1068,27 @@ export function AddWorkModal({
                 {col.items.map((item: SearchItem) => {
                   const sel = col.isSelected(item);
                   const poster = col.getPoster(item);
+                  const overview = (item as TmdbSearchResult).overview ?? "";
                   return (
-                    <button
-                      key={col.getKey(item)}
-                      onClick={() => col.onSelect(item)}
-                      className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-2.5 items-start w-full ${
-                        sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
-                      }`}
-                    >
-                      {poster && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={poster} alt={col.getTitle(item)} className="w-7 h-10 object-cover rounded shrink-0" />
-                      )}
-                      <div className="min-w-0">
-                        <p className="font-medium text-gray-900 truncate">{col.getTitle(item)}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{col.getMeta(item)}</p>
-                      </div>
-                    </button>
+                    <React.Fragment key={col.getKey(item)}>
+                      <button
+                        onClick={() => col.onSelect(item)}
+                        className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-2.5 items-start w-full ${
+                          sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
+                        }`}
+                      >
+                        {poster && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={poster} alt={col.getTitle(item)} className="w-7 h-10 object-cover rounded shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900 truncate">{col.getTitle(item)}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{col.getMeta(item)}</p>
+                          {overview ? <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{overview.slice(0, 120)}</p> : null}
+                        </div>
+                      </button>
+                      {sel && showSeriesFields && seriesEpisodePicker}
+                    </React.Fragment>
                   );
                 })}
               </div>
@@ -1010,19 +1164,19 @@ export function AddWorkModal({
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-gray-500">
-              {manualMode
+              {showSeriesFields && selectedEpisodeLabel
+                ? t("works.chosen")
+                : manualMode
                 ? t("works.manualWork")
                 : t("works.chosen")}
               :{" "}
               <strong className="text-gray-900">
-                {manualMode
-                  ? manualWork.title
-                  : searchItemTitle(pickedResult)}
+                {chosenSummary}
               </strong>
             </p>
-            <Button onClick={handleAddWork} disabled={isSaving || (manualMode && !manualWork.title.trim())} className="w-full gap-2 sm:w-auto">
+            <Button onClick={handleAddWork} disabled={isSaving || (manualMode && !manualWork.title.trim()) || missingSeriesEpisodes} className="w-full gap-2 sm:w-auto">
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              {isSaving ? t("works.adding") : t("works.addToMyWorks")}
+              {isSaving ? t("works.adding") : t("works.addWork")}
             </Button>
           </div>
         </div>

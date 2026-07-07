@@ -8,6 +8,7 @@ import {
   Film,
   GitMerge,
   Loader2,
+  MessageSquare,
   Plus,
   Search,
   Trash2,
@@ -30,7 +31,9 @@ import {
   deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
   fetchAdminRightsHolders,
+  addAdminWorkRequestComment,
   fetchAdminWorksForReview,
+  markWorkRequestCommentsRead,
   mergeAdminWorks,
   reviewWorkDataCorrection,
   updateAdminWorkData,
@@ -103,6 +106,8 @@ type CommentRow = {
   author_role: "member" | "admin";
   message: string;
   created_at: string;
+  member_read_at?: string | null;
+  admin_read_at?: string | null;
 };
 
 type ChangeRequest = {
@@ -283,6 +288,23 @@ function hasPendingRequest(work: WorkRow) {
   return (work.work_change_requests ?? []).some(request => request.status === "pending");
 }
 
+function unreadMemberMessageCount(work: WorkRow) {
+  return (work.work_change_requests ?? []).reduce((sum, request) =>
+    sum + (request.work_change_request_comments ?? []).filter(
+      comment => comment.author_role === "member" && !comment.admin_read_at
+    ).length, 0);
+}
+
+// Seneste ulæste medlems-besked på et værk (til liste-preview).
+function latestUnreadMemberMessage(work: WorkRow): string | null {
+  const unread = (work.work_change_requests ?? [])
+    .flatMap(request => request.work_change_request_comments ?? [])
+    .filter(comment => comment.author_role === "member" && !comment.admin_read_at)
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const last = unread[unread.length - 1];
+  return last ? last.message.split("\n")[0] : null;
+}
+
 function displayStatus(work: WorkRow) {
   if (hasPendingRequest(work) || work.status === "til_godkendelse") return "til_godkendelse";
   if (work.status === "aktiv") return "godkendt";
@@ -306,6 +328,7 @@ function requestKindLabel(request: ChangeRequest) {
   if (proposed.kind === "creation") return "Oprettelse";
   if (proposed.kind === "co_editors") return "Medklippere";
   if (proposed.kind === "correction") return "Rettelse";
+  if (proposed.kind === "message") return "Besked";
   return request.source;
 }
 
@@ -386,6 +409,9 @@ function comparableValue(value: unknown) {
 
 function requestDiffRows(request: ChangeRequest) {
   const proposed = request.proposed_data ?? {};
+  // Kun reelle data-redigeringer markerer felter. Beskeder og medklipper-requests
+  // ændrer ikke værksdata, så de skal ikke markere noget.
+  if (proposed.kind === "message" || proposed.kind === "co_editors") return [];
   const workData = typeof proposed.workData === "object" && proposed.workData ? proposed.workData as Record<string, unknown> : proposed;
 
   // Ved rettelser er old_data et snapshot af værket. Ved oprettelser er old_data tom,
@@ -628,6 +654,7 @@ export default function VaerksadministrationPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [pageSize, setPageSize] = useState(20);
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -704,7 +731,8 @@ export default function VaerksadministrationPage() {
 
   const filtered = useMemo(() => {
     let list = [...works];
-    if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
+    if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
+    else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(work =>
@@ -724,8 +752,8 @@ export default function VaerksadministrationPage() {
         title: [a.title ?? "", b.title ?? ""],
         type: [workTypeLabel(a.type), workTypeLabel(b.type)],
         data: [
-          `${a.dfi_id ?? ""} ${a.tmdb_id ?? ""} ${a.duration_minutes ?? ""} ${a.episode_count ?? ""} ${a.genre ?? ""}`,
-          `${b.dfi_id ?? ""} ${b.tmdb_id ?? ""} ${b.duration_minutes ?? ""} ${b.episode_count ?? ""} ${b.genre ?? ""}`,
+          `${a.dfi_id ?? ""} ${a.tmdb_id ?? ""} ${a.duration_minutes ?? ""} ${a.season_count ?? ""} ${a.episode_count ?? ""}`,
+          `${b.dfi_id ?? ""} ${b.tmdb_id ?? ""} ${b.duration_minutes ?? ""} ${b.season_count ?? ""} ${b.episode_count ?? ""}`,
         ],
         broadcaster: [getWorkBroadcaster(a) ?? "", getWorkBroadcaster(b) ?? ""],
         status: [statusSortValue(a), statusSortValue(b)],
@@ -735,6 +763,7 @@ export default function VaerksadministrationPage() {
     });
     return list;
   }, [works, filterStatus, search, sortKey, sortDir]);
+  const visibleWorks = filtered.slice(0, pageSize);
 
   const stats = useMemo(() => {
     const activeWorks = works.filter(work => displayStatus(work) !== "arkiveret");
@@ -815,8 +844,38 @@ export default function VaerksadministrationPage() {
 
   const sortMark = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : "";
 
+  const markWorkMessagesRead = async (work: WorkRow) => {
+    const unreadRequestIds = (work.work_change_requests ?? [])
+      .filter(request => (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
+      .map(request => request.id);
+    if (unreadRequestIds.length === 0) return;
+    const now = new Date().toISOString();
+    const patch = (w: WorkRow): WorkRow => ({
+      ...w,
+      work_change_requests: (w.work_change_requests ?? []).map(request =>
+        unreadRequestIds.includes(request.id)
+          ? {
+              ...request,
+              work_change_request_comments: (request.work_change_request_comments ?? []).map(c =>
+                c.author_role === "member" && !c.admin_read_at ? { ...c, admin_read_at: now } : c
+              ),
+            }
+          : request
+      ),
+    });
+    setWorks(prev => prev.map(w => (w.id === work.id ? patch(w) : w)));
+    setEditing(prev => (prev && prev.id === work.id ? patch(prev) : prev));
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
+    if (results.some(r => r.success)) notifyWorksUpdated();
+  };
+
   const openEdit = (work: WorkRow) => {
-    const pendingRequest = (work.work_change_requests ?? []).find(request => request.status === "pending") ?? null;
+    // Auto-åbn KUN en request med en ulæst besked (så nye beskeder ses).
+    // Allerede sete/godkendte rettelser popper ikke op — dem klikker man selv på.
+    const requestWithUnread = (work.work_change_requests ?? []).find(request =>
+      (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at)
+    ) ?? null;
+    void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
     setAssignmentDrafts(Object.fromEntries((work.work_assignments ?? []).map(assignment => [
@@ -829,7 +888,7 @@ export default function VaerksadministrationPage() {
       },
     ])));
     setNewAssignment({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
-    setActiveRequestId(pendingRequest?.id ?? null);
+    setActiveRequestId(requestWithUnread?.id ?? null);
     setAdminComment("");
     setImportPreview(null);
     setEditLookupQuery(work.title ?? "");
@@ -895,9 +954,9 @@ export default function VaerksadministrationPage() {
     }
   };
 
-  const handleReview = async (decision: "approved" | "rejected") => {
-    if (!activeRequestId) return;
-    const reviewedRequestId = activeRequestId;
+  const handleReview = async (decision: "approved" | "rejected", requestId?: string) => {
+    const reviewedRequestId = requestId ?? activeRequestId;
+    if (!reviewedRequestId) return;
     const editingWorkId = editing?.id;
     setSaving(true);
     try {
@@ -911,13 +970,45 @@ export default function VaerksadministrationPage() {
         const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
         if (updatedEditing) {
           setEditing(updatedEditing);
-          setEditForm(form => form ? { ...form, status: displayStatus(updatedEditing) } : form);
+          setEditForm(toForm(updatedEditing));
+          setAssignmentDrafts(Object.fromEntries((updatedEditing.work_assignments ?? []).map(assignment => [
+            assignment.id,
+            {
+              id: assignment.id,
+              rightsHolderId: assignment.rettighedshavere?.id,
+              role: displayCreditRole(assignment.role),
+              sharePercent: assignment.share_percent === null || assignment.share_percent === undefined ? "" : String(assignment.share_percent),
+            },
+          ])));
         }
       }
       setActiveRequestId(null);
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke behandle rettelsen."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!activeRequestId || !adminComment.trim()) return;
+    const editingWorkId = editing?.id;
+    setSaving(true);
+    try {
+      await addAdminWorkRequestComment({ requestId: activeRequestId, message: adminComment });
+      setAdminComment("");
+      const res = await fetchAdminWorksForReview();
+      if (res.success) {
+        const freshWorks = res.works as WorkRow[];
+        setWorks(freshWorks);
+        const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
+        if (updatedEditing) setEditing(updatedEditing);
+      }
+      setNotice("Svar sendt til bruger.");
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke sende svar."));
     } finally {
       setSaving(false);
     }
@@ -949,6 +1040,26 @@ export default function VaerksadministrationPage() {
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke godkende værker."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkSelectedMessagesRead = async () => {
+    const selected = works.filter(w => selectedIds.includes(w.id));
+    const requestIds = selected.flatMap(w => (w.work_change_requests ?? [])
+      .filter(r => (r.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
+      .map(r => r.id));
+    if (requestIds.length === 0) { setNotice("Ingen ulæste beskeder blandt de valgte."); return; }
+    setSaving(true);
+    try {
+      await Promise.all(requestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
+      setNotice(`Beskeder markeret som læst på ${selected.length} værk(er).`);
+      setSelectedIds([]);
+      await load();
+      notifyWorksUpdated();
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke markere beskeder læst."));
     } finally {
       setSaving(false);
     }
@@ -1102,6 +1213,25 @@ export default function VaerksadministrationPage() {
       setIsSearchingAdd(false);
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("add") !== "1") return;
+    const query = params.get("q") ?? "";
+    setAddOpen(true);
+    setAddQuery(query);
+    setAddForm(form => ({ ...form, title: query }));
+  }, []);
+
+  useEffect(() => {
+    if (!addOpen || !addQuery.trim()) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("add") !== "1") return;
+    void handleAddSearch();
+    window.history.replaceState(null, "", "/admin/vaerker");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addOpen, addQuery]);
 
   const handleEditSearch = async () => {
     if (!editLookupQuery.trim()) return;
@@ -1377,7 +1507,17 @@ export default function VaerksadministrationPage() {
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8 pr-8" value={search} onChange={e => setSearch(e.target.value)} />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+              aria-label="Tøm søgefelt"
+            >
+              <XCircle className="h-4 w-4" />
+            </button>
+          )}
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
@@ -1386,25 +1526,32 @@ export default function VaerksadministrationPage() {
             <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
             <SelectItem value="godkendt">Godkendt</SelectItem>
             <SelectItem value="arkiveret">Arkiveret</SelectItem>
+            <SelectItem value="beskeder">Beskeder</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
           Find dubletter
         </Button>
-        <Button variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving || selectedIds.length === 0}>
-          <CheckCircle2 className="h-4 w-4" />
-          Godkend valgte
-        </Button>
-        <Button variant="destructive" className="gap-2" onClick={() => setBatchDeleteOpen(true)} disabled={saving || selectedIds.length === 0}>
-          <AlertTriangle className="h-4 w-4" />
-          Slet permanent
-        </Button>
+        <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+          Vis
+          <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
+            {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+          </select>
+        </label>
       </div>
 
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
           <span className="text-sm font-medium">{selectedIds.length} valgt</span>
+          <Button size="sm" variant="outline" className="gap-2" onClick={handleApproveSelected} disabled={saving}>
+            <CheckCircle2 className="h-4 w-4" />
+            Godkend valgte
+          </Button>
+          <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
+            <MessageSquare className="h-4 w-4" />
+            Besked læst
+          </Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setArchiveOpen(true)}>
             <Trash2 className="h-4 w-4" />
             Arkiver
@@ -1438,7 +1585,7 @@ export default function VaerksadministrationPage() {
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</TableCell></TableRow>
-            ) : filtered.map(work => {
+            ) : visibleWorks.map(work => {
               const status = displayStatus(work);
               const broadcaster = getWorkBroadcaster(work);
               const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
@@ -1462,13 +1609,22 @@ export default function VaerksadministrationPage() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <button onClick={() => openEdit(work)} className="text-left font-medium underline-offset-4 hover:underline">{work.title}</button>
+                          {unreadMemberMessageCount(work) > 0 && (
+                            <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
+                              {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
+                            </Badge>
+                          )}
                           {pendingCount > 0 && (
                             <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                              {pendingCount} pending request{pendingCount === 1 ? "" : "s"}
+                              Skal godkendes
                             </Badge>
                           )}
                         </div>
-                        {work.description ? <p className="text-xs text-muted-foreground">{work.description.slice(0, 90)}</p> : null}
+                        {(() => {
+                          const msg = latestUnreadMemberMessage(work);
+                          if (msg) return <p className="max-w-[320px] truncate text-xs text-blue-700">{msg}</p>;
+                          return work.description ? <p className="text-xs text-muted-foreground">{work.description.slice(0, 90)}</p> : null;
+                        })()}
                       </div>
                     </div>
                   </TableCell>
@@ -1476,8 +1632,17 @@ export default function VaerksadministrationPage() {
                   <TableCell className="text-sm tabular-nums text-muted-foreground">{work.year ?? "-"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     <div>DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"}</div>
-                    <div>Varighed: {work.duration_minutes ?? "-"} · Afsnit: {work.episode_count ?? "-"} · Genre: {work.genre ?? "-"}</div>
-                    <div>Kontrakter: {work.contracts?.length ?? 0} · Poster: {work.poster_url ? "ja" : "nej"}</div>
+                    <div>
+                      Varighed: {work.duration_minutes ?? "-"}
+                      {isSeriesType(work.type) && <> · Sæson: {work.season_count ?? "-"} · Afsnit: {work.episode_count ?? "-"}</>}
+                    </div>
+                    <div>Kontrakter: {work.contracts?.length ?? 0}</div>
+                    {(() => {
+                      const coEditors = (work.work_assignments ?? [])
+                        .map(a => a.rettighedshavere?.full_name)
+                        .filter((name): name is string => Boolean(name));
+                      return coEditors.length > 0 ? <div>Medklippere: {coEditors.join(", ")}</div> : null;
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {broadcaster ? (
@@ -1510,11 +1675,11 @@ export default function VaerksadministrationPage() {
           {editing && editForm && (
             (() => {
               const requests = editing.work_change_requests ?? [];
-              const pendingRequests = requests.filter(request => request.status === "pending");
-              const activeRequest = requests.find(request => request.id === activeRequestId)
-                ?? pendingRequests[0]
-                ?? null;
-              const activeDiffMap = requestDiffMap(activeRequest);
+              const activeRequest = requests.find(request => request.id === activeRequestId) ?? null;
+              // Kun PENDING rettelser markerer datafelterne. Allerede godkendte/afviste
+              // rettelser vises stadig i request-panelet, men "popper" ikke op ved felterne.
+              const activeDiffMap = activeRequest?.status === "pending" ? requestDiffMap(activeRequest) : {};
+              const pendingReviewRequest = requests.find(request => request.status === "pending") ?? null;
               const summary = activeRequest ? requestSummary(activeRequest) : null;
               return (
             <div className="space-y-5">
@@ -1532,10 +1697,17 @@ export default function VaerksadministrationPage() {
                   <Button type="button" variant="destructive" onClick={() => setEditingDeleteOpen(true)} disabled={saving}>
                     Slet permanent
                   </Button>
-                  <Button type="button" onClick={handleSaveWork} disabled={saving}>
-                    {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Gem værk
-                  </Button>
+                  {pendingReviewRequest ? (
+                    <Button type="button" onClick={() => handleReview("approved", pendingReviewRequest.id)} disabled={saving}>
+                      {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Godkend rettelser
+                    </Button>
+                  ) : (
+                    <Button type="button" onClick={handleSaveWork} disabled={saving}>
+                      {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Gem værk
+                    </Button>
+                  )}
                   <Button type="button" variant="outline" onClick={() => { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); }}>
                     Annuller
                   </Button>
@@ -1573,7 +1745,7 @@ export default function VaerksadministrationPage() {
                           </div>
                           <Badge variant="outline">{requestKindLabel(activeRequest)}</Badge>
                         </div>
-                        {requestDiffRows(activeRequest).length > 0 && (
+                        {activeRequest.status === "pending" && requestDiffRows(activeRequest).length > 0 && (
                           <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">
                             {requestDiffRows(activeRequest).length} feltændring{requestDiffRows(activeRequest).length === 1 ? "" : "er"} er markeret i Værksdata nedenfor.
                           </p>
@@ -1595,29 +1767,34 @@ export default function VaerksadministrationPage() {
                             <p className="text-sm font-medium">Kommentartråd</p>
                             {(activeRequest.work_change_request_comments ?? []).map(comment => (
                               <div key={comment.id} className="rounded bg-muted px-2 py-1 text-sm">
-                                <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin" : "Bruger"} · {new Date(comment.created_at).toLocaleString("da-DK")}</div>
+                                <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin · " : ""}{new Date(comment.created_at).toLocaleString("da-DK")}</div>
                                 <div>{comment.message}</div>
                               </div>
                             ))}
                           </div>
                         )}
-                        {activeRequest.status !== "approved" && (
-                          <div className="space-y-3">
-                            <Field label="Svar til bruger">
-                              <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} />
-                            </Field>
-                            <div className="flex justify-end gap-2">
-                              <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
-                                <XCircle className="mr-2 h-4 w-4" />
-                                Afvis
-                              </Button>
-                              <Button onClick={() => handleReview("approved")} disabled={saving}>
-                                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                Godkend
-                              </Button>
-                            </div>
+                        <div className="space-y-3">
+                          <Field label="Svar til bruger">
+                            <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} placeholder="Skriv et svar til brugeren…" />
+                          </Field>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" onClick={handleSendReply} disabled={saving || !adminComment.trim()}>
+                              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Send svar
+                            </Button>
+                            {activeRequest.status === "pending" && (
+                              <>
+                                <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Afvis
+                                </Button>
+                                <Button onClick={() => handleReview("approved")} disabled={saving}>
+                                  Godkend
+                                </Button>
+                              </>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2060,6 +2237,7 @@ export default function VaerksadministrationPage() {
               <InfoPanel title="Søg i lokal database, DFI og TMDB">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
+                    autoFocus
                     placeholder="Søg titel i lokal database, DFI og TMDB..."
                     value={addQuery}
                     onChange={e => setAddQuery(e.target.value)}

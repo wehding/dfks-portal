@@ -32,6 +32,7 @@ type User = {
     org_roles: string[]
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
+    gender: string | null
     phone: string | null
     title: string | null
     banned: boolean
@@ -43,6 +44,13 @@ type Rettighedshaver = {
     id: string
     full_name: string
     email: string | null
+}
+
+type UsersResponse = {
+    users?: User[]
+    staff?: Array<Partial<User> & { roles?: string[] }>
+    portal?: Array<Partial<User>>
+    error?: string
 }
 
 // ── Rolle-konfiguration ───────────────────────────────────
@@ -57,6 +65,18 @@ const ROLE_CONFIG: Record<string, { label: string; color: string }> = {
 }
 
 const STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
+
+const GENDER_LABELS: Record<string, string> = {
+    female: "Kvinde",
+    male: "Mand",
+    non_binary: "Nonbinær",
+    other: "Andet",
+    prefer_not_to_say: "Ønsker ikke at oplyse",
+}
+
+function errorMessage(error: unknown, fallback = "Fejl") {
+    return error instanceof Error ? error.message : fallback
+}
 
 // ── Hjælpekomponenter ─────────────────────────────────────
 
@@ -167,14 +187,14 @@ export default function AdminBrugerePage() {
     async function load() {
         setLoading(true)
         const res = await fetch("/api/admin/users")
-        const json = await res.json()
+        const json = await res.json() as UsersResponse
         if (res.ok) {
             // Brug merged users hvis tilgængeligt, ellers bagudkompatibel sammensætning
             if (json.users) {
                 setUsers(json.users)
             } else {
-                const staff = (json.staff ?? []).map((u: any) => ({ ...u, org_roles: u.roles, is_rettighedshaver: false, rh_id: null, onboarding_completed: null }))
-                const portal = (json.portal ?? []).map((u: any) => ({ ...u, org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }))
+                const staff = (json.staff ?? []).map(u => ({ ...u, org_roles: u.roles ?? [], is_rettighedshaver: false, rh_id: null, onboarding_completed: null, gender: null }) as User)
+                const portal = (json.portal ?? []).map(u => ({ ...u, org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }) as User)
                 setUsers([...staff, ...portal])
             }
         } else {
@@ -248,8 +268,8 @@ export default function AdminBrugerePage() {
             if (!res.ok) throw new Error(json.error)
             setInviteLink(json.invite_url)
             await load()
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl ved invitation")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e, "Fejl ved invitation"))
         } finally {
             setInviteLoading(false)
         }
@@ -269,8 +289,8 @@ export default function AdminBrugerePage() {
             toast.success("Roller opdateret")
             await load()
             setEditUser(null)
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
         } finally {
             setEditLoading(false)
         }
@@ -288,8 +308,8 @@ export default function AdminBrugerePage() {
             const json = await res.json()
             if (!res.ok) throw new Error(json.error)
             setResetLink(json.reset_url)
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
         } finally {
             setResetLoading(false)
         }
@@ -312,8 +332,8 @@ export default function AdminBrugerePage() {
             toast.success(toggleUser.banned ? "Konto genaktiveret" : "Konto deaktiveret")
             await load()
             setToggleUser(null)
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
         } finally {
             setToggleLoading(false)
         }
@@ -394,6 +414,7 @@ export default function AdminBrugerePage() {
                             <TableHead>Navn</TableHead>
                             <TableHead>E-mail</TableHead>
                             <TableHead>Telefon</TableHead>
+                            <TableHead>Køn</TableHead>
                             <TableHead>Titel</TableHead>
                             <TableHead>Rolle(r)</TableHead>
                             <TableHead>Status</TableHead>
@@ -404,13 +425,13 @@ export default function AdminBrugerePage() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                                     <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
                                 </TableCell>
                             </TableRow>
                         ) : filtered.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                                     Ingen brugere fundet
                                 </TableCell>
                             </TableRow>
@@ -419,6 +440,7 @@ export default function AdminBrugerePage() {
                                 <TableCell className="font-medium">{u.full_name}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.email ?? "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.phone ?? "—"}</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">{u.gender ? GENDER_LABELS[u.gender] ?? u.gender : "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.title ?? "—"}</TableCell>
                                 <TableCell><RoleChips roles={u.roles} /></TableCell>
                                 <TableCell>

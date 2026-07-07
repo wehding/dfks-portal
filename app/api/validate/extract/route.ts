@@ -8,66 +8,15 @@ export const dynamic = "force-dynamic"
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 // Note: storage download bruger direkte fetch (omgår SDK JWT-validering for storage)
 import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { getApiKey } from "@/lib/ai-key-store"
-import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
+import { normaliseSources } from "@/lib/ai-sources"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import {
-    CONTRACT_TYPE_RULE, COLLECTIVE_AGREEMENT_RULE,
-    COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE, IS_FREELANCE_CONTRACT_RULE,
-    HOLIDAY_PAY_RATE_RULE, BETA_RATE_RULE,
-} from "@/lib/ai-fields"
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-// pdf-parse loaded lazily in handler to avoid DOMMatrix build error
-
-const SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
-Returner KUN JSON — ingen forklaringstekst.
-
-VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
-[CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
-Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
-
-const EXTRACTION_PROMPT = `Udtræk følgende data fra kontrakten og returner som JSON:
-{
-  "employerName": "producentens/arbejdsgiverens FIRMANAVN — det juridiske selskab der er kontraktpart. Find selskabsnavnet øverst i kontrakten i partsafsnittet, typisk efterfulgt af adresse og CVR-nummer. Selskabet kan være defineret som 'Virksomheden', 'Producenten', 'Arbejdsgiveren' eller lignende i kontrakten — brug det faktiske navn, ikke den interne betegnelse. VIGTIGT: Formuleringer som 'refererer til producent [navn]', 'kontaktperson: [navn]', 'projektleder: [navn]' angiver en PERSON hos producenten — brug aldrig dette personnavn som employerName. Tag i stedet det selskabsnavn der optræder som kontraktpart med CVR-nummer. Enkeltmandsvirksomheder uden ApS/A/S er gyldige firmanavne. ALDRIG et rent personnavn. (string|null)",
-  "rightsHolderName": "klipperens/medarbejderens/leverandørens fulde PERSONNAVN — den fysiske person der udfører klippearbejdet. Søg efter den part der er markeret som 'Klipper', 'Medarbejder', 'Leverandør' eller lignende. ALDRIG et firmanavn. (string|null)",
-  "workTitle": "produktionens titel (string|null)",
-  "contractType": "${CONTRACT_TYPE_RULE}",
-  "overenskomst": "de4-fiktion|faf|faf-dokumentar|ingen (string|null)",
-  "contractDate": "ISO 8601 (string|null)",
-  "startDate": "ISO 8601 (string|null)",
-  "endDate": "ISO 8601 (string|null)",
-  "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. Hvis kontrakten nævner afsnit, episoder, sæson eller episodenumre → tvSeries eller docSeries. (string|null)",
-  "salary": "bruttoløn som tal (number|null)",
-  "salaryUnit": "monthly|weekly|daily|total (string|null)",
-  "pensionPercent": "tal (number|null)",
-  "pensionSupplement": "tal i kr (number|null)",
-  "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number|null)",
-  "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string|null)",
-  "workingWeeks": "antal ARBEJDSUGER som tal (number|null). Hvis kontrakten angiver klippedage/arbejdsdage — divider med 5 (fx 35 klippedage = 7,0 uger). Hvis måneder — multiplicer med 4,33.",
-  "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
-  "betaRate": "${BETA_RATE_RULE}",
-  "svod": "boolean",
-  "copydan": "boolean",
-  "royalty": "boolean. (1) Spillefilm og dokumentar: true automatisk. (2) TV-serie/docSeries: kun true hvis dedikeret royalty-afsnit — IKKE fra Create Denmark/SVOD.",
-  "royaltyPercent": "tal (number|null)",
-  "aiDataMiningClause": "boolean",
-  "distribution": "platforme kommasepareret (string|null)",
-  "collectiveAgreement": "${COLLECTIVE_AGREEMENT_RULE}",
-  "collectiveAgreementName": "overenskomstens navn (string|null)",
-  "collectiveAgreementByReference": "${COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE}",
-  "isFreelanceContract": "${IS_FREELANCE_CONTRACT_RULE}",
-  "gender": "male|female|null",
-  "specialNotes": "bemærkninger (string|null)",
-  ${SOURCES_SCHEMA_PROMPT}
-}`
+import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 
 export async function POST(req: NextRequest) {
     try {
@@ -106,19 +55,14 @@ export async function POST(req: NextRequest) {
         const masked = maskPersonalData(text)
 
         // Hent overenskomsttekster fra DB
-        let activeSystemPrompt = SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT
+        let activeSystemPrompt = buildContractExtractionPrompt()
         try {
             const { data: refDocs } = await admin
                 .from("reference_docs")
                 .select("title, doc_subtype, content_text")
                 .eq("archived", false)
                 .not("content_text", "is", null)
-            if (refDocs?.length) {
-                activeSystemPrompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER:\n──────────────────────────────────────"
-                for (const doc of refDocs) {
-                    activeSystemPrompt += `\n\n${doc.doc_subtype ?? doc.title}:\n${doc.content_text}`
-                }
-            }
+            activeSystemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
         } catch (e) {
             console.warn("[validate/extract] Kunne ikke hente reference docs:", e)
         }
@@ -159,8 +103,8 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json({ ok: true, data: extracted, navneTjek, maskedText: masked })
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[validate/extract]", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
     }
 }

@@ -1,16 +1,18 @@
 "use client";
 
 import React, { useState, useCallback, useEffect } from "react";
-import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
+import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus, Search } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { saveUploadedContract } from "@/app/actions/member-contracts";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const BUCKET = "kontrakter";
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+const MAX_FILES = 15;
 
 const ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
 const SERIES_CATEGORIES = ["tvSeries", "docSeries", "tvEntertainment", "reality", "sport"];
@@ -22,10 +24,13 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 type Props = {
   onClose: () => void;
-  onUploaded: (contract: UploadedContract) => void;
+  onUploaded: (contracts: UploadedContract[]) => void;
   workId?: string;
   workTitle?: string;
+  myWorks?: MyWork[];
 };
+
+type MyWork = { id: string; title: string; year: number | null; type?: string };
 
 type UploadedContract = {
   id: string;
@@ -41,8 +46,9 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Ukendt fejl";
 }
 
-export default function UploadDialog({ onClose, onUploaded, workId, workTitle }: Props) {
-  const [file, setFile] = useState<File | null>(null);
+export default function UploadDialog({ onClose, onUploaded, workId, workTitle, myWorks = [] }: Props) {
+  const router = useRouter();
+  const [files, setFiles] = useState<File[]>([]);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -50,6 +56,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
 
   const [title, setTitle] = useState(workTitle ?? "");
+  const [selectedWorkId, setSelectedWorkId] = useState(workId ?? "");
+  const [workSearch, setWorkSearch] = useState(workTitle ?? "");
   const [category, setCategory] = useState("");
   const [creditedRoles, setCreditedRoles] = useState<string[]>(["Klipper"]);
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
@@ -57,7 +65,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
   const [premiereDate, setPremiereDate] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const file = files[0] ?? null;
+  const isBatchUpload = files.length > 1;
   const isSeries = SERIES_CATEGORIES.includes(category);
+  const selectedWork = selectedWorkId
+    ? myWorks.find(w => w.id === selectedWorkId) ?? { id: selectedWorkId, title: workTitle ?? title, year: null }
+    : null;
+  const filteredWorks = myWorks.filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase()));
 
   // Hent varighed og kreditering fra det kendte værk
   useEffect(() => {
@@ -96,11 +110,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
     })();
   }, [workId]);
 
-  const handleFile = useCallback((f: File) => {
+  const handleFiles = useCallback((incoming: File[]) => {
     const allowed = ["application/pdf", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"];
-    if (!allowed.includes(f.type)) { toast.error("Kun PDF og DOCX understøttes"); return; }
-    setFile(f);
-    if (f.type === "application/pdf") setPdfUrl(URL.createObjectURL(f));
+    const valid = incoming.filter(f => allowed.includes(f.type) || /\.(pdf|doc|docx)$/i.test(f.name));
+    const rejected = incoming.length - valid.length;
+
+    if (rejected > 0) toast.error("Kun PDF og DOCX understøttes");
+    if (valid.length === 0) return;
+
+    const limited = valid.slice(0, MAX_FILES);
+    if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
+
+    setFiles(limited);
+    const first = limited[0];
+    if (first.type === "application/pdf" || /\.pdf$/i.test(first.name)) setPdfUrl(URL.createObjectURL(first));
     else setPdfUrl(null);
   }, []);
 
@@ -119,7 +142,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
         const result = await screenPortalContract(text, ROLES);
         if (cancelled) return;
         const filled = new Set<string>();
-        if (result.title && !workTitle) { setTitle(result.title); filled.add("title"); }
+        if (result.title && !workTitle) {
+          setTitle(result.title);
+          setWorkSearch(prev => prev || result.title || "");
+          filled.add("title");
+        }
         if (result.category && CATEGORY_LABELS[result.category]) { setCategory(result.category); filled.add("category"); }
         if (result.creditedRole) {
           const match = ROLES.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase());
@@ -138,48 +165,80 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
     return () => { cancelled = true; };
   }, [file, workTitle]);
 
-  const canSubmit = !!file && !!title && !screening && !saving &&
+  const canSubmit = files.length > 0 && !!title && !screening && !saving &&
     (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean));
 
-  const handleSubmit = async () => {
-    if (!file || !title) return;
+  function goToAddWork() {
+    const params = new URLSearchParams({ add: "1" });
+    const query = workSearch.trim() || title.trim();
+    if (query) params.set("q", query);
+    onClose();
+    router.push(`/portal/mine-vaerker?${params.toString()}`);
+  }
+
+  const saveContracts = async () => {
+    if (files.length === 0 || !title) return null;
     setSaving(true);
     try {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { toast.error("Ikke logget ind"); setSaving(false); return; }
+      if (!user) { toast.error("Ikke logget ind"); return null; }
 
       const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
       const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
 
       const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
-      if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); setSaving(false); return; }
-
-      const filePath = `${orgId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-      const { error: storageErr } = await supabase.storage.from(BUCKET).upload(filePath, file, { contentType: file.type });
-      if (storageErr) { toast.error("Upload fejlede: " + storageErr.message); setSaving(false); return; }
+      if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); return null; }
 
       const roles = isSeries
         ? [...new Set(episodeCredits.filter(e => e.role).map(e => e.role))]
         : creditedRoles.filter(Boolean);
 
-      const res = await saveUploadedContract({
-        filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
-        workTitle: title.trim(), workId,
-        category, roles,
-        duration: duration ? Number(duration) : undefined,
-        premiereDate: premiereDate || undefined,
-        episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
-      });
+      const savedContracts: UploadedContract[] = [];
 
-      if (!res.success) { toast.error(res.error ?? "Kunne ikke gemme kontrakten"); setSaving(false); return; }
-      toast.success("Kontrakt indsendt til DFKS");
-      onUploaded(res.contract);
+      for (const [index, selectedFile] of files.entries()) {
+        const filePath = `${orgId}/${Date.now()}_${index}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const { error: storageErr } = await supabase.storage.from(BUCKET).upload(filePath, selectedFile, { contentType: selectedFile.type });
+        if (storageErr) { toast.error(`Upload fejlede for ${selectedFile.name}: ${storageErr.message}`); return null; }
+
+        const res = await saveUploadedContract({
+          filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
+          workTitle: isBatchUpload ? title.trim() : selectedWork?.title ?? title.trim(),
+          workId: isBatchUpload ? undefined : selectedWorkId || undefined,
+          category, roles,
+          duration: duration ? Number(duration) : undefined,
+          premiereDate: premiereDate || undefined,
+          episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
+        });
+
+        if (!res.success) { toast.error(res.error ?? `Kunne ikke gemme ${selectedFile.name}`); return null; }
+        savedContracts.push(res.contract);
+      }
+
+      return savedContracts;
     } catch (e: unknown) {
       toast.error(errorText(e) || "Fejl ved upload");
+      return null;
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async () => {
+    const savedContracts = await saveContracts();
+    if (!savedContracts) return;
+    toast.success(files.length === 1 ? "Kontrakt indsendt til DFKS" : `${files.length} kontrakter indsendt til DFKS`);
+    onUploaded(savedContracts);
+  };
+
+  const handleSaveAndAddWork = async () => {
+    const savedContracts: UploadedContract[] | null = files.length > 0 ? await saveContracts() : [];
+    if (!savedContracts) return;
+    if (savedContracts.length > 0) {
+      toast.success(savedContracts.length === 1 ? "Kontrakt gemt og sendt til AI-gennemlæsning" : `${savedContracts.length} kontrakter gemt og sendt til AI-gennemlæsning`);
+      onUploaded(savedContracts);
+    }
+    goToAddWork();
   };
 
   // Fælles select-stil (shadcn Select er overkill her — native select er tilstrækkeligt)
@@ -206,6 +265,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Upload kontrakt</h2>
+              <p className="text-sm text-gray-500 mt-1">Du kan godt uploade flere kontrakter ad gangen.</p>
               {workTitle && (
                 <p className="text-sm text-gray-500 mt-0.5">
                   til <strong className="text-gray-900">{workTitle}</strong>
@@ -221,42 +281,54 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
           <div
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
-            onDrop={e => { e.preventDefault(); setIsDragging(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
+            onDrop={e => { e.preventDefault(); setIsDragging(false); handleFiles(Array.from(e.dataTransfer.files)); }}
             className={`rounded-lg border-2 border-dashed p-7 text-center transition-colors ${isDragging ? "border-gray-400 bg-gray-50" : "border-gray-200 hover:border-gray-300"}`}
           >
             <Upload className="mx-auto h-7 w-7 text-gray-300 mb-2.5" />
             <p className="text-sm text-gray-500 mb-2">Træk fil hertil eller</p>
             <label className="cursor-pointer">
-              <input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+              <input type="file" accept=".pdf,.doc,.docx" multiple className="hidden" onChange={e => e.target.files && handleFiles(Array.from(e.target.files))} />
               <span className="text-sm font-medium px-4 py-1.5 rounded-md border border-gray-300 hover:bg-gray-50 transition-colors cursor-pointer">
-                Vælg fil
+                Vælg filer
               </span>
             </label>
-            <p className="text-xs text-gray-400 mt-2">PDF eller DOCX</p>
+            <p className="text-xs text-gray-400 mt-2">PDF eller DOCX. Maks. {MAX_FILES} filer.</p>
           </div>
 
           {/* Fil + screening-status */}
-          {file && (
-            <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-3">
-              {screening
-                ? <Loader2 className="h-4 w-4 shrink-0 text-purple-600 animate-spin" />
-                : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-              }
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900 truncate">{file.name}</p>
-                {screening && (
-                  <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
-                    <Sparkles className="h-3 w-3" /> Screener med Claude AI...
-                  </p>
+          {files.length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-3">
+              <div className="flex items-center gap-3">
+                {screening
+                  ? <Loader2 className="h-4 w-4 shrink-0 text-purple-600 animate-spin" />
+                  : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                }
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{file?.name}</p>
+                  {isBatchUpload && <p className="text-xs text-gray-500 mt-0.5">Kontrakt 1 af {files.length} - systemet forsøger automatisk at koble alle kontrakterne til værker</p>}
+                  {screening && (
+                    <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
+                      <Sparkles className="h-3 w-3" /> Screener første kontrakt med Claude AI...
+                    </p>
+                  )}
+                </div>
+                {!screening && (
+                  <button
+                    onClick={() => { setFiles([]); setPdfUrl(null); setTitle(workTitle ?? ""); setSelectedWorkId(workId ?? ""); setWorkSearch(workTitle ?? ""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
+                    className="text-gray-400 hover:text-gray-600 shrink-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 )}
               </div>
-              {!screening && (
-                <button
-                  onClick={() => { setFile(null); setPdfUrl(null); setTitle(workTitle ?? ""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
-                  className="text-gray-400 hover:text-gray-600 shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+              {files.length > 1 && (
+                <div className="mt-2 max-h-24 overflow-y-auto border-t border-gray-200 pt-2">
+                  {files.slice(1).map(extraFile => (
+                    <p key={`${extraFile.name}-${extraFile.size}`} className="truncate text-xs text-gray-500">
+                      {extraFile.name}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -264,6 +336,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
           {/* Formularfelter */}
           {file && !screening && (
             <div className="flex flex-col gap-4">
+
+              {isBatchUpload && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+                  Systemet forsøger automatisk at koble kontrakterne til dine eksisterende værker. Du skal selv kontrollere, at hver kontrakt er knyttet til det rigtige værk. Kontrakter uden korrekt værktilknytning kan ikke bruges til rettighedsfordeling og udløser derfor ikke rettighedspenge.
+                </div>
+              )}
 
               {/* Titel */}
               <div className="space-y-1.5">
@@ -278,6 +356,62 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
                   className={aiFields.has("title") ? "bg-purple-50" : ""}
                 />
               </div>
+
+              {/* Værkskobling */}
+              {!isBatchUpload && (
+              <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                <Label className="text-sm font-medium text-gray-500">
+                  Koblet værk
+                </Label>
+                {selectedWork ? (
+                  <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-gray-900">{selectedWork.title}</p>
+                      {selectedWork.year && <p className="text-xs text-gray-500">{selectedWork.year}</p>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedWorkId("")}
+                      className="ml-2 shrink-0 text-gray-400 hover:text-gray-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-gray-400" />
+                      <Input
+                        placeholder="Søg i dine værker..."
+                        value={workSearch}
+                        onChange={e => setWorkSearch(e.target.value)}
+                        className="h-8 pl-7 text-sm bg-white"
+                      />
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={handleSaveAndAddWork} disabled={saving || (files.length > 0 && !canSubmit)} className="w-full bg-white">
+                      {saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                      Tilføj værk
+                    </Button>
+                    <div className="max-h-40 overflow-y-auto flex flex-col gap-1">
+                      {filteredWorks.map(w => (
+                        <button
+                          key={w.id}
+                          type="button"
+                          onClick={() => { setSelectedWorkId(w.id); setWorkSearch(""); setTitle(w.title); }}
+                          className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100"
+                        >
+                          <span className="font-medium text-gray-900">{w.title}</span>
+                          <span className="text-xs text-gray-500">{w.year ?? ""}</span>
+                        </button>
+                      ))}
+                      {filteredWorks.length === 0 && (
+                        <p className="px-2 py-1.5 text-sm italic text-gray-400">Ingen værker fundet</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              )}
 
               {/* Kategori */}
               <div className="space-y-1.5">
@@ -406,7 +540,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
               {saving && (
                 <div className="space-y-2">
                   <p className="flex items-center gap-2 text-sm text-gray-500">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploader og gemmer kontrakt...
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploader og gemmer {files.length === 1 ? "kontrakt" : `${files.length} kontrakter`}...
                   </p>
                   <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
                     <div className="h-full bg-gray-900 rounded-full" style={{ animation: "upload-progress 8s ease-out forwards" }} />
@@ -415,7 +549,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle }:
                 </div>
               )}
               <Button onClick={handleSubmit} disabled={!canSubmit} className="w-full gap-2">
-                <Upload className="h-4 w-4" /> Indsend til DFKS
+                <Upload className="h-4 w-4" /> {isBatchUpload ? "Indsend kontrakter" : "Indsend til DFKS"}
               </Button>
             </div>
           )}

@@ -12,6 +12,7 @@ export interface NavneTjekResultat {
     status: "match" | "delvist-match" | "ikke-fundet"
     navnIKontrakt: string
     navnIRegister?: string
+    idIRegister?: string
     afvigendeSteder?: string[]
     feedbackpunkt?: {
         id: string
@@ -55,7 +56,7 @@ export async function tjekNavn(
     // 1. Eksakt match på full_name ELLER alternative_names
     const { data: eksakt } = await getSupabase()
         .from("rettighedshavere")
-        .select("full_name, alternative_names")
+        .select("id, full_name, alternative_names")
         .or(
             `full_name.ilike.${navnIKontrakt},` +
             `alternative_names.cs.{${navnIKontrakt}}`
@@ -73,12 +74,13 @@ export async function tjekNavn(
                     status: "delvist-match",
                     navnIKontrakt,
                     navnIRegister: registerNavn,
+                    idIRegister: eksakt[0].id,
                     afvigendeSteder: afvigende,
                     feedbackpunkt: {
                         id: "navnetjek",
                         type: "advarsel",
                         titel: "Stavefejl i navn",
-                        beskrivelse: `Dit navn er stavet forkert ét eller flere steder i kontrakten. Korrekt stavning ifølge DFKS-registeret: "${registerNavn}". Forkert stavning fundet: ${afvigende.map(s => `"${s}"`).join(", ")}. Ret disse steder så stavningen er konsistent og korrekt.`,
+                        beskrivelse: `Dit navn is stavet forkert ét eller flere steder i kontrakten. Korrekt stavning ifølge DFKS-registeret: "${registerNavn}". Forkert stavning fundet: ${afvigende.map(s => `"${s}"`).join(", ")}. Ret disse steder så stavningen er konsistent og korrekt.`,
                         anbefaling: `Erstat alle forekomster med den korrekte stavning: "${registerNavn}"`,
                         citat: afvigende[0],
                         paragraf: "",
@@ -91,6 +93,7 @@ export async function tjekNavn(
             status: "match",
             navnIKontrakt,
             navnIRegister: registerNavn,
+            idIRegister: eksakt[0].id,
         }
     }
 
@@ -99,7 +102,7 @@ export async function tjekNavn(
     for (const o of ord) {
         const { data: fuzzy } = await getSupabase()
             .from("rettighedshavere")
-            .select("full_name")
+            .select("id, full_name")
             .ilike("full_name", `%${o}%`)
             .limit(3)
 
@@ -111,12 +114,13 @@ export async function tjekNavn(
 
             const beskrivelse = afvigende.length > 0
                 ? `Dit navn er stavet forkert ét eller flere steder i kontrakten. Korrekt stavning ifølge DFKS-registeret: "${registerNavn}". Forkert stavning fundet: ${afvigende.map(s => `"${s}"`).join(", ")}. Ret disse steder så stavningen er konsistent og korrekt.`
-                : `Kontrakten bruger "${navnIKontrakt}" men DFKS-registeret har "${registerNavn}". Bekræft at den ønskede stavemåde er brugt — det er den der kommer i rulleteksterne.`
+                : `Kontrakten bruger "${navnIKontrakt}" ver DFKS-registeret har "${registerNavn}". Bekræft at den ønskede stavemåde er brugt — det er den der kommer i rulleteksterne.`
 
             return {
                 status: "delvist-match",
                 navnIKontrakt,
                 navnIRegister: registerNavn,
+                idIRegister: fuzzy[0].id,
                 afvigendeSteder: afvigende.length > 0 ? afvigende : undefined,
                 feedbackpunkt: {
                     id: "navnetjek",

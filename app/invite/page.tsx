@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 function InviteForm() {
     const router = useRouter()
     const params = useSearchParams()
-    const from = params.get("from") ?? "/"
+    const from = params?.get("from") ?? "/"
 
     const [code, setCode] = useState("")
     const [error, setError] = useState("")

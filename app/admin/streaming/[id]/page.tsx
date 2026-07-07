@@ -480,7 +480,7 @@ function generatePayoutText(production: MockProductionDetail, exploitation: Mock
 
 export default function StreamingDetailPage() {
     const params = useParams()
-    const id = params.id as string
+    const id = params?.id as string
     const [expandedPayout, setExpandedPayout] = useState<string | null>(null)
     const [copiedId, setCopiedId] = useState<string | null>(null)
     const [showRegister, setShowRegister] = useState(false)

@@ -17,78 +17,8 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { createClient } from "@supabase/supabase-js"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import { SOURCES_SCHEMA_PROMPT, normaliseSources } from "@/lib/ai-sources"
-import {
-    CONTRACT_TYPE_RULE,
-    COLLECTIVE_AGREEMENT_RULE,
-    COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE,
-    IS_FREELANCE_CONTRACT_RULE,
-    HOLIDAY_PAY_RATE_RULE,
-    BETA_RATE_RULE,
-} from "@/lib/ai-fields"
-
-// pdf-parse v2 exports PDFParse class (not a function like v1)
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-
-const SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
-Din opgave er at læse kontrakten og returnere et JSON-objekt med præcis de felter der er angivet.
-Vær præcis — brug null for felter der ikke fremgår af kontrakten. Brug aldrig gæt.
-Returner KUN JSON — ingen forklaringstekst.
-
-VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
-[CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
-Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
-
-const EXTRACTION_PROMPT = `Udtræk følgende data fra denne kontrakt og returner som JSON.
-Returner KUN JSON — ingen forklaringstekst.
-
-{
-  "employerName": "producentens/arbejdsgiverens FIRMANAVN — det juridiske selskab der er kontraktpart. Find selskabsnavnet øverst i kontrakten i partsafsnittet, typisk efterfulgt af adresse og CVR-nummer. Selskabet kan være defineret som 'Virksomheden', 'Producenten', 'Arbejdsgiveren' eller lignende i kontrakten — brug det faktiske navn, ikke den interne betegnelse. VIGTIGT: Formuleringer som 'refererer til producent [navn]', 'kontaktperson: [navn]', 'projektleder: [navn]' angiver en PERSON hos producenten — brug aldrig dette personnavn som employerName. Tag i stedet det selskabsnavn der optræder som kontraktpart med CVR-nummer. Enkeltmandsvirksomheder uden ApS/A/S er gyldige firmanaVNE. ALDRIG et rent personnavn. (string | null)",
-  "parentCompanyName": "moderselskabets firmanavn som fremgår af header, footer, brevhoved eller kontraktens første side — typisk et holding- eller produktionsselskab der er overordnet arbejdsgiveren. Kun firmanavne — aldrig personnavne. Sæt null hvis ikke identificerbart adskilt fra employerName. (string | null)",
-  "rightsHolderName": "klipperens/medarbejderens/leverandørens fulde PERSONNAVN — den fysiske person der udfører klippearbejdet. Søg efter den part der er markeret som 'Klipper', 'Medarbejder', 'Leverandør' eller lignende. ALDRIG et firmanavn. (string | null)",
-  "workTitle": "produktionens/filmens titel (string | null)",
-  "contractType": "${CONTRACT_TYPE_RULE}",
-  "overenskomst": "én af: de4-fiktion, faf, faf-dokumentar, ingen (string | null)",
-  "contractDate": "kontraktens dato ISO 8601 (string | null)",
-  "startDate": "ansættelsens startdato ISO 8601 (string | null)",
-  "endDate": "ansættelsens slutdato ISO 8601 (string | null)",
-
-  "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. VIGTIGE REGLER: Hvis kontrakten nævner 'afsnit', 'episode', 'sæson', episodenumre (fx 'afsnit 5+6', 'episode 3-7', 'sæson 2') eller et antal afsnit → brug tvSeries (fiktion) eller docSeries (dokumentar). Spillefilm/feature er altid ét samlet værk uden episoder. Dokumentarfilm med afsnit → docSeries. Returner præcis én af de nævnte værdier eller null.",
-  "salary": "bruttoløn som tal uden valuta (number | null)",
-  "salaryUnit": "monthly, weekly eller daily (string | null)",
-  "pensionPercent": "pensionsprocent som tal (number | null)",
-  "pensionSupplement": "pensionssupplement i kr. som tal (number | null)",
-  "personalSupplement": "personligt tillæg som TAL i kr. — KUN hvis der er et konkret kr.-beløb aftalt som personligt tillæg. Eksempel: 'personligt tillæg på 1.500 kr.' → 1500. Hvis tillægget kun beskrives som tekst uden beløb, sæt null og brug otherSupplements i stedet. (number | null)",
-  "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal — fx procenttillæg, variable tillæg, natkørselsgodtgørelse, kostpenge, eller tillæg der ikke er personlige tillæg. Fritekst. (string | null)",
-  "workingWeeks": "antal ARBEJDSUGER som tal (number | null). REGLER: (1) Hvis kontrakten angiver uger direkte — brug det tal. (2) Hvis kontrakten angiver klippedage eller arbejdsdage — divider med 5 og rund til én decimal (fx 35 klippedage = 7,0 uger). (3) Hvis kontrakten angiver måneder — multiplicer med 4,33. Returner altid et decimaltal, aldrig et dagstal.",
-  "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
-  "betaRate": "${BETA_RATE_RULE}",
-
-  "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
-  "copydan": "har kontrakten Copydan-forbehold eller lignende vederlagsbevarende klausul? Sæt true hvis kontrakten nævner ENTEN: Copydan, aftalelicens, eksemplarfremstilling, privatkopiering, kollektivt forvaltningsselskab, ophavsretslovens §§ 12-13, §§ 17-18, §§ 35-46a, 'vederlagsret for brug', 'bevarer en vederlagsret', eller tilsvarende formulering der bevarer rettigheder via kollektiv ordning. Sæt IKKE false blot fordi SVOD er overdraget — Copydan og SVOD er uafhængige rettigheder. (boolean)",
-  "royalty": "har kontrakten en INDIVIDUEL royalty-klausul? (boolean). REGLER: (1) ALDRIG true automatisk — kun hvis kontrakten eksplicit aftaler en individuel royaltybetaling i procent eller kr. til medarbejderen personligt. (2) Copydan-vederlagsret (kollektiv aftalelicens via §§ 13/17/35) tæller IKKE som royalty — det er Copydan-forbehold. (3) SVOD/Create Denmark-klausuler tæller IKKE. (4) Kun dedikerede royalty-afsnit med konkret procentangivelse eller beløb tæller.",
-  "royaltyPercent": "royaltyprocent som tal (number | null)",
-  "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
-  "distribution": "distributionsplatforme kommasepareret (string | null)",
-
-  "collectiveAgreement": "${COLLECTIVE_AGREEMENT_RULE}",
-  "collectiveAgreementName": "overenskomstens navn (string | null)",
-  "collectiveAgreementByReference": "${COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE}",
-  "isFreelanceContract": "${IS_FREELANCE_CONTRACT_RULE}",
-  "gender": "male, female eller null (string | null)",
-
-  "hasCreditClause": "er der en krediteringsklausul? (boolean)",
-  "hasTerminationClause": "er der en opsigelsesklausul? (boolean)",
-  "terminationDaysEditor": "klipperens opsigelsesvarsel i dage (number | null)",
-  "terminationDaysProducer": "producentens opsigelsesvarsel i dage (number | null)",
-  "hasIndemnification": "er der en skadesløsholdelsesklausul? (boolean)",
-  "hasOverenskomstIncorporation": "er overenskomst inkorporeret i leverandørkontrakt? (boolean)",
-
-  "specialNotes": "særlige bemærkninger der bør noteres (string | null)",
-
-${SOURCES_SCHEMA_PROMPT}
-}`
+import { normaliseSources } from "@/lib/ai-sources"
+import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 
 export async function POST(req: NextRequest) {
     try {
@@ -126,8 +56,8 @@ export async function POST(req: NextRequest) {
             masked = maskPersonalData(text)
         }
 
-        // Hent overenskomsttekster fra DB — samme som gennemgang-ruten
-        let activeSystemPrompt = SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT
+        // Hent overenskomsttekster fra DB — samme prompt-builder som validate/extract
+        let activeSystemPrompt = buildContractExtractionPrompt()
         try {
             const supabase = createClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -140,12 +70,7 @@ export async function POST(req: NextRequest) {
                 .eq("archived", false)
                 .not("content_text", "is", null)
 
-            if (refDocs?.length) {
-                activeSystemPrompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER — BRUG SOM BAGGRUNDSVIDEN:\n──────────────────────────────────────"
-                for (const doc of refDocs) {
-                    activeSystemPrompt += `\n\n${doc.doc_subtype ?? doc.title}:\n${doc.content_text}`
-                }
-            }
+            activeSystemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
         } catch (e) {
             console.warn("[contracts/extract] Kunne ikke hente reference docs:", e)
         }
@@ -173,9 +98,9 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ ok: true, data: extracted, navneTjek })
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("Extract fejl:", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
     }
 }
 
@@ -183,7 +108,7 @@ async function extractFromText(text: string, apiKey: string, systemPrompt?: stri
     const body = {
         model: "claude-sonnet-4-6",
         max_tokens: 4096,
-        system: systemPrompt ?? (SYSTEM_PROMPT + "\n\n" + EXTRACTION_PROMPT),
+        system: systemPrompt ?? buildContractExtractionPrompt(),
         messages: [{
             role: "user",
             content: `---KONTRAKT---\n${text.slice(0, 40000)}`,

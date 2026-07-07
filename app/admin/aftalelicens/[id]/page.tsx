@@ -3506,7 +3506,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default function AftalelicensDetailPage() {
     const params = useParams()
-    const id = params.id as string
+    const id = params?.id as string
 
     const [vaerker, setVaerker] = useState<AftalelicensVaerk[]>(genMockVaerker)
 

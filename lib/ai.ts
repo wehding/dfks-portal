@@ -14,6 +14,9 @@ import {
     BETA_RATE_RULE,
 } from "./ai-fields"
 
+type URLWithParse = typeof URL & { parse?: (val: string, base?: string) => URL | null }
+type PdfTextItem = { str?: string }
+
 // ── Anonymisation ─────────────────────────────────────────────
 // Removes personally identifiable data before sending to AI API.
 // Salary amounts, dates and production metadata are preserved
@@ -208,7 +211,8 @@ export function getMemberList(): MemberList {
 }
 
 /** @deprecated Use setMemberListGroups instead */
-export function setMemberList(list: MemberList) {
+export function setMemberList(_list: MemberList) {
+    void _list
     // no-op — kept for any remaining callers
 }
 
@@ -257,8 +261,9 @@ export async function extractTextFromFile(file: File): Promise<string> {
 
     // PDF: use the pdfjs that is already bundled with react-pdf
     // Polyfill URL.parse which older pdfjs versions expect
-    if (typeof window !== "undefined" && !(URL as any).parse) {
-        ;(URL as any).parse = (val: string, base?: string) => {
+    const URLCompat = URL as URLWithParse
+    if (typeof window !== "undefined" && !URLCompat.parse) {
+        URLCompat.parse = (val: string, base?: string) => {
             try { return new URL(val, base) } catch { return null }
         }
     }
@@ -274,7 +279,7 @@ export async function extractTextFromFile(file: File): Promise<string> {
     for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i)
         const content = await page.getTextContent()
-        text += content.items.map((item: any) => item.str).join(" ") + "\n"
+        text += (content.items as PdfTextItem[]).map(item => item.str ?? "").join(" ") + "\n"
     }
 
     // Normalize PDF text artifacts: remove spaces within numbers/dates
@@ -382,7 +387,6 @@ ${SOURCES_SCHEMA_PROMPT},
     "collectiveAgreementName": null,
     "isFreelanceContract": "${IS_FREELANCE_CONTRACT_RULE}",
     "collectiveAgreementByReference": "${COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE}",
-    "gender": null,
     "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
     "betaRate": "${BETA_RATE_RULE}",
     "specialNotes": "KUN vilkår der er USÆDVANLIGE og konkret afviger fra det normale FOR DEN PÅGÆLDENDE KONTRAKTTYPE. Skriv max 2-3 sætninger. FORBUDT at skrive: at det er en leverandørkontrakt, at honoraret er alt-inklusivt (100% standard for leverandørkontrakter), lønoplysninger der allerede fremgår af salary-feltet, en generel opsummering af kontrakten, parternes navne eller CVR. SKAL MED: Overenskomstinkorporering i en leverandørkontrakt — dvs. at overenskomstens vilkår gælder som supplement i en B2B-aftale — er et særligt og usædvanligt vilkår som ALTID skal nævnes i specialNotes (f.eks. 'Overenskomstvilkår inkorporeret ved reference: De4-overenskomstens vilkår supplerer denne leverandørkontrakt i medfør af § X'). Andre eksempler der KAN med: ensidigt forlængelsesret hos producenten, produktion i udlandet, unormalt kort opsigelsesvarsel (under 1 uge), særlig konkurrenceklausul. Null hvis ingen reelt usædvanlige vilkår."

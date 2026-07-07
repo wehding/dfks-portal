@@ -38,7 +38,7 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
                             <SidebarMenu>
                                 {NAV.map(item => (
                                     <SidebarMenuItem key={item.href}>
-                                        <SidebarMenuButton asChild isActive={pathname.startsWith(item.href)}>
+                                        <SidebarMenuButton asChild isActive={pathname?.startsWith(item.href) ?? false}>
                                             <Link href={item.href}>
                                                 <item.icon className="h-4 w-4" />
                                                 {item.label}

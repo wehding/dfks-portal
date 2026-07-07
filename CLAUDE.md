@@ -235,6 +235,11 @@ Følsomme data **maskes** inden API-kald via `lib/mask-text.ts`: CPR · bankkont
 - Rolle sættes via SQL: `update auth.users set raw_user_meta_data = raw_user_meta_data || '{"role": "admin"}' where email = '...'`
 - DFKS org_id: `3dfcad23-03ce-4de0-82f2-6566dfcd88a5`
 
+### 8. Vercel Hobby-begrænsninger på Cron Jobs
+- **Kritisk:** Vercel Hobby-konti tillader kun cron-jobs, der kører højst én gang i døgnet.
+- Derfor er cron-jobbet til jobprocessoren `/api/contracts/jobs/process` sat til `"0 5 * * *"` (hver dag kl. 5) i `vercel.json` i stedet for hvert 5. minut (`*/5 * * * *`).
+- **Når der opgraderes til Vercel Pro:** Husk at ændre dette interval i `vercel.json` tilbage til `"*/5 * * * *"` (hvert 5. minut) eller hurtigere, for at sikre hurtig behandling af kontrakter i køen.
+
 ---
 
 ## Database — kørt i produktion
@@ -393,9 +398,9 @@ Se MEMORY.md for fuld beskrivelse. Kort:
 
 ## Når du er i tvivl
 
-Spørg Martin. Han har dyb domæneviden om den danske filmindustri og ved præcis hvilke klausuler der er normale vs. kritiske.
+Martin har dyb domæneviden om den danske filmindustri og ved præcis hvilke klausuler der er normale vs. kritiske — træk på ham som ressource ved tvivl. Han skal **ikke** godkende ændringer før merge.
 
-### Hvad du IKKE må ændre uden Martins godkendelse
+### Vær ekstra varsom med (dobbelttjek grundigt — men kræver ikke godkendelse)
 - Domæneviden (royaltysatser, kontrakttyper, lovgivning)
 - "Rør ikke"-regler under Arkitekturbeslutninger
 - Modulernes formål og adskillelse
@@ -408,5 +413,4 @@ Arbejd aldrig direkte på master.
 Opret altid en sidebranch før ændringer: `feat/...`, `fix/...` eller `refactor/...`.
 Push altid sidebranchen og lav Pull Request ind i master.
 Direkte push til master er ikke tilladt.
-Ved domæneændringer eller tvivl: spørg Martin før merge.
 Lav altid PRs mod `wehding/dfks-portal` som base repository — aldrig mod upstream.

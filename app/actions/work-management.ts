@@ -221,6 +221,35 @@ async function findRightsHolderByName(db: ReturnType<typeof createServiceClient>
     .find(holder => holder?.id && normalizeTitle(holder.full_name ?? "") === normalizedName) ?? null;
 }
 
+async function findExistingWorkByTitle(
+  db: ReturnType<typeof createServiceClient>,
+  title: string,
+  year: number | null,
+  orgId: string
+) {
+  const normalizedTitle = normalizeTitle(title);
+  if (!normalizedTitle) return null;
+
+  const { data, error } = await db
+    .from("works")
+    .select("id, poster_url, title, year")
+    .eq("org_id", orgId)
+    .limit(50);
+  if (error) throw new Error(error.message);
+
+  const matches = (data ?? []).filter(work => {
+    const sameTitle = normalizeTitle(work.title ?? "") === normalizedTitle;
+    const sameYear = year ? work.year === year : true;
+    return sameTitle && sameYear;
+  });
+
+  if (matches.length > 1) {
+    throw new Error(`Værket "${title}" findes allerede flere gange i databasen. Vælg et eksisterende værk i stedet for at oprette en dublet.`);
+  }
+
+  return matches[0] ?? null;
+}
+
 async function applyCoEditorChanges(db: ReturnType<typeof createServiceClient>, workId: string, orgId: string, coEditors?: ProposedCoEditor[]) {
   for (const editor of coEditors ?? []) {
     const role = cleanText(editor.role) ?? "Klipper";
@@ -361,6 +390,7 @@ export async function submitWorkDataCorrection(params: {
     author_user_id: user.id,
     author_role: "member",
     message: comment,
+    member_read_at: new Date().toISOString(),
   });
   if (commentError) throw new Error(commentError.message);
 
@@ -394,7 +424,22 @@ export async function fetchAdminWorksForReview() {
   );
 
   if (error) throw new Error(error.message);
-  return { success: true, works: data ?? [] };
+  const rows = data ?? [];
+  // Skjul KUN tekniske serie-parents der faktisk har afsnit (children). Et childless
+  // serie-værk (fx ældre data hvor brugeren er tildelt direkte på serien) er et rigtigt
+  // værk og skal vises — ellers bliver det usynligt i admin selvom det har tildelinger/beskeder.
+  const parentIdsWithChildren = new Set(
+    rows.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
+  );
+  const visibleWorks = rows.filter(work => {
+    const isTechnicalSeriesParent =
+      (work.type === "tv-serie" || work.type === "dokumentar-serie") &&
+      work.parent_work_id === null &&
+      work.episode_number === null &&
+      parentIdsWithChildren.has(work.id);
+    return !isTechnicalSeriesParent;
+  });
+  return { success: true, works: visibleWorks };
 }
 
 export async function deleteAdminWorkPermanently(params: { workId: string }) {
@@ -417,9 +462,28 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
   if (workError) throw new Error(workError.message);
   if (!work) throw new Error("Værket findes ikke.");
 
+  // Hent alle berørte kontrakter
+  const { data: affectedContracts, error: affectedError } = await db
+    .from("contracts")
+    .select("id")
+    .eq("work_id", workId)
+    .eq("org_id", orgId);
+  if (affectedError) throw new Error(affectedError.message);
+
+  if (affectedContracts && affectedContracts.length > 0) {
+    const contractIds = affectedContracts.map(c => c.id);
+    
+    // Slet valideringerne for disse kontrakter
+    const { error: validationDeleteError } = await db
+      .from("contract_validations")
+      .delete()
+      .in("contract_id", contractIds);
+    if (validationDeleteError) throw new Error(validationDeleteError.message);
+  }
+
   const { error: contractUpdateError } = await db
     .from("contracts")
-    .update({ work_id: null })
+    .update({ work_id: null, status: "kladde" })
     .eq("work_id", workId)
     .eq("org_id", orgId);
   if (contractUpdateError) throw new Error(contractUpdateError.message);
@@ -464,26 +528,50 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
   const foundIds = works?.map(w => w.id) ?? [];
   if (foundIds.length === 0) throw new Error("Ingen af de valgte værker blev fundet.");
 
-  const { error: contractUpdateError } = await db
-    .from("contracts")
-    .update({ work_id: null })
-    .in("work_id", foundIds)
-    .eq("org_id", orgId);
-  if (contractUpdateError) throw new Error(contractUpdateError.message);
+  // Slet i batches så store cascade-sletninger ikke rammer statement-timeout
+  for (let i = 0; i < foundIds.length; i += 50) {
+    const chunk = foundIds.slice(i, i + 50);
 
-  const { error: airingUpdateError } = await db
-    .from("work_airings")
-    .update({ work_id: null })
-    .in("work_id", foundIds)
-    .eq("org_id", orgId);
-  if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+    // Hent alle berørte kontrakter for denne batch
+    const { data: affectedContracts, error: affectedError } = await db
+      .from("contracts")
+      .select("id")
+      .in("work_id", chunk)
+      .eq("org_id", orgId);
+    if (affectedError) throw new Error(affectedError.message);
 
-  const { error: deleteError } = await db
-    .from("works")
-    .delete()
-    .in("id", foundIds)
-    .eq("org_id", orgId);
-  if (deleteError) throw new Error(deleteError.message);
+    if (affectedContracts && affectedContracts.length > 0) {
+      const contractIds = affectedContracts.map(c => c.id);
+      
+      // Slet valideringerne for disse kontrakter
+      const { error: validationDeleteError } = await db
+        .from("contract_validations")
+        .delete()
+        .in("contract_id", contractIds);
+      if (validationDeleteError) throw new Error(validationDeleteError.message);
+    }
+
+    const { error: contractUpdateError } = await db
+      .from("contracts")
+      .update({ work_id: null, status: "kladde" })
+      .in("work_id", chunk)
+      .eq("org_id", orgId);
+    if (contractUpdateError) throw new Error(contractUpdateError.message);
+
+    const { error: airingUpdateError } = await db
+      .from("work_airings")
+      .update({ work_id: null })
+      .in("work_id", chunk)
+      .eq("org_id", orgId);
+    if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+
+    const { error: deleteError } = await db
+      .from("works")
+      .delete()
+      .in("id", chunk)
+      .eq("org_id", orgId);
+    if (deleteError) throw new Error(deleteError.message);
+  }
 
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
@@ -691,29 +779,24 @@ export async function createAdminWork(params: {
     }
   }
   if (!workId && params.data.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).eq("org_id", orgId).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
   if (!workId && params.data.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).eq("org_id", orgId).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
-  if (!workId && normalized.title && normalized.year) {
-    const { data } = await db
-      .from("works")
-      .select("id, poster_url")
-      .ilike("title", normalized.title)
-      .eq("year", normalized.year)
-      .maybeSingle();
-    if (data?.id) {
-      workId = data.id;
-      existingPosterUrl = data.poster_url;
+  if (!workId && normalized.title) {
+    const existing = await findExistingWorkByTitle(db, normalized.title, normalized.year, orgId);
+    if (existing?.id) {
+      workId = existing.id;
+      existingPosterUrl = existing.poster_url;
     }
   }
 
@@ -949,6 +1032,7 @@ export async function reviewWorkDataCorrection(params: {
       author_user_id: user.id,
       author_role: "admin",
       message: adminMessage,
+      admin_read_at: new Date().toISOString(),
     });
     if (commentError) throw new Error(commentError.message);
   }
@@ -966,4 +1050,78 @@ export async function reviewWorkDataCorrection(params: {
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
   return { success: true };
+}
+
+const WORK_ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
+
+export async function markWorkRequestCommentsRead(requestId: string, viewerRole: "admin" | "member" = "member") {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const db = createServiceClient();
+  const { data: request } = await db
+    .from("work_change_requests")
+    .select("id, org_id, requested_by_user_id")
+    .eq("id", requestId)
+    .single();
+  if (!request) return { success: false, error: "Anmodning ikke fundet" };
+
+  // Rollen bestemmes af HVILKEN side der kalder (admin vs portal), ikke af hvem der
+  // oprettede requesten — ellers fejler mark-læst når admin selv er medlemmet.
+  if (viewerRole === "admin") {
+    const { data: roles } = await db
+      .from("user_org_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("org_id", request.org_id);
+    if (!(roles ?? []).some(r => WORK_ADMIN_ROLES.includes(r.role))) return { success: false, error: "Ikke autoriseret" };
+  } else if (request.requested_by_user_id !== user.id) {
+    return { success: false, error: "Ikke autoriseret" };
+  }
+
+  const now = new Date().toISOString();
+  const asMember = viewerRole === "member";
+  // Medlem markerer admin-beskeder læst; admin markerer medlem-beskeder læst.
+  const { error } = await db
+    .from("work_change_request_comments")
+    .update(asMember ? { member_read_at: now } : { admin_read_at: now })
+    .eq("request_id", requestId)
+    .eq("author_role", asMember ? "admin" : "member")
+    .is(asMember ? "member_read_at" : "admin_read_at", null);
+
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/admin/vaerker");
+  return { success: true };
+}
+
+// Admin-svar på en værk-request UDEN at ændre status (kan bruges på enhver request,
+// også godkendte/beskeder). Godkend/afvis håndteres separat af reviewWorkDataCorrection.
+export async function addAdminWorkRequestComment(params: { requestId: string; message: string }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const message = cleanText(params.message);
+  if (!message) throw new Error("Skriv en besked.");
+
+  const db = createServiceClient();
+  const { data: comment, error } = await db
+    .from("work_change_request_comments")
+    .insert({
+      request_id: params.requestId,
+      author_user_id: user.id,
+      author_role: "admin",
+      message,
+      admin_read_at: new Date().toISOString(),
+    })
+    .select("id, author_role, message, created_at, member_read_at, admin_read_at")
+    .single();
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true, comment };
 }
