@@ -53,7 +53,7 @@ export default function OnboardingClient({
     city: "",
     cpr: rh?.cpr_no || "",
     bank_account: rh?.bank_account || "",
-    gender: rh?.gender || "ikke_oplyst",
+    gender: rh?.gender || "prefer_not_to_say",
   });
 
   const handleField = (field: string, value: string) =>
@@ -546,10 +546,10 @@ export default function OnboardingClient({
                         onChange={(e) => handleField("gender", e.target.value)}
                         style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)", outline: "none" }}
                       >
-                        <option value="ikke_oplyst">Vil ikke oplyse</option>
-                        <option value="kvinde">Kvinde</option>
-                        <option value="mand">Mand</option>
-                        <option value="andet">Andet / Non-binær</option>
+                        <option value="prefer_not_to_say">Vil ikke oplyse</option>
+                        <option value="female">Kvinde</option>
+                        <option value="male">Mand</option>
+                        <option value="non_binary">Andet / Non-binær</option>
                       </select>
                     </div>
                   </div>
@@ -573,7 +573,7 @@ export default function OnboardingClient({
                   { label: "Navn", value: `${formData.first_name} ${formData.last_name}`.trim() },
                   { label: "E-mail", value: formData.email },
                   { label: "By", value: formData.city || "Ikke angivet" },
-                  { label: "Køn (statistik)", value: formData.gender === "kvinde" ? "Kvinde" : formData.gender === "mand" ? "Mand" : formData.gender === "andet" ? "Andet / Non-binær" : "Ikke oplyst" },
+                  { label: "Køn (statistik)", value: formData.gender === "female" ? "Kvinde" : formData.gender === "male" ? "Mand" : formData.gender === "non_binary" ? "Andet / Non-binær" : "Ikke oplyst" },
                   { label: "CPR registreret", value: formData.cpr ? "✅ Ja" : "❌ Mangler" },
                   { label: "NemKonto", value: formData.bank_account ? "✅ Registreret" : "❌ Mangler" },
                   { label: "Lønstatistik", value: shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },
