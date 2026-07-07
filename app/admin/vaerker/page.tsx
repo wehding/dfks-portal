@@ -1214,6 +1214,25 @@ export default function VaerksadministrationPage() {
     }
   };
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("add") !== "1") return;
+    const query = params.get("q") ?? "";
+    setAddOpen(true);
+    setAddQuery(query);
+    setAddForm(form => ({ ...form, title: query }));
+  }, []);
+
+  useEffect(() => {
+    if (!addOpen || !addQuery.trim()) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("add") !== "1") return;
+    void handleAddSearch();
+    window.history.replaceState(null, "", "/admin/vaerker");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addOpen, addQuery]);
+
   const handleEditSearch = async () => {
     if (!editLookupQuery.trim()) return;
     setIsSearchingEdit(true);

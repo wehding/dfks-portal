@@ -532,6 +532,11 @@ export async function addWorkForMemberWithApproval(params: {
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const orgId = await currentOrgId(db, user.id);
   const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
+  const exactExistingWork = similarWorks.find(work => {
+    const sameTitle = normalizeTitle(work.title) === normalizeTitle(params.workData.title);
+    const sameYear = params.workData.year && work.year ? work.year === params.workData.year : true;
+    return sameTitle && sameYear;
+  }) ?? null;
   const coEditors = normalizeCoEditors(params.coEditors);
   // Godkendelse kræves KUN når værket allerede findes i databasen (dublet-tilføjelse
   // via DFI/TMDB/manuelt). Helt nye, umatchede værker godkendes automatisk.
@@ -681,39 +686,43 @@ export async function addWorkForMemberWithApproval(params: {
     }
   } else {
     // Enkeltværk flow
-    const insertPayload = {
-      org_id: orgId,
-      status: requiresApproval ? "til_godkendelse" : "godkendt",
-      title: enrichedWorkData.title,
-      type: enrichedWorkData.type,
-      year: enrichedWorkData.year,
-      duration_minutes: enrichedWorkData.duration_minutes ?? null,
-      episode_count: enrichedWorkData.episode_count ?? null,
-      genre: enrichedWorkData.genre ?? null,
-      director: enrichedWorkData.director ?? null,
-      description: enrichedWorkData.description ?? null,
-      poster_url: enrichedWorkData.poster_url ?? null,
-      dfi_id: enrichedWorkData.dfi_id ?? null,
-      tmdb_id: enrichedWorkData.tmdb_id ?? null,
-      dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
-    };
+    let workId = exactExistingWork?.id ?? null;
+    if (!workId) {
+      const insertPayload = {
+        org_id: orgId,
+        status: requiresApproval ? "til_godkendelse" : "godkendt",
+        title: enrichedWorkData.title,
+        type: enrichedWorkData.type,
+        year: enrichedWorkData.year,
+        duration_minutes: enrichedWorkData.duration_minutes ?? null,
+        episode_count: enrichedWorkData.episode_count ?? null,
+        genre: enrichedWorkData.genre ?? null,
+        director: enrichedWorkData.director ?? null,
+        description: enrichedWorkData.description ?? null,
+        poster_url: enrichedWorkData.poster_url ?? null,
+        dfi_id: enrichedWorkData.dfi_id ?? null,
+        tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
+      };
 
-    const { data: work, error: workError } = await db
-      .from("works")
-      .insert(insertPayload)
-      .select("id")
-      .single();
-    if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
+      const { data: work, error: workError } = await db
+        .from("works")
+        .insert(insertPayload)
+        .select("id")
+        .single();
+      if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
+      workId = work.id;
+    }
 
     const { error: assignErr } = await db
       .from("work_assignments")
       .upsert(
-        { work_id: work.id, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
+        { work_id: workId, org_id: orgId, rights_holder_id: params.rightsHolderId, role: params.role },
         { onConflict: "work_id,rights_holder_id,role" }
       );
     if (assignErr) return { success: false, error: assignErr.message };
 
-    finalWorkId = work.id;
+    finalWorkId = workId;
   }
 
   if (requiresApproval) {

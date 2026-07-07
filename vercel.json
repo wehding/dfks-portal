@@ -7,6 +7,10 @@
     {
       "path": "/api/admin/sync-retsinformation",
       "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/contracts/jobs/process",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

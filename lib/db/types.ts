@@ -40,6 +40,7 @@ export interface DbRettighedshaver {
     onboarding_completed: boolean
     dfi_person_id: number | null
     opt_out_statistics: boolean
+    gender: "female" | "male" | "non_binary" | "other" | "prefer_not_to_say" | null
     created_at: string
 }
 
@@ -249,7 +250,7 @@ export interface DbWork {
     tmdb_id: number | null
     description: string | null
     poster_url: string | null
-    dfi_metadata: any | null
+    dfi_metadata: Record<string, unknown> | null
     created_at: string
 }
 

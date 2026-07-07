@@ -221,6 +221,35 @@ async function findRightsHolderByName(db: ReturnType<typeof createServiceClient>
     .find(holder => holder?.id && normalizeTitle(holder.full_name ?? "") === normalizedName) ?? null;
 }
 
+async function findExistingWorkByTitle(
+  db: ReturnType<typeof createServiceClient>,
+  title: string,
+  year: number | null,
+  orgId: string
+) {
+  const normalizedTitle = normalizeTitle(title);
+  if (!normalizedTitle) return null;
+
+  const { data, error } = await db
+    .from("works")
+    .select("id, poster_url, title, year")
+    .eq("org_id", orgId)
+    .limit(50);
+  if (error) throw new Error(error.message);
+
+  const matches = (data ?? []).filter(work => {
+    const sameTitle = normalizeTitle(work.title ?? "") === normalizedTitle;
+    const sameYear = year ? work.year === year : true;
+    return sameTitle && sameYear;
+  });
+
+  if (matches.length > 1) {
+    throw new Error(`Værket "${title}" findes allerede flere gange i databasen. Vælg et eksisterende værk i stedet for at oprette en dublet.`);
+  }
+
+  return matches[0] ?? null;
+}
+
 async function applyCoEditorChanges(db: ReturnType<typeof createServiceClient>, workId: string, orgId: string, coEditors?: ProposedCoEditor[]) {
   for (const editor of coEditors ?? []) {
     const role = cleanText(editor.role) ?? "Klipper";
@@ -433,9 +462,28 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
   if (workError) throw new Error(workError.message);
   if (!work) throw new Error("Værket findes ikke.");
 
+  // Hent alle berørte kontrakter
+  const { data: affectedContracts, error: affectedError } = await db
+    .from("contracts")
+    .select("id")
+    .eq("work_id", workId)
+    .eq("org_id", orgId);
+  if (affectedError) throw new Error(affectedError.message);
+
+  if (affectedContracts && affectedContracts.length > 0) {
+    const contractIds = affectedContracts.map(c => c.id);
+    
+    // Slet valideringerne for disse kontrakter
+    const { error: validationDeleteError } = await db
+      .from("contract_validations")
+      .delete()
+      .in("contract_id", contractIds);
+    if (validationDeleteError) throw new Error(validationDeleteError.message);
+  }
+
   const { error: contractUpdateError } = await db
     .from("contracts")
-    .update({ work_id: null })
+    .update({ work_id: null, status: "kladde" })
     .eq("work_id", workId)
     .eq("org_id", orgId);
   if (contractUpdateError) throw new Error(contractUpdateError.message);
@@ -484,9 +532,28 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
   for (let i = 0; i < foundIds.length; i += 50) {
     const chunk = foundIds.slice(i, i + 50);
 
+    // Hent alle berørte kontrakter for denne batch
+    const { data: affectedContracts, error: affectedError } = await db
+      .from("contracts")
+      .select("id")
+      .in("work_id", chunk)
+      .eq("org_id", orgId);
+    if (affectedError) throw new Error(affectedError.message);
+
+    if (affectedContracts && affectedContracts.length > 0) {
+      const contractIds = affectedContracts.map(c => c.id);
+      
+      // Slet valideringerne for disse kontrakter
+      const { error: validationDeleteError } = await db
+        .from("contract_validations")
+        .delete()
+        .in("contract_id", contractIds);
+      if (validationDeleteError) throw new Error(validationDeleteError.message);
+    }
+
     const { error: contractUpdateError } = await db
       .from("contracts")
-      .update({ work_id: null })
+      .update({ work_id: null, status: "kladde" })
       .in("work_id", chunk)
       .eq("org_id", orgId);
     if (contractUpdateError) throw new Error(contractUpdateError.message);
@@ -712,29 +779,24 @@ export async function createAdminWork(params: {
     }
   }
   if (!workId && params.data.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).eq("org_id", orgId).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
   if (!workId && params.data.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).eq("org_id", orgId).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
-  if (!workId && normalized.title && normalized.year) {
-    const { data } = await db
-      .from("works")
-      .select("id, poster_url")
-      .ilike("title", normalized.title)
-      .eq("year", normalized.year)
-      .maybeSingle();
-    if (data?.id) {
-      workId = data.id;
-      existingPosterUrl = data.poster_url;
+  if (!workId && normalized.title) {
+    const existing = await findExistingWorkByTitle(db, normalized.title, normalized.year, orgId);
+    if (existing?.id) {
+      workId = existing.id;
+      existingPosterUrl = existing.poster_url;
     }
   }
 

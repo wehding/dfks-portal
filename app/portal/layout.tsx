@@ -21,11 +21,9 @@ import {
     Award,
     Users2,
     Receipt,
-    BookOpen,
     Scale,
     Library,
     UserCheck,
-    FlaskConical,
     BrainCircuit,
     ShieldCheck,
 } from "lucide-react"
@@ -275,8 +273,7 @@ export default function PortalLayout({
                                                     asChild
                                                     isActive={
                                                         pathname === item.href ||
-                                                        (pathname?.startsWith(`${item.href}/`) ?? false) ||
-                                                        (item.key === "kontrakter" && (pathname?.startsWith("/admin/validering") ?? false))
+                                                        (pathname?.startsWith(`${item.href}/`) ?? false)
                                                     }
                                                 >
                                                     <Link href={item.href}>

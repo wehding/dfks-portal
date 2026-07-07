@@ -14,9 +14,11 @@ import { useI18n } from "@/lib/i18n";
 import { DfiImportWizard } from "./components/DfiImportWizard";
 import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
-import { ContextualHelp, HelpButton, type HelpTopic } from "@/components/help/contextual-help";
+import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { MINE_VAERKER_HELP } from "@/lib/portal-help";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
+const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
 type Work = {
   id: string;
@@ -62,26 +64,6 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
-
-const MINE_VAERKER_HELP: HelpTopic[] = [
-  {
-    title: "Tilføj værk",
-    body: "Brug søgning først, så systemet kan genbruge værker, der allerede findes. Hvis værket er en serie, kan du vælge præcis de afsnit, du har klippet, inden du sender oprettelsen.",
-    tips: ["Lokale match kobler dig direkte på det eksisterende værk.", "DFI/TMDB-oprettelser og manuelle oprettelser kan kræve administratorgodkendelse."],
-  },
-  {
-    title: "Importer fra DFI",
-    body: "DFI-guiden finder dine krediteringer og frasorterer værker, der allerede er knyttet til dig. Lokale værker bliver koblet til dig uden at overskrive eksisterende data.",
-  },
-  {
-    title: "Kontraktstatus",
-    body: "Mangler kontrakt betyder, at systemet ikke kan se en godkendt kontrakt på værket endnu. Klik på mærket for at uploade en kontrakt direkte til værket.",
-  },
-  {
-    title: "Rettelser og admin-kommentarer",
-    body: "Når du retter værksdata, sendes ændringen til administrator. Klik på værket for at se status, kommentarer og hvilken type request kommentaren handler om.",
-  },
-];
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
@@ -562,11 +544,11 @@ export default function MineVaerkerClient({
               <div className="text-sm text-gray-500">{displayRole(a.role)}</div>
               <div className="text-sm text-gray-500">
                 {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
-                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700">
                     S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                   </span>
                 ) : w.episode_number !== undefined && w.episode_number !== null ? (
-                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700">
                     E{String(w.episode_number).padStart(2, "0")}
                   </span>
                 ) : (
@@ -583,9 +565,9 @@ export default function MineVaerkerClient({
                 onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
               >
                 {hasContract ? (
-                  <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                  <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
                 ) : (
-                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">{t("works.contractMissing")}</Badge>
+                  <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                 )}
               </div>
             </div>
@@ -635,9 +617,9 @@ export default function MineVaerkerClient({
                       onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
                     >
                       {hasContract ? (
-                        <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full cursor-pointer" style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                        <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
                       ) : (
-                        <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 cursor-pointer">{t("works.contractMissing")}</Badge>
+                        <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                       )}
                     </div>
                   </div>
@@ -651,11 +633,11 @@ export default function MineVaerkerClient({
                       <p className="font-medium text-gray-400">{t("works.episodes")}</p>
                       <p className="mt-0.5 text-gray-700">
                         {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
-                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700 font-mono">
+                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700 font-mono">
                             S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                           </span>
                         ) : w.episode_number !== undefined && w.episode_number !== null ? (
-                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700 font-mono">
+                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700 font-mono">
                             E{String(w.episode_number).padStart(2, "0")}
                           </span>
                         ) : (
@@ -739,6 +721,7 @@ export default function MineVaerkerClient({
         title="Hjælp til Mine værker"
         intro="Kort overblik over de vigtigste handlinger på siden."
         topics={MINE_VAERKER_HELP}
+        storageKey="dfks-help-mine-vaerker-v2"
       />
     </div>
   );

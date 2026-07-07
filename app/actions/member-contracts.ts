@@ -180,6 +180,17 @@ export async function saveUploadedContract(params: {
     return { success: false, error: validationError.message };
   }
 
+  const { error: jobError } = await db.from("contract_ai_jobs").insert({
+    contract_id: saved.id,
+    org_id: params.orgId,
+    status: "queued",
+    priority: 0,
+  });
+
+  if (jobError) {
+    console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
+  }
+
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, contract: saved };
 }
@@ -267,6 +278,19 @@ export async function saveContractValidation(params: { contractId: string; extra
   if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
 
   const ed = params.extractedData as Record<string, unknown>;
+
+  // Editoren sender kun de felter den kender (GROUPS). Flet oven på den
+  // eksisterende extracted_data, så øvrige nøgler (fx AI-kildecitater _sources,
+  // hasTerminationClause, terminationDaysEditor/Producer, hasIndemnification)
+  // ikke slettes ved hver gem.
+  const { data: existing } = await db
+    .from("contract_validations")
+    .select("extracted_data")
+    .eq("contract_id", params.contractId)
+    .maybeSingle();
+  const prevEd = (existing?.extracted_data ?? {}) as Record<string, unknown>;
+  const mergedEd = { ...prevEd, ...ed };
+
   const { error } = await db.from("contract_validations").upsert(
     {
       contract_id: params.contractId,
@@ -274,9 +298,9 @@ export async function saveContractValidation(params: { contractId: string; extra
       holiday_pay_rate: (ed.holidayPayRate as number) ?? null,
       beta_rate: (ed.betaRate as number) ?? null,
       has_overenskomst_incorporation: !!ed.collectiveAgreement,
-      has_credit_clause: !!ed.creditedRoles,
+      has_credit_clause: !!(ed.creditedRoles || ed.creditedFunction || mergedEd.hasCreditClause),
       notes: (ed.specialNotes as string) ?? null,
-      extracted_data: ed,
+      extracted_data: mergedEd,
       validated_by: user.id,
       validated_at: new Date().toISOString(),
     },
@@ -284,7 +308,6 @@ export async function saveContractValidation(params: { contractId: string; extra
   );
   if (error) return { success: false, error: error.message };
   revalidatePath("/admin/kontrakter");
-  revalidatePath("/admin/validering");
   return { success: true };
 }
 

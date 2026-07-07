@@ -352,6 +352,7 @@ export function AddWorkModal({
   const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
   const [showExternalResults, setShowExternalResults] = useState(false);
+  const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
     const updateTmdbEpisodes = async () => {
@@ -393,6 +394,7 @@ export function AddWorkModal({
   }, [manualMode, manualWork.episode_count, manualWork.type]);
 
   const resetAddState = React.useCallback(() => {
+    autoSearchKeyRef.current = "";
     setManualMode(false);
     setHasSearchedAdd(false);
     setManualWork(emptyManualWorkForm());
@@ -417,9 +419,12 @@ export function AddWorkModal({
     }
   }, [isOpen, resetAddState]);
 
-  const handleSearch = async () => {
-    if (!addQuery.trim()) return;
+  const handleSearch = async (queryOverride?: string) => {
+    const query = (queryOverride ?? addQuery).trim();
+    if (!query) return;
+    if (queryOverride) setAddQuery(query);
     setIsSearching(true);
+    setIsSearchingTmdb(false);
     setHasSearchedAdd(true);
     setShowExternalResults(false);
     setLocalResults([]);
@@ -429,26 +434,45 @@ export function AddWorkModal({
     setPickedSource(null);
     setAddCoEditors([]);
 
-    const [local, dfi] = await Promise.all([
-      searchLocalWorksForMember(addQuery).catch(() => ({ success: false, works: [] })),
-      searchDFIFilms(addQuery).catch(() => ({ success: false, results: [] })),
-    ]);
-
+    const local = await searchLocalWorksForMember(query).catch(() => ({ success: false, works: [] }));
     const locals = ((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8);
-    const dfiParents = (((dfi as { results?: DfiSearchResult[] }).results ?? [])
-      .filter(result => !isDfiChildResult(result)))
-      .slice(0, 8);
     setLocalResults(locals);
-    setDfiResults(dfiParents);
-    setTmdbResults([]);
-    setIsSearching(false);
 
     if (locals.length > 0) {
       setPickedResult(locals[0]);
       setPickedSource("local");
       setManualMode(false);
       setAddCoEditors(localWorkToCoEditors(locals[0]));
+      setIsSearching(false);
+      return;
     }
+
+    const dfi = await searchDFIFilms(query).catch(() => ({ success: false, results: [] }));
+    const dfiParents = (((dfi as { results?: DfiSearchResult[] }).results ?? [])
+      .filter(result => !isDfiChildResult(result)))
+      .slice(0, 8);
+    setDfiResults(dfiParents);
+
+    if (dfiParents.length > 0) {
+      setManualMode(false);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearchingTmdb(true);
+    setShowExternalResults(true);
+    const tmdb = await searchTMDB(query).catch(() => []);
+    const tmdbItems = (Array.isArray(tmdb) ? tmdb : []).slice(0, 8);
+    setTmdbResults(tmdbItems);
+    setIsSearchingTmdb(false);
+    setIsSearching(false);
+
+    if (tmdbItems.length > 0) {
+      setManualMode(false);
+      return;
+    }
+
+    setManualWork(prev => ({ ...prev, title: query }));
   };
 
   const handleTmdbSearch = async () => {
@@ -460,6 +484,19 @@ export function AddWorkModal({
     setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
     setIsSearchingTmdb(false);
   };
+
+  useEffect(() => {
+    if (!isOpen || !initialQuery.trim()) return;
+    const key = initialQuery.trim();
+    if (autoSearchKeyRef.current === key) return;
+    autoSearchKeyRef.current = key;
+    const timer = window.setTimeout(() => {
+      void handleSearch(key);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // handleSearch intentionally reads the current modal state after resetAddState has applied initialQuery.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialQuery]);
 
   const pickLocalResult = async (work: LocalWorkResult) => {
     setPickedResult(work);
@@ -711,6 +748,7 @@ export function AddWorkModal({
     ? `${chosenTitle}, ${locale === "da" ? "afsnit" : "episodes"} ${selectedEpisodeLabel}`
     : chosenTitle;
   const missingSeriesEpisodes = Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
+  const noSearchResults = hasSearchedAdd && !isSearching && !isSearchingTmdb && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0;
 
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
@@ -817,13 +855,13 @@ export function AddWorkModal({
             if (e.key === "Enter") handleSearch();
           }}
         />
-        <Button variant="outline" onClick={handleSearch} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
+        <Button variant="outline" onClick={() => handleSearch()} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
           {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
         </Button>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {hasSearchedAdd && (
+        {noSearchResults && (
           <Button
             type="button"
             size="sm"
@@ -923,7 +961,7 @@ export function AddWorkModal({
       )}
 
 
-      {!manualMode && hasSearchedAdd && !isSearching && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0 && !showExternalResults && (
+      {!manualMode && noSearchResults && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-900">
           {locale === "da" ? "Titel ikke fundet" : "Title not found"}
         </div>
@@ -985,7 +1023,7 @@ export function AddWorkModal({
         </div>
       )}
 
-      {!manualMode && hasSearchedAdd && !isSearching && tmdbResults.length === 0 && (
+      {!manualMode && hasSearchedAdd && !isSearching && !isSearchingTmdb && tmdbResults.length === 0 && !showExternalResults && (localResults.length > 0 || dfiResults.length > 0) && (
         <div className="mt-3 mb-4 flex justify-center">
           <Button type="button" variant="outline" size="sm" onClick={handleTmdbSearch} disabled={isSearchingTmdb}>
             {isSearchingTmdb && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

@@ -1180,6 +1180,8 @@ const OVERENSKOMST_TYPER = [
     { id: "de4", label: "De4 (fiktion)" },
     { id: "faf", label: "FAF (fiktion)" },
     { id: "faf-dokumentar", label: "FAF (dokumentar)" },
+    { id: "dj", label: "DJ" },
+    { id: "metal", label: "Metal" },
 ]
 
 const KATEGORIER = [
@@ -1575,6 +1577,8 @@ type Sats = {
 const OVERENSKOMST_LABELS: Record<string, string> = {
     "de4-fiktion": "De4 Fiktionsoverenskomst",
     "dokumentar": "FAF Dokumentaroverenskomst",
+    "dj": "DJ",
+    "metal": "Metal",
 }
 
 const ENHED_OPTIONS = ["kr/uge", "kr/dag", "kr/time", "%"]

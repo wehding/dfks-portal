@@ -150,7 +150,7 @@ export default function AdminDashboardPage() {
                         icon={Clock}
                         label="Afventer validering"
                         value={stats.pending}
-                        href="/admin/validering"
+                        href="/admin/kontrakter"
                         highlight
                     />
                     <StatCard
@@ -179,7 +179,7 @@ export default function AdminDashboardPage() {
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Genveje</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
-                        { href: "/admin/validering",       icon: CheckCircle, label: "Validér kontrakter",       desc: "Gennemgå og godkend indsendte kontrakter" },
+                        { href: "/admin/kontrakter",       icon: CheckCircle, label: "Validér kontrakter",       desc: "Gennemgå og godkend indsendte kontrakter" },
                         { href: "/admin/kontraktgennemgang", icon: Scale,      label: "Kontraktgennemgang",       desc: "AI-assisteret juridisk gennemgang" },
                         { href: "/admin/kontrakter",        icon: FileText,    label: "Kontrakter",               desc: "Se og administrér alle kontrakter" },
                         { href: "/admin/rettighedshavere",  icon: Users2,      label: "Rettighedshavere",         desc: "Medlemmer og portal-adgang" },
@@ -207,12 +207,12 @@ export default function AdminDashboardPage() {
                                 {stats.pending} kontrakt{stats.pending !== 1 ? "er" : ""} afventer validering
                             </p>
                             <p className="text-xs text-amber-600 dark:text-amber-400">
-                                Gå til valideringssiden for at gennemgå dem
+                                Gå til kontraktadministration for at gennemgå dem
                             </p>
                         </div>
                     </div>
                     <Button size="sm" asChild className="shrink-0 bg-amber-600 hover:bg-amber-700">
-                        <Link href="/admin/validering">Validér nu</Link>
+                        <Link href="/admin/kontrakter">Validér nu</Link>
                     </Button>
                 </div>
             )}

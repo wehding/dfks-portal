@@ -32,7 +32,7 @@ function getAdmin() {
     )
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
     const supabase = await createServerClient()
     const caller = await assertAdminRole(supabase)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
@@ -60,10 +60,20 @@ export async function GET(req: NextRequest) {
     }
 
     // Rettighedshavere med user_id — bruges til at berige staff-entries
-    const { data: rh } = await admin
+    let rh: Array<{ id: string; full_name: string; email: string | null; user_id: string | null; onboarding_completed: boolean | null; gender?: string | null }> | null = null
+    const rhWithGender = await admin
         .from("rettighedshavere")
-        .select("id, full_name, email, user_id, onboarding_completed")
+        .select("id, full_name, email, user_id, onboarding_completed, gender")
         .not("user_id", "is", null)
+    if (rhWithGender.error && rhWithGender.error.message.includes("gender")) {
+        const rhWithoutGender = await admin
+            .from("rettighedshavere")
+            .select("id, full_name, email, user_id, onboarding_completed")
+            .not("user_id", "is", null)
+        rh = rhWithoutGender.data ?? []
+    } else {
+        rh = rhWithGender.data ?? []
+    }
 
     const rhByUserId = new Map((rh ?? []).map(r => [r.user_id!, r]))
 
@@ -91,6 +101,7 @@ export async function GET(req: NextRequest) {
             org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
+            gender: rhEntry?.gender ?? null,
             phone: u?.user_metadata?.phone ?? null,
             title: u?.user_metadata?.title ?? null,
             banned: u?.banned_until ? new Date(u.banned_until) > new Date() : false,

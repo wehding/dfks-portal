@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -15,6 +16,7 @@ type ContextualHelpProps = {
   topics: HelpTopic[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  storageKey?: string;
 };
 
 export function HelpButton({ onClick, label = "Hjælp" }: { onClick: () => void; label?: string }) {
@@ -26,7 +28,14 @@ export function HelpButton({ onClick, label = "Hjælp" }: { onClick: () => void;
   );
 }
 
-export function ContextualHelp({ title, intro, topics, open, onOpenChange }: ContextualHelpProps) {
+export function ContextualHelp({ title, intro, topics, open, onOpenChange, storageKey }: ContextualHelpProps) {
+  useEffect(() => {
+    if (!storageKey || typeof window === "undefined") return;
+    if (window.localStorage.getItem(storageKey) === "seen") return;
+    window.localStorage.setItem(storageKey, "seen");
+    onOpenChange(true);
+  }, [onOpenChange, storageKey]);
+
   if (!open) return null;
 
   return (

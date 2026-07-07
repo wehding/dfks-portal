@@ -157,7 +157,6 @@ export interface ExtractedContractData {
     collectiveAgreementName?: string
     collectiveAgreementByReference?: boolean  // overenskomst inkorporeret ved reference i leverandørkontrakt
     isFreelanceContract?: boolean             // leverandørkontrakt med CVR
-    gender?: Gender
     holidayPayRate?: number // Helligdagsbetaling percentage
     betaRate?: number // BETA (barselsfonden) percentage
     specialNotes?: string
@@ -384,4 +383,3 @@ export interface MaternityFundSummary {
     avgWeeks: number
     byType: { type: LeaveType; count: number; totalAmount: number }[]
 }
-
