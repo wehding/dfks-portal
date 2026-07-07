@@ -9,7 +9,7 @@ import {
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, createAdminEmployer, checkRightsHolderName } from "@/app/actions/member-contracts"
 import { createAdminWork } from "@/app/actions/work-management"
 import { ContractAiDataEditor } from "./ContractAiDataEditor"
 import { ContractDocViewer } from "./ContractDocViewer"
@@ -255,6 +255,10 @@ function AdminKontrakterContent() {
     const [editWorkSearch, setEditWorkSearch] = useState("")
     const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [editSaving, setEditSaving] = useState(false)
+    const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
+    const [navneTjekResult, setNavneTjekResult] = useState<any>(null)
+    const [navneTjekLoading, setNavneTjekLoading] = useState(false)
+    const [creatingEmployer, setCreatingEmployer] = useState(false)
 
     // Upload flow
     const [showUpload, setShowUpload] = useState(false)
@@ -630,12 +634,82 @@ function AdminKontrakterContent() {
 
     // ── Edit ──────────────────────────────────────────────────
 
+    // ── Fuzzy match & normalize helpers ──────────────────────
+    const normalizeMatchText = (value: unknown) => {
+        return String(value ?? "")
+            .toLowerCase()
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9æøå]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+    }
+
+    const levenshtein = (a: string, b: string) => {
+        const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i])
+        for (let j = 1; j <= b.length; j++) matrix[0][j] = j
+        for (let i = 1; i <= a.length; i++) {
+            for (let j = 1; j <= b.length; j++) {
+                matrix[i][j] = a[i - 1] === b[j - 1]
+                    ? matrix[i - 1][j - 1]
+                    : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1
+            }
+        }
+        return matrix[a.length][b.length]
+    }
+
+    const fuzzyTitleScore = (a: string, b: string) => {
+        const left = normalizeMatchText(a)
+        const right = normalizeMatchText(b)
+        if (!left || !right) return 0
+        if (left === right) return 1
+        const distance = levenshtein(left, right)
+        const similarity = 1 - distance / Math.max(left.length, right.length)
+        const leftTokens = new Set(left.split(" "))
+        const rightTokens = new Set(right.split(" "))
+        const overlap = [...leftTokens].filter(token => rightTokens.has(token)).length / Math.max(1, Math.min(leftTokens.size, rightTokens.size))
+        return Math.max(similarity, overlap)
+    }
+
+    const findBestEmployerMatch = (extractedName: string | null, employersList: Employer[]) => {
+        if (!extractedName) return null
+        const normExtracted = normalizeMatchText(extractedName)
+        if (!normExtracted) return null
+
+        let bestMatch: Employer | null = null
+        let bestScore = 0
+
+        for (const emp of employersList) {
+            const score = fuzzyTitleScore(emp.name, normExtracted)
+            if (score > bestScore) {
+                bestScore = score
+                bestMatch = emp
+            }
+        }
+
+        return bestScore >= 0.6 ? { employer: bestMatch, score: bestScore } : null
+    }
+
     const openEdit = (c: ContractRow) => {
         setEditContract(c)
         setAdminReply("")
         void markAdminCommentsRead(c)
         // Auto-hent dokument-URL så kontrakten vises til venstre uden knap-tryk
         setEditDocUrl(null)
+        setActiveHighlight(null)
+        setNavneTjekResult(null)
+
+        const rightsHolderName = c.validation_data?.rightsHolderName as string | undefined
+        if (rightsHolderName) {
+            setNavneTjekLoading(true)
+            checkRightsHolderName(rightsHolderName).then(res => {
+                if (res.success && res.result) {
+                    setNavneTjekResult(res.result)
+                }
+                setNavneTjekLoading(false)
+            }).catch(() => setNavneTjekLoading(false))
+        }
+
         if (c.pdf_url) {
             const supabase = createClient()
             supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 3600).then(({ data }) => {
@@ -1438,14 +1512,62 @@ function AdminKontrakterContent() {
                         <div className="grid gap-4 md:grid-cols-[1.05fr_1fr]">
                             <div className="hidden h-[72vh] overflow-hidden rounded-md border md:block">
                                 {editContract?.pdf_url
-                                    ? <ContractDocViewer url={editDocUrl} filename={editContract.pdf_url} />
+                                    ? (() => {
+                                        const sources = editContract?.validation_data?._sources as Record<string, string | null> | undefined
+                                        const highlights = sources ? Object.values(sources).filter((v): v is string => typeof v === "string" && v.length > 0) : []
+                                        return (
+                                            <ContractDocViewer
+                                                url={editDocUrl}
+                                                filename={editContract.pdf_url}
+                                                highlights={highlights}
+                                                activeHighlight={activeHighlight}
+                                            />
+                                        )
+                                      })()
                                     : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil på kontrakten</div>}
                             </div>
                             <div className="max-h-[72vh] space-y-4 overflow-y-auto py-2 pr-1">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-1">
-                                    <Label className="text-xs">Klipper / rettighedshaver</Label>
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-xs">Klipper / rettighedshaver</Label>
+                                        {navneTjekLoading && <span className="text-[10px] text-muted-foreground animate-pulse">Tjekker register...</span>}
+                                    </div>
                                     <div className="space-y-2">
+                                        {!editForm.rights_holder_id && navneTjekResult && (
+                                            <div className={`p-2 rounded-md text-xs border ${
+                                                navneTjekResult.status === "match" 
+                                                    ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
+                                                    : navneTjekResult.status === "delvist-match" 
+                                                    ? "bg-amber-50 border-amber-200 text-amber-800" 
+                                                    : "bg-rose-50 border-rose-200 text-rose-800"
+                                            }`}>
+                                                <div className="font-semibold mb-0.5">
+                                                    {navneTjekResult.status === "match" && "✓ Perfekt match fundet"}
+                                                    {navneTjekResult.status === "delvist-match" && "⚠ Delvist navnematch fundet"}
+                                                    {navneTjekResult.status === "ikke-fundet" && "✗ Navn ikke fundet i medlemsregister"}
+                                                </div>
+                                                <p className="text-[11px] leading-relaxed">
+                                                    {navneTjekResult.status === "match" && `Kontraktens "${navneTjekResult.navnIKontrakt}" matcher medlemsregisteret.`}
+                                                    {navneTjekResult.status === "delvist-match" && `Registeret har "${navneTjekResult.navnIRegister}" men kontrakten har "${navneTjekResult.navnIKontrakt}".`}
+                                                    {navneTjekResult.status === "ikke-fundet" && `"${navneTjekResult.navnIKontrakt}" kunne ikke findes i registeret.`}
+                                                </p>
+                                                {navneTjekResult.idIRegister && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="mt-1.5 h-6 text-[10px] bg-white border-gray-200 hover:bg-gray-50"
+                                                        onClick={() => {
+                                                            setEditForm(f => f && ({ ...f, rights_holder_id: navneTjekResult.idIRegister }))
+                                                            setEditRightsHolderSearch(navneTjekResult.navnIRegister)
+                                                        }}
+                                                    >
+                                                        Kobl til {navneTjekResult.navnIRegister}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        )}
                                         <div className="relative">
                                             <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                                             <Input
@@ -1498,7 +1620,39 @@ function AdminKontrakterContent() {
                                     </div>
                                 </div>
                                 <div className="space-y-1">
-                                    <Label className="text-xs">Producent (juridisk)</Label>
+                                    <div className="flex items-center justify-between">
+                                        <Label className="text-xs">Producent (juridisk)</Label>
+                                        {(() => {
+                                            const validation = editContract?.validation_data
+                                            const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
+                                            if (!extractedEmployer) return null
+                                            return (
+                                                <Button
+                                                    type="button"
+                                                    variant="link"
+                                                    size="xs"
+                                                    className="h-auto p-0 text-[10px] text-primary hover:underline"
+                                                    disabled={creatingEmployer}
+                                                    onClick={async () => {
+                                                        const cvr = window.prompt(`Opret nyt selskab "${extractedEmployer}" i databasen.\n\nIndtast CVR-nummer (valgfrit):`, "")
+                                                        if (cvr === null) return
+                                                        setCreatingEmployer(true)
+                                                        const res = await createAdminEmployer({ name: extractedEmployer, cvr })
+                                                        setCreatingEmployer(false)
+                                                        if (res.success && res.employer) {
+                                                            toast.success(`Selskabet "${extractedEmployer}" er oprettet!`)
+                                                            setEmployers(prev => [...prev, res.employer].sort((a,b) => a.name.localeCompare(b.name)))
+                                                            setEditForm(f => f && ({ ...f, employer_id: res.employer.id }))
+                                                        } else {
+                                                            toast.error(res.error ?? "Kunne ikke oprette selskab")
+                                                        }
+                                                    }}
+                                                >
+                                                    Opret "{extractedEmployer}"
+                                                </Button>
+                                            )
+                                        })()}
+                                    </div>
                                     <Select value={editForm.employer_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, employer_id: v === "__none__" ? "" : v }))}>
                                         <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
                                         <SelectContent>
@@ -1506,6 +1660,27 @@ function AdminKontrakterContent() {
                                             {employers.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
                                         </SelectContent>
                                     </Select>
+                                    {(() => {
+                                        const validation = editContract?.validation_data
+                                        const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
+                                        if (!extractedEmployer || editForm.employer_id) return null
+                                        const match = findBestEmployerMatch(extractedEmployer, employers)
+                                        if (match && match.employer) {
+                                            return (
+                                                <p className="text-[10px] text-muted-foreground mt-0.5">
+                                                    Forslag:{" "}
+                                                    <button
+                                                        type="button"
+                                                        className="font-medium text-amber-600 hover:underline"
+                                                        onClick={() => setEditForm(f => f && ({ ...f, employer_id: match.employer!.id }))}
+                                                    >
+                                                        {match.employer.name} ({Math.round(match.score * 100)}% match)
+                                                    </button>
+                                                </p>
+                                            )
+                                        }
+                                        return null
+                                    })()}
                                 </div>
                                 <div className="space-y-1">
                                     <Label className="text-xs">Type</Label>
@@ -1631,7 +1806,14 @@ function AdminKontrakterContent() {
                             </div>
                             <div className="rounded-md border p-3">
                                 <p className="mb-2 text-sm font-medium">AI-udtrukket data</p>
-                                {editContract && <ContractAiDataEditor key={editContract.id} contractId={editContract.id} />}
+                                {editContract && (
+                                    <ContractAiDataEditor
+                                        key={editContract.id}
+                                        contractId={editContract.id}
+                                        activeHighlight={activeHighlight}
+                                        onHighlightClick={(quote) => setActiveHighlight(quote)}
+                                    />
+                                )}
                             </div>
                             <div className="rounded-md border p-3">
                                 <p className="mb-2 text-sm font-medium">Kommentarer</p>

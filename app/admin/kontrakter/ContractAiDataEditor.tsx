@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { getContractValidation, saveContractValidation } from "@/app/actions/member-contracts";
+import { SourceBtn } from "@/components/source-btn";
 
 // Fuld redigering af den AI-udtrukne kontraktdata. Skriver til den fælles
 // contract_validations-tabel, så adminvisning og kontraktdata holdes i sync.
@@ -34,6 +35,22 @@ const SALARY_SOURCE_LABELS: Record<string, string> = {
 const SALARY_SOURCE_VALUES = Object.fromEntries(
     Object.entries(SALARY_SOURCE_LABELS).map(([value, label]) => [label, value])
 );
+
+const FIELD_TO_SOURCE_KEY: Record<string, string> = {
+    workTitle: "workTitle",
+    salary: "salary",
+    pensionPercent: "pension",
+    personalSupplement: "supplements",
+    otherSupplements: "otherSupplements",
+    contractDate: "dates",
+    startDate: "dates",
+    endDate: "dates",
+    workingWeeks: "workingWeeks",
+    collectiveAgreement: "collectiveAgreement",
+    copydan: "copydan",
+    svod: "svod",
+    royalty: "royalty",
+};
 
 const GROUPS: { title: string; fields: Field[] }[] = [
     { title: "Produktion og parter", fields: [
@@ -133,11 +150,21 @@ function toExtractedData(v: FormValues): Record<string, unknown> {
     return ed;
 }
 
-export function ContractAiDataEditor({ contractId }: { contractId: string }) {
+export function ContractAiDataEditor({
+    contractId,
+    activeHighlight,
+    onHighlightClick,
+}: {
+    contractId: string;
+    activeHighlight?: string | null;
+    onHighlightClick: (quote: string) => void;
+}) {
     const [values, setValues] = useState<FormValues | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [found, setFound] = useState(false);
+    const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
+    const [sources, setSources] = useState<Record<string, string | null> | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -146,17 +173,40 @@ export function ContractAiDataEditor({ contractId }: { contractId: string }) {
             const ed = res.success ? (res.extractedData ?? null) : null;
             setFound(Boolean(ed));
             setValues(toFormValues(ed));
+            setLockedFields(new Set((ed?._lockedFields ?? []) as string[]));
+            setSources((ed?._sources ?? null) as Record<string, string | null>);
             setLoading(false);
         });
         return () => { active = false; };
     }, [contractId]);
 
-    const set = (k: string, val: string | boolean) => setValues(prev => ({ ...(prev ?? {}), [k]: val }));
+    const set = (k: string, val: string | boolean) => {
+        setValues(prev => ({ ...(prev ?? {}), [k]: val }));
+        setLockedFields(prev => {
+            const next = new Set(prev);
+            next.add(k);
+            return next;
+        });
+    };
+
+    const toggleLock = (key: string) => {
+        setLockedFields(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
 
     const save = async () => {
         if (!values) return;
         setSaving(true);
-        const res = await saveContractValidation({ contractId, extractedData: toExtractedData(values) });
+        const ed = toExtractedData(values);
+        ed._lockedFields = Array.from(lockedFields);
+        if (sources) {
+            ed._sources = sources;
+        }
+        const res = await saveContractValidation({ contractId, extractedData: ed });
         setSaving(false);
         if (res.success) { toast.success("AI-data gemt"); setFound(true); }
         else toast.error(res.error ?? "Kunne ikke gemme AI-data");
@@ -173,31 +223,75 @@ export function ContractAiDataEditor({ contractId }: { contractId: string }) {
                 <div key={g.title}>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</p>
                     <div className={g.title === "Rettigheder" ? "flex flex-wrap gap-x-4 gap-y-2" : "grid grid-cols-2 gap-3"}>
-                        {g.fields.map(f => (
-                            <div key={f.key} className={f.type === "textarea" ? "col-span-2 space-y-1" : g.title === "Rettigheder" && f.type === "bool" ? "min-w-fit" : "space-y-1"}>
-                                {f.type === "bool" ? (
-                                    <label className="flex items-center gap-2 text-xs">
-                                        <input type="checkbox" checked={!!values[f.key]} onChange={e => set(f.key, e.target.checked)} className="h-4 w-4" />
-                                        {f.label}
-                                    </label>
-                                ) : (
-                                    <>
-                                        <Label className="text-xs">{f.label}</Label>
-                                        {f.type === "textarea" ? (
-                                            <Textarea value={String(values[f.key] ?? "")} onChange={e => set(f.key, e.target.value)} />
-                                        ) : (
-                                            <Input
-                                                type={f.type === "date" ? "date" : "text"}
-                                                inputMode={f.type === "number" ? "decimal" : undefined}
-                                                className="h-8 text-xs"
-                                                value={String(values[f.key] ?? "")}
-                                                onChange={e => set(f.key, e.target.value)}
-                                            />
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                        ))}
+                        {g.fields.map(f => {
+                            const sourceKey = FIELD_TO_SOURCE_KEY[f.key];
+                            const quote = sources?.[sourceKey];
+                            const isLocked = lockedFields.has(f.key);
+
+                            return (
+                                <div key={f.key} className={f.type === "textarea" ? "col-span-2 space-y-1" : g.title === "Rettigheder" && f.type === "bool" ? "min-w-fit" : "space-y-1"}>
+                                    {f.type === "bool" ? (
+                                        <div className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0 min-h-[32px] gap-4">
+                                            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
+                                                <input type="checkbox" checked={!!values[f.key]} onChange={e => set(f.key, e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" />
+                                                {f.label}
+                                            </label>
+                                            <div className="flex items-center gap-1">
+                                                {quote && (
+                                                    <SourceBtn
+                                                        quote={quote}
+                                                        active={activeHighlight === quote}
+                                                        onClick={() => onHighlightClick(quote)}
+                                                    />
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    title={isLocked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"}
+                                                    onClick={() => toggleLock(f.key)}
+                                                    className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+                                                >
+                                                    {isLocked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 opacity-30 hover:opacity-75" />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-xs">{f.label}</Label>
+                                                <div className="flex items-center gap-1">
+                                                    {quote && (
+                                                        <SourceBtn
+                                                            quote={quote}
+                                                            active={activeHighlight === quote}
+                                                            onClick={() => onHighlightClick(quote)}
+                                                        />
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        title={isLocked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"}
+                                                        onClick={() => toggleLock(f.key)}
+                                                        className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+                                                    >
+                                                        {isLocked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 opacity-30 hover:opacity-75" />}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            {f.type === "textarea" ? (
+                                                <Textarea value={String(values[f.key] ?? "")} onChange={e => set(f.key, e.target.value)} />
+                                            ) : (
+                                                <Input
+                                                    type={f.type === "date" ? "date" : "text"}
+                                                    inputMode={f.type === "number" ? "decimal" : undefined}
+                                                    className="h-8 text-xs"
+                                                    value={String(values[f.key] ?? "")}
+                                                    onChange={e => set(f.key, e.target.value)}
+                                                />
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             ))}

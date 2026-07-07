@@ -211,18 +211,46 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         ? null
         : await findSingleOwnWorkMatch(admin, matchRightsHolderId, extractedTitle, extractedYear)
 
+    const { data: existingValidation } = await admin
+        .from("contract_validations")
+        .select("extracted_data")
+        .eq("contract_id", job.contract_id)
+        .maybeSingle()
+
+    const mergedExt = { ...ext }
+    if (existingValidation?.extracted_data) {
+        const prevData = existingValidation.extracted_data as Record<string, unknown>
+        const lockedFields = prevData._lockedFields as string[] | undefined
+        if (lockedFields && Array.isArray(lockedFields)) {
+            for (const key of lockedFields) {
+                if (key.startsWith("rightsOverview.")) {
+                    const subKey = key.split(".")[1]
+                    const prevOverview = (prevData.rightsOverview as Record<string, unknown> | undefined) ?? {}
+                    const mergedOverview = (mergedExt.rightsOverview as Record<string, unknown> | undefined) ?? {}
+                    mergedExt.rightsOverview = {
+                        ...mergedOverview,
+                        [subKey]: prevOverview[subKey]
+                    }
+                } else {
+                    mergedExt[key] = prevData[key]
+                }
+            }
+            mergedExt._lockedFields = lockedFields
+        }
+    }
+
     await admin.from("contract_validations").upsert({
         contract_id: job.contract_id,
         org_id: job.org_id,
-        holiday_pay_rate: ext.holidayPayRate ?? null,
-        beta_rate: ext.betaRate ?? null,
-        has_credit_clause: !!ext.hasCreditClause || Boolean(ext.creditedRoles),
-        has_termination_clause: !!ext.hasTerminationClause,
-        termination_days_editor: ext.terminationDaysEditor ?? null,
-        termination_days_producer: ext.terminationDaysProducer ?? null,
-        has_indemnification: !!ext.hasIndemnification,
-        has_overenskomst_incorporation: !!ext.hasOverenskomstIncorporation || !!ext.collectiveAgreement,
-        extracted_data: ext,
+        holiday_pay_rate: mergedExt.holidayPayRate ?? null,
+        beta_rate: mergedExt.betaRate ?? null,
+        has_credit_clause: !!mergedExt.hasCreditClause || Boolean(mergedExt.creditedRoles),
+        has_termination_clause: !!mergedExt.hasTerminationClause,
+        termination_days_editor: mergedExt.terminationDaysEditor ?? null,
+        termination_days_producer: mergedExt.terminationDaysProducer ?? null,
+        has_indemnification: !!mergedExt.hasIndemnification,
+        has_overenskomst_incorporation: !!mergedExt.hasOverenskomstIncorporation || !!mergedExt.collectiveAgreement,
+        extracted_data: mergedExt,
     }, { onConflict: "contract_id" })
 
     await admin.from("contracts").update({

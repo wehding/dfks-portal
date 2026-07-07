@@ -7,7 +7,7 @@ import { PdfViewer } from "@/components/pdf-viewer";
 // Viser et kontraktdokument inline: PDF, billede (JPEG/PNG m.fl.) eller DOCX/DOC
 // (udtrukket som tekst via mammoth). Typen afgøres af filstien (pdf_url).
 
-export function ContractDocViewer({ url, filename }: { url: string | null; filename?: string | null }) {
+export function ContractDocViewer({ url, filename, highlights, activeHighlight }: { url: string | null; filename?: string | null; highlights?: string[]; activeHighlight?: string | null }) {
     const [docxText, setDocxText] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
 
@@ -36,7 +36,7 @@ export function ContractDocViewer({ url, filename }: { url: string | null; filen
     if (!url) {
         return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Henter dokument…</div>;
     }
-    if (isPdf) return <PdfViewer url={url} />;
+    if (isPdf) return <PdfViewer url={url} highlights={highlights} activeHighlight={activeHighlight} />;
     if (isImage) {
         return (
             <div className="h-full overflow-auto bg-muted/30 p-2">

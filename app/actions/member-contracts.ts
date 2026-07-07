@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -476,4 +477,35 @@ export async function markContractCommentsRead(contractId: string, viewerRole: "
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/kontrakter");
   return { success: true };
+}
+
+export async function createAdminEmployer(params: { name: string; cvr?: string | null }) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const db = createServiceClient();
+  if (!(await assertAdminForOrg(db, user.id, DFKS_ORG_ID))) {
+    return { success: false, error: "Ikke autoriseret" };
+  }
+
+  const { data, error } = await db
+    .from("employers")
+    .insert({
+      name: params.name.trim(),
+      cvr: params.cvr?.trim() || null,
+    })
+    .select()
+    .single();
+
+  if (error) return { success: false, error: error.message };
+  return { success: true, employer: data };
+}
+
+export async function checkRightsHolderName(name: string) {
+  try {
+    const res = await tjekNavn(name);
+    return { success: true, result: res };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
 }
