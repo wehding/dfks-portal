@@ -7,6 +7,7 @@ import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
+import { runContractExtraction } from "@/lib/contract-extract-core"
 
 type ContractJob = {
     id: string
@@ -150,24 +151,18 @@ async function textFromStoragePath(path: string): Promise<string> {
 
 // Behandler ét enkelt job: henter fil, kører AI-udtræk, opdaterer validering +
 // kontrakt, og markerer jobbet done. Kaster ved fejl (kalderen markerer 'error').
-async function runContractJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob, req: NextRequest) {
+async function runContractJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob) {
     const storagePath = job.pdf_url
     if (!storagePath) throw new Error("Kontrakten mangler filsti")
 
     const rawText = await textFromStoragePath(storagePath)
     const maskedText = maskPersonalData(rawText)
 
-    const fd = new FormData()
-    fd.append("maskedText", maskedText)
-    const extractRes = await fetch(new URL("/api/contracts/extract", req.url), {
-        method: "POST",
-        body: fd,
-    })
-    const extractJson = await extractRes.json()
-    if (!extractRes.ok || !extractJson.ok) {
-        throw new Error(extractJson.error ?? "AI-aflæsning fejlede")
-    }
-    const ext = extractJson.data ?? {}
+    // Kald udtræks-kernen direkte (ingen HTTP-runde), så batch-læsningen ikke
+    // afhænger af den nu-autentificerede /api/contracts/extract-rute.
+    const extractResult = await runContractExtraction(maskedText)
+    if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning fejlede")
+    const ext = extractResult.data ?? {}
     const extractedTitle = String(ext.workTitle ?? ext.title ?? "").trim() || null
     const extractedYear = yearFromValue(ext.premiereYear ?? ext.productionYear ?? ext.year ?? ext.premiereDate ?? ext.contractDate)
 
@@ -244,7 +239,7 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         org_id: job.org_id,
         holiday_pay_rate: mergedExt.holidayPayRate ?? null,
         beta_rate: mergedExt.betaRate ?? null,
-        has_credit_clause: !!mergedExt.hasCreditClause || Boolean(mergedExt.creditedRoles),
+        has_credit_clause: !!mergedExt.hasCreditClause || Boolean(mergedExt.creditedRoles || mergedExt.creditedFunction),
         has_termination_clause: !!mergedExt.hasTerminationClause,
         termination_days_editor: mergedExt.terminationDaysEditor ?? null,
         termination_days_producer: mergedExt.terminationDaysProducer ?? null,
@@ -325,7 +320,7 @@ export async function POST(req: NextRequest) {
             if (!contract) throw new Error("Kontrakt ikke fundet")
             const result = await runContractJob(admin, {
                 id: "__direct__", contract_id: contract.id, org_id: contract.org_id, attempts: 0, pdf_url: contract.pdf_url,
-            } satisfies DirectContractJob, req)
+            } satisfies DirectContractJob)
             return NextResponse.json({ ok: true, processed: true, ...result })
         }
 
@@ -336,7 +331,7 @@ export async function POST(req: NextRequest) {
             const job = ((jobs?.[0] ?? null) as unknown as ContractJob | null)
             if (!job) return NextResponse.json({ ok: true, processed: false })
             try {
-                const result = await runContractJob(admin, job, req)
+                const result = await runContractJob(admin, job)
                 return NextResponse.json({ ok: true, processed: true, ...result })
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "Ukendt fejl"
@@ -357,7 +352,7 @@ export async function POST(req: NextRequest) {
             const job = ((jobs?.[0] ?? null) as unknown as ContractJob | null)
             if (!job) break
             try {
-                await runContractJob(admin, job, req)
+                await runContractJob(admin, job)
                 processedContractIds.push(job.contract_id)
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "Ukendt fejl"

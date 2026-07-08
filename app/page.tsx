@@ -12,6 +12,8 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
 import { createClient } from "@/lib/supabase/client"
 
+const TEST_MEMBER = { email: "test@dfks.dk", password: "test1234" }
+
 export default function LoginPage() {
     const { t } = useI18n()
     const router = useRouter()
@@ -30,20 +32,28 @@ export default function LoginPage() {
             toast.error("Supabase mangler lokal opsætning i .env.local")
             return
         }
-        if (!email) {
-            toast.error("Indtast en e-mailadresse i feltet ovenfor")
-            return
-        }
         setResettingOnboarding(true)
         try {
             const res = await fetch("/api/dev/reset-onboarding", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email }),
+                body: JSON.stringify({ email: TEST_MEMBER.email }),
             })
             const data = await res.json()
             if (!res.ok) throw new Error(data.error)
             toast.success(data.message)
+
+            // Log ind som testbrugeren automatisk
+            const supabase = createClient()
+            const { error: authError } = await supabase.auth.signInWithPassword(TEST_MEMBER)
+            if (authError) {
+                toast.error(`Login fejlede: ${authError.message}`)
+                return
+            }
+
+            // Gå til /onboarding
+            router.push("/onboarding")
+            router.refresh()
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : "Ukendt fejl")
         } finally {
@@ -59,7 +69,7 @@ export default function LoginPage() {
         setLoading(true)
         const creds = type === "admin"
             ? { email: "wehding@gmail.com", password: "" }
-            : { email: "test@dfks.dk", password: "test1234" }
+            : TEST_MEMBER
         setEmail(creds.email)
         setPassword(creds.password)
         const supabase = createClient()
@@ -207,7 +217,7 @@ export default function LoginPage() {
                                 onClick={handleResetOnboarding}
                                 disabled={resettingOnboarding}
                             >
-                                {resettingOnboarding ? "Nulstiller…" : "↺ Nulstil onboarding (e-mail ovenfor)"}
+                                {resettingOnboarding ? "Nulstiller…" : "↺ Nulstil testbruger & start onboarding"}
                             </Button>
                         </div>
                     )}

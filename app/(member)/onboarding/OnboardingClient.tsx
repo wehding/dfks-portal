@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks } from "@/app/actions/dfi";
+import { searchOnboardingCredits, importApprovedOnboardingWorks, type OnboardingCredit } from "@/app/actions/dfi";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Search } from "lucide-react";
 
@@ -27,14 +27,18 @@ export default function OnboardingClient({
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
 
-  // DFI-tilstand
+  // DFI & TMDB-tilstand
   const [dfiPersonId, setDfiPersonId] = useState<number | null>(null);
-  const [dfiCredits, setDfiCredits] = useState<any[]>([]);
-  const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<number, boolean>>({});
-  const [dfiSearchQuery, setDfiSearchQuery] = useState("");
+  const [tmdbPersonId, setTmdbPersonId] = useState<number | null>(null);
+  const [dfiCredits, setDfiCredits] = useState<OnboardingCredit[]>([]);
+  const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<string, boolean>>({});
+  const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [dfiError, setDfiError] = useState<string | null>(null);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
+
+  // Import timer
+  const [importSeconds, setImportSeconds] = useState(0);
 
   // Formulardata præ-udfyldt fra rettighedshaveren
   const existingName = rh?.full_name || "";
@@ -42,12 +46,14 @@ export default function OnboardingClient({
   const [formData, setFormData] = useState({
     first_name: nameParts[0] || "",
     last_name: nameParts.slice(1).join(" ") || "",
+    email: rh?.email || user?.email || "",
     phone: rh?.phone || "",
     address: rh?.address || "",
     zip: "",
     city: "",
     cpr: rh?.cpr_no || "",
     bank_account: rh?.bank_account || "",
+    gender: rh?.gender || "prefer_not_to_say",
   });
 
   const handleField = (field: string, value: string) =>
@@ -75,23 +81,18 @@ export default function OnboardingClient({
     setDfiError(null);
     setDfiCredits([]);
     setDfiPersonId(null);
+    setTmdbPersonId(null);
     try {
-      const searchResult = await searchDFIPerson(undefined, undefined, dfiSearchQuery);
-      if (searchResult.success && searchResult.results?.length > 0) {
-        const person = searchResult.results[0];
-        setDfiPersonId(person.Id);
-        const creditsResult = await getDFIPersonCredits(person.Id);
-        if (creditsResult.success && creditsResult.credits) {
-          const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-          setDfiCredits(unique);
-          const sel: Record<number, boolean> = {};
-          unique.forEach((c: any) => { sel[c.Id] = true; });
-          setSelectedDfiCredits(sel);
-        } else {
-          setDfiError("Fandt profil, men kunne ikke hente film for personen.");
-        }
+      const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
+      if (searchResult.success && searchResult.credits?.length > 0) {
+        setDfiPersonId(searchResult.dfiPersonId);
+        setTmdbPersonId(searchResult.tmdbPersonId);
+        setDfiCredits(searchResult.credits);
+        const sel: Record<string, boolean> = {};
+        searchResult.credits.forEach((c) => { sel[c.id] = true; });
+        setSelectedDfiCredits(sel);
       } else {
-        setDfiError(`Ingen personer fundet med navnet "${dfiSearchQuery}" i DFI Filmdatabasen.`);
+        setDfiError(`Ingen film fundet for "${dfiSearchQuery}" i DFI eller TMDb.`);
       }
     } catch {
       setDfiError("Der opstod en fejl under søgningen.");
@@ -102,22 +103,28 @@ export default function OnboardingClient({
 
   const handleNextStep = async () => {
     if (step === 2) {
-      // Automatisk DFI-søgning når vi forlader trin 2
+      // Krav 1: Validering af fornavn, efternavn og e-mail
+      if (!formData.first_name.trim() || !formData.last_name.trim() || !formData.email.trim()) {
+        alert("Venligst udfyld fornavn, efternavn og e-mailadresse for at gå videre.");
+        return;
+      }
+
       setIsSearchingDfi(true);
       setDfiError(null);
+
+      // Krav 1: Sæt det indtastede navn i søgefeltet som default
+      const fullName = `${formData.first_name} ${formData.last_name}`.trim();
+      setDfiSearchQuery(fullName);
+
       try {
-        const searchResult = await searchDFIPerson(formData.first_name, formData.last_name);
-        if (searchResult.success && searchResult.results?.length > 0) {
-          const person = searchResult.results[0];
-          setDfiPersonId(person.Id);
-          const creditsResult = await getDFIPersonCredits(person.Id);
-          if (creditsResult.success && creditsResult.credits) {
-            const unique = creditsResult.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
-            setDfiCredits(unique);
-            const sel: Record<number, boolean> = {};
-            unique.forEach((c: any) => { sel[c.Id] = true; });
-            setSelectedDfiCredits(sel);
-          }
+        const searchResult = await searchOnboardingCredits(formData.first_name, formData.last_name);
+        if (searchResult.success && searchResult.credits?.length > 0) {
+          setDfiPersonId(searchResult.dfiPersonId);
+          setTmdbPersonId(searchResult.tmdbPersonId);
+          setDfiCredits(searchResult.credits);
+          const sel: Record<string, boolean> = {};
+          searchResult.credits.forEach((c) => { sel[c.id] = true; });
+          setSelectedDfiCredits(sel);
         }
       } catch {
         setDfiError("Kunne ikke kontakte DFI Filmdatabasen.");
@@ -126,12 +133,17 @@ export default function OnboardingClient({
         setStep(3);
       }
     } else if (step === 3) {
-      const approved = dfiCredits.filter((c) => selectedDfiCredits[c.Id]);
-      if (approved.length > 0 && dfiPersonId) {
+      const approved = dfiCredits.filter((c) => selectedDfiCredits[c.id]);
+      if (approved.length > 0) {
         setIsImportingDfi(true);
+        setImportSeconds(0);
+        const timerInterval = setInterval(() => {
+          setImportSeconds((s) => s + 1);
+        }, 1000);
         try {
-          await importApprovedDFIWorks(dfiPersonId, approved);
+          await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
         } catch { /* ignorer importfejl */ } finally {
+          clearInterval(timerInterval);
           setIsImportingDfi(false);
           setStep(4);
         }
@@ -144,6 +156,49 @@ export default function OnboardingClient({
   };
 
   const progress = ((step - 1) / (STEPS.length - 1)) * 100;
+
+  if (isImportingDfi) {
+    const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
+    return (
+      <div style={{
+        minHeight: "100vh",
+        backgroundColor: "var(--background)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+      }}>
+        <div style={{ width: "100%", maxWidth: "540px", textAlign: "center", display: "flex", flexDirection: "column", gap: "24px", padding: "40px", backgroundColor: "var(--surface-container-lowest)", borderRadius: "var(--radius-lg)", border: "1px solid var(--outline-variant)", boxShadow: "0px 4px 12px rgba(15, 23, 42, 0.08)" }}>
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <Loader2 size={48} style={{ animation: "spin 2s linear infinite", color: "var(--primary)" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>
+              Importerer film og serier...
+            </h2>
+            <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: 0 }}>
+              Vi henter detaljeret metadata for dine {approvedCount} valgte titler fra DFI og TMDb.
+            </p>
+          </div>
+
+          <div style={{ padding: "20px", backgroundColor: "var(--surface-container-low)", borderRadius: "8px", border: "1px solid var(--outline-variant)" }}>
+            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--primary)", fontFamily: "monospace" }}>
+              {Math.floor(importSeconds / 60)}:{(importSeconds % 60).toString().padStart(2, '0')}
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px" }}>
+              Tid gået
+            </div>
+          </div>
+
+          {approvedCount >= 5 && (
+            <p style={{ fontSize: "13px", color: "#B45309", fontWeight: 600, margin: 0, lineHeight: 1.6 }}>
+              ⚠️ Vær tålmodig. Du har klippet mange film! Dette kan tage lidt tid.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -159,7 +214,7 @@ export default function OnboardingClient({
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: "8px" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/dfks-logo.png" alt="DFKS" style={{ height: "48px", objectFit: "contain" }} />
+          <img src="/logo.png" alt="DFKS" style={{ height: "48px", objectFit: "contain" }} />
         </div>
 
         {/* Fremskridtsindikator */}
@@ -206,14 +261,14 @@ export default function OnboardingClient({
                   Velkommen til DFKS Rettighedssystem
                 </h1>
                 <p style={{ color: "var(--on-surface-variant)", fontSize: "16px", lineHeight: 1.7, margin: 0 }}>
-                  Vi hjælper dig igennem en kort opsætning, så du er klar til at administrere
+                  Vi hjælper dig igennem a kort opsætning, så du er klar til at administrere
                   dine rettigheder, kontrakter og udbetalinger.
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
                 {[
                   { icon: "📋", text: "Bekræft dine personlige oplysninger" },
-                  { icon: "🎬", text: "Importer dine film fra DFI Filmdatabasen" },
+                  { icon: "🎬", text: "Importer dine film fra DFI Filmdatabasen og TMDb" },
                   { icon: "🔒", text: "Vælg dine privatlivsindstillinger" },
                 ].map((item) => (
                   <div key={item.text} style={{
@@ -267,15 +322,12 @@ export default function OnboardingClient({
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
                     E-mail
                   </label>
-                  <div style={{
-                    width: "100%", padding: "10px 12px",
-                    borderRadius: "var(--radius-default)",
-                    border: "1px solid var(--outline-variant)",
-                    backgroundColor: "var(--surface-container-low)",
-                    color: "var(--on-surface-variant)", fontSize: "14px",
-                  }}>
-                    {loginEmail}
-                  </div>
+                  <input
+                    value={formData.email}
+                    onChange={(e) => handleField("email", e.target.value)}
+                    placeholder="din.email@eksempel.dk"
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                  />
                 </div>
               </div>
 
@@ -299,24 +351,31 @@ export default function OnboardingClient({
                     </div>
                   ))}
                 </div>
+
+                <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "6px" }}>
+                  <span style={{ fontSize: "16px" }}>🔒</span>
+                  <p style={{ fontSize: "12px", color: "#065F46", margin: 0, lineHeight: 1.5 }}>
+                    <strong>Sikkerhed & Kryptering:</strong> Dit CPR-nummer og kontonummer krypteres automatisk i din browser, før de sendes afsted, og opbevares i krypteret form i vores database.
+                  </p>
+                </div>
               </div>
             </div>
           )}
 
-          {/* Trin 3: DFI Værker */}
+          {/* Trin 3: DFI & TMDB Værker */}
           {step === 3 && (
             <div style={{ padding: "40px" }}>
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>
-                🎬 Dine film og serier i DFI
+                🎬 Dine film og serier i DFI & TMDb
               </h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
-                Vi har slået dit navn op i DFI Filmdatabasen. Bekræft de titler, du har medvirket til at skabe.
+                Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
 
               <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
                 <input
                   type="text"
-                  placeholder="Søg under et andet navn i DFI..."
+                  placeholder="Søg under et andet navn..."
                   value={dfiSearchQuery}
                   onChange={(e) => setDfiSearchQuery(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleManualDfiSearch(); }}
@@ -341,7 +400,7 @@ export default function OnboardingClient({
               {isSearchingDfi ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>
                   <Loader2 size={36} style={{ animation: "spin 1s linear infinite", color: "var(--primary)" }} />
-                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i DFI Filmdatabasen...</div>
+                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i DFI og TMDb...</div>
                 </div>
               ) : dfiCredits.length > 0 ? (
                 <div>
@@ -352,8 +411,8 @@ export default function OnboardingClient({
                     <button
                       onClick={() => {
                         const allSelected = Object.values(selectedDfiCredits).every((v) => v);
-                        const next: Record<number, boolean> = {};
-                        dfiCredits.forEach((c) => { next[c.Id] = !allSelected; });
+                        const next: Record<string, boolean> = {};
+                        dfiCredits.forEach((c) => { next[c.id] = !allSelected; });
                         setSelectedDfiCredits(next);
                       }}
                       style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
@@ -362,35 +421,37 @@ export default function OnboardingClient({
                     </button>
                   </div>
                   <div style={{
-                    maxHeight: "300px", overflowY: "auto",
-                    border: "1px solid var(--outline-variant)",
-                    borderRadius: "var(--radius-md)",
+                    maxHeight: "350px", overflowY: "auto",
+                    border: "2px solid #9CA3AF",
+                    borderRadius: "8px",
                     backgroundColor: "var(--surface-container-low)",
-                    display: "flex", flexDirection: "column", padding: "4px",
+                    display: "flex", flexDirection: "column",
+                    boxShadow: "inset 0 2px 4px rgba(0, 0, 0, 0.05)",
                   }}>
                     {dfiCredits.map((c, i) => (
-                      <label key={`${c.Id}-${i}`} style={{
+                      <label key={`${c.id}-${i}`} style={{
                         display: "flex", alignItems: "flex-start", gap: "12px",
-                        padding: "12px 16px",
-                        borderBottom: "1px solid var(--outline-variant)",
+                        padding: "14px 16px",
+                        borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid #D1D5DB",
                         cursor: "pointer",
-                        backgroundColor: selectedDfiCredits[c.Id] ? "var(--surface-container-high)" : "transparent",
+                        backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                         userSelect: "none",
+                        transition: "background-color 0.2s ease",
                       }}>
                         <input
                           type="checkbox"
-                          checked={selectedDfiCredits[c.Id] || false}
-                          onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.Id]: e.target.checked }))}
+                          checked={selectedDfiCredits[c.id] || false}
+                          onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.id]: e.target.checked }))}
                           style={{ width: "16px", height: "16px", marginTop: "3px", accentColor: "var(--primary)" }}
                         />
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1 }}>
                           <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                            {c.Title} {c.ReleaseYear ? `(${c.ReleaseYear})` : ""}
+                            {c.title} {c.year ? `(${c.year})` : ""}
                           </div>
                           <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", display: "flex", gap: "8px" }}>
-                            <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.Description || c.Type || "Medvirkende"}</span>
+                            <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.role}</span>
                             <span>•</span>
-                            <span>{c.Category}</span>
+                            <span>{c.category}</span>
                           </div>
                         </div>
                       </label>
@@ -408,8 +469,8 @@ export default function OnboardingClient({
                   <div style={{ fontSize: "36px" }}>🔍</div>
                   <div style={{ fontWeight: 600, fontSize: "15px", color: "var(--on-surface)" }}>Ingen film fundet automatisk</div>
                   <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", margin: 0, lineHeight: 1.6, maxWidth: "400px" }}>
-                    Vi kunne ikke finde dig i DFI Filmdatabasen under navnet <strong>{formData.first_name} {formData.last_name}</strong>.
-                    Brug søgefeltet ovenfor, eller fortsæt hvis du ikke har film registreret i DFI endnu.
+                    Vi kunne ikke finde dig i DFI eller TMDb under navnet <strong>{formData.first_name} {formData.last_name}</strong>.
+                    Brug søgefeltet ovenfor, eller fortsæt hvis du ikke har film registreret endnu.
                   </p>
                 </div>
               )}
@@ -423,43 +484,76 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
                 Bestem, hvordan vi må bruge dine oplysninger.
               </p>
-              <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
-                <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
-                  <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
-                      Hjælp alle klippere til at forhandle bedre løn
+              
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                {/* Lønstatistik Checkbox */}
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
+                  <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
+                    <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "10px" }}>
+                        Hjælp alle klippere til at forhandle bedre løn
+                      </div>
+                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: "0 0 10px" }}>
+                        Når du deler dine anonymiserede løndata, kan vi beregne realistiske branchegennemsnit — opdelt på genre.
+                        Det er konkret viden til din næste lønforhandling.
+                      </p>
+                      <div style={{ fontSize: "12px", color: "var(--tertiary)", fontStyle: "italic", fontWeight: 500 }}>
+                        🔒 Dine data behandles altid anonymiseret og aggregeret.
+                      </div>
                     </div>
-                    <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.7, margin: "0 0 10px" }}>
-                      Når du deler dine anonymiserede løndata, kan vi beregne realistiske branchegennemsnit — opdelt på genre.
-                      Det er konkret viden til din næste lønforhandling.
-                    </p>
-                    <div style={{ fontSize: "12px", color: "var(--tertiary)", fontStyle: "italic", fontWeight: 500 }}>
-                      🔒 Dine data behandles altid anonymiseret og aggregeret.
+                  </div>
+                  <label style={{
+                    display: "flex", alignItems: "center", gap: "12px",
+                    padding: "16px 24px", cursor: "pointer",
+                    backgroundColor: "var(--surface-container-low)",
+                    borderTop: "1px solid var(--outline-variant)",
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={shareStatistics}
+                      onChange={(e) => setShareStatistics(e.target.checked)}
+                      style={{ width: "18px", height: "18px", accentColor: "var(--primary)" }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                        Jeg bidrager til fælles lønstatistik
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "2px" }}>
+                        Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Kønsoplysninger Dropdown */}
+                <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+                    <div style={{ fontSize: "28px", flexShrink: 0 }}>👥</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)", marginBottom: "6px" }}>
+                        Oplysning om køn (valgfrit)
+                      </div>
+                      <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", lineHeight: 1.6, margin: "0 0 16px" }}>
+                        Vi anvender kønsoplysninger til at udarbejde anonymiseret statistik over fordeling af rettigheder, diversitet og lønforhold i filmbranchen.
+                      </p>
+                      
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "8px", color: "var(--on-surface-variant)" }}>
+                        Vælg køn
+                      </label>
+                      <select
+                        value={formData.gender}
+                        onChange={(e) => handleField("gender", e.target.value)}
+                        style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)", outline: "none" }}
+                      >
+                        <option value="prefer_not_to_say">Vil ikke oplyse</option>
+                        <option value="female">Kvinde</option>
+                        <option value="male">Mand</option>
+                        <option value="non_binary">Andet / Non-binær</option>
+                      </select>
                     </div>
                   </div>
                 </div>
-                <label style={{
-                  display: "flex", alignItems: "center", gap: "12px",
-                  padding: "16px 24px", cursor: "pointer",
-                  backgroundColor: "var(--surface-container-low)",
-                  borderTop: "1px solid var(--outline-variant)",
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={shareStatistics}
-                    onChange={(e) => setShareStatistics(e.target.checked)}
-                    style={{ width: "18px", height: "18px", accentColor: "var(--primary)" }}
-                  />
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                      Jeg bidrager til fælles lønstatistik
-                    </div>
-                    <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "2px" }}>
-                      Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
-                    </div>
-                  </div>
-                </label>
               </div>
             </div>
           )}
@@ -477,8 +571,9 @@ export default function OnboardingClient({
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
                 {[
                   { label: "Navn", value: `${formData.first_name} ${formData.last_name}`.trim() },
-                  { label: "E-mail", value: loginEmail },
+                  { label: "E-mail", value: formData.email },
                   { label: "By", value: formData.city || "Ikke angivet" },
+                  { label: "Køn (statistik)", value: formData.gender === "female" ? "Kvinde" : formData.gender === "male" ? "Mand" : formData.gender === "non_binary" ? "Andet / Non-binær" : "Ikke oplyst" },
                   { label: "CPR registreret", value: formData.cpr ? "✅ Ja" : "❌ Mangler" },
                   { label: "NemKonto", value: formData.bank_account ? "✅ Registreret" : "❌ Mangler" },
                   { label: "Lønstatistik", value: shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },
@@ -519,11 +614,7 @@ export default function OnboardingClient({
                 disabled={isSearchingDfi || isImportingDfi}
                 style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
               >
-                {isImportingDfi ? (
-                  <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Importerer...</>
-                ) : (
-                  <>Fortsæt <ArrowRight size={16} /></>
-                )}
+                Fortsæt <ArrowRight size={16} />
               </button>
             ) : (
               <button

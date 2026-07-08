@@ -204,6 +204,7 @@ export function EditWorkModal({
   const [coEditorSuggestions, setCoEditorSuggestions]   = useState<Record<string, CoEditorSuggestion[]>>({});
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
   const [commentError, setCommentError]                 = useState(false);
+  const [selectedEpisodes, setSelectedEpisodes]         = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (isOpen && assignment) {
@@ -212,6 +213,7 @@ export function EditWorkModal({
       setWorkCorrection(assignment.works ? workToCorrectionForm(assignment.works) : null);
       setWorkCorrectionComment("");
       setCommentError(false);
+      setSelectedEpisodes({});
       setCoEditorSuggestions({});
       setEditCoEditors(
         (allAssignments ?? [])
@@ -250,6 +252,12 @@ export function EditWorkModal({
     if (!assignment.works || !workCorrection) return;
     if (!workCorrectionComment.trim()) { setCommentError(true); return; }
     setIsSendingCorrection(true);
+
+    const myEpisodes = Object.entries(selectedEpisodes)
+      .filter(([_, checked]) => checked)
+      .map(([num, _]) => parseInt(num, 10))
+      .sort((a, b) => a - b);
+
     try {
       const res = await submitWorkDataCorrection({
         assignmentId: assignment.id,
@@ -269,6 +277,7 @@ export function EditWorkModal({
         coEditors: editCoEditors.filter(
           editor => !editor.locked || editor.action === "remove" || editor.action === "change"
         ),
+        myEpisodes,
       });
       if (!res.success) throw new Error(t("works.createFailed"));
       onWorkUpdated(t("works.correctionSent"), true);
@@ -289,7 +298,12 @@ export function EditWorkModal({
       editor => !editor.locked || editor.action === "remove" || editor.action === "change"
     );
 
-    if (coEditorChanges.length > 0 && !workCorrectionComment.trim()) {
+    // "Gem" sender også en åben værks-rettelse med — så indtastede felter
+    // ikke tabes fordi brugeren trykkede "Gem" i stedet for "Send rettelse".
+    const wantsCorrection = showWorkCorrection && !!workCorrection;
+    const willSubmit = coEditorChanges.length > 0 || wantsCorrection;
+
+    if (willSubmit && !workCorrectionComment.trim()) {
       setCommentError(true);
       setIsSavingEdit(false);
       return;
@@ -307,22 +321,35 @@ export function EditWorkModal({
 
       if (ownRoleError) throw new Error(ownRoleError.message);
 
-      if (coEditorChanges.length > 0) {
+      if (willSubmit) {
         if (!assignment.works) throw new Error("Værket mangler.");
+        const data = wantsCorrection && workCorrection
+          ? {
+              title: workCorrection.title,
+              type: workCorrection.type,
+              year: numberOrNull(workCorrection.year),
+              duration_minutes: numberOrNull(workCorrection.duration_minutes),
+              season_count: numberOrNull(workCorrection.season_count),
+              episode_count: numberOrNull(workCorrection.episode_count),
+              genre: workCorrection.genre || null,
+              director: workCorrection.director || null,
+              description: workCorrection.description || null,
+            }
+          : {
+              title: assignment.works.title,
+              type: assignment.works.type ?? "spillefilm",
+              year: assignment.works.year,
+              duration_minutes: assignment.works.duration_minutes,
+              season_count: assignment.works.season_count,
+              episode_count: assignment.works.episode_count,
+              genre: assignment.works.genre,
+              director: assignment.works.director,
+              description: assignment.works.description,
+            };
         await submitWorkDataCorrection({
           assignmentId: assignment.id,
           workId: assignment.works.id,
-          data: {
-            title: assignment.works.title,
-            type: assignment.works.type ?? "spillefilm",
-            year: assignment.works.year,
-            duration_minutes: assignment.works.duration_minutes,
-            season_count: assignment.works.season_count,
-            episode_count: assignment.works.episode_count,
-            genre: assignment.works.genre,
-            director: assignment.works.director,
-            description: assignment.works.description,
-          },
+          data,
           comment: workCorrectionComment,
           coEditors: coEditorChanges,
         });
@@ -609,6 +636,69 @@ export function EditWorkModal({
                     inputMode="numeric"
                   />
                 </div>
+              )}
+              {isSeriesType(workCorrection.type) && (
+                (() => {
+                  const epCount = parseInt(workCorrection.episode_count || "0", 10) || 0;
+                  if (epCount <= 0) return null;
+                  return (
+                    <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border border-gray-200 p-4 bg-gray-50/50">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm font-semibold text-gray-900">Vælg afsnit du har klippet</Label>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium bg-transparent border-0 cursor-pointer"
+                            onClick={() => {
+                              const all: Record<number, boolean> = {};
+                              for (let i = 1; i <= epCount; i++) all[i] = true;
+                              setSelectedEpisodes(all);
+                            }}
+                          >
+                            Vælg alle
+                          </button>
+                          <span className="text-gray-300 text-xs">|</span>
+                          <button
+                            type="button"
+                            className="text-xs text-gray-500 hover:text-gray-700 font-medium bg-transparent border-0 cursor-pointer"
+                            onClick={() => setSelectedEpisodes({})}
+                          >
+                            Fravælg alle
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1 bg-white rounded-md border border-gray-200">
+                        {Array.from({ length: epCount }, (_, idx) => {
+                          const epNum = idx + 1;
+                          const isChecked = selectedEpisodes[epNum] || false;
+                          return (
+                            <label
+                              key={epNum}
+                              className={`flex items-center gap-2 rounded border p-2 text-xs cursor-pointer select-none transition-colors ${
+                                isChecked
+                                  ? "border-blue-500 bg-blue-50/50 text-blue-900"
+                                  : "border-gray-200 hover:bg-gray-50 text-gray-700"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) =>
+                                  setSelectedEpisodes((prev) => ({
+                                    ...prev,
+                                    [epNum]: e.target.checked,
+                                  }))
+                                }
+                                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span>Afsnit {epNum}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()
               )}
             </div>
             <div className="space-y-1.5">

@@ -58,8 +58,7 @@ const GROUPS: { title: string; fields: Field[] }[] = [
         { key: "director", label: "Instruktør", type: "text" },
         { key: "duration", label: "Varighed (min.)", type: "number" },
         { key: "premiereYear", label: "Premiereår", type: "number" },
-        { key: "producerName", label: "Producent", type: "text" },
-        { key: "employerName", label: "Produktionsselskab", type: "text" },
+        { key: "employerName", label: "Producent / produktionsselskab", type: "text" },
         { key: "parentCompanyName", label: "Moderselskab", type: "text" },
         { key: "rightsHolderName", label: "Rettighedshaver", type: "text" },
         { key: "creditedFunction", label: "Krediteret funktion", type: "text" },
@@ -122,6 +121,9 @@ function toFormValues(ed: Record<string, unknown> | null): FormValues {
             v[f.key] = raw === true || value === "ja" || value.includes("implicit");
         }
         else if (f.type === "bool") v[f.key] = !!raw;
+        // AI returnerer ISO 8601 med evt. tidskomponent; <input type="date">
+        // kræver ren YYYY-MM-DD, ellers render feltet tomt og gemmer undefined.
+        else if (f.type === "date") v[f.key] = raw == null ? "" : String(raw).slice(0, 10);
         else if (ARRAY_KEYS.has(f.key)) v[f.key] = Array.isArray(raw) ? raw.join(", ") : (raw != null ? String(raw) : "");
         else if (f.key === "salarySourceType") v[f.key] = raw == null ? "" : SALARY_SOURCE_LABELS[String(raw)] ?? String(raw);
         else if (raw && typeof raw === "object") v[f.key] = JSON.stringify(raw, null, 2);

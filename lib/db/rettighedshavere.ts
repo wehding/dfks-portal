@@ -62,7 +62,7 @@ export async function createRettighedshaver(
 // Opdater rettighedshaver
 export async function updateRettighedshaver(
     id: string,
-    input: Partial<Pick<DbRettighedshaver, "full_name" | "email" | "phone" | "address" | "cpr_no">>
+    input: Partial<Pick<DbRettighedshaver, "full_name" | "email" | "phone" | "address" | "cpr_no">> & Record<string, unknown>
 ): Promise<void> {
     const supabase = createClient()
     await supabase

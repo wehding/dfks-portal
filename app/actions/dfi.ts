@@ -3,8 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBMatch } from "@/app/actions/tmdb";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata } from "@/lib/dfi-metadata";
+import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits } from "@/app/actions/tmdb";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -472,6 +472,418 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       else importedCount++;
     } catch (err: unknown) {
       errors.push(`Systemfejl for ${filmTitle}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
+    }
+  }
+
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/vaerker");
+
+  return {
+    success: errors.length === 0 || importedCount > 0 || linkedExistingCount > 0,
+    importedCount,
+    linkedExistingCount,
+    errors: errors.length > 0 ? errors : null,
+  };
+}
+
+export type OnboardingCredit = {
+  id: string;
+  title: string;
+  year: number | null;
+  role: string;
+  category: string;
+  source: "lokal" | "dfi" | "tmdb";
+  raw: any;
+};
+
+function isRightBearingRole(role: string | null | undefined): boolean {
+  if (!role) return true;
+  const r = role.toLowerCase().trim();
+  const excluded = [
+    "color grading",
+    "kolorist",
+    "teaser klipper",
+    "grading",
+    "colorist",
+    "trailer klipper",
+    "dft",
+    "colorist assistant"
+  ];
+  return !excluded.some(ex => r.includes(ex));
+}
+
+function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYear: number | null) {
+  const normA = normalizeTitle(aTitle);
+  const normB = normalizeTitle(bTitle);
+  if (!normA || !normB) return false;
+  if (normA !== normB) return false;
+  if (aYear && bYear) {
+    return Math.abs(aYear - bYear) <= 1;
+  }
+  return true;
+}
+
+function isDfiSeriesParent(c: any): boolean {
+  const category = String(c.Category || "").toLowerCase();
+  const type = String(c.Type || "").toLowerCase();
+  const isSeries = category.includes("serie") || type.includes("serie");
+  
+  if (!isSeries) return false;
+  
+  const hasParent = Boolean(c.Parent?.Id);
+  const hasEpisodeInfo = Boolean(parseDfiEpisodeTitleInfo(c.Title ?? ""));
+  
+  return !hasParent && !hasEpisodeInfo;
+}
+
+export async function searchOnboardingCredits(
+  firstName?: string,
+  lastName?: string,
+  fullName?: string
+) {
+  const nameToSearch = fullName || `${firstName ?? ""} ${lastName ?? ""}`.trim();
+  console.log("[Onboarding search] Navn:", nameToSearch);
+
+  const db = createServiceClient();
+  let rightsHolderId: string | null = null;
+  try {
+    const context = await currentRightsHolderAndOrg();
+    rightsHolderId = context.rightsHolderId;
+  } catch {
+    // Fortsæt uden rightsHolderId i tilfælde af test-kørsler
+  }
+
+  let dfiPersonId: number | null = null;
+  let tmdbPersonId: number | null = null;
+  
+  const rawDfiCredits: any[] = [];
+  const rawTmdbCredits: any[] = [];
+
+  // 1. Hent rådata fra DFI
+  try {
+    const dfiPersonRes = await searchDFIPerson(firstName, lastName, fullName);
+    if (dfiPersonRes.success && dfiPersonRes.results?.length > 0) {
+      const p = dfiPersonRes.results[0];
+      dfiPersonId = p.Id;
+      const dfiCreditsRes = await getDFIPersonCredits(p.Id);
+      if (dfiCreditsRes.success && dfiCreditsRes.credits) {
+        const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
+        const filteredDfi = uniqueDfi
+          .filter((c: any) => isRightBearingRole(c.Description || c.Type))
+          .filter((c: any) => !isDfiSeriesParent(c));
+        rawDfiCredits.push(...filteredDfi);
+      }
+    }
+  } catch (err) {
+    console.error("DFI raw search error:", err);
+  }
+
+  // 2. Hent rådata fra TMDB
+  try {
+    const tmdbPersonRes = await searchTMDBPerson(nameToSearch);
+    if (tmdbPersonRes.success && tmdbPersonRes.results?.length > 0) {
+      const p = tmdbPersonRes.results[0];
+      tmdbPersonId = p.id;
+      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(p.id);
+      if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
+        const tmdbCrew = tmdbCreditsRes.crew as any[];
+        const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
+        const filteredTmdb = editors.filter(c => isRightBearingRole(c.job));
+        rawTmdbCredits.push(...filteredTmdb);
+      }
+    }
+  } catch (err) {
+    console.error("TMDB raw search error:", err);
+  }
+
+  // 3. Tjek den lokale database (works og work_assignments)
+  const localWorksMap = new Map<string, any>();
+  const localDfiIds = new Set<string>();
+  const localTmdbIds = new Set<number>();
+
+  // A. Hent eksisterende assignments for denne rettighedshaver (kun hvis søgningen er på eget navn)
+  if (rightsHolderId) {
+    try {
+      const { data: rhProfile } = await db
+        .from("rettighedshavere")
+        .select("full_name")
+        .eq("id", rightsHolderId)
+        .maybeSingle();
+
+      const rhName = rhProfile?.full_name ?? "";
+      const isSearchForSelf = normalizeTitle(rhName) === normalizeTitle(nameToSearch);
+
+      if (isSearchForSelf) {
+        const { data: myAssignments } = await db
+          .from("work_assignments")
+          .select("role, works(*)")
+          .eq("rights_holder_id", rightsHolderId);
+        
+        if (myAssignments) {
+          myAssignments.forEach((a: any) => {
+            const w = a.works;
+            if (w && isRightBearingRole(a.role)) {
+              localWorksMap.set(w.id, { work: w, role: a.role });
+              if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
+              if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Local assignments query error:", err);
+    }
+  }
+
+  // B. Slå de DFI og TMDB id'er op, som vi fandt i søgningen, for at se om de allerede findes lokalt
+  const searchDfiIds = rawDfiCredits.map(c => String(c.Id)).filter(Boolean);
+  if (searchDfiIds.length > 0) {
+    try {
+      const { data: matchedDfiWorks } = await db
+        .from("works")
+        .select("*")
+        .in("dfi_id", searchDfiIds);
+      if (matchedDfiWorks) {
+        matchedDfiWorks.forEach((w: any) => {
+          if (!localWorksMap.has(w.id)) {
+            const rawCredit = rawDfiCredits.find(c => String(c.Id) === String(w.dfi_id));
+            localWorksMap.set(w.id, { work: w, role: rawCredit?.Description || rawCredit?.Type || "Klipper" });
+          }
+          localDfiIds.add(String(w.dfi_id));
+          if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
+        });
+      }
+    } catch (err) {
+      console.error("Local DFI works lookup error:", err);
+    }
+  }
+
+  const searchTmdbIds = rawTmdbCredits.map(c => Number(c.id)).filter(Boolean);
+  if (searchTmdbIds.length > 0) {
+    try {
+      const { data: matchedTmdbWorks } = await db
+        .from("works")
+        .select("*")
+        .in("tmdb_id", searchTmdbIds);
+      if (matchedTmdbWorks) {
+        matchedTmdbWorks.forEach((w: any) => {
+          if (!localWorksMap.has(w.id)) {
+            const rawCredit = rawTmdbCredits.find(c => Number(c.id) === Number(w.tmdb_id));
+            localWorksMap.set(w.id, { work: w, role: rawCredit?.job || "Klipper" });
+          }
+          localTmdbIds.add(Number(w.tmdb_id));
+          if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
+        });
+      }
+    } catch (err) {
+      console.error("Local TMDB works lookup error:", err);
+    }
+  }
+
+  // 4. Byg de tre separate lister for at respektere prioriteringsrækkefølgen
+  const localCredits: OnboardingCredit[] = [];
+  const dfiCredits: OnboardingCredit[] = [];
+  const tmdbCredits: OnboardingCredit[] = [];
+
+  // A. Fyld Local listen
+  localWorksMap.forEach((val, workId) => {
+    const w = val.work;
+    localCredits.push({
+      id: `local-${w.id}`,
+      title: w.title,
+      year: w.year,
+      role: val.role || "Klipper",
+      category: w.type === "serie" ? "TV-serie" : "Spillefilm",
+      source: "lokal",
+      raw: w
+    });
+  });
+
+  // B. Fyld DFI listen med udestående DFI titler
+  rawDfiCredits.forEach((c: any) => {
+    const title = c.Title || c.DanishTitle || "Ukendt";
+    const year = extractDfiPremiereYear(c) || null;
+    const dfiId = String(c.Id);
+
+    const isLocal = localDfiIds.has(dfiId) || localCredits.some(l => isSameCredit(l.title, l.year, title, year));
+    if (!isLocal) {
+      dfiCredits.push({
+        id: `dfi-${dfiId}`,
+        title,
+        year,
+        role: c.Description || c.Type || "Klipper",
+        category: c.Category || "Film",
+        source: "dfi",
+        raw: c
+      });
+    }
+  });
+
+  // C. Fyld TMDB listen med udestående TMDB titler
+  rawTmdbCredits.forEach((c: any) => {
+    const title = c.title || c.name || "Ukendt";
+    const releaseDate = c.release_date || c.first_air_date || "";
+    const year = Number.parseInt(releaseDate.substring(0, 4), 10) || null;
+    const tmdbId = Number(c.id);
+
+    const isLocalOrDfi = localTmdbIds.has(tmdbId) || 
+                         localCredits.some(l => isSameCredit(l.title, l.year, title, year)) ||
+                         dfiCredits.some(d => isSameCredit(d.title, d.year, title, year));
+    
+    if (!isLocalOrDfi) {
+      tmdbCredits.push({
+        id: `tmdb-${tmdbId}`,
+        title,
+        year,
+        role: c.job || "Klipper",
+        category: c.media_type === "tv" ? "TV-serie" : "Spillefilm",
+        source: "tmdb",
+        raw: c
+      });
+    }
+  });
+
+  const mergedCredits = [...localCredits, ...dfiCredits, ...tmdbCredits];
+
+  // Sorter den samlede liste efter årstal (nyeste først)
+  mergedCredits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+
+  return {
+    success: mergedCredits.length > 0,
+    credits: mergedCredits,
+    dfiPersonId,
+    tmdbPersonId
+  };
+}
+
+export async function importApprovedOnboardingWorks(
+  dfiPersonId: number | null,
+  tmdbPersonId: number | null,
+  approvedCredits: OnboardingCredit[]
+) {
+  let context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>;
+  try {
+    context = await currentRightsHolderAndOrg();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Du skal være logget ind for at importere.";
+    return { success: false, error: message };
+  }
+  const { db, rightsHolderId, orgId } = context;
+
+  // Gem dfi_person_id på rettighedshaveren
+  if (dfiPersonId) {
+    await db
+      .from("rettighedshavere")
+      .update({ dfi_person_id: dfiPersonId })
+      .eq("id", rightsHolderId);
+  }
+
+  const localCredits = approvedCredits.filter(c => c.source === "lokal");
+  const dfiCredits = approvedCredits.filter(c => c.source === "dfi").map(c => c.raw as DfiCredit);
+  const tmdbCredits = approvedCredits.filter(c => c.source === "tmdb");
+
+  let importedCount = 0;
+  let linkedExistingCount = 0;
+  const errors: string[] = [];
+
+  // 1. Importer Local credits (opret kun assignments til det eksisterende værk)
+  for (const credit of localCredits) {
+    const workId = credit.id.replace("local-", "");
+    try {
+      const { error: assignErr } = await db
+        .from("work_assignments")
+        .upsert(
+          {
+            work_id: workId,
+            org_id: orgId,
+            rights_holder_id: rightsHolderId,
+            role: credit.role || "Klipper",
+          },
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+      if (assignErr) {
+        errors.push(`Fejl ved kreditering af eksisterende værk ${credit.title}: ${assignErr.message}`);
+      } else {
+        linkedExistingCount++;
+      }
+    } catch (err: unknown) {
+      errors.push(`Systemfejl for eksisterende værk ${credit.title}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
+    }
+  }
+
+  // 2. Importer DFI credits
+  if (dfiCredits.length > 0 && dfiPersonId) {
+    const dfiRes = await importApprovedDFIWorks(dfiPersonId, dfiCredits);
+    if (dfiRes.success) {
+      importedCount += dfiRes.importedCount ?? 0;
+      linkedExistingCount += dfiRes.linkedExistingCount ?? 0;
+    }
+    if (dfiRes.errors) {
+      errors.push(...dfiRes.errors);
+    }
+  }
+
+  // 3. Importer TMDB credits
+  for (const credit of tmdbCredits) {
+    const tmdbId = credit.raw.id;
+    const title = credit.title;
+    const year = credit.year;
+    const type = credit.category === "TV-serie" ? "serie" : "film";
+    const posterUrl = credit.raw.poster_path ? `https://image.tmdb.org/t/p/w185${credit.raw.poster_path}` : null;
+
+    try {
+      const { data: existing } = await db
+        .from("works")
+        .select("id")
+        .eq("org_id", orgId)
+        .eq("tmdb_id", tmdbId)
+        .maybeSingle();
+
+      let workId = existing?.id ?? null;
+
+      if (!workId) {
+        const { data: newWork, error: insertErr } = await db
+          .from("works")
+          .insert({
+            title,
+            type,
+            year,
+            org_id: orgId,
+            description: credit.raw.overview || null,
+            poster_url: posterUrl,
+            tmdb_id: tmdbId,
+            status: "godkendt",
+          })
+          .select("id")
+          .single();
+
+        if (insertErr || !newWork) {
+          errors.push(`Fejl ved oprettelse af TMDB værk ${title}: ${insertErr?.message}`);
+          continue;
+        }
+        workId = newWork.id;
+        importedCount++;
+      } else {
+        linkedExistingCount++;
+      }
+
+      const { error: assignErr } = await db
+        .from("work_assignments")
+        .upsert(
+          {
+            work_id: workId,
+            org_id: orgId,
+            rights_holder_id: rightsHolderId,
+            role: credit.role || "Klipper",
+          },
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+
+      if (assignErr) {
+        errors.push(`Fejl ved kreditering af TMDB værk ${title}: ${assignErr.message}`);
+      }
+    } catch (err: unknown) {
+      errors.push(`Systemfejl for TMDB værk ${title}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);
     }
   }
 
