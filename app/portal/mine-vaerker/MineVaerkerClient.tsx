@@ -700,13 +700,11 @@ export default function MineVaerkerClient({
           onWorkUpdated={(message, success, updatedRole, targetId) => {
             setMsg({ type: success ? "success" : "error", text: message });
             if (success) {
+              // Rollerettelse afspejles med det samme. En data-/medklipper-rettelse
+              // ændrer IKKE værkets status — værket forbliver "godkendt", og kun
+              // ændringsanmodningen er pending (bekræftes via toast-beskeden).
               if (updatedRole && targetId) {
                 setAssignments(prev => prev.map(a => a.id === targetId ? { ...a, role: updatedRole } : a));
-              } else if (editAssignment?.works) {
-                setAssignments(prev => prev.map(a => a.works?.id === editAssignment.works?.id ? {
-                  ...a,
-                  works: a.works ? { ...a.works, status: "til_godkendelse" } : a.works,
-                } : a));
               }
               closeEdit();
             }

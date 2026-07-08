@@ -188,11 +188,27 @@ async function retryWithoutSharePercent<T>(
   return fallback();
 }
 
+// Værdibaseret sammenligning så uændrede felter ikke fejlagtigt markeres som rettelser.
+// Arrays sammenlignes normaliseret (trimmet, sorteret) — ikke ved reference.
+function normValue(v: unknown) {
+  return v === undefined || v === "" ? null : v;
+}
+function valuesEqual(a: unknown, b: unknown) {
+  const na = normValue(a);
+  const nb = normValue(b);
+  if (Array.isArray(na) || Array.isArray(nb)) {
+    const asArr = (x: unknown) => (Array.isArray(x) ? x : x == null ? [] : [x]).map(e => String(e).trim()).filter(Boolean).sort();
+    return JSON.stringify(asArr(na)) === JSON.stringify(asArr(nb));
+  }
+  if (na == null || nb == null) return na === nb;
+  return String(na) === String(nb);
+}
+
 function changedFields(current: Record<string, unknown>, proposed: WorkCorrectionData) {
   return CORRECTABLE_KEYS.reduce<Partial<WorkCorrectionData>>((acc, key) => {
     const next = proposed[key];
     const prev = current[key];
-    if ((next ?? null) !== (prev ?? null)) acc[key] = next as never;
+    if (!valuesEqual(next, prev)) acc[key] = next as never;
     return acc;
   }, {});
 }
@@ -397,8 +413,9 @@ export async function submitWorkDataCorrection(params: {
   });
   if (commentError) throw new Error(commentError.message);
 
-  const { error: statusError } = await db.from("works").update({ status: "til_godkendelse" }).eq("id", work.id);
-  if (statusError) throw new Error(statusError.message);
+  // Værket forbliver "godkendt" — kun selve ændringsanmodningen er pending.
+  // Admin ser stadig "Til godkendelse" via hasPendingRequest(), så en enkelt
+  // klippers mikro-rettelse flager ikke andre rettighedshaveres andel af værket.
 
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
@@ -983,6 +1000,9 @@ export async function reviewWorkDataCorrection(params: {
   requestId: string;
   decision: "approved" | "rejected";
   comment?: string;
+  // Admin kan rette antal afsnit + hvilke afsnit medlemmet krediteres på inden godkendelse.
+  episodeCountOverride?: number | null;
+  myEpisodesOverride?: number[];
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -1009,6 +1029,7 @@ export async function reviewWorkDataCorrection(params: {
     const workUpdates = {
       ...allowed,
       status: "godkendt",
+      ...(params.episodeCountOverride != null ? { episode_count: params.episodeCountOverride } : {}),
     };
     const { error } = await db.from("works").update(workUpdates).eq("id", request.work_id);
     if (error) throw new Error(error.message);
@@ -1018,7 +1039,9 @@ export async function reviewWorkDataCorrection(params: {
     // Automatisk generering og tildeling af afsnit
     const oldWork = request.old_data as any;
     const isSeries = workUpdates.type === "tv-serie" || workUpdates.type === "dokumentar-serie" || oldWork?.type === "tv-serie" || oldWork?.type === "dokumentar-serie";
-    const epCount = workUpdates.episode_count ? Number(workUpdates.episode_count) : (oldWork?.episode_count ? Number(oldWork.episode_count) : 0);
+    const epCount = params.episodeCountOverride != null && params.episodeCountOverride > 0
+      ? params.episodeCountOverride
+      : (workUpdates.episode_count ? Number(workUpdates.episode_count) : (oldWork?.episode_count ? Number(oldWork.episode_count) : 0));
 
     if (isSeries && epCount > 0) {
       const { data: existingEpisodes } = await db
@@ -1041,7 +1064,9 @@ export async function reviewWorkDataCorrection(params: {
         .maybeSingle();
 
       const memberRole = myAssignment?.role || "Klipper";
-      const myEpisodes = (proposed.myEpisodes || []) as number[];
+      const myEpisodes = (params.myEpisodesOverride && params.myEpisodesOverride.length > 0
+        ? params.myEpisodesOverride
+        : (proposed.myEpisodes || [])) as number[];
 
       for (let i = 1; i <= epCount; i++) {
         let epWorkId = existingMap.get(i);

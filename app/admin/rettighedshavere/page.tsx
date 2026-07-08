@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, UserMinus, Eye } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, Link2Off, LogIn, RotateCcw, Trash2, UserMinus, Eye } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -39,11 +40,13 @@ function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
 
 const EMPTY_FORM = {
     full_name: "", email: "", phone: "", address: "", cpr_no: "", member_no: "", is_member: false,
+    gender: "", opt_out_statistics: false,
 }
 
 export default function RettighedshavereAdminPage() {
     const [orgId, setOrgId] = useState<string | null>(null)
     const [rows, setRows] = useState<RettighedshaverWithAffiliation[]>([])
+    const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
     const [filter, setFilter] = useState<Filter>("alle")
@@ -100,11 +103,16 @@ export default function RettighedshavereAdminPage() {
         
         const { data: cData } = await supabase
             .from("contracts")
-            .select("id, title, type, status, created_at, employer_name")
+            .select("id, working_title, type, status, created_at, work_id, employers(name)")
             .eq("rights_holder_id", rhId)
             .order("created_at", { ascending: false })
-            
-        setContracts(cData ?? [])
+
+        type ContractRow = { working_title?: string | null; employers?: { name?: string | null } | { name?: string | null }[] | null }
+        setContracts(((cData ?? []) as ContractRow[]).map(c => ({
+            ...c,
+            title: c.working_title ?? "Kontrakt",
+            employer_name: Array.isArray(c.employers) ? c.employers[0]?.name : c.employers?.name,
+        })))
 
         const { data: wData } = await supabase
             .from("work_assignments")
@@ -113,6 +121,19 @@ export default function RettighedshavereAdminPage() {
             
         setWorks(wData ?? [])
         setDetailsLoading(false)
+    }
+
+    async function handleUnlinkContract(contractId: string) {
+        const confirm = window.confirm("Fjern kontraktens tilknytning til dette medlem? Selve kontrakten slettes ikke og forbliver i kontraktadministrationen.")
+        if (!confirm) return
+        const supabase = createClient()
+        const { error } = await supabase.from("contracts").update({ rights_holder_id: null }).eq("id", contractId)
+        if (error) {
+            toast.error("Kunne ikke fjerne tilknytning: " + error.message)
+        } else {
+            toast.success("Tilknytning fjernet")
+            if (detailsTarget) loadDetails(detailsTarget.id)
+        }
     }
 
     async function handleDeleteContract(contractId: string) {
@@ -223,14 +244,15 @@ export default function RettighedshavereAdminPage() {
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getAffiliation(rh, orgId) : null
-        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false })
+        const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
+        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
         setEditTarget(rh)
     }
 
     async function handleEdit() {
         if (!editTarget || !orgId) return
         setEditSaving(true)
-        await updateRettighedshaver(editTarget.id, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null })
+        await updateRettighedshaver(editTarget.id, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
         await setMemberStatus(editTarget.id, orgId, editForm.is_member, editForm.member_no || undefined)
         setEditSaving(false)
         toast.success("Gemt")
@@ -367,7 +389,7 @@ export default function RettighedshavereAdminPage() {
                             const hasLogin = !!rh.user_id
                             return (
                                 <TableRow key={rh.id}>
-                                    <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => setDetailsTarget(rh)}>{rh.full_name}</TableCell>
+                                    <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{aff?.member_no ?? "—"}</TableCell>
@@ -473,7 +495,7 @@ export default function RettighedshavereAdminPage() {
 
             {/* Edit dialog */}
             <Dialog open={!!editTarget} onOpenChange={open => { if (!open) setEditTarget(null) }}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="w-[min(720px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
                         <DialogTitle>Rediger rettighedshaver</DialogTitle>
                         <DialogDescription>{editTarget?.full_name}</DialogDescription>
@@ -489,10 +511,31 @@ export default function RettighedshavereAdminPage() {
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={editForm.cpr_no} onChange={e => setEditForm(f => ({ ...f, cpr_no: e.target.value }))} /></div>
                             <div className="space-y-1"><Label>Medlemsnr.</Label><Input value={editForm.member_no} onChange={e => setEditForm(f => ({ ...f, member_no: e.target.value }))} /></div>
                         </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                                <Label>Køn (statistik)</Label>
+                                <Select value={editForm.gender || "__none__"} onValueChange={v => setEditForm(f => ({ ...f, gender: v === "__none__" ? "" : v }))}>
+                                    <SelectTrigger><SelectValue placeholder="Ikke angivet" /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="__none__">Ikke angivet</SelectItem>
+                                        <SelectItem value="female">Kvinde</SelectItem>
+                                        <SelectItem value="male">Mand</SelectItem>
+                                        <SelectItem value="other">Andet</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex items-end gap-2 pb-2">
+                                <input type="checkbox" id="edit-opt-out" checked={editForm.opt_out_statistics} onChange={e => setEditForm(f => ({ ...f, opt_out_statistics: e.target.checked }))} className="h-4 w-4" />
+                                <Label htmlFor="edit-opt-out" className="cursor-pointer">Fravalgt statistik</Label>
+                            </div>
+                        </div>
                         <div className="flex items-center gap-2 pt-1">
                             <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
                         </div>
+                        <Button type="button" variant="outline" className="w-full gap-2" onClick={() => { if (editTarget) setDetailsTarget(editTarget) }}>
+                            <Eye className="h-4 w-4" />Tilknyttede værker og kontrakter
+                        </Button>
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditTarget(null)}>Annuller</Button>
@@ -566,7 +609,7 @@ export default function RettighedshavereAdminPage() {
 
             {/* Medlem detaljer dialog (Kontrakter & Værker) */}
             <Dialog open={!!detailsTarget} onOpenChange={open => { if (!open) setDetailsTarget(null) }}>
-                <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-6 overflow-hidden">
+                <DialogContent className="w-[min(1100px,calc(100vw-2rem))] !max-w-none sm:!max-w-none max-h-[85vh] flex flex-col p-6 overflow-hidden">
                     <DialogHeader className="flex-shrink-0">
                         <DialogTitle className="text-xl font-bold flex items-center justify-between">
                             <span>{detailsTarget?.full_name}</span>
@@ -671,8 +714,10 @@ export default function RettighedshavereAdminPage() {
                                                     {filteredContracts.map((c: any) => (
                                                         <TableRow key={c.id}>
                                                             <TableCell>
-                                                                <div className="font-semibold text-xs text-gray-900">{c.title}</div>
-                                                                <div className="text-[10px] text-gray-500">{c.employer_name || "Ukendt producent"}</div>
+                                                                <button type="button" onClick={() => router.push(`/admin/kontrakter?edit=${c.id}`)} className="text-left">
+                                                                    <div className="font-semibold text-xs text-gray-900 hover:text-blue-600 hover:underline">{c.title}</div>
+                                                                    <div className="text-[10px] text-gray-500">{c.employer_name || "Ukendt producent"}</div>
+                                                                </button>
                                                             </TableCell>
                                                             <TableCell className="text-xs capitalize">{c.type}</TableCell>
                                                             <TableCell className="text-xs text-muted-foreground">{c.created_at ? new Date(c.created_at).toLocaleDateString("da-DK") : "—"}</TableCell>
@@ -682,14 +727,26 @@ export default function RettighedshavereAdminPage() {
                                                                 </Badge>
                                                             </TableCell>
                                                             <TableCell>
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="icon"
-                                                                    className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                                                    onClick={() => handleDeleteContract(c.id)}
-                                                                >
-                                                                    <Trash2 className="h-4 w-4" />
-                                                                </Button>
+                                                                <div className="flex items-center gap-1">
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                                                        title="Fjern tilknytning (behold kontrakt)"
+                                                                        onClick={() => handleUnlinkContract(c.id)}
+                                                                    >
+                                                                        <Link2Off className="h-4 w-4" />
+                                                                    </Button>
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                                        title="Slet kontrakt helt"
+                                                                        onClick={() => handleDeleteContract(c.id)}
+                                                                    >
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </div>
                                                             </TableCell>
                                                         </TableRow>
                                                     ))}
@@ -790,10 +847,12 @@ export default function RettighedshavereAdminPage() {
                                                         return (
                                                             <TableRow key={wa.id}>
                                                                 <TableCell>
-                                                                    <div className="font-semibold text-xs text-gray-900">{w.title}</div>
-                                                                    <div className="text-[10px] text-gray-500">
-                                                                        {w.director ? `Instruktør: ${w.director}` : ""} {w.year ? `(${w.year})` : ""}
-                                                                    </div>
+                                                                    <button type="button" onClick={() => router.push(`/admin/vaerker?edit=${w.id}`)} className="text-left">
+                                                                        <div className="font-semibold text-xs text-gray-900 hover:text-blue-600 hover:underline">{w.title}</div>
+                                                                        <div className="text-[10px] text-gray-500">
+                                                                            {w.director ? `Instruktør: ${w.director}` : ""} {w.year ? `(${w.year})` : ""}
+                                                                        </div>
+                                                                    </button>
                                                                 </TableCell>
                                                                 <TableCell className="text-xs capitalize">{w.type}</TableCell>
                                                                 <TableCell>

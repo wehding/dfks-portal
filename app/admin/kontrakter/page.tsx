@@ -284,6 +284,20 @@ function AdminKontrakterContent() {
     // Delete
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const validateAndNextRef = useRef<() => void>(() => undefined)
+    const editParamHandledRef = useRef(false)
+
+    // Deep-link: ?edit=<id> åbner Rediger kontrakt automatisk (fx fra rettighedshaver-siden)
+    useEffect(() => {
+        if (editParamHandledRef.current || contracts.length === 0) return
+        const editId = new URLSearchParams(window.location.search).get("edit")
+        if (!editId) return
+        const c = contracts.find(x => x.id === editId)
+        if (c) {
+            editParamHandledRef.current = true
+            openEdit(c)
+            window.history.replaceState(null, "", "/admin/kontrakter")
+        }
+    }, [contracts]) // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Load ──────────────────────────────────────────────────
 
@@ -1339,7 +1353,7 @@ function AdminKontrakterContent() {
                                                 {c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}
                                             </button>
                                             {unreadMemberComments > 0 && (
-                                                <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+                                                <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
                                                     {unreadMemberComments}
                                                 </Badge>

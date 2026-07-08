@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -404,7 +404,11 @@ function formatDiffValue(value: unknown) {
 }
 
 function comparableValue(value: unknown) {
-  return value === undefined || value === "" ? null : value;
+  // Normaliser til en sammenlignelig repræsentation, så uændrede felter (især arrays
+  // og tal-vs-streng) ikke fejlagtigt markeres som ændringer.
+  if (Array.isArray(value)) return JSON.stringify(value.map(v => String(v).trim()).filter(Boolean).sort());
+  if (value === undefined || value === "" || value === null) return null;
+  return typeof value === "number" ? String(value) : value;
 }
 
 function requestDiffRows(request: ChangeRequest) {
@@ -662,6 +666,9 @@ export default function VaerksadministrationPage() {
   const [editForm, setEditForm] = useState<WorkForm | null>(null);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [adminComment, setAdminComment] = useState("");
+  // Admin-redigering af antal afsnit + hvilke afsnit medlemmet krediteres på (ved serie-rettelse)
+  const [reviewEpisodeCount, setReviewEpisodeCount] = useState<string>("");
+  const [reviewEpisodes, setReviewEpisodes] = useState<number[]>([]);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [editingDeleteOpen, setEditingDeleteOpen] = useState(false);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
@@ -720,6 +727,29 @@ export default function VaerksadministrationPage() {
   useEffect(() => {
     load();
   }, []);
+
+  const editParamHandled = useRef(false);
+  // Deep-link: ?edit=<id> åbner Rediger værk automatisk (fx fra rettighedshaver-siden)
+  useEffect(() => {
+    if (editParamHandled.current || works.length === 0) return;
+    const editId = new URLSearchParams(window.location.search).get("edit");
+    if (!editId) return;
+    const work = works.find(w => w.id === editId);
+    if (work) {
+      editParamHandled.current = true;
+      openEdit(work);
+      window.history.replaceState(null, "", "/admin/vaerker");
+    }
+  }, [works]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Forudfyld antal afsnit + valgte afsnit fra den aktive rettelse (medlemmets myEpisodes)
+  useEffect(() => {
+    const req = (editing?.work_change_requests ?? []).find(r => r.id === activeRequestId);
+    const proposed = (req?.proposed_data ?? {}) as Record<string, unknown>;
+    const ec = proposed.episode_count ?? editing?.episode_count ?? "";
+    setReviewEpisodeCount(ec != null && ec !== "" ? String(ec) : "");
+    setReviewEpisodes(Array.isArray(proposed.myEpisodes) ? (proposed.myEpisodes as number[]) : []);
+  }, [activeRequestId, editing]);
 
   const broadcasterLogoMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -960,7 +990,13 @@ export default function VaerksadministrationPage() {
     const editingWorkId = editing?.id;
     setSaving(true);
     try {
-      await reviewWorkDataCorrection({ requestId: reviewedRequestId, decision, comment: adminComment });
+      await reviewWorkDataCorrection({
+        requestId: reviewedRequestId,
+        decision,
+        comment: adminComment,
+        episodeCountOverride: reviewEpisodeCount ? Number(reviewEpisodeCount) : null,
+        myEpisodesOverride: reviewEpisodes,
+      });
       setNotice(decision === "approved" ? "Rettelsen er godkendt." : "Rettelsen er afvist.");
       setAdminComment("");
       const res = await fetchAdminWorksForReview();
@@ -1614,11 +1650,6 @@ export default function VaerksadministrationPage() {
                               {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
                             </Badge>
                           )}
-                          {pendingCount > 0 && (
-                            <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                              Skal godkendes
-                            </Badge>
-                          )}
                         </div>
                         {(() => {
                           const msg = latestUnreadMemberMessage(work);
@@ -1749,6 +1780,34 @@ export default function VaerksadministrationPage() {
                           <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">
                             {requestDiffRows(activeRequest).length} feltændring{requestDiffRows(activeRequest).length === 1 ? "" : "er"} er markeret i Værksdata nedenfor.
                           </p>
+                        )}
+                        {activeRequest.status === "pending" && (isSeriesType(editForm?.type ?? "") || isSeriesType(String((activeRequest.proposed_data as Record<string, unknown>)?.type ?? ""))) && (
+                          <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                            <div className="flex items-center gap-2">
+                              <Label className="text-sm">Antal afsnit</Label>
+                              <Input type="number" min="1" className="h-8 w-24" value={reviewEpisodeCount} onChange={e => setReviewEpisodeCount(e.target.value)} />
+                            </div>
+                            {Number(reviewEpisodeCount) > 0 && (
+                              <div>
+                                <p className="mb-1 text-xs text-muted-foreground">Afsnit medlemmet er krediteret på (klik for at vælge til/fra):</p>
+                                <div className="grid grid-cols-6 gap-1.5 sm:grid-cols-10">
+                                  {Array.from({ length: Number(reviewEpisodeCount) }, (_, i) => i + 1).map(n => {
+                                    const on = reviewEpisodes.includes(n);
+                                    return (
+                                      <button
+                                        key={n}
+                                        type="button"
+                                        onClick={() => setReviewEpisodes(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n].sort((a, b) => a - b))}
+                                        className={`rounded border px-2 py-1 text-xs ${on ? "border-foreground bg-foreground text-background" : "hover:bg-muted"}`}
+                                      >
+                                        {n}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         )}
                         {summary.coEditors.length > 0 && (
                           <div className="space-y-2">
