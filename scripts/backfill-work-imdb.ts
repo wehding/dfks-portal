@@ -115,6 +115,15 @@ async function wikidataImdb(tmdbId: number, mediaType: string): Promise<string |
   }
 }
 
+async function wikidataImdbFallback(tmdbId: number, mediaType: string | null): Promise<string | null> {
+  if (mediaType) return wikidataImdb(tmdbId, mediaType);
+  for (const mt of ["movie", "tv"]) {
+    const imdb = await wikidataImdb(tmdbId, mt);
+    if (imdb) return imdb;
+  }
+  return null;
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function main() {
@@ -147,7 +156,7 @@ async function main() {
     let imdb: string | null = null;
     if (mediaType) imdb = await externalIds(tmdbId, mediaType);
     if (!imdb) imdb = await externalIds(tmdbId, mediaType === "tv" ? "movie" : "tv");
-    if (!imdb) imdb = await wikidataImdb(tmdbId, mediaType ?? "movie");
+    if (!imdb) imdb = await wikidataImdbFallback(tmdbId, mediaType);
 
     if (!imdb) { skipped++; await sleep(120); continue; }
 

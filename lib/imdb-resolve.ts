@@ -55,5 +55,10 @@ export async function resolveImdbId(params: {
   }
 
   // Fallback: Wikidata
-  return imdbFromWikidataByTmdb(tmdbId, mediaType ?? "movie");
+  if (mediaType) return imdbFromWikidataByTmdb(tmdbId, mediaType);
+  for (const mt of ["movie", "tv"]) {
+    const imdb = await imdbFromWikidataByTmdb(tmdbId, mt);
+    if (imdb) return imdb;
+  }
+  return null;
 }
