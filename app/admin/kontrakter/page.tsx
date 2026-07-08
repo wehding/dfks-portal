@@ -404,6 +404,79 @@ function AdminKontrakterContent() {
         load()
     }, [])
 
+    // ── Live AI-jobstatus ─────────────────────────────────────
+    // Så længe kontrakter er i kø/behandling, poll deres jobstatus og opdatér
+    // rækkerne uden manuel genindlæsning. Når et job bliver "done", hentes de
+    // opdaterede visningsfelter (titel, arbejdsgiver, valideringsflag) med.
+    const pendingJobKey = contracts
+        .filter(c => c.ai_job_status === "queued" || c.ai_job_status === "processing")
+        .map(c => c.id)
+        .join(",")
+    useEffect(() => {
+        const ids = pendingJobKey.split(",").filter(Boolean)
+        if (!orgId || ids.length === 0) return
+        let cancelled = false
+        const supabase = createClient()
+
+        const poll = async () => {
+            const { data: jobRows } = await supabase
+                .from("contract_ai_jobs")
+                .select("contract_id, status, error_message, created_at")
+                .in("contract_id", ids)
+                .order("created_at", { ascending: false })
+            if (cancelled || !jobRows) return
+
+            const latest: Record<string, { status: string; error_message: string | null }> = {}
+            for (const j of jobRows as Array<{ contract_id: string; status: string; error_message: string | null }>) {
+                if (!latest[j.contract_id]) latest[j.contract_id] = { status: j.status, error_message: j.error_message }
+            }
+
+            // Kontrakter der lige er blevet færdige — hent opdaterede visningsfelter
+            const doneIds = ids.filter(id => latest[id]?.status === "done")
+            const refreshed: Record<string, Partial<ContractRow>> = {}
+            if (doneIds.length > 0) {
+                const { data: rows } = await supabase
+                    .from("contracts")
+                    .select(`
+                        id, type, overenskomst, status, employer_id, rights_holder_id, working_title,
+                        employers (name), rettighedshavere (full_name), works (id, title, poster_url),
+                        contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+                    `)
+                    .in("id", doneIds)
+                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
+                    const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
+                    refreshed[r.id] = {
+                        type: r.type,
+                        overenskomst: r.overenskomst,
+                        status: r.status,
+                        employer_id: r.employer_id ?? null,
+                        employer_name: r.employers?.name ?? null,
+                        rights_holder_id: r.rights_holder_id ?? null,
+                        rights_holder_name: r.rettighedshavere?.full_name ?? null,
+                        work_id: r.works?.id ?? null,
+                        working_title: r.working_title ?? null,
+                        work_title: r.works?.title ?? null,
+                        work_poster_url: r.works?.poster_url ?? null,
+                        validation_data: validation?.extracted_data ?? null,
+                        validation_has_credit_clause: validation?.has_credit_clause ?? null,
+                        validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+                    }
+                }
+            }
+            if (cancelled) return
+            setContracts(prev => prev.map(c => {
+                const l = latest[c.id]
+                if (!l) return c
+                return { ...c, ...(refreshed[c.id] ?? {}), ai_job_status: l.status, ai_job_error: l.error_message }
+            }))
+        }
+
+        void poll()
+        const interval = setInterval(() => void poll(), 4000)
+        return () => { cancelled = true; clearInterval(interval) }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgId, pendingJobKey])
+
     // ── Signed URL for PDF ────────────────────────────────────
 
     const openPdf = async (contract: ContractRow) => {
