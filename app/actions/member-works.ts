@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
+import { resolveImdbId } from "@/lib/imdb-resolve";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
@@ -14,6 +15,7 @@ const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
 type MemberWorkData = {
   dfi_id?: string | null;
   tmdb_id?: number | null;
+  imdb_id?: string | null;
   title: string;
   type: string;
   year: number | null;
@@ -209,6 +211,7 @@ export async function addWorkForMember(params: {
   workData: {
     dfi_id?: string;
     tmdb_id?: number;
+    imdb_id?: string | null;
     title: string;
     type: string;
     year: number | null;
@@ -228,25 +231,30 @@ export async function addWorkForMember(params: {
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
   let existingTmdbId: number | null = null;
+  let existingImdbId: string | null = null;
   if (params.workData.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("dfi_id", params.workData.dfi_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id, imdb_id").eq("dfi_id", params.workData.dfi_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
       existingTmdbId = data.tmdb_id;
+      existingImdbId = data.imdb_id;
     }
   }
   if (!workId && params.workData.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url, tmdb_id").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url, tmdb_id, imdb_id").eq("tmdb_id", params.workData.tmdb_id).maybeSingle();
     if (data) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
       existingTmdbId = data.tmdb_id;
+      existingImdbId = data.imdb_id;
     }
   }
 
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? existingTmdbId ?? null;
+  let tmdbMediaType: string | null = params.workData.type === "tv-serie" || params.workData.type === "dokumentar-serie" ? "tv" : null;
+  let imdbId = params.workData.imdb_id ?? existingImdbId ?? null;
   let dfiMetadata: DfiMetadata | null = null;
 
   if (params.workData.dfi_id) {
@@ -266,6 +274,7 @@ export async function addWorkForMember(params: {
     try {
       const match = await findTMDBMatch(params.workData.title, params.workData.year);
       if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.media_type) tmdbMediaType = match.media_type;
       if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
     } catch (e) {
       console.error("DFI import TMDB match lookup error:", e);
@@ -274,6 +283,15 @@ export async function addWorkForMember(params: {
 
   if (!posterUrl) {
     posterUrl = await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  }
+
+  // Udfyld imdb_id hvis muligt (TMDB /external_ids, ellers Wikidata) — stille fejl
+  if (!imdbId && tmdbId) {
+    try {
+      imdbId = await resolveImdbId({ tmdbId, mediaType: tmdbMediaType });
+    } catch (e) {
+      console.error("imdb_id resolve error (add):", e);
+    }
   }
 
   // Opret nyt værk hvis ikke fundet
@@ -286,6 +304,7 @@ export async function addWorkForMember(params: {
         ...params.workData,
         poster_url: posterUrl,
         tmdb_id: tmdbId,
+        imdb_id: imdbId,
         dfi_metadata: dfiMetadata,
       })
       .select("id")
@@ -297,6 +316,7 @@ export async function addWorkForMember(params: {
     const updates: Partial<MemberWorkData> = {};
     if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
     if (!existingTmdbId && tmdbId) updates.tmdb_id = tmdbId;
+    if (!existingImdbId && imdbId) updates.imdb_id = imdbId;
     if (dfiMetadata) updates.dfi_metadata = dfiMetadata;
     if (Object.keys(updates).length > 0) {
       await db.from("works").update(updates).eq("id", workId);
@@ -544,6 +564,8 @@ export async function addWorkForMemberWithApproval(params: {
   let dfiMetadata = params.workData.dfi_metadata ?? null;
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? null;
+  let tmdbMediaType: string | null = params.workData.type === "tv-serie" || params.workData.type === "dokumentar-serie" ? "tv" : null;
+  let imdbId = params.workData.imdb_id ?? null;
 
   if (params.workData.dfi_id && !dfiMetadata) {
     try {
@@ -561,9 +583,19 @@ export async function addWorkForMemberWithApproval(params: {
     try {
       const match = await findTMDBMatch(params.workData.title, params.workData.year);
       if (match.tmdb_id) tmdbId = match.tmdb_id;
+      if (match.media_type) tmdbMediaType = match.media_type;
       if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
     } catch (error) {
       console.error("DFI TMDB match lookup error in addWorkForMemberWithApproval:", error);
+    }
+  }
+
+  // Udfyld imdb_id hvis muligt (TMDB /external_ids, ellers Wikidata) — stille fejl
+  if (!imdbId && tmdbId) {
+    try {
+      imdbId = await resolveImdbId({ tmdbId, mediaType: tmdbMediaType });
+    } catch (e) {
+      console.error("imdb_id resolve error (approval):", e);
     }
   }
 
@@ -571,6 +603,7 @@ export async function addWorkForMemberWithApproval(params: {
   const enrichedWorkData = {
     ...params.workData,
     tmdb_id: tmdbId,
+    imdb_id: imdbId,
     poster_url: posterUrl,
     dfi_metadata: dfiMetadata,
   };
@@ -610,6 +643,7 @@ export async function addWorkForMemberWithApproval(params: {
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
         tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        imdb_id: enrichedWorkData.imdb_id ?? null,
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
@@ -702,6 +736,7 @@ export async function addWorkForMemberWithApproval(params: {
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
         tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        imdb_id: enrichedWorkData.imdb_id ?? null,
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 

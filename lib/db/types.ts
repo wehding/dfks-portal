@@ -248,6 +248,7 @@ export interface DbWork {
     status: string
     dfi_id: string | null
     tmdb_id: number | null
+    imdb_id: string | null
     description: string | null
     poster_url: string | null
     dfi_metadata: Record<string, unknown> | null

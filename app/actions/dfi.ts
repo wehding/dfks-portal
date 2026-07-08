@@ -4,7 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits } from "@/app/actions/tmdb";
+import { resolveImdbId } from "@/lib/imdb-resolve";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import type { DbWork } from "@/lib/db/types";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -21,11 +23,29 @@ type DfiCredit = {
   Description?: string | null;
   Type?: string | null;
   Category?: string | null;
+  Parent?: { Id?: number | string | null } | null;
 };
 
 type DfiSearchScore = {
   film: DfiCredit;
   score: number;
+};
+
+type TmdbCrewCredit = {
+  id?: number | null;
+  title?: string | null;
+  name?: string | null;
+  release_date?: string | null;
+  first_air_date?: string | null;
+  job?: string | null;
+  media_type?: string | null;
+  poster_path?: string | null;
+  overview?: string | null;
+};
+
+type LocalCreditValue = {
+  work: DbWork;
+  role: string | null;
 };
 
 function normalizeTitle(title: string) {
@@ -86,7 +106,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
   if (filmId) {
     const { data } = await db
       .from("works")
-      .select("id, title, year, poster_url, tmdb_id, dfi_metadata")
+      .select("id, title, year, poster_url, tmdb_id, imdb_id, dfi_metadata")
       .eq("org_id", orgId)
       .eq("dfi_id", filmId)
       .maybeSingle();
@@ -99,7 +119,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
 
   const { data } = await db
     .from("works")
-    .select("id, title, year, poster_url, tmdb_id, dfi_metadata")
+    .select("id, title, year, poster_url, tmdb_id, imdb_id, dfi_metadata")
     .eq("org_id", orgId)
     .eq("year", year)
     .limit(50);
@@ -393,13 +413,17 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
 
     let posterUrl = await downloadDfiPosterDataUrl(film) ?? extractDfiPosterUrl(film);
 
-    // Slå plakat og tmdb_id op i TMDB (stille fejl)
+    // Slå plakat, tmdb_id og imdb_id op i TMDB (stille fejl)
     let tmdbId: number | null = null;
+    let imdbId: string | null = null;
     try {
       const match = await findTMDBMatch(filmTitle, prodYear);
       tmdbId = match.tmdb_id;
       if (!posterUrl) posterUrl = match.poster_url;
-    } catch { /* tmdbId/posterUrl forbliver som de er */ }
+      if (tmdbId) {
+        imdbId = await resolveImdbId({ tmdbId, mediaType: match.media_type ?? null });
+      }
+    } catch { /* tmdbId/posterUrl/imdbId forbliver som de er */ }
 
     try {
       const existing = await findExistingWorkForDfiCredit(db, { ...credit, Title: filmTitle, ProductionYear: prodYear }, orgId);
@@ -415,6 +439,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         director: extractDfiDirectors(film).join(", ") || null,
         poster_url: posterUrl,
         tmdb_id: tmdbId,
+        imdb_id: imdbId,
         dfi_metadata: film,
         dfi_title: typeof film.Title === "string" ? film.Title : null,
         dfi_danish_title: typeof film.DanishTitle === "string" ? film.DanishTitle : null,
@@ -443,6 +468,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         const updates: Record<string, unknown> = {};
         if (!existing.poster_url && posterUrl) updates.poster_url = posterUrl;
         if (!existing.tmdb_id && tmdbId) updates.tmdb_id = tmdbId;
+        if (!existing.imdb_id && imdbId) updates.imdb_id = imdbId;
         updates.dfi_metadata = film;
         if (Object.keys(updates).length > 0) {
           await db.from("works").update(updates).eq("id", workId);
@@ -493,7 +519,7 @@ export type OnboardingCredit = {
   role: string;
   category: string;
   source: "lokal" | "dfi" | "tmdb";
-  raw: any;
+  raw: unknown;
 };
 
 function isRightBearingRole(role: string | null | undefined): boolean {
@@ -523,7 +549,7 @@ function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYea
   return true;
 }
 
-function isDfiSeriesParent(c: any): boolean {
+function isDfiSeriesParent(c: DfiCredit): boolean {
   const category = String(c.Category || "").toLowerCase();
   const type = String(c.Type || "").toLowerCase();
   const isSeries = category.includes("serie") || type.includes("serie");
@@ -556,8 +582,8 @@ export async function searchOnboardingCredits(
   let dfiPersonId: number | null = null;
   let tmdbPersonId: number | null = null;
   
-  const rawDfiCredits: any[] = [];
-  const rawTmdbCredits: any[] = [];
+  const rawDfiCredits: DfiCredit[] = [];
+  const rawTmdbCredits: TmdbCrewCredit[] = [];
 
   // 1. Hent rådata fra DFI
   try {
@@ -567,10 +593,11 @@ export async function searchOnboardingCredits(
       dfiPersonId = p.Id;
       const dfiCreditsRes = await getDFIPersonCredits(p.Id);
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
-        const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
+        const credits = dfiCreditsRes.credits as DfiCredit[];
+        const uniqueDfi = credits.filter((c, i, arr) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
-          .filter((c: any) => isRightBearingRole(c.Description || c.Type))
-          .filter((c: any) => !isDfiSeriesParent(c));
+          .filter(c => isRightBearingRole(c.Description || c.Type))
+          .filter(c => !isDfiSeriesParent(c));
         rawDfiCredits.push(...filteredDfi);
       }
     }
@@ -586,7 +613,7 @@ export async function searchOnboardingCredits(
       tmdbPersonId = p.id;
       const tmdbCreditsRes = await getTMDBPersonCombinedCredits(p.id);
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
-        const tmdbCrew = tmdbCreditsRes.crew as any[];
+        const tmdbCrew = tmdbCreditsRes.crew as TmdbCrewCredit[];
         const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
         const filteredTmdb = editors.filter(c => isRightBearingRole(c.job));
         rawTmdbCredits.push(...filteredTmdb);
@@ -597,7 +624,7 @@ export async function searchOnboardingCredits(
   }
 
   // 3. Tjek den lokale database (works og work_assignments)
-  const localWorksMap = new Map<string, any>();
+  const localWorksMap = new Map<string, LocalCreditValue>();
   const localDfiIds = new Set<string>();
   const localTmdbIds = new Set<number>();
 
@@ -620,7 +647,8 @@ export async function searchOnboardingCredits(
           .eq("rights_holder_id", rightsHolderId);
         
         if (myAssignments) {
-          myAssignments.forEach((a: any) => {
+          type AssignmentWithWork = { role: string | null; works: DbWork | null };
+          (myAssignments as unknown as AssignmentWithWork[]).forEach(a => {
             const w = a.works;
             if (w && isRightBearingRole(a.role)) {
               localWorksMap.set(w.id, { work: w, role: a.role });
@@ -644,7 +672,7 @@ export async function searchOnboardingCredits(
         .select("*")
         .in("dfi_id", searchDfiIds);
       if (matchedDfiWorks) {
-        matchedDfiWorks.forEach((w: any) => {
+        (matchedDfiWorks as DbWork[]).forEach(w => {
           if (!localWorksMap.has(w.id)) {
             const rawCredit = rawDfiCredits.find(c => String(c.Id) === String(w.dfi_id));
             localWorksMap.set(w.id, { work: w, role: rawCredit?.Description || rawCredit?.Type || "Klipper" });
@@ -666,7 +694,7 @@ export async function searchOnboardingCredits(
         .select("*")
         .in("tmdb_id", searchTmdbIds);
       if (matchedTmdbWorks) {
-        matchedTmdbWorks.forEach((w: any) => {
+        (matchedTmdbWorks as DbWork[]).forEach(w => {
           if (!localWorksMap.has(w.id)) {
             const rawCredit = rawTmdbCredits.find(c => Number(c.id) === Number(w.tmdb_id));
             localWorksMap.set(w.id, { work: w, role: rawCredit?.job || "Klipper" });
@@ -686,7 +714,7 @@ export async function searchOnboardingCredits(
   const tmdbCredits: OnboardingCredit[] = [];
 
   // A. Fyld Local listen
-  localWorksMap.forEach((val, workId) => {
+  localWorksMap.forEach(val => {
     const w = val.work;
     localCredits.push({
       id: `local-${w.id}`,
@@ -700,7 +728,7 @@ export async function searchOnboardingCredits(
   });
 
   // B. Fyld DFI listen med udestående DFI titler
-  rawDfiCredits.forEach((c: any) => {
+  rawDfiCredits.forEach(c => {
     const title = c.Title || c.DanishTitle || "Ukendt";
     const year = extractDfiPremiereYear(c) || null;
     const dfiId = String(c.Id);
@@ -720,7 +748,7 @@ export async function searchOnboardingCredits(
   });
 
   // C. Fyld TMDB listen med udestående TMDB titler
-  rawTmdbCredits.forEach((c: any) => {
+  rawTmdbCredits.forEach(c => {
     const title = c.title || c.name || "Ukendt";
     const releaseDate = c.release_date || c.first_air_date || "";
     const year = Number.parseInt(releaseDate.substring(0, 4), 10) || null;
@@ -825,16 +853,22 @@ export async function importApprovedOnboardingWorks(
 
   // 3. Importer TMDB credits
   for (const credit of tmdbCredits) {
-    const tmdbId = credit.raw.id;
+    const raw = credit.raw as TmdbCrewCredit;
+    const tmdbId = raw.id;
     const title = credit.title;
     const year = credit.year;
     const type = credit.category === "TV-serie" ? "serie" : "film";
-    const posterUrl = credit.raw.poster_path ? `https://image.tmdb.org/t/p/w185${credit.raw.poster_path}` : null;
+    const posterUrl = raw.poster_path ? `https://image.tmdb.org/t/p/w185${raw.poster_path}` : null;
+    let imdbId: string | null = null;
 
     try {
+      if (typeof tmdbId === "number") {
+        imdbId = await resolveImdbId({ tmdbId, mediaType: raw.media_type ?? (type === "serie" ? "tv" : "movie") });
+      }
+
       const { data: existing } = await db
         .from("works")
-        .select("id")
+        .select("id, imdb_id")
         .eq("org_id", orgId)
         .eq("tmdb_id", tmdbId)
         .maybeSingle();
@@ -849,9 +883,10 @@ export async function importApprovedOnboardingWorks(
             type,
             year,
             org_id: orgId,
-            description: credit.raw.overview || null,
+            description: raw.overview || null,
             poster_url: posterUrl,
             tmdb_id: tmdbId,
+            imdb_id: imdbId,
             status: "godkendt",
           })
           .select("id")
@@ -864,6 +899,9 @@ export async function importApprovedOnboardingWorks(
         workId = newWork.id;
         importedCount++;
       } else {
+        if (!existing?.imdb_id && imdbId) {
+          await db.from("works").update({ imdb_id: imdbId }).eq("id", workId);
+        }
         linkedExistingCount++;
       }
 

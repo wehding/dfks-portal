@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Film, Plus, Search, X, RefreshCw, Trash2 } from "lucide-react";
+import { Film, Plus, Search, X, RefreshCw, Trash2, ChevronRight, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -28,6 +28,7 @@ type Work = {
   year: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
   season_number?: number | null;
   episode_number?: number | null;
   genre: string | null;
@@ -93,6 +94,11 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
   };
   const type = canonical[key] ?? null;
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
+}
+
+function isSeriesType(t: string | null | undefined) {
+  const label = typeLabel(t ?? "", "da");
+  return label === "TV-serie" || label === "Dokumentarserie";
 }
 
 function displayRole(role: string | null | undefined) {
@@ -191,6 +197,32 @@ export default function MineVaerkerClient({
   const [pageSize, setPageSize] = useState(20);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
 
+  // Foldbar serie → sæson → afsnit
+  type EpisodeChild = { id: string; title: string; season_number: number | null; episode_number: number | null; poster_url: string | null };
+  const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, EpisodeChild[]>>({});
+  const [loadingSeries, setLoadingSeries] = useState<Set<string>>(new Set());
+
+  const toggleSeries = async (workId: string) => {
+    setExpandedSeries(prev => {
+      const next = new Set(prev);
+      if (next.has(workId)) next.delete(workId); else next.add(workId);
+      return next;
+    });
+    // Lazy-hent afsnit første gang serien foldes ud
+    if (!seriesEpisodes[workId] && !loadingSeries.has(workId)) {
+      setLoadingSeries(prev => new Set(prev).add(workId));
+      const { data } = await supabase
+        .from("works")
+        .select("id, title, season_number, episode_number, poster_url")
+        .eq("parent_work_id", workId)
+        .order("season_number", { ascending: true })
+        .order("episode_number", { ascending: true });
+      setSeriesEpisodes(prev => ({ ...prev, [workId]: (data ?? []) as EpisodeChild[] }));
+      setLoadingSeries(prev => { const next = new Set(prev); next.delete(workId); return next; });
+    }
+  };
+
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
   const [wizardOpen, setWizardOpen]         = useState(false);
@@ -274,7 +306,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -505,6 +537,13 @@ export default function MineVaerkerClient({
           const pendingLabel = pendingRequestLabel(w);
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
+          // Serie-parent = serie-type der ikke selv er et afsnit (ingen parent, intet afsnitsnummer)
+          const isSeriesParent = isSeriesType(w.type)
+            && (w.parent_work_id === undefined || w.parent_work_id === null)
+            && (w.episode_number === undefined || w.episode_number === null);
+          const isExpanded = expandedSeries.has(w.id);
+          const children = seriesEpisodes[w.id] ?? [];
+          const isLoadingChildren = loadingSeries.has(w.id);
           return (
             <React.Fragment key={a.id}>
             <div
@@ -518,6 +557,17 @@ export default function MineVaerkerClient({
 
               {/* Poster + titel */}
               <div className="flex items-center gap-3">
+                {isSeriesParent ? (
+                  <button
+                    onClick={e => { e.stopPropagation(); void toggleSeries(w.id); }}
+                    className="shrink-0 text-gray-400 hover:text-gray-700"
+                    aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                  >
+                    {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </button>
+                ) : (
+                  <span className="w-4 shrink-0" />
+                )}
                 <div className="w-8 shrink-0 flex items-center justify-center">
                   {posterSrc ? (
                     <div className="w-8 h-11 rounded overflow-hidden shrink-0">
@@ -665,6 +715,30 @@ export default function MineVaerkerClient({
                 </div>
               </div>
             </div>
+
+            {/* Udfoldede afsnit (sæson → afsnit) */}
+            {isSeriesParent && isExpanded && (
+              <div className="border-b border-gray-100 bg-gray-50/60">
+                {isLoadingChildren ? (
+                  <div className="px-14 py-3 text-xs text-gray-400">Henter afsnit…</div>
+                ) : children.length === 0 ? (
+                  <div className="px-14 py-3 text-xs text-gray-400">Ingen registrerede afsnit</div>
+                ) : (
+                  children.map(ep => (
+                    <div key={ep.id} className="flex items-center gap-2 px-14 py-2 text-sm text-gray-600 border-t border-gray-100 first:border-t-0">
+                      <span className="inline-flex items-center rounded bg-white border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700 font-mono">
+                        {ep.season_number != null && ep.episode_number != null
+                          ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
+                          : ep.episode_number != null
+                            ? `E${String(ep.episode_number).padStart(2, "0")}`
+                            : "–"}
+                      </span>
+                      <span className="truncate">{ep.title}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
             </React.Fragment>
           );
         })}

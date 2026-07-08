@@ -1,7 +1,7 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
+import { getTMDBSeasonEpisodes, getTMDBEpisodeExternalIds } from "@/app/actions/tmdb";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
@@ -22,6 +22,7 @@ type EpisodeInsert = {
   status: string;
   dfi_id?: string | null;
   tmdb_id?: number | null;
+  imdb_id?: string | null;
   dfi_metadata?: unknown;
 };
 
@@ -107,6 +108,16 @@ export async function generateEpisodesForSeries(params: {
             dfi_id: parentWork.dfi_id,
           });
         }
+
+        // Berig hvert afsnit med sit eget imdb_id (afsnit har eget IMDb-id,
+        // forskelligt fra seriens) — gratis via TMDB episode-/external_ids.
+        const tvId = parentWork.tmdb_id;
+        await Promise.all(
+          episodesToInsert.map(async (ep) => {
+            const ext = await getTMDBEpisodeExternalIds(tvId, seasonNumber, ep.episode_number);
+            ep.imdb_id = ext.imdb_id;
+          })
+        );
       }
     } catch (e) {
       console.error("TMDB afsnit hentning fejlede:", e);

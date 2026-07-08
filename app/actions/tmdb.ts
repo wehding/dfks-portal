@@ -166,17 +166,18 @@ export async function findTMDBMatch(title: string, year?: number | null) {
       tmdbFetch(`/search/tv?query=${encodedTitle}${tvYear}&language=da-DK`).catch(() => null),
     ]);
 
-    const results: TMDBSearchItem[] = [];
+    // Behold media_type pr. resultat, så vi bagefter kan slå de rigtige external_ids op
+    const results: (TMDBSearchItem & { media_type: "movie" | "tv" })[] = [];
     if (movieRes?.ok) {
       const data = await movieRes.json() as TMDBSearchResponse;
-      results.push(...(data.results ?? []));
+      results.push(...(data.results ?? []).map(r => ({ ...r, media_type: "movie" as const })));
     }
     if (tvRes?.ok) {
       const data = await tvRes.json() as TMDBSearchResponse;
-      results.push(...(data.results ?? []));
+      results.push(...(data.results ?? []).map(r => ({ ...r, media_type: "tv" as const })));
     }
 
-    if (!results.length) return { poster_url: null, tmdb_id: null };
+    if (!results.length) return { poster_url: null, tmdb_id: null, media_type: null };
 
     // Find et match baseret på år
     let match = results[0];
@@ -192,12 +193,56 @@ export async function findTMDBMatch(title: string, year?: number | null) {
     return {
       poster_url: match.poster_path ? `${TMDB_IMG_W185}${match.poster_path}` : null,
       tmdb_id: match.id ?? null,
+      media_type: match.media_type,
     };
   } catch (err) {
     console.error("TMDB match lookup error:", err);
-    return { poster_url: null, tmdb_id: null };
+    return { poster_url: null, tmdb_id: null, media_type: null };
   }
 }
+
+// Hent eksterne id'er (bl.a. imdb_id) for et TMDB-værk. Gratis via TMDB — undgår
+// IMDb's egne datasæt, der kun må bruges ikke-kommercielt.
+export async function getTMDBExternalIds(tmdbId: number, mediaType: string): Promise<{ imdb_id: string | null }> {
+  if (!process.env.TMDB_API_KEY) return { imdb_id: null };
+  const type = mediaType === "tv" ? "tv" : "movie";
+  try {
+    const res = await tmdbFetch(`/${type}/${tmdbId}/external_ids`);
+    if (!res.ok) return { imdb_id: null };
+    const data = await res.json();
+    return { imdb_id: typeof data.imdb_id === "string" && data.imdb_id ? data.imdb_id : null };
+  } catch (err) {
+    console.error("TMDB external ids error:", err);
+    return { imdb_id: null };
+  }
+}
+
+// Hent imdb_id for et konkret afsnit i en TV-serie. Afsnit har deres eget IMDb-id,
+// forskelligt fra seriens. Gratis via TMDB.
+export async function getTMDBEpisodeExternalIds(
+  tvId: number,
+  seasonNumber: number,
+  episodeNumber: number
+): Promise<{ imdb_id: string | null }> {
+  if (!process.env.TMDB_API_KEY) return { imdb_id: null };
+  try {
+    const res = await tmdbFetch(`/tv/${tvId}/season/${seasonNumber}/episode/${episodeNumber}/external_ids`);
+    if (!res.ok) return { imdb_id: null };
+    const data = await res.json();
+    return { imdb_id: typeof data.imdb_id === "string" && data.imdb_id ? data.imdb_id : null };
+  } catch (err) {
+    console.error("TMDB episode external ids error:", err);
+    return { imdb_id: null };
+  }
+}
+
+export type TMDBSeasonEpisode = {
+  episode_number: number;
+  name?: string | null;
+  air_date?: string | null;
+  runtime?: number | null;
+  overview?: string | null;
+};
 
 export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number) {
   try {
@@ -206,10 +251,10 @@ export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number
       const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`);
       if (!resEn.ok) throw new Error(`TMDB returned status ${resEn.status}`);
       const data = await resEn.json();
-      return { success: true, episodes: (data.episodes || []) as any[] };
+      return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
     }
     const data = await res.json();
-    return { success: true, episodes: (data.episodes || []) as any[] };
+    return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
   } catch (err: unknown) {
     console.error("TMDB season episodes error:", err);
     return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] };
