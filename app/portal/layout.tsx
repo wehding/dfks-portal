@@ -18,7 +18,6 @@ import {
     BarChart3,
     Database,
     ScrollText,
-    Award,
     Users2,
     Receipt,
     Scale,
@@ -60,7 +59,6 @@ const ALL_ADMIN_NAV_ITEMS = [
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "stamdata",           href: "/admin/stamdata",           icon: Database,    labelKey: "nav.masterData"       },
     { key: "gennemsigtighed",    href: "/admin/gennemsigtighed",    icon: ScrollText,  labelKey: "nav.transparency"     },
-    { key: "krediteringer",      href: "/admin/krediteringer",      icon: Award,       labelKey: "nav.credits"          },
     { key: "indbetalinger",      href: "/admin/indbetalinger",      icon: Receipt,     labelKey: "nav.producerPayments" },
     { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
 ]

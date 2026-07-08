@@ -6,6 +6,50 @@ import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
 
+type EpisodeInsert = {
+  org_id: string;
+  parent_work_id: string;
+  season_number: number;
+  episode_number: number;
+  title: string;
+  type: string;
+  year: number | null;
+  duration_minutes: number | null;
+  genre: string | null;
+  director: string | null;
+  description: string | null;
+  poster_url: string | null;
+  status: string;
+  dfi_id?: string | null;
+  tmdb_id?: number | null;
+  dfi_metadata?: unknown;
+};
+
+type DfiChildMetadata = Record<string, unknown> & {
+  Id?: number | string | null;
+  Title?: string | null;
+  Category?: string | null;
+  Duration?: number | string | null;
+  Synopsis?: string | null;
+  ShortSynopsis?: string | null;
+};
+
+type DfiEpisodeRow = {
+  child: DfiChildMetadata;
+  info: ReturnType<typeof parseDfiEpisodeTitleInfo>;
+  episodeNumber: number;
+};
+
+function asDfiChild(value: unknown): DfiChildMetadata | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as DfiChildMetadata
+    : null;
+}
+
+function textOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export async function generateEpisodesForSeries(params: {
   parentWork: DbWork;
   seasonNumber: number;
@@ -30,7 +74,7 @@ export async function generateEpisodesForSeries(params: {
     return { success: true, count: existingEpisodes.length, existing: true };
   }
 
-  const episodesToInsert: any[] = [];
+  const episodesToInsert: EpisodeInsert[] = [];
   const sStr = String(seasonNumber).padStart(2, "0");
 
   // 2. Forsøg at hente afsnitsdata fra TMDB, hvis tmdb_id findes
@@ -71,25 +115,36 @@ export async function generateEpisodesForSeries(params: {
 
   // 3. Forsøg at hente afsnitsdata fra DFI Children, hvis TMDB fejlede eller ikke findes
   if (episodesToInsert.length === 0 && parentWork.dfi_metadata) {
-    const metadata = parentWork.dfi_metadata as any;
-    const children = Array.isArray(metadata.Children) ? metadata.Children : [];
+    const metadata = typeof parentWork.dfi_metadata === "object" && parentWork.dfi_metadata !== null
+      ? parentWork.dfi_metadata as Record<string, unknown>
+      : {};
+    const children = Array.isArray(metadata.Children)
+      ? metadata.Children.map(asDfiChild).filter((child): child is DfiChildMetadata => child !== null)
+      : [];
 
-    // Tjek om DFI children repræsenterer direkte afsnit (indeholder f.eks. "1:6")
-    const isEpisodeChildren = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
+    const childEpisodeRows = children
+      .map((child, index) => {
+        const info = parseDfiEpisodeTitleInfo(child.Title);
+        const episodeNumber = info?.episodeNumber ?? index + 1;
+        if (!Number.isFinite(episodeNumber) || episodeNumber < 1) return null;
+        return { child, info, episodeNumber };
+      })
+      .filter((row): row is DfiEpisodeRow => row !== null);
 
-    if (isEpisodeChildren) {
+    if (childEpisodeRows.length > 0) {
       // Hent detaljer for alle børn i parallel for at berige deres data
-      const childDetailsMap = new Map<number, any>();
+      const childDetailsMap = new Map<number, DfiChildMetadata>();
       try {
-        const promises = children.map(async (c: any) => {
-          if (!c.Id) return;
+        const promises = childEpisodeRows.map(async ({ child }) => {
+          if (!child.Id) return;
           try {
-            const det = await getDFIFilmDetails(Number(c.Id));
+            const det = await getDFIFilmDetails(Number(child.Id));
             if (det.success && det.film) {
-              childDetailsMap.set(Number(c.Id), det.film);
+              const film = asDfiChild(det.film);
+              if (film) childDetailsMap.set(Number(child.Id), film);
             }
           } catch (e) {
-            console.error(`Kunne ikke hente DFI detaljer for barn ${c.Id}:`, e);
+            console.error(`Kunne ikke hente DFI detaljer for barn ${child.Id}:`, e);
           }
         });
         await Promise.all(promises);
@@ -97,38 +152,37 @@ export async function generateEpisodesForSeries(params: {
         console.error("Fejl ved parallel DFI-børnehentning:", err);
       }
 
-      for (const child of children) {
-        const info = parseDfiEpisodeTitleInfo(child.Title);
-        if (info) {
-          const eStr = String(info.episodeNumber).padStart(2, "0");
-          const title = info.subtitle 
-            ? `${parentWork.title} - S${sStr}E${eStr}: ${info.subtitle}` 
-            : `${parentWork.title} - S${sStr}E${eStr}`;
+      for (const { child, info, episodeNumber } of childEpisodeRows) {
+        const eStr = String(episodeNumber).padStart(2, "0");
+        const fullChild = childDetailsMap.get(Number(child.Id)) || child;
+        const childTitle = textOrNull(fullChild.Title) || textOrNull(child.Title) || "";
+        const subtitle = info?.subtitle || childTitle;
+        const title = subtitle
+          ? `${parentWork.title} - S${sStr}E${eStr}: ${subtitle}`
+          : `${parentWork.title} - S${sStr}E${eStr}`;
 
-          const fullChild = childDetailsMap.get(Number(child.Id)) || child;
-          const director = extractDfiDirectors(fullChild).join(", ") || parentWork.director;
-          const year = extractDfiPremiereYear(fullChild) || parentWork.year;
-          const description = fullChild.Synopsis || fullChild.ShortSynopsis || parentWork.description;
-          const duration = fullChild.Duration ? Number(fullChild.Duration) : parentWork.duration_minutes;
+        const director = extractDfiDirectors(fullChild).join(", ") || parentWork.director;
+        const year = extractDfiPremiereYear(fullChild) || parentWork.year;
+        const description = textOrNull(fullChild.Synopsis) || textOrNull(fullChild.ShortSynopsis) || parentWork.description;
+        const duration = fullChild.Duration ? Number(fullChild.Duration) : parentWork.duration_minutes;
 
-          episodesToInsert.push({
-            org_id: parentWork.org_id,
-            parent_work_id: parentWork.id,
-            season_number: seasonNumber,
-            episode_number: info.episodeNumber,
-            title,
-            type: parentWork.type,
-            year,
-            duration_minutes: duration,
-            genre: fullChild.Category || parentWork.genre,
-            director,
-            description,
-            poster_url: extractDfiPosterUrl(fullChild) || parentWork.poster_url,
-            status: parentWork.status,
-            dfi_id: child.Id ? String(child.Id) : null,
-            dfi_metadata: fullChild,
-          });
-        }
+        episodesToInsert.push({
+          org_id: parentWork.org_id,
+          parent_work_id: parentWork.id,
+          season_number: seasonNumber,
+          episode_number: episodeNumber,
+          title,
+          type: parentWork.type,
+          year,
+          duration_minutes: duration,
+          genre: textOrNull(fullChild.Category) || parentWork.genre,
+          director,
+          description,
+          poster_url: extractDfiPosterUrl(fullChild) || parentWork.poster_url,
+          status: parentWork.status,
+          dfi_id: child.Id ? String(child.Id) : null,
+          dfi_metadata: fullChild,
+        });
       }
     }
   }
@@ -166,7 +220,7 @@ export async function generateEpisodesForSeries(params: {
   }
 
   // Opdater parent_work.episode_count og season_count, hvis de er ændret
-  const updates: any = {};
+  const updates: Partial<Pick<DbWork, "episode_count" | "season_count">> = {};
   if (params.totalEpisodes && parentWork.episode_count !== params.totalEpisodes) {
     updates.episode_count = params.totalEpisodes;
   } else if (episodesToInsert.length > 0 && !parentWork.episode_count) {

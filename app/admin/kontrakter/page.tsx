@@ -87,6 +87,12 @@ type RightsHolder = { id: string; full_name: string }
 type WorkOption = { id: string; title: string; year: number | null; poster_url: string | null }
 type SortKey = "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status"
 type SortDir = "asc" | "desc"
+type NavneTjekResult = {
+    status: "match" | "delvist-match" | "ikke-fundet"
+    navnIKontrakt?: string
+    navnIRegister?: string
+    idIRegister?: string
+}
 
 type UploadItem = {
     file: File
@@ -241,6 +247,9 @@ function AdminKontrakterContent() {
     const [bulkDeleteStep, setBulkDeleteStep] = useState(0) // 0 = lukket, 1-3 = advarselstrin
     const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState("")
     const [duplicatesOpen, setDuplicatesOpen] = useState(false)
+    const [archiveEditOpen, setArchiveEditOpen] = useState(false)
+    const [deleteEditOpen, setDeleteEditOpen] = useState(false)
+    const [missingWorkValidation, setMissingWorkValidation] = useState<{ contractId: string; title: string; openNextAfterSave: boolean } | null>(null)
     const [adminReply, setAdminReply] = useState("")
     const [replySaving, setReplySaving] = useState(false)
 
@@ -256,7 +265,7 @@ function AdminKontrakterContent() {
     const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [editSaving, setEditSaving] = useState(false)
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
-    const [navneTjekResult, setNavneTjekResult] = useState<any>(null)
+    const [navneTjekResult, setNavneTjekResult] = useState<NavneTjekResult | null>(null)
     const [navneTjekLoading, setNavneTjekLoading] = useState(false)
     const [creatingEmployer, setCreatingEmployer] = useState(false)
 
@@ -488,7 +497,6 @@ function AdminKontrakterContent() {
         void poll()
         const interval = setInterval(() => void poll(), 4000)
         return () => { cancelled = true; clearInterval(interval) }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [orgId, pendingJobKey])
 
     // ── Signed URL for PDF ────────────────────────────────────
@@ -952,19 +960,32 @@ function AdminKontrakterContent() {
         await runAiDataminingForContract(editContract)
     }
 
-    const handleSaveEdit = async (statusOverride?: "kladde" | "valideret" | "arkiveret") => {
+    const handleSaveEdit = async (
+        statusOverride?: "kladde" | "valideret" | "arkiveret",
+        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean }
+    ) => {
         if (!editContract || !editForm) return false
+        const newStatus = statusOverride ?? editForm.status
+        let resolvedWorkId = editForm.work_id
+        let selectedWork = works.find(w => w.id === resolvedWorkId)
+        if (newStatus === "valideret" && !resolvedWorkId && !options?.skipMissingWorkConfirm) {
+            const title = (editForm.working_title || editContract.working_title || editContract.work_title || "").trim()
+            if (!title) {
+                toast.error("Kontrakten kan ikke valideres uden værk eller arbejdstitel.")
+                return false
+            }
+            setMissingWorkValidation({
+                contractId: editContract.id,
+                title,
+                openNextAfterSave: Boolean(options?.openNextAfterSave),
+            })
+            return false
+        }
         setEditSaving(true)
-        const supabase = createClient()
         try {
-            const newStatus = statusOverride ?? editForm.status
-            let resolvedWorkId = editForm.work_id
-            let selectedWork = works.find(w => w.id === resolvedWorkId)
             if (newStatus === "valideret" && !resolvedWorkId) {
                 const title = (editForm.working_title || editContract.working_title || editContract.work_title || "").trim()
                 if (!title) throw new Error("Kontrakten kan ikke valideres uden værk eller arbejdstitel.")
-                const ok = window.confirm(`Kontrakten mangler værktilknytning.\n\nHvis du fortsætter, oprettes et nyt værk med arbejdstitlen:\n"${title}"\n\nFortsæt og valider?`)
-                if (!ok) return false
                 const created = await createAdminWork({
                     data: {
                         title,
@@ -994,6 +1015,7 @@ function AdminKontrakterContent() {
                 selectedWork = { id: created.workId, title, year: null, poster_url: null }
                 setWorks(prev => prev.some(w => w.id === created.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
             }
+            const supabase = createClient()
             const { error } = await supabase
                 .from("contracts")
                 .update({
@@ -1045,20 +1067,29 @@ function AdminKontrakterContent() {
     const handleValidateAndNext = async () => {
         if (!editContract) return
         const currentId = editContract.id
-        const saved = await handleSaveEdit("valideret")
+        const saved = await handleSaveEdit("valideret", { openNextAfterSave: true })
         if (saved) openNextValidationContract(currentId)
     }
     validateAndNextRef.current = handleValidateAndNext
 
     const handleArchiveEdit = async () => {
         if (!editContract) return
-        if (!confirm(`Arkiver kontrakten?\n\n${adminContractSummary(editContract)}`)) return
+        setArchiveEditOpen(true)
+    }
+
+    const confirmArchiveEdit = async () => {
+        setArchiveEditOpen(false)
         await handleSaveEdit("arkiveret")
     }
 
     const handleDeleteEdit = async () => {
         if (!editContract) return
-        if (!confirm(`Slet kontrakten permanent?\n\n${adminContractSummary(editContract)}\n\nDette kan ikke fortrydes.`)) return
+        setDeleteEditOpen(true)
+    }
+
+    const confirmDeleteEdit = async () => {
+        if (!editContract) return
+        setDeleteEditOpen(false)
         const contract = editContract
         const supabase = createClient()
         setEditSaving(true)
@@ -1075,6 +1106,14 @@ function AdminKontrakterContent() {
         } finally {
             setEditSaving(false)
         }
+    }
+
+    const confirmMissingWorkValidation = async () => {
+        if (!missingWorkValidation) return
+        const pending = missingWorkValidation
+        setMissingWorkValidation(null)
+        const saved = await handleSaveEdit("valideret", { skipMissingWorkConfirm: true })
+        if (saved && pending.openNextAfterSave) openNextValidationContract(pending.contractId)
     }
 
     useEffect(() => {
@@ -1245,7 +1284,7 @@ function AdminKontrakterContent() {
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
                     <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">Alle status</SelectItem>
+                        <SelectItem value="all">Status</SelectItem>
                         <SelectItem value="kladde">Kladde</SelectItem>
                         <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
                         <SelectItem value="missingOwner">Mangler ejer</SelectItem>
@@ -1646,8 +1685,10 @@ function AdminKontrakterContent() {
                                                         size="sm"
                                                         className="mt-1.5 h-6 text-[10px] bg-white border-gray-200 hover:bg-gray-50"
                                                         onClick={() => {
-                                                            setEditForm(f => f && ({ ...f, rights_holder_id: navneTjekResult.idIRegister }))
-                                                            setEditRightsHolderSearch(navneTjekResult.navnIRegister)
+                                                            const idIRegister = navneTjekResult.idIRegister
+                                                            if (!idIRegister) return
+                                                            setEditForm(f => f && ({ ...f, rights_holder_id: idIRegister }))
+                                                            setEditRightsHolderSearch(navneTjekResult.navnIRegister ?? "")
                                                         }}
                                                     >
                                                         Kobl til {navneTjekResult.navnIRegister}
@@ -1735,7 +1776,7 @@ function AdminKontrakterContent() {
                                                         }
                                                     }}
                                                 >
-                                                    Opret "{extractedEmployer}"
+                                                    Opret &quot;{extractedEmployer}&quot;
                                                 </Button>
                                             )
                                         })()}
@@ -1971,6 +2012,79 @@ function AdminKontrakterContent() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setDuplicatesOpen(false)}>Luk</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={Boolean(missingWorkValidation)} onOpenChange={open => !open && setMissingWorkValidation(null)}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Opret værk og valider?</DialogTitle>
+                        <DialogDescription>
+                            Kontrakten mangler værktilknytning. Hvis du fortsætter, oprettes et nyt værk med arbejdstitlen:
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-medium">
+                        {missingWorkValidation?.title}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setMissingWorkValidation(null)} disabled={editSaving}>
+                            Annuller
+                        </Button>
+                        <Button onClick={confirmMissingWorkValidation} disabled={editSaving}>
+                            {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Opret værk og valider
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={archiveEditOpen} onOpenChange={setArchiveEditOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Arkiver kontrakt?</DialogTitle>
+                        <DialogDescription>
+                            Kontrakten skjules fra den aktive arbejdsliste, men kan stadig findes som arkiveret.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {editContract && (
+                        <div className="whitespace-pre-line rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                            {adminContractSummary(editContract)}
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setArchiveEditOpen(false)} disabled={editSaving}>
+                            Annuller
+                        </Button>
+                        <Button variant="outline" onClick={confirmArchiveEdit} disabled={editSaving}>
+                            {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Arkiver
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={deleteEditOpen} onOpenChange={setDeleteEditOpen}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Slet kontrakt permanent?</DialogTitle>
+                        <DialogDescription>
+                            Kontrakten og PDF-filen slettes permanent. Dette kan ikke fortrydes.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {editContract && (
+                        <div className="whitespace-pre-line rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                            {adminContractSummary(editContract)}
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDeleteEditOpen(false)} disabled={editSaving}>
+                            Annuller
+                        </Button>
+                        <Button variant="destructive" onClick={confirmDeleteEdit} disabled={editSaving}>
+                            {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Slet permanent
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

@@ -33,6 +33,48 @@ import {
 import { MoreHorizontal } from "lucide-react"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer"
+type ConfirmAction =
+    | { type: "unlink-contract"; id: string; title: string; description: string; destructive?: false }
+    | { type: "delete-contract"; id: string; title: string; description: string; destructive: true }
+    | { type: "remove-assignment"; id: string; title: string; description: string; destructive?: false }
+    | { type: "delete-work"; id: string; title: string; description: string; destructive: true }
+    | { type: "delete-all-works"; title: string; description: string; destructive: true }
+
+type DetailContract = {
+    id: string
+    title: string
+    type: string | null
+    status: string | null
+    created_at: string | null
+    employer_name: string | null
+}
+
+type DetailWork = {
+    id: string
+    title: string
+    type: string
+    year: number | null
+    director: string | null
+    status: string | null
+}
+
+type DetailWorkAssignment = {
+    id: string
+    role: string | null
+    share_percent: number | null
+    works: DetailWork | null
+}
+
+type AdminUserResponse = {
+    error?: string
+    invite_url?: string
+    reset_url?: string
+    user_id?: string
+}
+
+function errorMessage(error: unknown) {
+    return error instanceof Error ? error.message : "Fejl"
+}
 
 function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
     return rh.org_affiliations?.find(a => a.org_id === orgId) ?? null
@@ -66,8 +108,8 @@ export default function RettighedshavereAdminPage() {
 
     // Rettighedshaver detaljer dialog states
     const [detailsTarget, setDetailsTarget] = useState<RettighedshaverWithAffiliation | null>(null)
-    const [contracts, setContracts] = useState<any[]>([])
-    const [works, setWorks] = useState<any[]>([])
+    const [contracts, setContracts] = useState<DetailContract[]>([])
+    const [works, setWorks] = useState<DetailWorkAssignment[]>([])
     const [detailsLoading, setDetailsLoading] = useState(false)
 
     const [contractSearch, setContractSearch] = useState("")
@@ -78,6 +120,7 @@ export default function RettighedshavereAdminPage() {
     const [workSort, setWorkSort] = useState<"title" | "year">("title")
     const [workFilter, setWorkFilter] = useState<string>("alle")
     const [activeTab, setActiveTab] = useState<"contracts" | "works">("contracts")
+    const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
 
     useEffect(() => {
         const supabase = createClient()
@@ -107,11 +150,14 @@ export default function RettighedshavereAdminPage() {
             .eq("rights_holder_id", rhId)
             .order("created_at", { ascending: false })
 
-        type ContractRow = { working_title?: string | null; employers?: { name?: string | null } | { name?: string | null }[] | null }
+        type ContractRow = { id: string; working_title?: string | null; type?: string | null; status?: string | null; created_at?: string | null; employers?: { name?: string | null } | { name?: string | null }[] | null }
         setContracts(((cData ?? []) as ContractRow[]).map(c => ({
-            ...c,
+            id: c.id,
             title: c.working_title ?? "Kontrakt",
-            employer_name: Array.isArray(c.employers) ? c.employers[0]?.name : c.employers?.name,
+            type: c.type ?? null,
+            status: c.status ?? null,
+            created_at: c.created_at ?? null,
+            employer_name: (Array.isArray(c.employers) ? c.employers[0]?.name : c.employers?.name) ?? null,
         })))
 
         const { data: wData } = await supabase
@@ -119,13 +165,20 @@ export default function RettighedshavereAdminPage() {
             .select("id, role, share_percent, works(id, title, type, year, director, status)")
             .eq("rights_holder_id", rhId)
             
-        setWorks(wData ?? [])
+        setWorks((wData ?? []) as unknown as DetailWorkAssignment[])
         setDetailsLoading(false)
     }
 
-    async function handleUnlinkContract(contractId: string) {
-        const confirm = window.confirm("Fjern kontraktens tilknytning til dette medlem? Selve kontrakten slettes ikke og forbliver i kontraktadministrationen.")
-        if (!confirm) return
+    function handleUnlinkContract(contractId: string) {
+        setConfirmAction({
+            type: "unlink-contract",
+            id: contractId,
+            title: "Fjern kontrakttilknytning?",
+            description: "Kontrakten fjernes fra dette medlem, men slettes ikke og forbliver i kontraktadministrationen.",
+        })
+    }
+
+    async function unlinkContract(contractId: string) {
         const supabase = createClient()
         const { error } = await supabase.from("contracts").update({ rights_holder_id: null }).eq("id", contractId)
         if (error) {
@@ -136,10 +189,17 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleDeleteContract(contractId: string) {
-        const confirm = window.confirm("Er du sikker på, at du vil slette denne kontrakt permanent fra systemet? Denne handling kan ikke fortrydes.")
-        if (!confirm) return
-        
+    function handleDeleteContract(contractId: string) {
+        setConfirmAction({
+            type: "delete-contract",
+            id: contractId,
+            title: "Slet kontrakt permanent?",
+            description: "Kontrakten slettes permanent fra systemet. Denne handling kan ikke fortrydes.",
+            destructive: true,
+        })
+    }
+
+    async function deleteContract(contractId: string) {
         const supabase = createClient()
         await supabase.from("work_assignments").update({ contract_id: null }).eq("contract_id", contractId)
         
@@ -153,10 +213,16 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleRemoveAssignment(assignmentId: string) {
-        const confirm = window.confirm("Er du sikker på, at du vil fjerne medlemmets tildeling til dette værk? Selve værket slettes ikke.")
-        if (!confirm) return
-        
+    function handleRemoveAssignment(assignmentId: string) {
+        setConfirmAction({
+            type: "remove-assignment",
+            id: assignmentId,
+            title: "Fjern værktildeling?",
+            description: "Medlemmets tildeling til værket fjernes. Selve værket slettes ikke.",
+        })
+    }
+
+    async function removeAssignment(assignmentId: string) {
         const supabase = createClient()
         const { error } = await supabase.from("work_assignments").delete().eq("id", assignmentId)
         
@@ -168,10 +234,17 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleDeleteWork(workId: string) {
-        const confirm = window.confirm("Er du sikker på, at du vil slette dette værk permanent fra hele systemet? Dette vil fjerne det for alle tilknyttede brugere.")
-        if (!confirm) return
-        
+    function handleDeleteWork(workId: string) {
+        setConfirmAction({
+            type: "delete-work",
+            id: workId,
+            title: "Slet værk permanent?",
+            description: "Værket slettes permanent fra hele systemet og fjernes for alle tilknyttede brugere.",
+            destructive: true,
+        })
+    }
+
+    async function deleteWork(workId: string) {
         const supabase = createClient()
         await supabase.from("contracts").update({ work_id: null }).eq("work_id", workId)
         
@@ -185,11 +258,17 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleDeleteAllWorks() {
+    function handleDeleteAllWorks() {
         if (works.length === 0) return
-        const confirm = window.confirm(`Er du sikker på, at du vil slette ALLE ${works.length} værker permanent fra systemet, som dette medlem er tilknyttet? Dette vil slette værkerne helt.`)
-        if (!confirm) return
-        
+        setConfirmAction({
+            type: "delete-all-works",
+            title: "Slet alle værker permanent?",
+            description: `Du er ved at slette alle ${works.length} værker permanent fra systemet, som dette medlem er tilknyttet. Værkerne slettes helt.`,
+            destructive: true,
+        })
+    }
+
+    async function deleteAllWorks() {
         const supabase = createClient()
         const workIds = works.map(w => w.works?.id).filter(Boolean)
         
@@ -205,6 +284,17 @@ export default function RettighedshavereAdminPage() {
             toast.success("Alle værker slettet")
             if (detailsTarget) loadDetails(detailsTarget.id)
         }
+    }
+
+    async function confirmPendingAction() {
+        if (!confirmAction) return
+        const action = confirmAction
+        setConfirmAction(null)
+        if (action.type === "unlink-contract") await unlinkContract(action.id)
+        if (action.type === "delete-contract") await deleteContract(action.id)
+        if (action.type === "remove-assignment") await removeAssignment(action.id)
+        if (action.type === "delete-work") await deleteWork(action.id)
+        if (action.type === "delete-all-works") await deleteAllWorks()
     }
 
     async function load(oid: string) {
@@ -285,16 +375,16 @@ export default function RettighedshavereAdminPage() {
                         : { action: "reset", userId: rh.user_id, email: rh.email }
                 ),
             })
-            const json = await res.json()
+            const json = await res.json() as AdminUserResponse
             if (!res.ok) throw new Error(json.error)
             const link = type === "invite" ? json.invite_url : json.reset_url
-            setPortalLink(link)
+            setPortalLink(link ?? null)
             if (type === "invite") {
                 // Opdater lokal state med ny user_id
-                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id } : r))
+                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null } : r))
             }
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
         } finally {
             setPortalLoading(false)
         }
@@ -307,12 +397,12 @@ export default function RettighedshavereAdminPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "reset-onboarding", rhId: rh.id }),
             })
-            const json = await res.json()
+            const json = await res.json() as AdminUserResponse
             if (!res.ok) throw new Error(json.error)
             toast.success(`Onboarding nulstillet for ${rh.full_name}`)
             setRows(prev => prev.map(r => r.id === rh.id ? { ...r, onboarding_completed: false } : r))
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl")
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
         }
     }
 
@@ -664,7 +754,7 @@ export default function RettighedshavereAdminPage() {
                                                 <SelectItem value="kladde">Kladde</SelectItem>
                                             </SelectContent>
                                         </Select>
-                                        <Select value={contractSort} onValueChange={v => setContractSort(v as any)}>
+                                        <Select value={contractSort} onValueChange={v => setContractSort(v as "date" | "title" | "status")}>
                                             <SelectTrigger className="h-8 text-xs w-32 bg-white"><SelectValue placeholder="Sorter" /></SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="date">Nyeste først</SelectItem>
@@ -711,7 +801,7 @@ export default function RettighedshavereAdminPage() {
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
-                                                    {filteredContracts.map((c: any) => (
+                                                    {filteredContracts.map(c => (
                                                         <TableRow key={c.id}>
                                                             <TableCell>
                                                                 <button type="button" onClick={() => router.push(`/admin/kontrakter?edit=${c.id}`)} className="text-left">
@@ -778,7 +868,7 @@ export default function RettighedshavereAdminPage() {
                                                 <SelectItem value="serie">Kun serier</SelectItem>
                                             </SelectContent>
                                         </Select>
-                                        <Select value={workSort} onValueChange={v => setWorkSort(v as any)}>
+                                        <Select value={workSort} onValueChange={v => setWorkSort(v as "title" | "year")}>
                                             <SelectTrigger className="h-8 text-xs w-32 bg-white"><SelectValue placeholder="Sorter" /></SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="title">Titel A-Å</SelectItem>
@@ -841,7 +931,7 @@ export default function RettighedshavereAdminPage() {
                                                     </TableRow>
                                                 </TableHeader>
                                                 <TableBody>
-                                                    {filteredWorks.map((wa: any) => {
+                                                    {filteredWorks.map(wa => {
                                                         const w = wa.works;
                                                         if (!w) return null;
                                                         return (
@@ -897,6 +987,28 @@ export default function RettighedshavereAdminPage() {
                             </div>
                         )}
                     </div>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={Boolean(confirmAction)} onOpenChange={open => !open && setConfirmAction(null)}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>{confirmAction?.title}</DialogTitle>
+                        <DialogDescription>{confirmAction?.description}</DialogDescription>
+                    </DialogHeader>
+                    {confirmAction?.destructive && (
+                        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+                            Denne handling kan ikke fortrydes fra denne side.
+                        </div>
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setConfirmAction(null)}>
+                            Annuller
+                        </Button>
+                        <Button variant={confirmAction?.destructive ? "destructive" : "default"} onClick={confirmPendingAction}>
+                            {confirmAction?.destructive ? "Slet permanent" : "Fjern tilknytning"}
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>
