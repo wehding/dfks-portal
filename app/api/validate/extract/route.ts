@@ -5,28 +5,41 @@ export const dynamic = "force-dynamic"
  * Henter en kontrakt fra Supabase Storage og kører AI-udtræk.
  * Bruges af valideringssiden når kontrakten er gemt i Storage
  * (fx ved portal-upload) og admin ikke har filen lokalt.
+ *
+ * Auth: /api er IKKE dækket af middleware — ruten henter vilkårlige
+ * storage-filer med service-rettigheder og kræver derfor en admin-session
+ * (eller et service-secret ved server-til-server-kald).
  */
 
 import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
-// Note: storage download bruger direkte fetch (omgår SDK JWT-validering for storage)
+import { createClient as createSessionClient } from "@/lib/supabase/server"
+import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
-import { getApiKey } from "@/lib/ai-key-store"
-import { normaliseSources } from "@/lib/ai-sources"
-import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import { buildContractExtractionPrompt, CONTRACT_EXTRACTION_MODEL } from "@/lib/contract-extraction-prompt"
+import { runContractExtraction } from "@/lib/contract-extract-core"
+
+async function isAuthorized(req: NextRequest): Promise<boolean> {
+    const secret = process.env.CONTRACT_AI_JOB_SECRET
+    const cronSecret = process.env.CRON_SECRET
+    const authHeader = req.headers.get("authorization") ?? ""
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null
+    if (bearer && ((secret && bearer === secret) || (cronSecret && bearer === cronSecret))) return true
+    const sessionClient = await createSessionClient()
+    return Boolean(await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"]))
+}
 
 export async function POST(req: NextRequest) {
     try {
+        if (!(await isAuthorized(req))) {
+            return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
+        }
+
         const { contractId, pdfPath } = await req.json()
         if (!contractId && !pdfPath) {
             return NextResponse.json({ error: "contractId eller pdfPath påkrævet" }, { status: 400 })
         }
-
-        const apiKey = getApiKey("anthropic")
-        if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY mangler" }, { status: 500 })
 
         const admin = createServiceClient()
 
@@ -54,55 +67,10 @@ export async function POST(req: NextRequest) {
 
         const masked = maskPersonalData(text)
 
-        // Hent overenskomsttekster fra DB
-        let activeSystemPrompt = buildContractExtractionPrompt()
-        try {
-            const { data: refDocs } = await admin
-                .from("reference_docs")
-                .select("title, doc_subtype, content_text")
-                .eq("archived", false)
-                .not("content_text", "is", null)
-            activeSystemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
-        } catch (e) {
-            console.warn("[validate/extract] Kunne ikke hente reference docs:", e)
-        }
+        const result = await runContractExtraction(masked)
+        if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
-        // Kald Anthropic
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-                model: CONTRACT_EXTRACTION_MODEL,
-                max_tokens: 4096,
-                system: activeSystemPrompt,
-                messages: [{ role: "user", content: `---KONTRAKT---\n${masked.slice(0, 40000)}` }],
-            }),
-        })
-        if (!response.ok) throw new Error(`Anthropic fejl: ${response.status}`)
-        const aiData = await response.json()
-        const raw = aiData.content?.[0]?.text ?? ""
-
-        const jsonMatch = raw.match(/\{[\s\S]*\}/)
-        if (!jsonMatch) return NextResponse.json({ error: "Ugyldigt AI-svar" }, { status: 500 })
-
-        const extracted = JSON.parse(jsonMatch[0])
-        if (extracted._sources) extracted._sources = normaliseSources(extracted._sources)
-
-        // Navnetjek mod DFKS-register (server-side, kun full_name)
-        let navneTjek = null
-        if (extracted.rightsHolderName) {
-            try {
-                navneTjek = await tjekNavn(extracted.rightsHolderName)
-            } catch (e) {
-                console.warn("[validate/extract] Navnetjek fejlede:", e)
-            }
-        }
-
-        return NextResponse.json({ ok: true, data: extracted, navneTjek, maskedText: masked })
+        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })
     } catch (err: unknown) {
         console.error("[validate/extract]", err)
         return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
