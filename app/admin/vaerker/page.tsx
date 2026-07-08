@@ -1650,6 +1650,11 @@ export default function VaerksadministrationPage() {
                               {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
                             </Badge>
                           )}
+                          {pendingCount > 0 && (
+                            <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
+                              Skal godkendes
+                            </Badge>
+                          )}
                         </div>
                         {(() => {
                           const msg = latestUnreadMemberMessage(work);
