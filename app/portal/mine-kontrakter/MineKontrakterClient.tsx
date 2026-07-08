@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
@@ -139,6 +140,8 @@ export default function MineKontrakterClient({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
   const [commentSaving, setCommentSaving] = useState(false);
+  const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
+  const [deleteContractId, setDeleteContractId] = useState<string | null>(null);
 
   const total     = contracts.length;
   const validerede = contracts.filter(c => c.status === "valideret").length;
@@ -193,8 +196,13 @@ export default function MineKontrakterClient({
 
   async function handleDeleteSelected() {
     if (!selectedIds.length) return;
-    if (!confirm(`Fjern ${selectedIds.length} valgte kontrakt${selectedIds.length === 1 ? "" : "er"}?`)) return;
+    setDeleteSelectedOpen(true);
+  }
+
+  async function confirmDeleteSelected() {
+    if (!selectedIds.length) return;
     const ids = [...selectedIds];
+    setDeleteSelectedOpen(false);
     const results = await Promise.all(ids.map(id => deleteMemberContract(id)));
     const failedIds = ids.filter((_, index) => !results[index].success);
     setContracts(prev => prev.filter(c => !ids.includes(c.id) || failedIds.includes(c.id)));
@@ -223,8 +231,14 @@ export default function MineKontrakterClient({
     setSelectedContract(null);
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm("Er du sikker på at du vil slette denne kontrakt?")) return;
+  function handleDelete(id: string) {
+    setDeleteContractId(id);
+  }
+
+  async function confirmDeleteContract() {
+    if (!deleteContractId) return;
+    const id = deleteContractId;
+    setDeleteContractId(null);
     const res = await deleteMemberContract(id);
     if (res.success) {
       setContracts(prev => prev.filter(c => c.id !== id));
@@ -379,7 +393,7 @@ export default function MineKontrakterClient({
                   )}
                 </div>
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
-                  <option value="all">Alle statuser</option>
+                  <option value="all">Status</option>
                   <option value="missingWork">Mangler værk</option>
                   <option value="linked">Værk tilknyttet</option>
                   <option value="kladde">Afventer validering</option>
@@ -743,6 +757,44 @@ export default function MineKontrakterClient({
           }}
         />
       )}
+
+      <Dialog open={deleteSelectedOpen} onOpenChange={setDeleteSelectedOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fjern valgte kontrakter?</DialogTitle>
+            <DialogDescription>
+              Du er ved at fjerne {selectedIds.length} valgte kontrakt{selectedIds.length === 1 ? "" : "er"} fra din liste.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteSelectedOpen(false)}>
+              Annuller
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteSelected}>
+              Fjern {selectedIds.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(deleteContractId)} onOpenChange={open => !open && setDeleteContractId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Slet kontrakt?</DialogTitle>
+            <DialogDescription>
+              Kontrakten fjernes fra din liste. Handlingen kan ikke fortrydes herfra.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteContractId(null)}>
+              Annuller
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteContract}>
+              Slet kontrakt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

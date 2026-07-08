@@ -12,9 +12,9 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
-    MessageSquare, Archive, X, Send, Pencil, Eye, BookMarked,
-    ThumbsUp, ThumbsDown, Star, Inbox, Search, Filter,
-    Clock, User, FileText, ChevronDown, RotateCcw, Loader2,
+    Archive, Send, Pencil, Eye, BookMarked,
+    ThumbsUp, ThumbsDown, Star, Search,
+    User, FileText, ChevronDown, RotateCcw,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -32,7 +32,7 @@ import {
 import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog"
-import { type CaseLearning, type CaseLearningKontrakttype } from "@/lib/ai"
+import { type CaseLearningKontrakttype } from "@/lib/ai"
 import { saveReview } from "@/lib/db/gennemgang"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
@@ -79,6 +79,16 @@ interface ReviewResult {
     samlet_vurdering: "godkendt" | "forbehold" | "kritisk"
     prioriterede_forhandlingspunkter: string[]
     prioriterede_mail_sektioner?: (number | null)[]
+}
+
+type ReviewClassification = {
+    kontrakttype?: string
+    produktionstype?: string
+    er_overenskomst?: boolean
+}
+
+function getErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : "ukendt fejl"
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -217,7 +227,15 @@ function Indbakke() {
         setLoading(false)
     }, [tab, statusFilter, productionTypeFilter, search])
 
-    useEffect(() => { fetchReviews() }, [fetchReviews])
+    useEffect(() => {
+        let cancelled = false
+        queueMicrotask(() => {
+            if (!cancelled) void fetchReviews()
+        })
+        return () => {
+            cancelled = true
+        }
+    }, [fetchReviews])
 
     // ── Supabase Realtime — lyt på INSERT og UPDATE ───────────
     useEffect(() => {
@@ -293,7 +311,7 @@ function Indbakke() {
                         <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="alle">Alle statusser</SelectItem>
+                        <SelectItem value="alle">Status</SelectItem>
                         <SelectItem value="afventer">Ikke tildelt</SelectItem>
                         <SelectItem value="behandling">Under behandling</SelectItem>
                         <SelectItem value="afsluttet">Afsluttet</SelectItem>
@@ -497,7 +515,7 @@ function ManuelGennemgang() {
     const [mailEditMode, setMailEditMode] = useState(false)
     const [showSaveLearning, setShowSaveLearning] = useState(false)
     const [learningDraft, setLearningDraft] = useState<{ titel: string; kontrakttype: CaseLearningKontrakttype; regel: string }>({ titel: "", kontrakttype: "alle", regel: "" })
-    const [klassifikation, setKlassifikation] = useState<any>(null)
+    const [klassifikation, setKlassifikation] = useState<ReviewClassification | null>(null)
     const [showSaveEksempel, setShowSaveEksempel] = useState(false)
     const [eksempelNote, setEksempelNote] = useState("")
     const [gemmerEksempel, setGemmerEksempel] = useState(false)
@@ -507,7 +525,6 @@ function ManuelGennemgang() {
     const [analyseId] = useState(() => crypto.randomUUID())
     const [fundFeedback, setFundFeedback] = useState<Record<string, "good" | "bad">>({})
     const [fundKorrektioner, setFundKorrektioner] = useState<Record<string, string>>({})
-    const [fundGemtSagserfaring, setFundGemtSagserfaring] = useState<Record<string, boolean>>({})
     const [fundGemtFeedback, setFundGemtFeedback] = useState<Record<string, boolean>>({})
 
     useEffect(() => {
@@ -592,8 +609,8 @@ function ManuelGennemgang() {
                     ai_result: data.result,
                 })
             }
-        } catch (e: any) {
-            toast.error(`Gennemgang fejlede: ${e.message}`)
+        } catch (e: unknown) {
+            toast.error(`Gennemgang fejlede: ${getErrorMessage(e)}`)
         }
         setAnalyzing(false)
     }
@@ -804,7 +821,7 @@ function ManuelGennemgang() {
                     <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                     <div className="text-xs text-muted-foreground space-y-1">
                         <p><strong className="text-foreground">Datasikkerhed:</strong> Filen behandles server-side og gemmes ikke efter analyse. Kun udgående mails arkiveres under medlemmets navn.</p>
-                        <p><strong className="text-foreground">Ekstern behandling:</strong> Kontraktindholdet analyseres via Anthropic's API (USA). CPR-numre, bankkontonumre, IBAN og private adressenumre maskeres automatisk inden afsendelse. Anthropic anvender ikke API-data til modeltræning.</p>
+                        <p><strong className="text-foreground">Ekstern behandling:</strong> Kontraktindholdet analyseres via Anthropic&apos;s API (USA). CPR-numre, bankkontonumre, IBAN og private adressenumre maskeres automatisk inden afsendelse. Anthropic anvender ikke API-data til modeltræning.</p>
                         <p><strong className="text-foreground">Anbefaling:</strong> Undgå at uploade kontrakter med særligt følsomme oplysninger der ikke er nødvendige for analysen.</p>
                     </div>
                 </div>
@@ -966,7 +983,7 @@ function ManuelGennemgang() {
                                                         </div>
                                                     )}
                                                     {fp.citat && (
-                                                        <p className="text-[10px] italic text-muted-foreground border-l-2 pl-2 border-muted-foreground/30 line-clamp-3">"{fp.citat}"</p>
+                                                        <p className="text-[10px] italic text-muted-foreground border-l-2 pl-2 border-muted-foreground/30 line-clamp-3">&quot;{fp.citat}&quot;</p>
                                                     )}
                                                     <div className="pt-1 border-t border-border/50" onClick={e => e.stopPropagation()}>
                                                         <p className="text-[10px] text-muted-foreground mb-1.5">Var dette fund korrekt?</p>
@@ -1131,11 +1148,11 @@ function ManuelGennemgang() {
                 <DialogContent className="max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Tilføj regel fra denne sag</DialogTitle>
-                        <DialogDescription>Skriv den regel AI'en skal lære af denne kontrakt. Den tilføjes til lærte mønstre og bruges i fremtidige analyser.</DialogDescription>
+                        <DialogDescription>Skriv den regel AI&apos;en skal lære af denne kontrakt. Den tilføjes til lærte mønstre og bruges i fremtidige analyser.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
                         <div className="space-y-1.5">
-                            <Label className="text-xs">Hvad gik AI'en galt? (kort titel)</Label>
+                            <Label className="text-xs">Hvad gik AI&apos;en galt? (kort titel)</Label>
                             <Input value={learningDraft.titel} onChange={(e) => setLearningDraft(d => ({ ...d, titel: e.target.value }))} placeholder="Fx: AI klassificerede leverandørkontrakt som overenskomstkontrakt" />
                         </div>
                         <div className="space-y-1.5">
@@ -1183,7 +1200,7 @@ function ManuelGennemgang() {
                 <DialogContent className="max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Gem analyse som eksempel</DialogTitle>
-                        <DialogDescription>Dette gemmer hele analysen som et godkendt eksempel AI'en kan lære af ved fremtidige gennemgange af lignende kontrakter.</DialogDescription>
+                        <DialogDescription>Dette gemmer hele analysen som et godkendt eksempel AI&apos;en kan lære af ved fremtidige gennemgange af lignende kontrakter.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
                         <div className="grid grid-cols-2 gap-3">
@@ -1226,8 +1243,8 @@ function ManuelGennemgang() {
                                     if (error) throw error
                                     setShowSaveEksempel(false)
                                     toast.success("Analyse gemt som eksempel — bruges ved næste gennemgang")
-                                } catch (e: any) {
-                                    toast.error(`Kunne ikke gemme eksempel: ${e.message ?? "ukendt fejl"}`)
+                                } catch (e: unknown) {
+                                    toast.error(`Kunne ikke gemme eksempel: ${getErrorMessage(e)}`)
                                 } finally {
                                     setGemmerEksempel(false)
                                 }

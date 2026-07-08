@@ -136,6 +136,12 @@ interface ResultColumnDef {
   getPoster: (item: SearchItem) => string | null;
 }
 
+interface EpisodeOption {
+  number: number;
+  title: string;
+  dfiId?: string | null;
+}
+
 interface AddWorkModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -280,6 +286,35 @@ function isDfiChildResult(result: DfiSearchResult) {
   return Boolean(dfiNumericId(film.Parent?.Id)) || Boolean(parseDfiEpisodeTitleInfo(result.Title ?? ""));
 }
 
+function dfiEpisodeOptions(film: DfiFilm): EpisodeOption[] {
+  const children = Array.isArray(film.Children) ? film.Children : [];
+  const options = children
+    .map((child, index) => {
+      const parsed = parseDfiEpisodeTitleInfo(child.Title ?? "");
+      const number = parsed?.episodeNumber ?? index + 1;
+      const title = parsed?.subtitle || child.Title || `Afsnit ${number}`;
+      return {
+        number,
+        title,
+        dfiId: child.Id ? String(child.Id) : null,
+      };
+    })
+    .filter(option => Number.isFinite(option.number) && option.number > 0);
+
+  if (options.length) {
+    return Array.from(new Map(options.map(option => [option.number, option])).values())
+      .sort((a, b) => a.number - b.number);
+  }
+
+  const count = countDfiEpisodes(film);
+  return count
+    ? Array.from({ length: count }, (_, index) => ({
+        number: index + 1,
+        title: `Afsnit ${index + 1}`,
+      }))
+    : [];
+}
+
 function findDfiEpisodeNumber(parentFilm: DfiFilm, childFilm: DfiFilm) {
   const childId = dfiNumericId(childFilm.Id);
   const children = Array.isArray(parentFilm.Children) ? parentFilm.Children : [];
@@ -339,6 +374,7 @@ export function AddWorkModal({
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
+  const [episodeOptions, setEpisodeOptions] = useState<EpisodeOption[]>([]);
   const [addComment, setAddComment]           = useState("");
 
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
@@ -368,6 +404,7 @@ export function AddWorkModal({
             const count = season ? season.episode_count : null;
             if (count) {
               setDetectedEpisodeCount(count);
+              setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })));
               setSelectedEpisodes(prev => prev.filter(x => x <= count));
             }
           }
@@ -386,8 +423,16 @@ export function AddWorkModal({
       const count = parseInt(manualWork.episode_count) || null;
       setDetectedEpisodeCount(count);
       if (count) {
-        setSelectedEpisodes(prev => prev.filter(x => x <= count));
+        setEpisodeOptions(Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
+        setSelectedEpisodes(prev => {
+          const filtered = prev.filter(x => x <= count);
+          if (filtered.length === 0) {
+            return Array.from({ length: count }, (_, i) => i + 1);
+          }
+          return filtered;
+        });
       } else {
+        setEpisodeOptions([]);
         setSelectedEpisodes([]);
       }
     }
@@ -410,6 +455,7 @@ export function AddWorkModal({
     setAddEpisode("");
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
+    setEpisodeOptions([]);
     setShowExternalResults(false);
   }, [initialQuery]);
 
@@ -507,6 +553,7 @@ export function AddWorkModal({
     const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
     if (!isSeries) {
       setDetectedEpisodeCount(null);
+      setEpisodeOptions([]);
       return;
     }
     // Hvis det valgte lokale værk selv er et afsnit, sæt sæsonen automatisk.
@@ -527,12 +574,20 @@ export function AddWorkModal({
       }
       if (!count && work.dfi_id) {
         const details = await getDFIFilmDetails(Number(work.dfi_id));
-        if (details.success && details.film) count = countDfiEpisodes(asDfiFilm(details.film as DfiFilm));
+        if (details.success && details.film) {
+          const options = dfiEpisodeOptions(asDfiFilm(details.film as DfiFilm));
+          count = options.length || countDfiEpisodes(asDfiFilm(details.film as DfiFilm));
+          setEpisodeOptions(options.length ? options : count ? Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })) : []);
+        }
+      } else {
+        setEpisodeOptions(count ? Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })) : []);
       }
       setDetectedEpisodeCount(count);
       // Forvælg det afsnit, brugeren klikkede på (hvis det selv er et afsnit).
       if (work.episode_number && count && work.episode_number <= count) {
         setSelectedEpisodes([work.episode_number]);
+      } else if (count) {
+        setSelectedEpisodes(Array.from({ length: count }, (_, idx) => idx + 1));
       }
     } catch (e) {
       console.error(e);
@@ -548,6 +603,7 @@ export function AddWorkModal({
     setAddCoEditors([]);
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
+    setEpisodeOptions([]);
     setEpisodesLoading(true);
     try {
       const resolved = await resolveDfiSelection(result);
@@ -558,9 +614,11 @@ export function AddWorkModal({
       const editors = extractDfiCoEditors(film);
       if (editors.length) setAddCoEditors(editors);
 
-      const count = countDfiEpisodes(film);
+      const options = dfiEpisodeOptions(film);
+      const count = options.length || countDfiEpisodes(film);
       if (count) {
         setDetectedEpisodeCount(count);
+        setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
         if (resolved.selectedEpisode) {
           setSelectedEpisodes([resolved.selectedEpisode]);
         } else {
@@ -784,7 +842,7 @@ export function AddWorkModal({
                 variant="outline"
                 size="xs"
                 className="h-7 text-xs px-2"
-                onClick={() => setSelectedEpisodes(Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
+                onClick={() => setSelectedEpisodes(episodeOptions.length ? episodeOptions.map(option => option.number) : Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
               >
                 {locale === "da" ? "Vælg alle" : "Select all"}
               </Button>
@@ -799,16 +857,16 @@ export function AddWorkModal({
               </Button>
             </div>
           </div>
-          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6 max-h-40 overflow-y-auto p-1">
-            {Array.from({ length: detectedEpisodeCount }, (_, idx) => {
-              const epNum = idx + 1;
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1">
+            {(episodeOptions.length ? episodeOptions : Array.from({ length: detectedEpisodeCount }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` }))).map(option => {
+              const epNum = option.number;
               const isChecked = selectedEpisodes.includes(epNum);
               return (
                 <label
                   key={epNum}
-                  className={`flex items-center justify-center border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
+                  className={`flex min-h-12 items-start gap-2 border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
                     isChecked
-                      ? "border-gray-900 bg-white font-semibold text-gray-900 ring-2 ring-gray-900 ring-offset-2"
+                      ? "border-gray-900 bg-gray-900 font-semibold text-white"
                       : "border-gray-200 bg-white hover:bg-gray-50 text-gray-600"
                   }`}
                 >
@@ -824,7 +882,8 @@ export function AddWorkModal({
                       );
                     }}
                   />
-                  {epNum}
+                  <span className="shrink-0 tabular-nums">{epNum}</span>
+                  <span className="min-w-0 text-left text-xs leading-snug line-clamp-2">{option.title}</span>
                 </label>
               );
             })}

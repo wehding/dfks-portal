@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, Search, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,14 @@ interface DfiSearchResult {
   Category?: string;
   Description?: string;
   Type?: string;
+}
+
+interface DfiPersonResult {
+  Id: number;
+  Name?: string;
+  FirstName?: string;
+  LastName?: string;
+  BirthYear?: number | string | null;
 }
 
 interface DfiImportWizardProps {
@@ -39,43 +47,26 @@ export function DfiImportWizard({
 
   const [wizardStep, setWizardStep]         = useState<"search" | "persons" | "credits">("search");
   const [wizardQuery, setWizardQuery]       = useState(userName);
-  const [wizardPersons, setWizardPersons]   = useState<any[]>([]);
-  const [wizardPerson, setWizardPerson]     = useState<any>(null);
-  const [wizardCredits, setWizardCredits]   = useState<any[]>([]);
+  const [wizardPersons, setWizardPersons]   = useState<DfiPersonResult[]>([]);
+  const [wizardPerson, setWizardPerson]     = useState<DfiPersonResult | null>(null);
+  const [wizardCredits, setWizardCredits]   = useState<DfiSearchResult[]>([]);
   const [wizardSelected, setWizardSelected] = useState<Record<number, boolean>>({});
   const [wizardLinkedExistingCount, setWizardLinkedExistingCount] = useState(0);
   const [wizardSkippedExistingCount, setWizardSkippedExistingCount] = useState(0);
   const [wizardSearching, setWizardSearching] = useState(false);
   const [wizardImporting, setWizardImporting] = useState(false);
   const [wizardError, setWizardError]       = useState<string | null>(null);
+  const [wizardValidationError, setWizardValidationError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (isOpen) {
-      setWizardQuery(userName);
-      setWizardPersons([]);
-      setWizardPerson(null);
-      setWizardCredits([]);
-      setWizardSelected({});
-      setWizardError(null);
-      setWizardLinkedExistingCount(0);
-      setWizardSkippedExistingCount(0);
-      if (dfiPersonId) {
-        setWizardStep("credits");
-        loadWizardCredits(dfiPersonId);
-      } else {
-        setWizardStep("search");
-      }
-    }
-  }, [isOpen, userName, dfiPersonId]);
-
-  const loadWizardCredits = async (personId: number) => {
+  const loadWizardCredits = useCallback(async (personId: number) => {
     setWizardSearching(true);
     setWizardError(null);
+    setWizardValidationError(null);
     const res = await getDFIPersonCredits(personId);
     if (res.success && res.credits) {
-      const unique = (res.credits as any[]).filter((c, i, arr) => arr.findIndex(x => x.Id === c.Id) === i);
+      const unique = (res.credits as DfiSearchResult[]).filter((c, i, arr) => arr.findIndex(x => x.Id === c.Id) === i);
       const prepared = await prepareDFIImportCredits(personId, unique);
-      const newCredits = prepared.success ? (prepared.credits ?? []) : unique;
+      const newCredits: DfiSearchResult[] = prepared.success ? ((prepared.credits ?? []) as DfiSearchResult[]) : unique;
       setWizardCredits(newCredits);
       setWizardLinkedExistingCount(prepared.linkedExistingCount ?? 0);
       setWizardSkippedExistingCount(prepared.skippedAlreadyAssignedCount ?? 0);
@@ -94,21 +85,49 @@ export function DfiImportWizard({
       setWizardError(res.error ?? "Kunne ikke hente krediteringer.");
     }
     setWizardSearching(false);
-  };
+  }, [reloadAssignments]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setWizardQuery(userName);
+      setWizardPersons([]);
+      setWizardPerson(null);
+      setWizardCredits([]);
+      setWizardSelected({});
+      setWizardError(null);
+      setWizardValidationError(null);
+      setWizardLinkedExistingCount(0);
+      setWizardSkippedExistingCount(0);
+      if (dfiPersonId) {
+        setWizardStep("credits");
+        loadWizardCredits(dfiPersonId);
+      } else {
+        setWizardStep("search");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, userName, dfiPersonId, loadWizardCredits]);
 
   const handleWizardSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!wizardQuery.trim()) return;
     setWizardSearching(true);
     setWizardError(null);
+    setWizardValidationError(null);
     const res = await searchDFIPerson(undefined, undefined, wizardQuery);
     if (res.success && res.results?.length) {
+      const persons = res.results as DfiPersonResult[];
       if (res.results.length === 1) {
-        setWizardPerson(res.results[0]);
+        setWizardPerson(persons[0]);
         setWizardStep("credits");
-        loadWizardCredits(res.results[0].Id);
+        loadWizardCredits(persons[0].Id);
       } else {
-        setWizardPersons(res.results);
+        setWizardPersons(persons);
         setWizardStep("persons");
       }
     } else {
@@ -120,13 +139,14 @@ export function DfiImportWizard({
   const handleWizardImport = async () => {
     const approved = wizardCredits.filter(c => wizardSelected[c.Id]);
     if (!approved.length) {
-      alert(t("works.chooseAtLeastOne"));
+      setWizardValidationError(t("works.chooseAtLeastOne"));
       return;
     }
     const personId = wizardPerson?.Id ?? dfiPersonId;
     if (!personId) return;
     setWizardImporting(true);
     setWizardError(null);
+    setWizardValidationError(null);
     const res = await importApprovedDFIWorks(personId, approved);
     if (res.success) {
       const linkedCount = res.linkedExistingCount ?? 0;
@@ -229,6 +249,7 @@ export function DfiImportWizard({
                       s[c.Id] = !all;
                     });
                     setWizardSelected(s);
+                    setWizardValidationError(null);
                   }}
                   className="w-full text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600 sm:w-auto"
                 >
@@ -246,7 +267,10 @@ export function DfiImportWizard({
                     <input
                       type="checkbox"
                       checked={wizardSelected[c.Id] || false}
-                      onChange={e => setWizardSelected(prev => ({ ...prev, [c.Id]: e.target.checked }))}
+                      onChange={e => {
+                        setWizardSelected(prev => ({ ...prev, [c.Id]: e.target.checked }));
+                        setWizardValidationError(null);
+                      }}
                       className="mt-0.5 w-4 h-4 accent-gray-900"
                     />
                     <div>
@@ -260,6 +284,11 @@ export function DfiImportWizard({
                   </label>
                 ))}
               </div>
+              {wizardValidationError && (
+                <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
+                  {wizardValidationError}
+                </div>
+              )}
               <div className="flex justify-end mt-4">
                 <Button onClick={handleWizardImport} disabled={wizardImporting} className="w-full gap-2 sm:w-auto">
                   {wizardImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}

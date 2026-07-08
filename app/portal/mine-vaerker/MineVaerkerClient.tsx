@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Film, Plus, Search, X, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -182,12 +183,13 @@ export default function MineVaerkerClient({
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
-  const [sortKey, setSortKey]   = useState<SortKey>("year");
+  const [sortKey, setSortKey]   = useState<SortKey>("date");
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [pageSize, setPageSize] = useState(20);
+  const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -326,11 +328,18 @@ export default function MineVaerkerClient({
   };
 
   const handleDeleteSelected = async () => {
-    if (!selected.length || !confirm(t("works.confirmRemove").replace("{count}", String(selected.length)))) return;
+    if (!selected.length) return;
+    setRemoveConfirmOpen(true);
+  };
+
+  const confirmDeleteSelected = async () => {
+    if (!selected.length) return;
+    const ids = [...selected];
+    setRemoveConfirmOpen(false);
     try {
-      const res = await removeWorkAssignments(selected, rightsHolderId ?? "");
+      const res = await removeWorkAssignments(ids, rightsHolderId ?? "");
       if (res.success) {
-        setAssignments(prev => prev.filter(a => !selected.includes(a.id)));
+        setAssignments(prev => prev.filter(a => !ids.includes(a.id)));
         setSelected([]);
         setMsg({ type: "success", text: t("works.selectedRemoved") });
       } else {
@@ -721,6 +730,25 @@ export default function MineVaerkerClient({
         topics={MINE_VAERKER_HELP}
         storageKey="dfks-help-mine-vaerker-v2"
       />
+
+      <Dialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Fjern valgte værker?</DialogTitle>
+            <DialogDescription>
+              {t("works.confirmRemove").replace("{count}", String(selected.length))}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoveConfirmOpen(false)}>
+              Annuller
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteSelected}>
+              Fjern {selected.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
