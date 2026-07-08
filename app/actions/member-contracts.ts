@@ -205,6 +205,23 @@ export async function linkContractToWork(contractId: string, workId: string | nu
   const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).single();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil" };
 
+  // Kontrakten skal tilhøre medlemmet
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id")
+    .eq("id", contractId)
+    .eq("rights_holder_id", rh.id)
+    .maybeSingle();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+
+  // Værket skal findes og tilhøre samme org som kontrakten
+  if (workId) {
+    const { data: work } = await db.from("works").select("id, org_id").eq("id", workId).maybeSingle();
+    if (!work || work.org_id !== contract.org_id) {
+      return { success: false, error: "Værket findes ikke i din organisation" };
+    }
+  }
+
   const { error } = await db
     .from("contracts")
     .update({ work_id: workId })
@@ -245,8 +262,18 @@ export async function deleteMemberContract(contractId: string) {
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
   if (contract.rights_holder_id !== rh.id) return { success: false, error: "Ikke autoriseret" };
 
-  if (contract.pdf_url) {
-    await db.storage.from(BUCKET).remove([contract.pdf_url]);
+  // Ryd op i storage: både selve kontrakten og evt. vedhæftede allonger/bilag,
+  // så filer ikke bliver forældreløse når DB-rækkerne cascade-slettes.
+  const { data: attachments } = await db
+    .from("contract_attachments")
+    .select("pdf_url")
+    .eq("contract_id", contractId);
+  const storagePaths = [
+    contract.pdf_url,
+    ...((attachments ?? []).map(a => a.pdf_url)),
+  ].filter((p): p is string => Boolean(p));
+  if (storagePaths.length > 0) {
+    await db.storage.from(BUCKET).remove(storagePaths);
   }
 
   await db.from("contracts").delete().eq("id", contractId);

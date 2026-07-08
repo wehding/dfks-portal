@@ -18,7 +18,7 @@ import { maskPersonalData } from "@/lib/mask-text"
 import { createClient } from "@supabase/supabase-js"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources } from "@/lib/ai-sources"
-import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
+import { buildContractExtractionPrompt, CONTRACT_EXTRACTION_MODEL } from "@/lib/contract-extraction-prompt"
 
 export async function POST(req: NextRequest) {
     try {
@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
 
 async function extractFromText(text: string, apiKey: string, systemPrompt?: string): Promise<string> {
     const body = {
-        model: "claude-sonnet-4-6",
+        model: CONTRACT_EXTRACTION_MODEL,
         max_tokens: 4096,
         system: systemPrompt ?? buildContractExtractionPrompt(),
         messages: [{

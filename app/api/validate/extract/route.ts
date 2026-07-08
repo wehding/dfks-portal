@@ -16,7 +16,7 @@ import { maskPersonalData } from "@/lib/mask-text"
 import { getApiKey } from "@/lib/ai-key-store"
 import { normaliseSources } from "@/lib/ai-sources"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
-import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
+import { buildContractExtractionPrompt, CONTRACT_EXTRACTION_MODEL } from "@/lib/contract-extraction-prompt"
 
 export async function POST(req: NextRequest) {
     try {
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
                 "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-                model: "claude-haiku-4-5-20251001",
+                model: CONTRACT_EXTRACTION_MODEL,
                 max_tokens: 4096,
                 system: activeSystemPrompt,
                 messages: [{ role: "user", content: `---KONTRAKT---\n${masked.slice(0, 40000)}` }],

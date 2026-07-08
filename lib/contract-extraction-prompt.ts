@@ -8,6 +8,11 @@ import {
     BETA_RATE_RULE,
 } from "@/lib/ai-fields"
 
+// Fælles model for AL kontrakt-udtræk, så batch-læsning (jobs/process →
+// contracts/extract) og manuel re-læsning (validate/extract) giver samme
+// kvalitet. Tidligere brugte de to ruter forskellige modeller.
+export const CONTRACT_EXTRACTION_MODEL = "claude-sonnet-4-6"
+
 export const CONTRACT_EXTRACTION_SYSTEM_PROMPT = `Du er ekspert i at udtrække strukturerede data fra danske filmkontrakter.
 Din opgave er at læse kontrakten og returnere et JSON-objekt med præcis de felter der er angivet.
 Vær præcis — brug null for felter der ikke fremgår af kontrakten. Brug aldrig gæt.

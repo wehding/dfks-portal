@@ -244,7 +244,7 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         org_id: job.org_id,
         holiday_pay_rate: mergedExt.holidayPayRate ?? null,
         beta_rate: mergedExt.betaRate ?? null,
-        has_credit_clause: !!mergedExt.hasCreditClause || Boolean(mergedExt.creditedRoles),
+        has_credit_clause: !!mergedExt.hasCreditClause || Boolean(mergedExt.creditedRoles || mergedExt.creditedFunction),
         has_termination_clause: !!mergedExt.hasTerminationClause,
         termination_days_editor: mergedExt.terminationDaysEditor ?? null,
         termination_days_producer: mergedExt.terminationDaysProducer ?? null,
