@@ -298,7 +298,12 @@ export function EditWorkModal({
       editor => !editor.locked || editor.action === "remove" || editor.action === "change"
     );
 
-    if (coEditorChanges.length > 0 && !workCorrectionComment.trim()) {
+    // "Gem" sender også en åben værks-rettelse med — så indtastede felter
+    // ikke tabes fordi brugeren trykkede "Gem" i stedet for "Send rettelse".
+    const wantsCorrection = showWorkCorrection && !!workCorrection;
+    const willSubmit = coEditorChanges.length > 0 || wantsCorrection;
+
+    if (willSubmit && !workCorrectionComment.trim()) {
       setCommentError(true);
       setIsSavingEdit(false);
       return;
@@ -316,22 +321,35 @@ export function EditWorkModal({
 
       if (ownRoleError) throw new Error(ownRoleError.message);
 
-      if (coEditorChanges.length > 0) {
+      if (willSubmit) {
         if (!assignment.works) throw new Error("Værket mangler.");
+        const data = wantsCorrection && workCorrection
+          ? {
+              title: workCorrection.title,
+              type: workCorrection.type,
+              year: numberOrNull(workCorrection.year),
+              duration_minutes: numberOrNull(workCorrection.duration_minutes),
+              season_count: numberOrNull(workCorrection.season_count),
+              episode_count: numberOrNull(workCorrection.episode_count),
+              genre: workCorrection.genre || null,
+              director: workCorrection.director || null,
+              description: workCorrection.description || null,
+            }
+          : {
+              title: assignment.works.title,
+              type: assignment.works.type ?? "spillefilm",
+              year: assignment.works.year,
+              duration_minutes: assignment.works.duration_minutes,
+              season_count: assignment.works.season_count,
+              episode_count: assignment.works.episode_count,
+              genre: assignment.works.genre,
+              director: assignment.works.director,
+              description: assignment.works.description,
+            };
         await submitWorkDataCorrection({
           assignmentId: assignment.id,
           workId: assignment.works.id,
-          data: {
-            title: assignment.works.title,
-            type: assignment.works.type ?? "spillefilm",
-            year: assignment.works.year,
-            duration_minutes: assignment.works.duration_minutes,
-            season_count: assignment.works.season_count,
-            episode_count: assignment.works.episode_count,
-            genre: assignment.works.genre,
-            director: assignment.works.director,
-            description: assignment.works.description,
-          },
+          data,
           comment: workCorrectionComment,
           coEditors: coEditorChanges,
         });

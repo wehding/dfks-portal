@@ -22,6 +22,10 @@ export type ContractExtractionResult = {
     error?: string
 }
 
+// AI'en får kun de første CONTRACT_TEXT_LIMIT tegn. Længere kontrakter
+// afkortes (rettighedsklausuler står ofte til sidst — se advarsel nedenfor).
+const CONTRACT_TEXT_LIMIT = 40000
+
 async function callAnthropic(maskedText: string, apiKey: string, systemPrompt: string): Promise<string> {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -34,7 +38,7 @@ async function callAnthropic(maskedText: string, apiKey: string, systemPrompt: s
             model: CONTRACT_EXTRACTION_MODEL,
             max_tokens: 4096,
             system: systemPrompt,
-            messages: [{ role: "user", content: `---KONTRAKT---\n${maskedText.slice(0, 40000)}` }],
+            messages: [{ role: "user", content: `---KONTRAKT---\n${maskedText.slice(0, CONTRACT_TEXT_LIMIT)}` }],
         }),
     })
     if (!res.ok) throw new Error(`Anthropic fejl: ${res.status}`)
@@ -73,6 +77,15 @@ export async function runContractExtraction(maskedText: string): Promise<Contrac
     const extracted = JSON.parse(jsonMatch[0]) as Record<string, unknown>
     if (extracted._sources && typeof extracted._sources === "object") {
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
+    }
+
+    // Advar hvis kontrakten blev afkortet — rettighedsklausuler (Copydan/SVOD/
+    // Create Denmark) står typisk til sidst og kan være klippet væk.
+    if (maskedText.length > CONTRACT_TEXT_LIMIT) {
+        extracted._truncated = true
+        const advarsel = `⚠ ADVARSEL: Kontrakten er meget lang (${maskedText.length.toLocaleString("da-DK")} tegn) og blev afkortet til de første ${CONTRACT_TEXT_LIMIT.toLocaleString("da-DK")} tegn ved AI-læsning. Kontrollér især rettighedsklausuler til sidst i dokumentet.`
+        extracted.specialNotes = extracted.specialNotes ? `${advarsel}\n${String(extracted.specialNotes)}` : advarsel
+        console.warn(`[contract-extract] Kontrakt afkortet: ${maskedText.length} > ${CONTRACT_TEXT_LIMIT} tegn`)
     }
 
     // Navnetjek mod DFKS-register (kun full_name)
