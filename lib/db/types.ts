@@ -55,6 +55,22 @@ export interface DbOrgAffiliation {
     created_at: string
 }
 
+export interface DbDfksMember {
+    id: string
+    org_id: string | null
+    foreninglet_id: string
+    display_id: string | null
+    first_name: string | null
+    last_name: string | null
+    full_name: string
+    email: string | null
+    status: "active" | "resigned" | string
+    raw: Record<string, unknown> | null
+    synced_at: string
+    created_at: string
+    updated_at: string
+}
+
 export interface DbEmployer {
     id: string
     name: string
@@ -248,6 +264,8 @@ export interface DbWork {
     status: string
     dfi_id: string | null
     tmdb_id: number | null
+    imdb_id: string | null
+    wikidata_id: string | null
     description: string | null
     poster_url: string | null
     dfi_metadata: Record<string, unknown> | null

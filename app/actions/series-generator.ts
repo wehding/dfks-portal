@@ -1,7 +1,7 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/service";
-import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
+import { getTMDBEpisodeExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
@@ -22,6 +22,8 @@ type EpisodeInsert = {
   status: string;
   dfi_id?: string | null;
   tmdb_id?: number | null;
+  imdb_id?: string | null;
+  wikidata_id?: string | null;
   dfi_metadata?: unknown;
 };
 
@@ -83,6 +85,7 @@ export async function generateEpisodesForSeries(params: {
       const tmdbRes = await getTMDBSeasonEpisodes(parentWork.tmdb_id, seasonNumber);
       if (tmdbRes.success && tmdbRes.episodes && tmdbRes.episodes.length > 0) {
         for (const ep of tmdbRes.episodes) {
+          const externalIds = await getTMDBEpisodeExternalIds(parentWork.tmdb_id, seasonNumber, ep.episode_number);
           const eStr = String(ep.episode_number).padStart(2, "0");
           const subtitle = ep.name ? String(ep.name).trim() : "";
           const title = subtitle 
@@ -105,6 +108,8 @@ export async function generateEpisodesForSeries(params: {
             status: parentWork.status,
             tmdb_id: parentWork.tmdb_id,
             dfi_id: parentWork.dfi_id,
+            imdb_id: externalIds.imdb_id,
+            wikidata_id: externalIds.wikidata_id,
           });
         }
       }

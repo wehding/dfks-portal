@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -41,6 +42,7 @@ import {
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
 import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
+import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -695,6 +697,7 @@ export default function VaerksadministrationPage() {
   const [masterId, setMasterId] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const { activeRh, setActiveRh } = useActiveRightsHolder();
 
   const load = async () => {
     setLoading(true);
@@ -729,6 +732,7 @@ export default function VaerksadministrationPage() {
   }, []);
 
   const editParamHandled = useRef(false);
+  const rhParamHandled = useRef(false);
   // Deep-link: ?edit=<id> åbner Rediger værk automatisk (fx fra rettighedshaver-siden)
   useEffect(() => {
     if (editParamHandled.current || works.length === 0) return;
@@ -741,6 +745,20 @@ export default function VaerksadministrationPage() {
       window.history.replaceState(null, "", "/admin/vaerker");
     }
   }, [works]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (rhParamHandled.current || rightsHolders.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const rhId = params.get("rh");
+    if (!rhId) return;
+    const rh = rightsHolders.find(x => x.id === rhId);
+    if (!rh) return;
+    rhParamHandled.current = true;
+    setActiveRh({ id: rh.id, name: rh.full_name });
+    params.delete("rh");
+    const next = params.toString();
+    window.history.replaceState(null, "", next ? `/admin/vaerker?${next}` : "/admin/vaerker");
+  }, [rightsHolders, setActiveRh]);
 
   // Forudfyld antal afsnit + valgte afsnit fra den aktive rettelse (medlemmets myEpisodes)
   useEffect(() => {
@@ -761,6 +779,9 @@ export default function VaerksadministrationPage() {
 
   const filtered = useMemo(() => {
     let list = [...works];
+    if (activeRh) list = list.filter(work =>
+      work.work_assignments?.some(assignment => assignment.rettighedshavere?.id === activeRh.id)
+    );
     if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
     else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
     if (search.trim()) {
@@ -771,7 +792,10 @@ export default function VaerksadministrationPage() {
         String(work.year ?? "").includes(q) ||
         work.dfi_id?.toLowerCase().includes(q) ||
         String(work.tmdb_id ?? "").includes(q) ||
-        (getWorkBroadcaster(work) ?? "").toLowerCase().includes(q)
+        (getWorkBroadcaster(work) ?? "").toLowerCase().includes(q) ||
+        work.work_assignments?.some(assignment =>
+          assignment.rettighedshavere?.full_name?.toLowerCase().includes(q)
+        )
       );
     }
     list.sort((a, b) => {
@@ -792,7 +816,7 @@ export default function VaerksadministrationPage() {
       return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction;
     });
     return list;
-  }, [works, filterStatus, search, sortKey, sortDir]);
+  }, [works, activeRh, filterStatus, search, sortKey, sortDir]);
   const visibleWorks = filtered.slice(0, pageSize);
 
   const stats = useMemo(() => {
@@ -1565,6 +1589,7 @@ export default function VaerksadministrationPage() {
             <SelectItem value="beskeder">Beskeder</SelectItem>
           </SelectContent>
         </Select>
+        <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
         <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
           Find dubletter

@@ -14,15 +14,37 @@ const STEPS = [
   { id: 5, title: "Bekræft & Start", icon: "✅" },
 ];
 
+type OnboardingProfile = {
+  full_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  address?: string | null;
+  cpr_no?: string | null;
+  bank_account?: string | null;
+  gender?: string | null;
+};
+
+type OnboardingUser = {
+  email?: string | null;
+};
+
+type FormKey = "first_name" | "last_name" | "email" | "phone" | "address" | "zip" | "city" | "cpr" | "bank_account" | "gender";
+
+type FormField = {
+  label: string;
+  key: FormKey;
+  placeholder: string;
+  full?: boolean;
+};
+
 export default function OnboardingClient({
   rh,
   user,
 }: {
-  rh: any;
-  user: any;
+  rh: OnboardingProfile | null;
+  user: OnboardingUser | null;
 }) {
   const router = useRouter();
-  const loginEmail = user?.email || "";
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
@@ -32,6 +54,9 @@ export default function OnboardingClient({
   const [tmdbPersonId, setTmdbPersonId] = useState<number | null>(null);
   const [dfiCredits, setDfiCredits] = useState<OnboardingCredit[]>([]);
   const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<string, boolean>>({});
+  const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
+  const [seriesSeasons, setSeriesSeasons] = useState<Record<string, number>>({});
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, number[]>>({});
   const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [dfiError, setDfiError] = useState<string | null>(null);
@@ -58,6 +83,33 @@ export default function OnboardingClient({
 
   const handleField = (field: string, value: string) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
+
+  const isSeriesCredit = (credit: OnboardingCredit) => {
+    const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
+    return category.includes("serie") || category.includes("tv");
+  };
+
+  const episodeCountForCredit = (credit: OnboardingCredit) => {
+    const rawCount = credit.raw?.number_of_episodes ?? credit.raw?.episode_count ?? credit.raw?.EpisodeCount;
+    const parsed = Number(rawCount);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 60);
+    return 10;
+  };
+
+  const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
+    const count = episodeCountForCredit(credit);
+    return seriesEpisodes[credit.id] ?? Array.from({ length: count }, (_, index) => index + 1);
+  };
+
+  const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
+    setSeriesEpisodes(prev => {
+      const current = selectedEpisodesForCredit(credit);
+      const next = current.includes(episodeNumber)
+        ? current.filter(n => n !== episodeNumber)
+        : [...current, episodeNumber].sort((a, b) => a - b);
+      return { ...prev, [credit.id]: next };
+    });
+  };
 
   const handleComplete = async () => {
     setIsSaving(true);
@@ -133,7 +185,17 @@ export default function OnboardingClient({
         setStep(3);
       }
     } else if (step === 3) {
-      const approved = dfiCredits.filter((c) => selectedDfiCredits[c.id]);
+      const approved = dfiCredits
+        .filter((c) => selectedDfiCredits[c.id])
+        .map((c) => isSeriesCredit(c)
+          ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
+          : c
+        );
+      const missingSeriesEpisodes = approved.some((c) => isSeriesCredit(c) && (!c.selected_episodes || c.selected_episodes.length === 0));
+      if (missingSeriesEpisodes) {
+        alert("Vælg mindst ét afsnit for hver serie, du vil importere.");
+        return;
+      }
       if (approved.length > 0) {
         setIsImportingDfi(true);
         setImportSeconds(0);
@@ -298,25 +360,32 @@ export default function OnboardingClient({
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                {[
+                {([
                   { label: "Fornavn", key: "first_name", placeholder: "Dit fornavn" },
                   { label: "Efternavn", key: "last_name", placeholder: "Dit efternavn" },
                   { label: "Telefon", key: "phone", placeholder: "+45 12 34 56 78" },
                   { label: "Adresse", key: "address", placeholder: "Gadenavn 1", full: true },
                   { label: "Postnr.", key: "zip", placeholder: "1234" },
                   { label: "By", key: "city", placeholder: "København" },
-                ].map((f: any) => (
-                  <div key={f.key} style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
-                    <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
-                      {f.label}
-                    </label>
-                    <input
-                      value={(formData as any)[f.key]}
-                      onChange={(e) => handleField(f.key, e.target.value)}
-                      placeholder={f.placeholder}
-                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
-                    />
-                  </div>
+                ] satisfies FormField[]).map((f) => (
+                  <React.Fragment key={f.key}>
+                    <div style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
+                      <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                        {f.label}
+                      </label>
+                      <input
+                        value={formData[f.key]}
+                        onChange={(e) => handleField(f.key, e.target.value)}
+                        placeholder={f.placeholder}
+                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                      />
+                    </div>
+                    {f.key === "last_name" && (
+                      <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
+                        Det er vigtigt at du skriver dit navn sådan som du typisk bliver krediteret.
+                      </div>
+                    )}
+                  </React.Fragment>
                 ))}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
@@ -334,16 +403,16 @@ export default function OnboardingClient({
               <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "#F9FAFB", borderRadius: "8px", border: "1px solid #E5E7EB" }}>
                 <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-surface)" }}>🏦 Bankoplysninger (til udbetaling)</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                  {[
+                  {([
                     { label: "CPR-nummer", key: "cpr", placeholder: "DDMMÅÅ-XXXX" },
                     { label: "NemKonto / Kontonr.", key: "bank_account", placeholder: "Reg.nr. + kontonr." },
-                  ].map((f) => (
+                  ] satisfies FormField[]).map((f) => (
                     <div key={f.key}>
                       <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
                         {f.label}
                       </label>
                       <input
-                        value={(formData as any)[f.key]}
+                        value={formData[f.key]}
                         onChange={(e) => handleField(f.key, e.target.value)}
                         placeholder={f.placeholder}
                         style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "#F9FAFB", color: "var(--on-surface)" }}
@@ -428,34 +497,85 @@ export default function OnboardingClient({
                     display: "flex", flexDirection: "column",
                     boxShadow: "inset 0 2px 4px rgba(0, 0, 0, 0.05)",
                   }}>
-                    {dfiCredits.map((c, i) => (
-                      <label key={`${c.id}-${i}`} style={{
-                        display: "flex", alignItems: "flex-start", gap: "12px",
-                        padding: "14px 16px",
-                        borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid #D1D5DB",
-                        cursor: "pointer",
-                        backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
-                        userSelect: "none",
-                        transition: "background-color 0.2s ease",
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={selectedDfiCredits[c.id] || false}
-                          onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.id]: e.target.checked }))}
-                          style={{ width: "16px", height: "16px", marginTop: "3px", accentColor: "var(--primary)" }}
-                        />
-                        <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1 }}>
-                          <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
-                            {c.title} {c.year ? `(${c.year})` : ""}
-                          </div>
-                          <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", display: "flex", gap: "8px" }}>
-                            <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.role}</span>
-                            <span>•</span>
-                            <span>{c.category}</span>
-                          </div>
+                    {dfiCredits.map((c, i) => {
+                      const isSeries = isSeriesCredit(c);
+                      const episodeCount = episodeCountForCredit(c);
+                      const selectedEpisodes = selectedEpisodesForCredit(c);
+                      return (
+                        <div key={`${c.id}-${i}`} style={{
+                          padding: "14px 16px",
+                          borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid #D1D5DB",
+                          backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
+                          transition: "background-color 0.2s ease",
+                        }}>
+                          <label style={{ display: "flex", alignItems: "flex-start", gap: "12px", cursor: "pointer", userSelect: "none" }}>
+                            <input
+                              type="checkbox"
+                              checked={selectedDfiCredits[c.id] || false}
+                              onChange={(e) => setSelectedDfiCredits((prev) => ({ ...prev, [c.id]: e.target.checked }))}
+                              style={{ width: "16px", height: "16px", marginTop: "3px", accentColor: "var(--primary)" }}
+                            />
+                            <div style={{ display: "flex", flexDirection: "column", gap: "2px", flex: 1 }}>
+                              <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                                {c.title} {c.year ? `(${c.year})` : ""}
+                              </div>
+                              <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                                <span style={{ fontWeight: 500, color: "var(--tertiary)" }}>{c.role}</span>
+                                <span>•</span>
+                                <span>{c.category}</span>
+                                <span>•</span>
+                                <span>{c.source.toUpperCase()}</span>
+                                {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
+                              </div>
+                            </div>
+                          </label>
+                          {isSeries && selectedDfiCredits[c.id] && (
+                            <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid #D1D5DB", borderRadius: "6px", backgroundColor: "#FFFFFF" }}>
+                              <button
+                                type="button"
+                                onClick={() => setExpandedSeries(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                                style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "#111827" }}
+                              >
+                                {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
+                              </button>
+                              {expandedSeries[c.id] && (
+                                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--on-surface-variant)" }}>
+                                    Sæson
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      value={seriesSeasons[c.id] ?? 1}
+                                      onChange={(event) => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
+                                      style={{ width: "72px", padding: "6px 8px", border: "1px solid #D1D5DB", borderRadius: "6px" }}
+                                    />
+                                  </label>
+                                  <div style={{ display: "flex", gap: "8px" }}>
+                                    <button type="button" onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: Array.from({ length: episodeCount }, (_, index) => index + 1) }))} style={{ padding: "4px 8px", fontSize: "12px", border: "1px solid #D1D5DB", borderRadius: "4px", background: "transparent" }}>Vælg alle</button>
+                                    <button type="button" onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }))} style={{ padding: "4px 8px", fontSize: "12px", border: "1px solid #D1D5DB", borderRadius: "4px", background: "transparent" }}>Fravælg alle</button>
+                                  </div>
+                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(44px, 1fr))", gap: "6px" }}>
+                                    {Array.from({ length: episodeCount }, (_, index) => index + 1).map(episodeNumber => {
+                                      const checked = selectedEpisodes.includes(episodeNumber);
+                                      return (
+                                        <button
+                                          key={episodeNumber}
+                                          type="button"
+                                          onClick={() => toggleEpisode(c, episodeNumber)}
+                                          style={{ padding: "6px 0", borderRadius: "5px", border: checked ? "1px solid #111827" : "1px solid #D1D5DB", background: checked ? "#111827" : "#FFFFFF", color: checked ? "#FFFFFF" : "#111827", fontSize: "12px", cursor: "pointer" }}
+                                        >
+                                          {episodeNumber}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      </label>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ) : (
