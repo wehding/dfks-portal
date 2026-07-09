@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
+import { requireAdminApi } from "@/lib/api-auth"
 
 export async function POST(request: Request) {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     try {
         const { fritekst, prioritet } = await request.json()
 

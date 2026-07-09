@@ -7,10 +7,13 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { getKeyStatus, writeKeyStore } from "@/lib/ai-key-store"
+import { requireAdminApi } from "@/lib/api-auth"
 
 const PROVIDERS = ["anthropic", "openai", "google"] as const
 
 export async function GET() {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     const status = Object.fromEntries(
         PROVIDERS.map(p => [p, getKeyStatus(p)])
     )
@@ -18,6 +21,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     try {
         const body = await req.json() as Partial<Record<typeof PROVIDERS[number], string>>
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
+import { requireAdminApi } from "@/lib/api-auth"
 
 function sb() {
     return createClient(
@@ -10,6 +11,8 @@ function sb() {
 }
 
 export async function GET() {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     const supabase = sb()
     const [patternsRes, feedbackRes] = await Promise.all([
         supabase
@@ -30,6 +33,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     const body = await req.json()
     const { titel, regel, semantisk_beskrivelse, kilde_feedback_id, godkendt_af } = body
     if (!titel || !regel || !semantisk_beskrivelse) {
@@ -46,6 +51,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     const { id, ...updates } = await req.json()
     if (!id) return NextResponse.json({ error: "id mangler" }, { status: 400 })
     const allowed = ["titel", "regel", "semantisk_beskrivelse", "aktiv"]
