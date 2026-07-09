@@ -14,6 +14,7 @@ import {
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -226,7 +227,7 @@ export default function RettighedshavereAdminPage() {
                 title="Rettighedshavere"
                 subtitle="Klippere tilknyttet organisationen"
                 actions={
-                    <div className="flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                         {memberSyncStatus && (
                             <span className="text-xs text-muted-foreground">
                                 DFKS liste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
@@ -260,14 +261,14 @@ export default function RettighedshavereAdminPage() {
                 </div>
             )}
 
-            <div className="flex gap-2 items-center">
-                <div className="relative flex-1 max-w-xs">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
                     {search && <button className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
                 <Select value={filter} onValueChange={v => setFilter(v as Filter)}>
-                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
@@ -276,7 +277,71 @@ export default function RettighedshavereAdminPage() {
                 </Select>
             </div>
 
-            <div className="rounded-md border">
+            <MobileCardList>
+                {loading ? (
+                    <MobileDataCard>
+                        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter...
+                        </div>
+                    </MobileDataCard>
+                ) : visible.length === 0 ? (
+                    <MobileDataCard>
+                        <p className="py-6 text-center text-sm text-muted-foreground">Ingen rettighedshavere fundet</p>
+                    </MobileDataCard>
+                ) : visible.map(rh => {
+                    const aff = orgId ? getAffiliation(rh, orgId) : null
+                    const hasLogin = !!rh.user_id
+                    return (
+                        <MobileDataCard key={rh.id}>
+                            <div className="flex items-start justify-between gap-3">
+                                <button className="min-w-0 text-left" onClick={() => openEdit(rh)}>
+                                    <p className="truncate font-medium">{rh.full_name}</p>
+                                    <p className="mt-1 truncate text-sm text-muted-foreground">{rh.email ?? "Ingen email"}</p>
+                                </button>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                            <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem onClick={() => openEdit(rh)}>
+                                            <Pencil className="h-3.5 w-3.5 mr-2" />Rediger
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => router.push(`/admin/kontrakter?rh=${rh.id}`)}>
+                                            <FileText className="h-3.5 w-3.5 mr-2" />Se alle kontrakter
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => router.push(`/admin/vaerker?rh=${rh.id}`)}>
+                                            <Eye className="h-3.5 w-3.5 mr-2" />Se alle værker
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => toggleMember(rh)}>
+                                            {aff?.is_member
+                                                ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
+                                                : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-3">
+                                <MobileMetaRow label="Telefon">{rh.phone ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label="DFKS nr.">{aff?.member_no ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label="Status">
+                                    {aff?.is_member
+                                        ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
+                                        : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                </MobileMetaRow>
+                                <MobileMetaRow label="Portal">
+                                    {hasLogin
+                                        ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
+                                        : <span className="text-muted-foreground">Ingen adgang</span>}
+                                </MobileMetaRow>
+                            </div>
+                        </MobileDataCard>
+                    )
+                })}
+            </MobileCardList>
+
+            <ResponsiveTableFrame className="rounded-md">
                 <Table>
                     <TableHeader>
                         <TableRow>
@@ -370,7 +435,7 @@ export default function RettighedshavereAdminPage() {
                         })}
                     </TableBody>
                 </Table>
-            </div>
+            </ResponsiveTableFrame>
 
             {/* Create dialog */}
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>

@@ -17,6 +17,7 @@ import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -1275,8 +1276,8 @@ function AdminKontrakterContent() {
                 title={t("admin.contracts.title")}
                 subtitle={t("admin.contracts.subtitle")}
                 actions={
-                    <div className="flex flex-wrap gap-2">
-                        <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
+                    <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+                        <Button size="sm" className="w-full gap-1.5 sm:w-auto" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
                             <Upload className="h-4 w-4" />
                             Upload kontrakter
                         </Button>
@@ -1285,10 +1286,10 @@ function AdminKontrakterContent() {
             />
 
             {/* Filters */}
-            <div className="flex flex-wrap items-center gap-3">
-                <div className="relative">
+            <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+                <div className="relative w-full lg:w-auto">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg titel, klipper, producent..." className="w-[280px] pl-8 pr-8" value={search} onChange={e => setSearch(e.target.value)} />
+                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={search} onChange={e => setSearch(e.target.value)} />
                     {search && (
                         <button
                             type="button"
@@ -1301,7 +1302,7 @@ function AdminKontrakterContent() {
                     )}
                 </div>
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full lg:w-[150px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">Status</SelectItem>
                         <SelectItem value="kladde">Kladde</SelectItem>
@@ -1313,7 +1314,7 @@ function AdminKontrakterContent() {
                     </SelectContent>
                 </Select>
                 <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full lg:w-[160px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">Alle typer</SelectItem>
                         <SelectItem value="a-løn">A-løn</SelectItem>
@@ -1321,11 +1322,11 @@ function AdminKontrakterContent() {
                     </SelectContent>
                 </Select>
                 <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
-                <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
+                <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
                     Find dubletter
                 </Button>
-                <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
                     Vis
                     <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
                         {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
@@ -1369,7 +1370,79 @@ function AdminKontrakterContent() {
             )}
 
             {/* Table */}
-            <div className="rounded-lg border">
+            <MobileCardList>
+                {filtered.length === 0 ? (
+                    <MobileDataCard>
+                        <p className="py-6 text-center text-sm text-muted-foreground">
+                            {contracts.length === 0 ? "Ingen kontrakter endnu — upload den første" : t("common.noResults")}
+                        </p>
+                    </MobileDataCard>
+                ) : visibleContracts.map(c => {
+                    const unreadMemberComments = c.contract_comments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).length
+                    const latestUnread = c.contract_comments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).slice(-1)[0]
+                    return (
+                        <MobileDataCard key={c.id}>
+                            <div className="flex gap-3">
+                                <div onClick={event => event.stopPropagation()} className="pt-1">
+                                    <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="h-4 w-4" aria-label={`Vælg ${c.work_title ?? c.working_title ?? "kontrakt"}`} />
+                                </div>
+                                <button type="button" onClick={() => openEdit(c)} className="flex min-w-0 flex-1 gap-3 text-left">
+                                    {posterUrl(c.work_poster_url) && (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={posterUrl(c.work_poster_url) ?? ""} alt="" className="h-16 w-11 shrink-0 rounded object-cover" />
+                                    )}
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <p className="font-medium leading-snug">{c.work_title ?? c.working_title ?? "—"}</p>
+                                            {unreadMemberComments > 0 && (
+                                                <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
+                                                    <MessageSquare className="mr-1 h-3 w-3" />
+                                                    {unreadMemberComments}
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        {latestUnread && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnread.message.split("\n")[0]}</p>}
+                                    </div>
+                                </button>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                            <MoreHorizontal className="h-4 w-4" />
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem className="gap-2" onClick={() => openPdf(c)}>
+                                            <Eye className="h-3.5 w-3.5" />Se kontrakt
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem className="gap-2" onClick={() => openEdit(c)}>
+                                            <Pencil className="h-3.5 w-3.5" />Rediger
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem className="gap-2 text-destructive" onClick={() => setDeleteId(c.id)}>
+                                            <Trash2 className="h-3.5 w-3.5" />Slet
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-3">
+                                <MobileMetaRow label="Klipper">{c.rights_holder_name ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label="Producent">{c.employer_name ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label="Type">{c.type === "a-løn" ? "A-løn" : "Leverandør"}</MobileMetaRow>
+                                <MobileMetaRow label="Overenskomst">{c.overenskomst ? (OVERENSKOMST_LABELS[c.overenskomst] ?? c.overenskomst) : "—"}</MobileMetaRow>
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                                <ContractStatusBadges contract={c} compact />
+                                <span className="text-xs text-muted-foreground">
+                                    {c.start_date && c.end_date
+                                        ? `${new Date(c.start_date).toLocaleDateString("da-DK")} – ${new Date(c.end_date).toLocaleDateString("da-DK")}`
+                                        : c.contract_date ? new Date(c.contract_date).toLocaleDateString("da-DK") : "—"}
+                                </span>
+                            </div>
+                        </MobileDataCard>
+                    )
+                })}
+            </MobileCardList>
+
+            <ResponsiveTableFrame>
                 <Table>
                     <TableHeader>
                         <TableRow>
@@ -1462,7 +1535,7 @@ function AdminKontrakterContent() {
                         )}
                     </TableBody>
                 </Table>
-            </div>
+            </ResponsiveTableFrame>
 
             {/* PDF Viewer */}
             <Dialog open={!!viewContract} onOpenChange={() => { setViewContract(null); setViewPdfUrl(null) }}>

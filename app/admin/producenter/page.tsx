@@ -3,9 +3,9 @@
 import { useEffect, useState, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -36,6 +36,18 @@ type ContractRow = {
     contract_date: string | null
     created_at: string
     rights_holder_name: string | null
+}
+
+type ContractQueryRow = {
+    id: string
+    working_title: string | null
+    type: string
+    overenskomst: string | null
+    status: string
+    contract_date: string | null
+    created_at: string
+    employer_id: string | null
+    rettighedshavere?: { full_name: string | null } | { full_name: string | null }[] | null
 }
 
 const STATUS_CFG: Record<string, { label: string; class: string }> = {
@@ -84,7 +96,7 @@ export default function ProducenterPage() {
 
             // Byg et map: employer_id → contracts
             const contractMap: Record<string, ContractRow[]> = {}
-            for (const c of contracts ?? []) {
+            for (const c of (contracts ?? []) as ContractQueryRow[]) {
                 const eid = c.employer_id
                 if (!eid) continue
                 if (!contractMap[eid]) contractMap[eid] = []
@@ -96,7 +108,9 @@ export default function ProducenterPage() {
                     status: c.status,
                     contract_date: c.contract_date,
                     created_at: c.created_at,
-                    rights_holder_name: (c as any).rettighedshavere?.full_name ?? null,
+                    rights_holder_name: Array.isArray(c.rettighedshavere)
+                        ? c.rettighedshavere[0]?.full_name ?? null
+                        : c.rettighedshavere?.full_name ?? null,
                 })
             }
 
@@ -149,7 +163,7 @@ export default function ProducenterPage() {
 
             {/* Stats */}
             {!loading && (
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     {[
                         { label: "Producenter i alt",        value: employers.length },
                         { label: "Med kontrakter",           value: withContracts },
@@ -164,7 +178,7 @@ export default function ProducenterPage() {
             )}
 
             {/* Søg */}
-            <div className="relative max-w-sm">
+            <div className="relative w-full sm:max-w-sm">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
                     placeholder="Søg producent, moderselskab, klipper..."
@@ -185,7 +199,69 @@ export default function ProducenterPage() {
                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
             ) : (
-                <div className="rounded-lg border">
+                <>
+                <MobileCardList>
+                    {visible.length === 0 ? (
+                        <MobileDataCard>
+                            <p className="py-6 text-center text-sm text-muted-foreground">Ingen producenter fundet</p>
+                        </MobileDataCard>
+                    ) : visible.map(emp => (
+                        <MobileDataCard key={emp.id}>
+                            <button
+                                type="button"
+                                className="flex w-full items-start justify-between gap-3 text-left"
+                                onClick={() => setExpanded(expanded === emp.id ? null : emp.id)}
+                            >
+                                <div className="min-w-0">
+                                    <div className="flex items-center gap-2">
+                                        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                        <p className="truncate font-medium">{emp.name}</p>
+                                    </div>
+                                    <p className="mt-1 truncate text-sm text-muted-foreground">{emp.parent_name ?? "Intet moderselskab"}</p>
+                                </div>
+                                <ChevronRight className={`mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded === emp.id ? "rotate-90" : ""}`} />
+                            </button>
+                            <div className="mt-4 grid grid-cols-2 gap-3">
+                                <MobileMetaRow label="Kontrakter">{emp.contract_count}</MobileMetaRow>
+                                <MobileMetaRow label="Seneste">
+                                    {emp.latest_contract ? new Date(emp.latest_contract).toLocaleDateString("da-DK") : "—"}
+                                </MobileMetaRow>
+                            </div>
+                            {emp.klippere.length > 0 && (
+                                <div className="mt-3 flex flex-wrap gap-1">
+                                    {emp.klippere.slice(0, 4).map(k => (
+                                        <Badge key={k} variant="secondary" className="text-[10px] font-normal">
+                                            {k}
+                                        </Badge>
+                                    ))}
+                                    {emp.klippere.length > 4 && <span className="text-xs text-muted-foreground">+{emp.klippere.length - 4}</span>}
+                                </div>
+                            )}
+                            {expanded === emp.id && (
+                                <div className="mt-4 space-y-2 border-t pt-3">
+                                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kontrakthistorik</p>
+                                    {emp.contracts.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground">Ingen kontrakter registreret</p>
+                                    ) : emp.contracts.map(c => {
+                                        const s = STATUS_CFG[c.status] ?? STATUS_CFG.kladde
+                                        return (
+                                            <div key={c.id} className="rounded-md border bg-muted/20 p-3">
+                                                <p className="font-medium">{c.working_title ?? "—"}</p>
+                                                <p className="mt-1 text-sm text-muted-foreground">{c.rights_holder_name ?? "—"} · {c.type === "a-løn" ? "A-løn" : "Leverandør"}</p>
+                                                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                                    <span>{c.contract_date ? new Date(c.contract_date).toLocaleDateString("da-DK") : new Date(c.created_at).toLocaleDateString("da-DK")}</span>
+                                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${s.class}`}>{s.label}</span>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
+                            )}
+                        </MobileDataCard>
+                    ))}
+                </MobileCardList>
+
+                <ResponsiveTableFrame>
                     <Table>
                         <TableHeader>
                             <TableRow>
@@ -334,7 +410,8 @@ export default function ProducenterPage() {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </ResponsiveTableFrame>
+                </>
             )}
         </div>
     )

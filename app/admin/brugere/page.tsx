@@ -8,6 +8,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -359,7 +360,7 @@ export default function AdminBrugerePage() {
                 title="Brugere"
                 subtitle="Administrer stab, jurister og rettighedshavere"
                 actions={
-                    <div className="flex gap-2">
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                         <Button size="sm" variant="outline" onClick={() => openInvite(true)}>
                             <Plus className="h-4 w-4 mr-1" />Ny rettighedshaver
                         </Button>
@@ -371,7 +372,7 @@ export default function AdminBrugerePage() {
             />
 
             {/* Tabs */}
-            <div className="flex items-center gap-1 border-b">
+            <div className="flex items-center gap-1 overflow-x-auto border-b">
                 {TABS.map(t => {
                     const Icon = t.icon
                     const active = tab === t.key
@@ -396,7 +397,7 @@ export default function AdminBrugerePage() {
             </div>
 
             {/* Søg */}
-            <div className="relative max-w-xs">
+            <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                     placeholder="Søg navn eller e-mail…"
@@ -407,7 +408,75 @@ export default function AdminBrugerePage() {
             </div>
 
             {/* Tabel */}
-            <div className="rounded-md border">
+            <MobileCardList>
+                {loading ? (
+                    <MobileDataCard>
+                        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter...
+                        </div>
+                    </MobileDataCard>
+                ) : filtered.length === 0 ? (
+                    <MobileDataCard>
+                        <p className="py-6 text-center text-sm text-muted-foreground">Ingen brugere fundet</p>
+                    </MobileDataCard>
+                ) : filtered.map(u => (
+                    <MobileDataCard key={u.id} className={u.banned ? "opacity-60" : ""}>
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <p className="truncate font-medium">{u.full_name}</p>
+                                <p className="mt-1 truncate text-sm text-muted-foreground">{u.email ?? "Ingen email"}</p>
+                            </div>
+                            <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                        <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                    {u.org_roles.length > 0 && (
+                                        <DropdownMenuItem onClick={() => {
+                                            setEditUser(u)
+                                            setEditRoles(u.org_roles.slice())
+                                        }}>
+                                            <Pencil className="h-3.5 w-3.5 mr-2" />Skift rolle(r)
+                                        </DropdownMenuItem>
+                                    )}
+                                    {u.email && (
+                                        <DropdownMenuItem onClick={() => { setResetUser(u); setResetLink(null) }}>
+                                            <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
+                                        </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                        onClick={() => setToggleUser(u)}
+                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
+                                    >
+                                        {u.banned
+                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
+                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
+                                        }
+                                    </DropdownMenuItem>
+                                </DropdownMenuContent>
+                            </DropdownMenu>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3">
+                            <MobileMetaRow label="Telefon">{u.phone ?? "—"}</MobileMetaRow>
+                            <MobileMetaRow label="Titel">{u.title ?? "—"}</MobileMetaRow>
+                            <MobileMetaRow label="Status"><StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} /></MobileMetaRow>
+                            <MobileMetaRow label="Sidst logget ind">
+                                {u.last_sign_in
+                                    ? new Date(u.last_sign_in).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })
+                                    : "—"}
+                            </MobileMetaRow>
+                        </div>
+                        <div className="mt-3">
+                            <RoleChips roles={u.roles} />
+                        </div>
+                    </MobileDataCard>
+                ))}
+            </MobileCardList>
+
+            <ResponsiveTableFrame className="rounded-md">
                 <Table>
                     <TableHeader>
                         <TableRow>
@@ -489,7 +558,7 @@ export default function AdminBrugerePage() {
                         ))}
                     </TableBody>
                 </Table>
-            </div>
+            </ResponsiveTableFrame>
 
             {/* ── Invite dialog ── */}
             <Dialog open={inviteOpen} onOpenChange={o => { if (!o) setInviteOpen(false) }}>

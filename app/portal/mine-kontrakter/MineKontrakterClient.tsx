@@ -373,13 +373,13 @@ export default function MineKontrakterClient({
               </>
             ) : (
               <>
-                <div className="relative max-w-xs">
+                <div className="relative w-full sm:max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                   <Input
                     placeholder="Søg i kontrakter..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    className="pl-8 pr-8 h-8 text-sm w-72"
+                    className="h-8 w-full pl-8 pr-8 text-sm sm:w-72"
                   />
                   {search && (
                     <button
@@ -412,8 +412,7 @@ export default function MineKontrakterClient({
         </div>
 
         {/* Kolonnehoveder */}
-        <div className="grid px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500"
-          style={{ gridTemplateColumns: "36px 2fr 1.5fr 1fr 1fr 0.9fr 40px" }}>
+        <div className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-gray-700">Værk{sortArrow("title")}</button>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-gray-700">Producent{sortArrow("employer")}</button>
@@ -436,19 +435,22 @@ export default function MineKontrakterClient({
             <div
               key={c.id}
               onClick={() => openContract(c)}
-              className="grid items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors text-sm"
-              style={{ gridTemplateColumns: "36px 2fr 1.5fr 1fr 1fr 0.9fr 40px" }}
+              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]"
             >
               <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
                 <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-semibold text-gray-900">{title}</div>
                 {c.contract_date && <div className="text-xs text-gray-500 mt-0.5">{c.contract_date.substring(0, 10)}</div>}
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-500 md:hidden">
+                  <span className="truncate">Producent: {c.employers?.name ?? "–"}</span>
+                  <span>{overenskomstLabel(c.overenskomst)}</span>
+                </div>
               </div>
-              <div className="text-gray-500 truncate">{c.employers?.name ?? "–"}</div>
-              <div className="text-gray-500">{overenskomstLabel(c.overenskomst)}</div>
-              <div className="flex gap-1 flex-wrap">
+              <div className="hidden text-gray-500 truncate md:block">{c.employers?.name ?? "–"}</div>
+              <div className="hidden text-gray-500 md:block">{overenskomstLabel(c.overenskomst)}</div>
+              <div className="hidden gap-1 flex-wrap md:flex">
                 {val?.validated_at ? (
                   <>
                     <span className={TAG_CLASS} style={{ backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>
@@ -523,20 +525,20 @@ export default function MineKontrakterClient({
       {/* Kontrakt-detalje-overlay */}
       {selectedContract && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6"
+          className="fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
           onClick={e => { if (e.target === e.currentTarget) setSelectedContract(null); }}
         >
-          <div className={`bg-white rounded-xl border border-gray-200 flex overflow-hidden max-h-[90vh] w-full ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
+          <div className={`bg-white rounded-t-xl border border-gray-200 flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
 
             {/* PDF-viewer */}
             {viewUrl && (
-              <div className="flex-1 bg-gray-100">
+              <div className="hidden flex-1 bg-gray-100 md:block">
                 <iframe src={`${viewUrl}#navpanes=0`} className="w-full h-full border-0" title="Kontrakt" />
               </div>
             )}
 
             {/* Sidebar */}
-            <div className={`${viewUrl ? "w-[360px]" : "w-full"} p-7 overflow-y-auto flex flex-col gap-4 shrink-0`}>
+            <div className={`${viewUrl ? "w-full md:w-[360px]" : "w-full"} flex shrink-0 flex-col gap-4 overflow-y-auto p-4 sm:p-7`}>
 
               {/* Titel + luk */}
               <div className="flex items-center justify-between">
@@ -550,6 +552,11 @@ export default function MineKontrakterClient({
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> Henter dokument...
                 </div>
+              )}
+              {viewUrl && (
+                <Button type="button" variant="outline" className="md:hidden" onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}>
+                  Åbn PDF
+                </Button>
               )}
 
               <StatusBadge status={selectedContract.status} />
