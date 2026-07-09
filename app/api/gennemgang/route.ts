@@ -10,16 +10,17 @@ import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { analyserKontrakt } from "@/lib/analyse"
+import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 
 export async function POST(req: NextRequest) {
     try {
-        console.log("[gennemgang] 1/5 Modtager request")
+        logInfo("gennemgang", "Modtager request")
         const formData = await req.formData()
         const file       = formData.get("file")       as File | null
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
         const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
 
-        console.log("[gennemgang] 2/5 FormData parset, fil:", file?.name ?? "mangler", "provider:", provider)
+        logInfo("gennemgang", "FormData parset", { hasFile: Boolean(file), provider })
 
         // Hent brugerens navn fra Auth — fallback til formData-navn → "Ukendt"
         // Brug try/catch: kaldet kan mangle cookie-kontekst ved interne server-kald
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
             const { data: { user } } = await supabaseSession.auth.getUser()
             sessionUser = user
         } catch (authErr) {
-            console.warn("[gennemgang] Auth-opslag fejlede (forventet ved interne kald):", authErr)
+            logWarn("gennemgang", "Auth-opslag fejlede", { error: errorMessage(authErr) })
         }
 
         const memberName: string =
@@ -59,12 +60,12 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
         }
 
-        console.log("[gennemgang] 3/5 Læser filbuffer")
+        logInfo("gennemgang", "Læser filbuffer", { fileType: file.type || "ukendt" })
         const fileBuffer = Buffer.from(await file.arrayBuffer())
         const saveOrgId  = portalOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
         const resolvedOrgId = portalOrgId ?? sessionUser?.user_metadata?.org_id ?? saveOrgId
 
-        console.log("[gennemgang] 4/5 Starter analyserKontrakt")
+        logInfo("gennemgang", "Starter kontraktanalyse", { provider, model })
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
@@ -84,8 +85,8 @@ export async function POST(req: NextRequest) {
                 provider,
                 model,
             })
-        } catch (err: any) {
-            const msg = err.message ?? "Analyse fejlede"
+        } catch (err: unknown) {
+            const msg = errorMessage(err, "Analyse fejlede")
             const status =
                 msg.includes("Ikke-understøttet") ? 400 :
                 msg.includes("PDF-analyse kræver") ? 400 :
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: msg }, { status })
         }
 
-        console.log("[gennemgang] 5/5 Analyse fuldført, gemmer resultat")
+        logInfo("gennemgang", "Analyse fuldført, gemmer resultat")
         const { result: parsed, contractText: returnText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
         // ── Gem fil i Supabase Storage ────────────────────────
@@ -114,11 +115,11 @@ export async function POST(req: NextRequest) {
                     upsert: false,
                 })
             if (storageErr) {
-                console.warn("[gennemgang] Storage upload fejlede (ikke kritisk):", storageErr.message)
+                logWarn("gennemgang", "Storage upload fejlede", { error: storageErr.message })
                 storagePath = null
             }
         } catch (storageEx) {
-            console.warn("[gennemgang] Storage upload exception (ikke kritisk):", storageEx)
+            logWarn("gennemgang", "Storage upload exception", { error: errorMessage(storageEx) })
             storagePath = null
         }
 
@@ -138,9 +139,9 @@ export async function POST(req: NextRequest) {
                     })
                     .eq("id", existingReviewId)
                 if (updateErr) {
-                    console.error("[gennemgang] UPDATE contract_reviews fejl:", updateErr.message)
+                    logWarn("gennemgang", "Update af contract_reviews fejlede", { error: updateErr.message })
                 } else {
-                    console.log("[gennemgang] Opdateret review:", existingReviewId)
+                    logInfo("gennemgang", "Opdateret review", { reviewId: existingReviewId })
                 }
             } else {
                 const insertPayload: Record<string, unknown> = {
@@ -176,13 +177,13 @@ export async function POST(req: NextRequest) {
                     .select()
                     .single()
                 if (insertError) {
-                    console.error("[gennemgang] INSERT contract_reviews fejl:", JSON.stringify(insertError, null, 2))
+                    logWarn("gennemgang", "Insert i contract_reviews fejlede", { error: insertError.message })
                 } else {
-                    console.log("[gennemgang] Gemt i contract_reviews:", savedReview?.id, "storage_path:", storagePath)
+                    logInfo("gennemgang", "Gemt i contract_reviews", { reviewId: savedReview?.id ?? null, hasStorage: Boolean(storagePath) })
                 }
             }
         } catch (saveErr) {
-            console.error("[gennemgang] Gem fejlede:", saveErr)
+            logWarn("gennemgang", "Gem fejlede", { error: errorMessage(saveErr) })
         }
 
         return NextResponse.json({
@@ -193,10 +194,10 @@ export async function POST(req: NextRequest) {
             should_escalate: shouldEscalate,
         })
 
-    } catch (err: any) {
-        console.error("[gennemgang] Caught error:", err)
+    } catch (err: unknown) {
+        logWarn("gennemgang", "Request fejlede", { error: errorMessage(err) })
         return NextResponse.json(
-            { error: err.message ?? "Ukendt serverfejl" },
+            { error: errorMessage(err, "Ukendt serverfejl") },
             { status: 500 }
         )
     }

@@ -129,8 +129,8 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
             const idx = normFull.indexOf(needle)
             if (idx === -1) continue
 
-            let matchStart = idx
-            let matchEnd = idx + needle.length
+            const matchStart = idx
+            const matchEnd = idx + needle.length
 
             if (isSection) {
                 // Try the quote directly as needle first, then shorter slices

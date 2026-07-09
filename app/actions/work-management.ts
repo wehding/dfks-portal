@@ -73,6 +73,11 @@ type WorkRequestPayload = Partial<WorkCorrectionData> & {
   myEpisodes?: number[];
 };
 
+type ExistingEpisodeRow = {
+  id: string;
+  episode_number: number | null;
+};
+
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
 
 const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
@@ -1037,7 +1042,7 @@ export async function reviewWorkDataCorrection(params: {
     await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.assignmentChanges);
 
     // Automatisk generering og tildeling af afsnit
-    const oldWork = request.old_data as any;
+    const oldWork = (request.old_data ?? {}) as Partial<CreateWorkData>;
     const isSeries = workUpdates.type === "tv-serie" || workUpdates.type === "dokumentar-serie" || oldWork?.type === "tv-serie" || oldWork?.type === "dokumentar-serie";
     const epCount = params.episodeCountOverride != null && params.episodeCountOverride > 0
       ? params.episodeCountOverride
@@ -1051,7 +1056,7 @@ export async function reviewWorkDataCorrection(params: {
 
       const existingMap = new Map<number, string>();
       if (existingEpisodes) {
-        existingEpisodes.forEach((e: any) => {
+        (existingEpisodes as ExistingEpisodeRow[]).forEach(e => {
           if (e.episode_number != null) existingMap.set(Number(e.episode_number), e.id);
         });
       }

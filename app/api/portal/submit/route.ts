@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 
@@ -75,11 +76,11 @@ export async function POST(req: NextRequest) {
                 upsert: false,
             })
         if (storageErr) {
-            console.warn("[portal/submit] Storage upload fejlede:", storageErr.message)
+            logWarn("portal/submit", "Storage upload fejlede", { error: storageErr.message })
             storagePath = null
         }
     } catch (e) {
-        console.warn("[portal/submit] Storage exception:", e)
+        logWarn("portal/submit", "Storage exception", { error: errorMessage(e) })
         storagePath = null
     }
 
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
         .single()
 
     if (insertErr || !review) {
-        console.error("[portal/submit] INSERT fejl:", insertErr)
+        logWarn("portal/submit", "Insert i contract_reviews fejlede", { error: insertErr?.message })
         return NextResponse.json({ error: "Kunne ikke gemme kontrakten" }, { status: 500 })
     }
 
@@ -187,9 +188,9 @@ export async function POST(req: NextRequest) {
                 })
                 .eq("id", reviewId)
 
-            console.log("[portal/submit] Analyse fuldført for review:", reviewId)
+            logInfo("portal/submit", "Analyse fuldført", { reviewId })
         } catch (e) {
-            console.error("[portal/submit] Analyse fejlede for review:", reviewId, e)
+            logWarn("portal/submit", "Analyse fejlede", { reviewId, error: errorMessage(e) })
             // Marker som fejlet i DB så admin kan se det
             await admin
                 .from("contract_reviews")
@@ -205,7 +206,7 @@ export async function POST(req: NextRequest) {
         after(runAnalysis())
     } catch {
         // Fallback: fire-and-forget (virker på de fleste Vercel-deployments)
-        runAnalysis().catch(e => console.error("[portal/submit] fire-and-forget fejl:", e))
+        runAnalysis().catch(e => logWarn("portal/submit", "Fire-and-forget fejlede", { reviewId, error: errorMessage(e) }))
     }
 
     return NextResponse.json({ success: true, review_id: reviewId })

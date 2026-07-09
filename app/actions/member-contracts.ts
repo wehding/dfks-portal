@@ -532,7 +532,7 @@ export async function checkRightsHolderName(name: string) {
   try {
     const res = await tjekNavn(name);
     return { success: true, result: res };
-  } catch (err: any) {
-    return { success: false, error: err.message };
+  } catch (err: unknown) {
+    return { success: false, error: err instanceof Error ? err.message : "Navnetjek fejlede" };
   }
 }

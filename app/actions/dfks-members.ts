@@ -20,7 +20,7 @@ function authHeader() {
   const username = process.env.FORENINGLET_USERNAME;
   const password = process.env.FORENINGLET_PASSWORD;
   if (!username || !password) {
-    throw new Error("ForeningLet-login mangler i miljøvariablerne.");
+    throw new Error("ForeningLet-login mangler i miljøet.");
   }
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 }

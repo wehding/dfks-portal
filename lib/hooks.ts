@@ -1,8 +1,9 @@
 "use client"
 
 /**
- * Data hooks — currently backed by local state + mock data.
- * When Supabase is ready, swap internals to useQuery/useMutation.
+ * Data hooks for the legacy streaming/stamdata prototype surface.
+ * These are intentionally local-state backed until the remaining prototype
+ * screens are migrated to Supabase-backed actions.
  * The component API stays the same.
  */
 
@@ -26,17 +27,14 @@ export function useContracts() {
     useEffect(() => contractStore.subscribe(() => setContracts(contractStore.getAll())), [])
 
     const deleteContract = useCallback((id: string) => {
-        // TODO: await supabase.from('contracts').delete().eq('id', id)
         contractStore.remove(id)
     }, [])
 
     const updateContract = useCallback((id: string, updates: Partial<Contract>) => {
-        // TODO: await supabase.from('contracts').update(updates).eq('id', id)
         contractStore.update(id, updates)
     }, [])
 
     const addContract = useCallback((contract: Contract) => {
-        // TODO: await supabase.from('contracts').insert(contract)
         contractStore.add(contract)
     }, [])
 
@@ -67,7 +65,6 @@ export function useMasterData(type: "roles" | "categories" | "platforms" | "prod
     const [items, setItems] = useState<MasterDataItem[]>(initial)
 
     const addItem = useCallback((name: string) => {
-        // TODO: await supabase.from(type).insert({ name, active: true })
         const newItem: MasterDataItem = {
             id: `${type}_${Date.now()}`,
             name,
@@ -77,12 +74,10 @@ export function useMasterData(type: "roles" | "categories" | "platforms" | "prod
     }, [type])
 
     const deleteItem = useCallback((id: string) => {
-        // TODO: await supabase.from(type).delete().eq('id', id)
         setItems((prev) => prev.filter((item) => item.id !== id))
     }, [])
 
     const toggleActive = useCallback((id: string) => {
-        // TODO: await supabase.from(type).update({ active: !current }).eq('id', id)
         setItems((prev) =>
             prev.map((item) =>
                 item.id === id ? { ...item, active: !item.active } : item
@@ -91,7 +86,6 @@ export function useMasterData(type: "roles" | "categories" | "platforms" | "prod
     }, [])
 
     const renameItem = useCallback((id: string, name: string) => {
-        // TODO: await supabase.from(type).update({ name }).eq('id', id)
         setItems((prev) =>
             prev.map((item) => (item.id === id ? { ...item, name } : item))
         )
