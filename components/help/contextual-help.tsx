@@ -21,7 +21,7 @@ type ContextualHelpProps = {
 
 export function HelpButton({ onClick, label = "Hjælp" }: { onClick: () => void; label?: string }) {
   return (
-    <Button type="button" variant="outline" onClick={onClick} className="gap-2">
+    <Button type="button" variant="outline" onClick={onClick} className="w-full gap-2 sm:w-auto">
       <HelpCircle className="h-4 w-4" />
       {label}
     </Button>
@@ -45,7 +45,7 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
         if (event.target === event.currentTarget) onOpenChange(false);
       }}
     >
-      <aside className="ml-auto flex h-full w-full max-w-md flex-col border-l border-gray-200 bg-white shadow-xl">
+      <aside className="ml-auto mt-auto flex h-[min(92svh,42rem)] w-full flex-col rounded-t-2xl border-l border-gray-200 bg-white shadow-xl sm:mt-0 sm:h-full sm:max-w-md sm:rounded-none">
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">{title}</h2>

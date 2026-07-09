@@ -246,20 +246,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
   return (
     <div
-      className="fixed inset-0 bg-black/45 z-50 flex items-center justify-center p-6"
+      className="fixed inset-0 bg-black/45 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className={`bg-white rounded-xl border border-gray-200 flex overflow-hidden max-h-[92vh] w-full transition-all duration-300 ${pdfUrl ? "max-w-4xl" : "max-w-lg"}`}>
+      <div className={`bg-white rounded-t-xl border border-gray-200 flex max-h-[96svh] w-full overflow-hidden transition-all duration-300 sm:rounded-xl sm:max-h-[92vh] ${pdfUrl ? "max-w-4xl" : "max-w-lg"}`}>
 
         {/* PDF preview */}
         {pdfUrl && (
-          <div className="flex-1 bg-gray-100 border-r border-gray-200 min-w-0">
+          <div className="hidden flex-1 bg-gray-100 border-r border-gray-200 min-w-0 md:block">
             <iframe src={`${pdfUrl}#navpanes=0`} className="w-full h-full border-0" title="Forhåndsvisning" />
           </div>
         )}
 
         {/* Formular */}
-        <div className={`${pdfUrl ? "w-[420px]" : "w-full"} p-7 overflow-y-auto shrink-0 flex flex-col gap-5`}>
+        <div className={`${pdfUrl ? "w-full md:w-[420px]" : "w-full"} flex shrink-0 flex-col gap-5 overflow-y-auto p-4 sm:p-7`}>
 
           {/* Header */}
           <div className="flex items-start justify-between">
@@ -276,6 +276,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               <X className="h-5 w-5" />
             </button>
           </div>
+          {pdfUrl && (
+            <Button type="button" variant="outline" onClick={() => window.open(pdfUrl, "_blank", "noopener,noreferrer")} className="md:hidden">
+              Åbn forhåndsvisning
+            </Button>
+          )}
 
           {/* Drop zone */}
           <div

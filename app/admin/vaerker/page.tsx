@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -1564,10 +1565,10 @@ export default function VaerksadministrationPage() {
         ))}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative">
+      <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
+        <div className="relative w-full lg:w-auto">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-[320px] pl-8 pr-8" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input placeholder="Søg titel, DFI-id, TMDB-id, type..." className="w-full pl-8 pr-8 lg:w-[320px]" value={search} onChange={e => setSearch(e.target.value)} />
           {search && (
             <button
               type="button"
@@ -1580,7 +1581,7 @@ export default function VaerksadministrationPage() {
           )}
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full lg:w-[180px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Status</SelectItem>
             <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
@@ -1590,11 +1591,11 @@ export default function VaerksadministrationPage() {
           </SelectContent>
         </Select>
         <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
-        <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
+        <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
           Find dubletter
         </Button>
-        <label className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
           Vis
           <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
             {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
@@ -1628,7 +1629,74 @@ export default function VaerksadministrationPage() {
         </div>
       )}
 
-      <div className="rounded-lg border">
+      <MobileCardList>
+        {filtered.length === 0 ? (
+          <MobileDataCard>
+            <p className="py-6 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</p>
+          </MobileDataCard>
+        ) : visibleWorks.map(work => {
+          const status = displayStatus(work);
+          const broadcaster = getWorkBroadcaster(work);
+          const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
+          const poster = posterSrc(work.poster_url);
+          const pendingCount = (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
+          const coEditors = (work.work_assignments ?? [])
+            .map(a => a.rettighedshavere?.full_name)
+            .filter((name): name is string => Boolean(name));
+          return (
+            <MobileDataCard key={work.id} className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
+              <div className="flex gap-3">
+                <div onClick={event => event.stopPropagation()} className="pt-1">
+                  <input type="checkbox" checked={selectedIds.includes(work.id)} onChange={() => toggleSelected(work.id)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
+                </div>
+                <button type="button" onClick={() => openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
+                  <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
+                    {poster ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={poster} alt={work.title} className="h-full w-full object-cover" loading="lazy" />
+                    ) : (
+                      <Film className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium leading-snug">{work.title}</p>
+                      {pendingCount > 0 && <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">Skal godkendes</Badge>}
+                      {unreadMemberMessageCount(work) > 0 && <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">Besked</Badge>}
+                    </div>
+                    {latestUnreadMemberMessage(work) && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnreadMemberMessage(work)}</p>}
+                  </div>
+                </button>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <MobileMetaRow label="Type">{workTypeLabel(work.type)}</MobileMetaRow>
+                <MobileMetaRow label="År">{work.year ?? "—"}</MobileMetaRow>
+                <MobileMetaRow label="Status">
+                  <Badge variant="outline" className={STATUS_CLASS[status] ?? ""}>
+                    {STATUS_LABELS[status] ?? status}
+                  </Badge>
+                </MobileMetaRow>
+                <MobileMetaRow label="Broadcast">
+                  {broadcaster ? (
+                    broadcasterLogo ? (
+                      <span className="inline-flex h-6 w-14 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
+                      </span>
+                    ) : broadcaster
+                  ) : "—"}
+                </MobileMetaRow>
+              </div>
+              <div className="mt-3 text-xs text-muted-foreground">
+                DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"} · Kontrakter: {work.contracts?.length ?? 0}
+                {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Medklippere: {coEditors.join(", ")}</div>}
+              </div>
+            </MobileDataCard>
+          );
+        })}
+      </MobileCardList>
+
+      <ResponsiveTableFrame>
         <Table>
           <TableHeader>
             <TableRow>
@@ -1728,7 +1796,7 @@ export default function VaerksadministrationPage() {
             })}
           </TableBody>
         </Table>
-      </div>
+      </ResponsiveTableFrame>
 
       <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); setEditingArchiveOpen(false); } }}>
         <DialogContent className="max-h-[92vh] w-[min(1360px,calc(100vw-2rem))] !max-w-none sm:!max-w-none overflow-y-auto overflow-x-hidden">

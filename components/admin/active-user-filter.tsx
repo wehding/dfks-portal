@@ -37,7 +37,7 @@ export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
 
   if (activeRh) {
     return (
-      <div className="flex h-10 items-center gap-2 rounded-md border bg-background px-3 text-sm">
+      <div className="flex min-h-10 w-full flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm sm:w-auto">
         <span className="text-muted-foreground">Aktiv rettighedshaver:</span>
         <span className="font-medium">{activeRh.name}</span>
         <Button
@@ -55,7 +55,7 @@ export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
   }
 
   return (
-    <div ref={rootRef} className="relative w-[280px]">
+    <div ref={rootRef} className="relative w-full sm:w-[280px]">
       <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
       <Input
         value={query}

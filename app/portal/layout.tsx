@@ -362,7 +362,7 @@ export default function PortalLayout({
             </Sidebar>
 
             <SidebarInset className="min-w-0 overflow-x-hidden">
-                <header className="flex h-12 items-center gap-2 border-b px-4">
+                <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="h-4" />
                     <span className="text-sm font-medium text-muted-foreground">
@@ -373,7 +373,7 @@ export default function PortalLayout({
                         <ThemeToggle />
                     </div>
                 </header>
-                <main className="flex-1 p-4 md:p-6">{children}</main>
+                <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>
     )

@@ -14,16 +14,13 @@ import {
     Database,
     LogOut,
     ScrollText,
-    Award,
     Users2,
     Receipt,
-    BookOpen,
     Scale,
     Film,
     Library,
     Layers,
     UserCheck,
-    FlaskConical,
     BrainCircuit,
     ShieldCheck,
     ChevronRight,
@@ -309,7 +306,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </Sidebar>
 
             <SidebarInset>
-                <header className="flex h-12 items-center gap-2 border-b px-4">
+                <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="h-4" />
                     <span className="text-sm font-medium text-muted-foreground">{t("nav.admin")}</span>
@@ -318,7 +315,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         <ThemeToggle />
                     </div>
                 </header>
-                <main className="flex-1 p-6">{children}</main>
+                <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>
     )
