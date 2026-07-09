@@ -16,6 +16,7 @@ import { ContractDocViewer } from "./ContractDocViewer"
 import { useI18n } from "@/lib/i18n"
 import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
+import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -33,6 +34,7 @@ import {
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
+import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 
 type ContractRow = {
     id: string
@@ -277,6 +279,7 @@ function AdminKontrakterContent() {
     const [uploadRightsHolderSearch, setUploadRightsHolderSearch] = useState("")
     const [saving, setSaving] = useState(false)
     const prefillWorkIdRef = useRef<string | null>(null)
+    const { activeRh, setActiveRh } = useActiveRightsHolder()
 
     // Åbn upload-flowet automatisk når man kommer fra "Tilføj kontrakt" (?new=1&work=<id>)
     useEffect(() => {
@@ -294,6 +297,7 @@ function AdminKontrakterContent() {
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const validateAndNextRef = useRef<() => void>(() => undefined)
     const editParamHandledRef = useRef(false)
+    const rhParamHandledRef = useRef(false)
 
     // Deep-link: ?edit=<id> åbner Rediger kontrakt automatisk (fx fra rettighedshaver-siden)
     useEffect(() => {
@@ -307,6 +311,20 @@ function AdminKontrakterContent() {
             window.history.replaceState(null, "", "/admin/kontrakter")
         }
     }, [contracts]) // eslint-disable-line react-hooks/exhaustive-deps
+
+    useEffect(() => {
+        if (rhParamHandledRef.current || rightsHolders.length === 0) return
+        const params = new URLSearchParams(window.location.search)
+        const rhId = params.get("rh")
+        if (!rhId) return
+        const rh = rightsHolders.find(x => x.id === rhId)
+        if (!rh) return
+        rhParamHandledRef.current = true
+        setActiveRh({ id: rh.id, name: rh.full_name })
+        params.delete("rh")
+        const next = params.toString()
+        window.history.replaceState(null, "", next ? `/admin/kontrakter?${next}` : "/admin/kontrakter")
+    }, [rightsHolders, setActiveRh])
 
     // ── Load ──────────────────────────────────────────────────
 
@@ -1153,6 +1171,7 @@ function AdminKontrakterContent() {
 
     const filtered = useMemo(() => {
         let list = [...contracts]
+        if (activeRh) list = list.filter(c => c.rights_holder_id === activeRh.id)
         if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
         else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
         else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
@@ -1183,7 +1202,7 @@ function AdminKontrakterContent() {
             return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction
         })
         return list
-    }, [contracts, filterStatus, filterType, search, sortDir, sortKey])
+    }, [contracts, activeRh, filterStatus, filterType, search, sortDir, sortKey])
     const visibleContracts = filtered.slice(0, pageSize)
     const selectedContracts = useMemo(
         () => contracts.filter(contract => selectedIds.includes(contract.id)),
@@ -1301,6 +1320,7 @@ function AdminKontrakterContent() {
                         <SelectItem value="leverandør">Leverandør</SelectItem>
                     </SelectContent>
                 </Select>
+                <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
                 <Button variant="outline" className="gap-2" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
                     Find dubletter

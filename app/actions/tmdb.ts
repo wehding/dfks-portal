@@ -23,6 +23,17 @@ type TMDBCreditsResponse = {
   crew?: TMDBCrewMember[];
 };
 
+export type TMDBSeasonEpisode = {
+  id: number;
+  name?: string;
+  overview?: string;
+  episode_number: number;
+  season_number: number;
+  runtime?: number | null;
+  still_path?: string | null;
+  air_date?: string | null;
+};
+
 function tmdbFetch(endpointPath: string) {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) throw new Error("TMDB_API_KEY mangler");
@@ -115,6 +126,39 @@ export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
   }
 }
 
+export async function getTMDBExternalIds(tmdbId: number, mediaType: string) {
+  const type = mediaType === "tv" ? "tv" : "movie";
+  try {
+    const res = await tmdbFetch(`/${type}/${tmdbId}/external_ids`);
+    if (!res.ok) return { success: false, imdb_id: null, wikidata_id: null };
+    const data = await res.json();
+    return {
+      success: true,
+      imdb_id: typeof data.imdb_id === "string" ? data.imdb_id : null,
+      wikidata_id: typeof data.wikidata_id === "string" ? data.wikidata_id : null,
+    };
+  } catch (err) {
+    console.error("TMDB external ids error:", err);
+    return { success: false, imdb_id: null, wikidata_id: null };
+  }
+}
+
+export async function getTMDBEpisodeExternalIds(tmdbId: number, seasonNumber: number, episodeNumber: number) {
+  try {
+    const res = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}/episode/${episodeNumber}/external_ids`);
+    if (!res.ok) return { success: false, imdb_id: null, wikidata_id: null };
+    const data = await res.json();
+    return {
+      success: true,
+      imdb_id: typeof data.imdb_id === "string" ? data.imdb_id : null,
+      wikidata_id: typeof data.wikidata_id === "string" ? data.wikidata_id : null,
+    };
+  } catch (err) {
+    console.error("TMDB episode external ids error:", err);
+    return { success: false, imdb_id: null, wikidata_id: null };
+  }
+}
+
 export async function findTMDBPoster(title: string, year?: number | null) {
   if (!process.env.TMDB_API_KEY || !title.trim()) return null;
 
@@ -192,6 +236,7 @@ export async function findTMDBMatch(title: string, year?: number | null) {
     return {
       poster_url: match.poster_path ? `${TMDB_IMG_W185}${match.poster_path}` : null,
       tmdb_id: match.id ?? null,
+      media_type: match.media_type ?? (match.first_air_date ? "tv" : "movie"),
     };
   } catch (err) {
     console.error("TMDB match lookup error:", err);
@@ -206,13 +251,12 @@ export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number
       const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`);
       if (!resEn.ok) throw new Error(`TMDB returned status ${resEn.status}`);
       const data = await resEn.json();
-      return { success: true, episodes: (data.episodes || []) as any[] };
+      return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
     }
     const data = await res.json();
-    return { success: true, episodes: (data.episodes || []) as any[] };
+    return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
   } catch (err: unknown) {
     console.error("TMDB season episodes error:", err);
-    return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] };
+    return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] as TMDBSeasonEpisode[] };
   }
 }
-

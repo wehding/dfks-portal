@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, Link2Off, LogIn, RotateCcw, Trash2, UserMinus, Eye } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, Link2Off, LogIn, RotateCcw, Trash2, UserMinus, Eye, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -31,6 +31,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
+import { getDfksMembersSyncStatus, syncDfksMembers } from "@/app/actions/dfks-members"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer"
 type ConfirmAction =
@@ -81,7 +82,7 @@ function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
 }
 
 const EMPTY_FORM = {
-    full_name: "", email: "", phone: "", address: "", cpr_no: "", member_no: "", is_member: false,
+    full_name: "", email: "", phone: "", address: "", cpr_no: "", bank_account: "", member_no: "", is_member: false,
     gender: "", opt_out_statistics: false,
 }
 
@@ -118,6 +119,8 @@ export default function RettighedshavereAdminPage() {
 
     const [workSearch, setWorkSearch] = useState("")
     const [workSort, setWorkSort] = useState<"title" | "year">("title")
+    const [syncingMembers, setSyncingMembers] = useState(false)
+    const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
     const [workFilter, setWorkFilter] = useState<string>("alle")
     const [activeTab, setActiveTab] = useState<"contracts" | "works">("contracts")
     const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
@@ -128,6 +131,7 @@ export default function RettighedshavereAdminPage() {
             const oid = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
             setOrgId(oid)
             load(oid)
+            refreshMemberSyncStatus()
         })
     }, [])
 
@@ -304,6 +308,25 @@ export default function RettighedshavereAdminPage() {
         setLoading(false)
     }
 
+    async function refreshMemberSyncStatus() {
+        const status = await getDfksMembersSyncStatus()
+        if (status.success) {
+            setMemberSyncStatus({ count: status.count ?? 0, syncedAt: status.syncedAt ?? null })
+        }
+    }
+
+    async function handleSyncDfksMembers() {
+        setSyncingMembers(true)
+        const result = await syncDfksMembers()
+        setSyncingMembers(false)
+        if (!result.success) {
+            toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
+            return
+        }
+        toast.success(`${result.count ?? 0} medlemmer opdateret fra DFKS medlemslisten`)
+        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+    }
+
     const visible = rows.filter(rh => {
         const aff = orgId ? getAffiliation(rh, orgId) : null
         if (filter === "medlemmer" && !aff?.is_member) return false
@@ -324,7 +347,7 @@ export default function RettighedshavereAdminPage() {
         if (!orgId || !createForm.full_name.trim()) return
         setCreateSaving(true)
         const result = await createRettighedshaver(
-            { full_name: createForm.full_name.trim(), email: createForm.email || null, phone: createForm.phone || null, address: createForm.address || null, cpr_no: createForm.cpr_no || null },
+            { full_name: createForm.full_name.trim(), email: createForm.email || null, phone: createForm.phone || null, address: createForm.address || null, cpr_no: createForm.cpr_no || null, bank_account: createForm.bank_account || null },
             orgId, createForm.is_member, createForm.member_no || undefined
         )
         setCreateSaving(false)
@@ -335,14 +358,14 @@ export default function RettighedshavereAdminPage() {
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getAffiliation(rh, orgId) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
-        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
+        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
         setEditTarget(rh)
     }
 
     async function handleEdit() {
         if (!editTarget || !orgId) return
         setEditSaving(true)
-        await updateRettighedshaver(editTarget.id, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
+        await updateRettighedshaver(editTarget.id, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, bank_account: editForm.bank_account || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
         await setMemberStatus(editTarget.id, orgId, editForm.is_member, editForm.member_no || undefined)
         setEditSaving(false)
         toast.success("Gemt")
@@ -416,9 +439,20 @@ export default function RettighedshavereAdminPage() {
                 title="Rettighedshavere"
                 subtitle="Klippere tilknyttet organisationen"
                 actions={
-                    <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateOpen(true) }}>
-                        <Plus className="h-4 w-4 mr-1" />Opret ny
-                    </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                        {memberSyncStatus && (
+                            <span className="text-xs text-muted-foreground">
+                                DFKS liste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
+                            </span>
+                        )}
+                        <Button size="sm" variant="outline" onClick={handleSyncDfksMembers} disabled={syncingMembers}>
+                            {syncingMembers ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
+                            Opdater DFKS medlemsliste
+                        </Button>
+                        <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateOpen(true) }}>
+                            <Plus className="h-4 w-4 mr-1" />Opret ny
+                        </Button>
+                    </div>
                 }
             />
 
@@ -462,7 +496,7 @@ export default function RettighedshavereAdminPage() {
                             <TableHead>Navn</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Telefon</TableHead>
-                            <TableHead>Medlemsnr.</TableHead>
+                            <TableHead>DFKS medlemsnr.</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Portal</TableHead>
                             <TableHead>Onboarding</TableHead>
@@ -513,6 +547,12 @@ export default function RettighedshavereAdminPage() {
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => openEdit(rh)}>
                                                     <Pencil className="h-3.5 w-3.5 mr-2" />Rediger
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => router.push(`/admin/kontrakter?rh=${rh.id}`)}>
+                                                    <FileText className="h-3.5 w-3.5 mr-2" />Se alle kontrakter
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => router.push(`/admin/vaerker?rh=${rh.id}`)}>
+                                                    <Eye className="h-3.5 w-3.5 mr-2" />Se alle værker
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => toggleMember(rh)}>
                                                     {aff?.is_member
@@ -567,7 +607,8 @@ export default function RettighedshavereAdminPage() {
                         <div className="space-y-1"><Label>Adresse</Label><Input value={createForm.address} onChange={e => setCreateForm(f => ({ ...f, address: e.target.value }))} placeholder="Gade 1, 2100 København Ø" /></div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={createForm.cpr_no} onChange={e => setCreateForm(f => ({ ...f, cpr_no: e.target.value }))} placeholder="DDMMÅÅ-XXXX" /></div>
-                            <div className="space-y-1"><Label>Medlemsnr.</Label><Input value={createForm.member_no} onChange={e => setCreateForm(f => ({ ...f, member_no: e.target.value }))} placeholder="F.eks. 1042" /></div>
+                            <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={createForm.bank_account} onChange={e => setCreateForm(f => ({ ...f, bank_account: e.target.value }))} placeholder="Reg.nr. og kontonr." /></div>
+                            <div className="space-y-1"><Label>DFKS medlemsnr.</Label><Input value={createForm.member_no} onChange={e => setCreateForm(f => ({ ...f, member_no: e.target.value }))} placeholder="F.eks. 1042" /></div>
                         </div>
                         <div className="flex items-center gap-2 pt-1">
                             <input type="checkbox" id="create-is-member" checked={createForm.is_member} onChange={e => setCreateForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
@@ -599,7 +640,8 @@ export default function RettighedshavereAdminPage() {
                         <div className="space-y-1"><Label>Adresse</Label><Input value={editForm.address} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} /></div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={editForm.cpr_no} onChange={e => setEditForm(f => ({ ...f, cpr_no: e.target.value }))} /></div>
-                            <div className="space-y-1"><Label>Medlemsnr.</Label><Input value={editForm.member_no} onChange={e => setEditForm(f => ({ ...f, member_no: e.target.value }))} /></div>
+                            <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={editForm.bank_account} onChange={e => setEditForm(f => ({ ...f, bank_account: e.target.value }))} /></div>
+                            <div className="space-y-1"><Label>DFKS medlemsnr.</Label><Input value={editForm.member_no} onChange={e => setEditForm(f => ({ ...f, member_no: e.target.value }))} /></div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1">

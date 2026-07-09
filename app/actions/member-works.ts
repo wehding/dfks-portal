@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster, findTMDBMatch } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds } from "@/app/actions/tmdb";
+import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
@@ -28,6 +29,8 @@ type MemberWorkData = {
   description?: string | null;
   poster_url?: string | null;
   dfi_metadata?: DfiMetadata | null;
+  imdb_id?: string | null;
+  wikidata_id?: string | null;
 };
 
 type ProposedCoEditor = {
@@ -218,6 +221,8 @@ export async function addWorkForMember(params: {
     director?: string | null;
     description?: string | null;
     poster_url?: string | null;
+    imdb_id?: string | null;
+    wikidata_id?: string | null;
   };
 }) {
   const user = await currentUser();
@@ -247,6 +252,8 @@ export async function addWorkForMember(params: {
 
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? existingTmdbId ?? null;
+  let imdbId = params.workData.imdb_id ?? null;
+  let wikidataId = params.workData.wikidata_id ?? null;
   let dfiMetadata: DfiMetadata | null = null;
 
   if (params.workData.dfi_id) {
@@ -267,6 +274,11 @@ export async function addWorkForMember(params: {
       const match = await findTMDBMatch(params.workData.title, params.workData.year);
       if (match.tmdb_id) tmdbId = match.tmdb_id;
       if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+      if (match.tmdb_id) {
+        const externalIds = await getTMDBExternalIds(match.tmdb_id, match.media_type ?? "movie");
+        imdbId = imdbId ?? externalIds.imdb_id;
+        wikidataId = wikidataId ?? externalIds.wikidata_id;
+      }
     } catch (e) {
       console.error("DFI import TMDB match lookup error:", e);
     }
@@ -274,6 +286,14 @@ export async function addWorkForMember(params: {
 
   if (!posterUrl) {
     posterUrl = await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  }
+
+  try {
+    const wiki = await enrichFromWikidata({ imdbId, title: params.workData.title, year: params.workData.year });
+    imdbId = imdbId ?? wiki.imdb_id;
+    wikidataId = wikidataId ?? wiki.wikidata_id;
+  } catch {
+    // Wikidata er kun berigelse.
   }
 
   // Opret nyt værk hvis ikke fundet
@@ -286,6 +306,8 @@ export async function addWorkForMember(params: {
         ...params.workData,
         poster_url: posterUrl,
         tmdb_id: tmdbId,
+        imdb_id: imdbId,
+        wikidata_id: wikidataId,
         dfi_metadata: dfiMetadata,
       })
       .select("id")
@@ -297,6 +319,8 @@ export async function addWorkForMember(params: {
     const updates: Partial<MemberWorkData> = {};
     if (!existingPosterUrl && posterUrl) updates.poster_url = posterUrl;
     if (!existingTmdbId && tmdbId) updates.tmdb_id = tmdbId;
+    if (imdbId) updates.imdb_id = imdbId;
+    if (wikidataId) updates.wikidata_id = wikidataId;
     if (dfiMetadata) updates.dfi_metadata = dfiMetadata;
     if (Object.keys(updates).length > 0) {
       await db.from("works").update(updates).eq("id", workId);
@@ -544,6 +568,8 @@ export async function addWorkForMemberWithApproval(params: {
   let dfiMetadata = params.workData.dfi_metadata ?? null;
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? null;
+  let imdbId = params.workData.imdb_id ?? null;
+  let wikidataId = params.workData.wikidata_id ?? null;
 
   if (params.workData.dfi_id && !dfiMetadata) {
     try {
@@ -562,15 +588,29 @@ export async function addWorkForMemberWithApproval(params: {
       const match = await findTMDBMatch(params.workData.title, params.workData.year);
       if (match.tmdb_id) tmdbId = match.tmdb_id;
       if (match.poster_url && !posterUrl) posterUrl = match.poster_url;
+      if (match.tmdb_id) {
+        const externalIds = await getTMDBExternalIds(match.tmdb_id, match.media_type ?? "movie");
+        imdbId = imdbId ?? externalIds.imdb_id;
+        wikidataId = wikidataId ?? externalIds.wikidata_id;
+      }
     } catch (error) {
       console.error("DFI TMDB match lookup error in addWorkForMemberWithApproval:", error);
     }
   }
 
   posterUrl = posterUrl ?? await findTMDBPoster(params.workData.title, params.workData.year) ?? null;
+  try {
+    const wiki = await enrichFromWikidata({ imdbId, title: params.workData.title, year: params.workData.year });
+    imdbId = imdbId ?? wiki.imdb_id;
+    wikidataId = wikidataId ?? wiki.wikidata_id;
+  } catch {
+    // Wikidata er kun en berigelse.
+  }
   const enrichedWorkData = {
     ...params.workData,
     tmdb_id: tmdbId,
+    imdb_id: imdbId,
+    wikidata_id: wikidataId,
     poster_url: posterUrl,
     dfi_metadata: dfiMetadata,
   };
@@ -610,6 +650,8 @@ export async function addWorkForMemberWithApproval(params: {
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
         tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        imdb_id: enrichedWorkData.imdb_id ?? null,
+        wikidata_id: enrichedWorkData.wikidata_id ?? null,
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
@@ -702,6 +744,8 @@ export async function addWorkForMemberWithApproval(params: {
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
         tmdb_id: enrichedWorkData.tmdb_id ?? null,
+        imdb_id: enrichedWorkData.imdb_id ?? null,
+        wikidata_id: enrichedWorkData.wikidata_id ?? null,
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 

@@ -34,7 +34,7 @@ export async function getRettighedshaver(id: string): Promise<RettighedshaverWit
 
 // Opret ny rettighedshaver (uden portallogin)
 export async function createRettighedshaver(
-    input: Pick<DbRettighedshaver, "full_name" | "email" | "phone" | "address" | "cpr_no">,
+    input: Pick<DbRettighedshaver, "full_name" | "email" | "phone" | "address" | "cpr_no" | "bank_account">,
     orgId: string,
     isMember: boolean,
     memberNo?: string
