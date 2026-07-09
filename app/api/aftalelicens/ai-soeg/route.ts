@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
+import { requireAdminApi } from "@/lib/api-auth"
 
 const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper Dansk Filmklipperselskab (DFKS) med at vurdere om TV-titler fra Copydan-data er relevante.
 
@@ -55,6 +56,8 @@ function buildExamplesBlock(examples: FeedbackExample[]): string {
 }
 
 export async function POST(req: NextRequest) {
+    const denied = await requireAdminApi()
+    if (denied) return denied
     try {
         const { rawTitle, channel, productionYear, broadcastDate, duration, examples = [], provider, model } = await req.json()
 

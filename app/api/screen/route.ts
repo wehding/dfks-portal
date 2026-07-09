@@ -11,8 +11,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { errorMessage, logWarn } from "@/lib/server-log"
+import { requireSessionApi } from "@/lib/api-auth"
 
 export async function POST(req: NextRequest) {
+    const denied = await requireSessionApi()
+    if (denied) return denied
     try {
         const { system, userMessage, provider, model } = await req.json()
 
