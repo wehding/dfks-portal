@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { getDFIFilmDetails } from "@/app/actions/dfi";
-import { extractDfiPosterUrl, type DfiMetadata } from "@/lib/dfi-metadata";
+import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
+import { extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
@@ -978,3 +978,292 @@ export async function linkApprovedCoEditorSuggestionsForRightsHolder(params: {
   if (linked) revalidatePath("/portal/mine-vaerker");
   return { success: true, linked };
 }
+
+export type UnifiedSearchWorkResult = {
+  id: string;
+  title: string;
+  year: number | null;
+  type: string;
+  description: string | null;
+  poster_url: string | null;
+  director: string | null;
+  genre: string | null;
+  duration_minutes: number | null;
+  local_id?: string | null;
+  dfi_id?: string | null;
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
+  wikidata_id?: string | null;
+  sources: ("local" | "dfi" | "tmdb")[];
+  raw_local?: any;
+  raw_dfi?: any;
+  raw_tmdb?: any;
+};
+
+export async function searchWorksUnified(query: string) {
+  const q = query.trim();
+  if (!q) return { success: true, results: [] };
+
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+
+  let localWorks: any[] = [];
+  try {
+    const { data } = await db.from("works")
+      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
+      .eq("org_id", orgId)
+      .ilike("title", `%${q}%`)
+      .limit(15);
+    if (data) localWorks = data;
+  } catch (e) {
+    console.error("Local search error in searchWorksUnified:", e);
+  }
+
+  // Fetch in parallel: DFI, TMDB
+  const [dfiRes, tmdbRes] = await Promise.all([
+    searchDFIFilms(q).catch(() => ({ success: false, results: [] })),
+    searchTMDB(q).catch(() => []),
+  ]);
+
+  const dfiFilms = (dfiRes.success ? dfiRes.results ?? [] : []) as any[];
+  const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
+
+  const results: UnifiedSearchWorkResult[] = [];
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  // 1. Add Local works (parents only)
+  localWorks.forEach(w => {
+    if (w.parent_work_id) return;
+    results.push({
+      id: `local-${w.id}`,
+      title: w.title,
+      year: w.year,
+      type: w.type,
+      description: w.description ?? null,
+      poster_url: w.poster_url ?? null,
+      director: w.director ?? null,
+      genre: w.genre ?? null,
+      duration_minutes: w.duration_minutes ?? null,
+      local_id: w.id,
+      dfi_id: w.dfi_id ? String(w.dfi_id) : null,
+      tmdb_id: w.tmdb_id ? Number(w.tmdb_id) : null,
+      imdb_id: w.imdb_id ?? null,
+      wikidata_id: w.wikidata_id ?? null,
+      sources: ["local"],
+      raw_local: w,
+    });
+  });
+
+  // 2. Merge DFI results
+  dfiFilms.forEach((film: any) => {
+    const isChild = film.Parent && film.Parent.Id;
+    if (isChild) return; // Skip child episodes, we always select parent series!
+
+    const title = film.Title || film.DanishTitle || "Ukendt";
+    const year = extractDfiPremiereYear(film);
+    const dfiId = String(film.Id);
+    const mappedType = mapDfiWorkType(film.Category, film.Type);
+    const director = extractDfiDirectors(film).join(", ") || null;
+
+    const existingIndex = results.findIndex(r => {
+      if (r.dfi_id && r.dfi_id === dfiId) return true;
+      if (normalize(r.title) === normalize(title) && r.year && year && Math.abs(r.year - year) <= 1) return true;
+      return false;
+    });
+
+    if (existingIndex !== -1) {
+      const match = results[existingIndex];
+      if (!match.sources.includes("dfi")) match.sources.push("dfi");
+      if (!match.dfi_id) match.dfi_id = dfiId;
+      if (!match.raw_dfi) match.raw_dfi = film;
+      if (!match.director && director) match.director = director;
+      if (!match.poster_url) match.poster_url = extractDfiPosterUrl(film);
+    } else {
+      results.push({
+        id: `dfi-${dfiId}`,
+        title,
+        year,
+        type: mappedType,
+        description: film.Synopsis || film.ShortSynopsis || null,
+        poster_url: extractDfiPosterUrl(film) ?? null,
+        director,
+        genre: typeof film.Genre === "string" ? film.Genre : typeof film.Category === "string" ? film.Category : null,
+        duration_minutes: typeof film.Duration === "number" ? film.Duration : null,
+        dfi_id: dfiId,
+        sources: ["dfi"],
+        raw_dfi: film,
+      });
+    }
+  });
+
+  // 3. Merge TMDB results
+  tmdbItems.forEach((item: any) => {
+    const title = item.title || item.name || "Ukendt";
+    const releaseDate = item.release_date || item.first_air_date || "";
+    const year = Number.parseInt(releaseDate.substring(0, 4), 10) || null;
+    const tmdbId = Number(item.id);
+    const type = item.media_type === "tv" ? "tv-serie" : "spillefilm";
+
+    const existingIndex = results.findIndex(r => {
+      if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
+      if (normalize(r.title) === normalize(title) && r.year && year && Math.abs(r.year - year) <= 1) return true;
+      return false;
+    });
+
+    if (existingIndex !== -1) {
+      const match = results[existingIndex];
+      if (!match.sources.includes("tmdb")) match.sources.push("tmdb");
+      if (!match.tmdb_id) match.tmdb_id = tmdbId;
+      if (!match.raw_tmdb) match.raw_tmdb = item;
+      if (!match.poster_url && item.poster_path) match.poster_url = `https://image.tmdb.org/t/p/w185${item.poster_path}`;
+    } else {
+      results.push({
+        id: `tmdb-${tmdbId}`,
+        title,
+        year,
+        type,
+        description: item.overview || null,
+        poster_url: item.poster_path ? `https://image.tmdb.org/t/p/w185${item.poster_path}` : null,
+        director: null,
+        genre: null,
+        duration_minutes: null,
+        tmdb_id: tmdbId,
+        sources: ["tmdb"],
+        raw_tmdb: item,
+      });
+    }
+  });
+
+  results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+  return { success: true, results };
+}
+
+export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult) {
+  let dfiMetadata: DfiMetadata | null = null;
+  let tmdbId = result.tmdb_id ?? null;
+  let imdbId = result.imdb_id ?? null;
+  let wikidataId = result.wikidata_id ?? null;
+  let director = result.director ?? null;
+  let genre = result.genre ?? null;
+  let duration = result.duration_minutes ?? null;
+  let description = result.description ?? null;
+  let posterUrl = result.poster_url ?? null;
+  let type = result.type;
+  let episodeCount: number | null = null;
+  let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
+
+  // 1. Fetch DFI details if DFI ID is present
+  if (result.dfi_id) {
+    try {
+      const det = await getDFIFilmDetails(Number(result.dfi_id));
+      if (det.success && det.film) {
+        const meta = det.film as DfiMetadata;
+        dfiMetadata = meta;
+        const syn = typeof meta.Synopsis === "string" ? meta.Synopsis : null;
+        const shortSyn = typeof meta.ShortSynopsis === "string" ? meta.ShortSynopsis : null;
+        description = syn || shortSyn || description;
+        director = extractDfiDirectors(meta).join(", ") || director;
+        genre = typeof meta.Genre === "string" ? meta.Genre : genre;
+        duration = typeof meta.Duration === "number" ? meta.Duration : duration;
+        posterUrl = det.posterDataUrl ?? extractDfiPosterUrl(meta) ?? posterUrl;
+        type = mapDfiWorkType(meta.Category, meta.Type);
+
+        // Fetch DFI episodes count
+        const comment = (dfiMetadata as any).Comment || (dfiMetadata as any).Synopsis || "";
+        const epMatch = comment.match(/(\d+)\s+afsnit/i);
+        if (epMatch) {
+          episodeCount = parseInt(epMatch[1]);
+        }
+
+        const children = Array.isArray((dfiMetadata as any).Children) ? (dfiMetadata as any).Children : [];
+        if (children.length > 0) {
+          const isEp = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
+          if (isEp) {
+            episodeCount = children.length;
+            episodeOptions = children.map((c: any, idx: number) => {
+              const parsed = parseDfiEpisodeTitleInfo(c.Title ?? "");
+              const num = parsed?.episodeNumber ?? idx + 1;
+              const subtitle = parsed?.subtitle || c.Title || `Afsnit ${num}`;
+              return {
+                number: num,
+                title: subtitle,
+                dfiId: c.Id ? String(c.Id) : null,
+              };
+            }).filter((opt: any) => opt.number > 0);
+            episodeOptions.sort((a, b) => a.number - b.number);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("DFI lookup error in resolveUnifiedSearchResultDetails:", e);
+    }
+  }
+
+  // 2. Fetch TMDB match and external IDs if TMDB ID is missing
+  if (result.dfi_id && !tmdbId) {
+    try {
+      const match = await findTMDBMatch(result.title, result.year);
+      if (match.tmdb_id) {
+        tmdbId = match.tmdb_id;
+        if (!posterUrl && match.poster_url) posterUrl = match.poster_url;
+      }
+    } catch (e) {
+      console.error("TMDB match lookup error in resolveUnifiedSearchResultDetails:", e);
+    }
+  }
+
+  if (tmdbId) {
+    try {
+      const externalIds = await getTMDBExternalIds(tmdbId, type === "tv-serie" ? "tv" : "movie");
+      imdbId = imdbId ?? externalIds.imdb_id;
+      wikidataId = wikidataId ?? externalIds.wikidata_id;
+
+      if (type === "tv-serie") {
+        const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
+        if (tmdbDet.success && tmdbDet.details) {
+          const tDetails = tmdbDet.details as any;
+          if (tDetails.number_of_episodes) {
+            episodeCount = episodeCount ?? tDetails.number_of_episodes;
+          }
+        }
+      }
+    } catch (e) {
+      console.error("TMDB external IDs lookup error in resolveUnifiedSearchResultDetails:", e);
+    }
+  }
+
+  // 3. Enrich from Wikidata
+  try {
+    const wiki = await enrichFromWikidata({ imdbId, title: result.title, year: result.year });
+    imdbId = imdbId ?? wiki.imdb_id;
+    wikidataId = wikidataId ?? wiki.wikidata_id;
+    director = director ?? wiki.director;
+    genre = genre ?? wiki.genre;
+    duration = duration ?? wiki.duration_minutes;
+  } catch (e) {
+    console.error("Wikidata enrichment error in resolveUnifiedSearchResultDetails:", e);
+  }
+
+  return {
+    success: true,
+    details: {
+      title: result.title,
+      year: result.year,
+      type,
+      description,
+      poster_url: posterUrl,
+      director,
+      genre,
+      duration_minutes: duration,
+      dfi_id: result.dfi_id ?? null,
+      tmdb_id: tmdbId,
+      imdb_id: imdbId,
+      wikidata_id: wikidataId,
+      dfi_metadata: dfiMetadata,
+      episode_count: episodeCount,
+      episode_options: episodeOptions,
+    }
+  };
+}
+

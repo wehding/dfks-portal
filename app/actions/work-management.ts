@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { findTMDBPoster } from "@/app/actions/tmdb";
+import { ensureOnboardingEpisodes } from "@/app/actions/dfi";
+import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import type { DfiMetadata } from "@/lib/dfi-metadata";
 
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -1237,3 +1239,132 @@ export async function addAdminWorkRequestComment(params: { requestId: string; me
   revalidatePath("/portal/mine-vaerker");
   return { success: true, comment };
 }
+
+export async function createAndLinkWorkForContract(params: {
+  contractId: string;
+  result: UnifiedSearchWorkResult;
+  seasonNumber?: number | null;
+  selectedEpisodes?: number[] | null;
+  rightsHolderId?: string | null;
+  role?: string | null;
+}) {
+  const db = createServiceClient();
+  const { contractId, result, seasonNumber, selectedEpisodes, rightsHolderId, role } = params;
+
+  let activeRightsHolderId = rightsHolderId;
+  if (!activeRightsHolderId) {
+    try {
+      const userRes = await currentUser().catch(() => null);
+      if (userRes && userRes.user) {
+        const { data: rh } = await db
+          .from("rettighedshavere")
+          .select("id")
+          .eq("user_id", userRes.user.id)
+          .maybeSingle();
+        if (rh) activeRightsHolderId = rh.id;
+      }
+    } catch (e) {
+      console.error("Could not resolve current user rights holder:", e);
+    }
+  }
+
+  // 1. Find or create the parent work
+  let parentId = result.local_id ?? null;
+
+  if (!parentId) {
+    const detailsRes = await resolveUnifiedSearchResultDetails(result);
+    if (!detailsRes.success || !detailsRes.details) {
+      return { success: false, error: "Kunne ikke hente detaljer for værket." };
+    }
+    const d = detailsRes.details;
+
+    const { data: newWork, error: insertErr } = await db
+      .from("works")
+      .insert({
+        title: d.title,
+        type: d.type,
+        year: d.year,
+        org_id: DFKS_ORG_ID,
+        description: d.description,
+        director: d.director,
+        genre: d.genre,
+        poster_url: d.poster_url,
+        dfi_id: d.dfi_id ? String(d.dfi_id) : null,
+        tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : null,
+        imdb_id: d.imdb_id ?? null,
+        wikidata_id: d.wikidata_id ?? null,
+        dfi_metadata: d.dfi_metadata,
+        status: "godkendt",
+      })
+      .select("id")
+      .single();
+
+    if (insertErr || !newWork) {
+      return { success: false, error: `Fejl ved oprettelse af værk: ${insertErr?.message}` };
+    }
+    parentId = newWork.id;
+  }
+
+  // 2. Handle episodes if it is a series
+  let targetWorkId = parentId;
+  const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie";
+  const activeEpisodes = (selectedEpisodes ?? []).filter(Number.isFinite);
+  const activeSeason = seasonNumber ?? 1;
+
+  if (isSeries && activeEpisodes.length > 0) {
+    const { data: parentWork } = await db
+      .from("works")
+      .select("*")
+      .eq("id", parentId)
+      .single();
+
+    if (parentWork) {
+      const episodes = await ensureOnboardingEpisodes({
+        db,
+        parent: parentWork as any,
+        seasonNumber: activeSeason,
+        selectedEpisodes: activeEpisodes,
+      });
+
+      if (activeEpisodes.length === 1 && episodes.length === 1) {
+        targetWorkId = episodes[0].id;
+      }
+
+      // If user is linking a work assignment role
+      if (activeRightsHolderId && role) {
+        await db.from("work_assignments").upsert(
+          episodes.map(ep => ({
+            work_id: ep.id,
+            org_id: parentWork.org_id,
+            rights_holder_id: activeRightsHolderId,
+            role: role,
+          })),
+          { onConflict: "work_id,rights_holder_id,role" }
+        );
+      }
+    }
+  } else if (activeRightsHolderId && role) {
+    const { data: parentWork } = await db.from("works").select("org_id").eq("id", parentId).single();
+    await db.from("work_assignments").upsert({
+      work_id: parentId,
+      org_id: parentWork?.org_id ?? DFKS_ORG_ID,
+      rights_holder_id: activeRightsHolderId,
+      role: role,
+    }, { onConflict: "work_id,rights_holder_id,role" });
+  }
+
+  // 3. Link the contract to the work
+  const { error: updateErr } = await db
+    .from("contracts")
+    .update({ work_id: targetWorkId })
+    .eq("id", contractId);
+
+  if (updateErr) {
+    return { success: false, error: `Fejl ved tilknytning til kontrakt: ${updateErr.message}` };
+  }
+
+  revalidatePath("/admin/kontrakter");
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true, workId: targetWorkId };
+}
+

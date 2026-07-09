@@ -142,7 +142,7 @@ async function assignmentExists(db: ReturnType<typeof createServiceClient>, work
   return Boolean(data?.id);
 }
 
-async function ensureOnboardingEpisodes(params: {
+export async function ensureOnboardingEpisodes(params: {
   db: ReturnType<typeof createServiceClient>;
   parent: EpisodeParentWork;
   seasonNumber: number;

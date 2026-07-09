@@ -10,7 +10,9 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, createAdminEmployer, checkRightsHolderName } from "@/app/actions/member-contracts"
-import { createAdminWork } from "@/app/actions/work-management"
+import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
+import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
+import { getTMDBWorkDetails } from "@/app/actions/tmdb"
 import { ContractAiDataEditor } from "./ContractAiDataEditor"
 import { ContractDocViewer } from "./ContractDocViewer"
 import { useI18n } from "@/lib/i18n"
@@ -267,12 +269,116 @@ function AdminKontrakterContent() {
     const [editContract, setEditContract] = useState<ContractRow | null>(null)
     const [editForm, setEditForm] = useState<EditForm | null>(null)
     const [editWorkSearch, setEditWorkSearch] = useState("")
-    const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [editSaving, setEditSaving] = useState(false)
+
+    const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([])
+    const [isSearching, setIsSearching] = useState(false)
+    const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null)
+    const [detailsLoading, setDetailsLoading] = useState(false)
+
+    // Series fields
+    const [addSeason, setAddSeason] = useState("")
+    const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([])
+    const [episodeOptions, setEpisodeOptions] = useState<any[]>([])
+    const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null)
+    const [episodesLoading, setEpisodesLoading] = useState(false)
+
+    useEffect(() => {
+        const delayDebounceFn = setTimeout(async () => {
+            const q = editWorkSearch.trim()
+            if (!q) {
+                setUnifiedResults([])
+                return
+            }
+            setIsSearching(true)
+            try {
+                const res = await searchWorksUnified(q)
+                if (res.success && res.results) {
+                    setUnifiedResults(res.results.slice(0, 8))
+                }
+            } catch (e) {
+                console.error(e)
+            } finally {
+                setIsSearching(false)
+            }
+        }, 400)
+
+        return () => clearTimeout(delayDebounceFn)
+    }, [editWorkSearch])
+
+    useEffect(() => {
+        const updateTmdbEpisodes = async () => {
+            if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
+                const tmdbId = pickedUnifiedResult.tmdb_id
+                if (tmdbId) {
+                    setEpisodesLoading(true)
+                    try {
+                        const det = await getTMDBWorkDetails(tmdbId, "tv")
+                        if (det.success && det.details) {
+                            const d = det.details as any
+                            const sNum = parseInt(addSeason) || 1
+                            const season = d.seasons?.find((s: any) => s.season_number === sNum)
+                            const count = season ? season.episode_count : null
+                            if (count) {
+                                setDetectedEpisodeCount(count)
+                                setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })))
+                                setSelectedEpisodes(prev => prev.filter(x => x <= count))
+                            }
+                        }
+                    } catch (e) {
+                        console.error(e)
+                    } finally {
+                        setEpisodesLoading(false)
+                    }
+                }
+            }
+        }
+        updateTmdbEpisodes()
+    }, [addSeason, pickedUnifiedResult])
+
+    const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
+        setPickedUnifiedResult(result)
+        setDetectedEpisodeCount(null)
+        setSelectedEpisodes([])
+        setEpisodeOptions([])
+        setDetailsLoading(true)
+
+        try {
+            const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie"
+            if (isSeries) {
+                const detRes = await resolveUnifiedSearchResultDetails(result)
+                if (detRes.success && detRes.details) {
+                    const d = detRes.details
+                    const options = d.episode_options || []
+                    const count = d.episode_count || options.length
+
+                    if (count) {
+                        setDetectedEpisodeCount(count)
+                        setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })))
+                        setSelectedEpisodes([])
+                    }
+                }
+            }
+        } catch (e) {
+            console.error(e)
+        } finally {
+            setDetailsLoading(false)
+        }
+    }
+    const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
     const [navneTjekResult, setNavneTjekResult] = useState<NavneTjekResult | null>(null)
     const [navneTjekLoading, setNavneTjekLoading] = useState(false)
     const [creatingEmployer, setCreatingEmployer] = useState(false)
+    const closeEditDialog = () => {
+        setEditContract(null)
+        setEditForm(null)
+        setPickedUnifiedResult(null)
+        setAddSeason("")
+        setSelectedEpisodes([])
+        setEpisodeOptions([])
+        setDetectedEpisodeCount(null)
+    }
 
     // Upload flow
     const [showUpload, setShowUpload] = useState(false)
@@ -989,6 +1095,38 @@ function AdminKontrakterContent() {
         const newStatus = statusOverride ?? editForm.status
         let resolvedWorkId = editForm.work_id
         let selectedWork = works.find(w => w.id === resolvedWorkId)
+
+        if (pickedUnifiedResult) {
+            setEditSaving(true)
+            try {
+                const activeSeason = parseInt(addSeason) || 1
+                const linkRes = await createAndLinkWorkForContract({
+                    contractId: editContract.id,
+                    result: pickedUnifiedResult,
+                    seasonNumber: activeSeason,
+                    selectedEpisodes: selectedEpisodes,
+                    rightsHolderId: editForm.rights_holder_id,
+                    role: "Klipper",
+                })
+                if (!linkRes.success || !linkRes.workId) {
+                    toast.error(linkRes.error || "Fejl under oprettelse/kobling af værk")
+                    setEditSaving(false)
+                    return false
+                }
+                resolvedWorkId = linkRes.workId
+                selectedWork = {
+                    id: linkRes.workId,
+                    title: pickedUnifiedResult.title,
+                    year: pickedUnifiedResult.year,
+                    poster_url: pickedUnifiedResult.poster_url ?? null,
+                } as any
+                setWorks(prev => prev.some(w => w.id === linkRes.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
+            } catch (e: any) {
+                toast.error(e.message || "Kunne ikke tilknytte værk")
+                setEditSaving(false)
+                return false
+            }
+        }
         if (newStatus === "valideret" && !resolvedWorkId && !options?.skipMissingWorkConfirm) {
             const title = (editForm.working_title || editContract.working_title || editContract.work_title || "").trim()
             if (!title) {
@@ -1073,8 +1211,7 @@ function AdminKontrakterContent() {
                 work_poster_url: selectedWork?.poster_url ?? (resolvedWorkId ? c.work_poster_url : null),
                 working_title: editForm.working_title || null,
             } : c))
-            setEditContract(null)
-            setEditForm(null)
+            closeEditDialog()
             toast.success(newStatus === "valideret" ? "Kontrakt valideret" : "Kontrakt gemt")
             return true
         } catch (err: unknown) {
@@ -1716,7 +1853,7 @@ function AdminKontrakterContent() {
             </Dialog>
 
             {/* Edit */}
-            <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { setEditContract(null); setEditForm(null) } }}>
+            <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
                 <DialogContent className="w-[min(1180px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -2000,49 +2137,139 @@ function AdminKontrakterContent() {
                                             <span className="font-medium">{works.find(w => w.id === editForm.work_id)?.title ?? editContract?.work_title ?? "Valgt værk"}</span>
                                             <span className="text-xs text-muted-foreground">{works.find(w => w.id === editForm.work_id)?.year ?? ""}</span>
                                         </div>
+                                    ) : pickedUnifiedResult ? (
+                                        <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-3">
+                                            <div className="flex items-start justify-between gap-2">
+                                                <div>
+                                                    <p className="text-xs font-semibold text-gray-900">{pickedUnifiedResult.title}</p>
+                                                    <p className="text-[10px] text-gray-500 mt-0.5">
+                                                        {pickedUnifiedResult.year ?? "-"} · {pickedUnifiedResult.type}
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPickedUnifiedResult(null)}
+                                                    className="text-gray-400 hover:text-gray-600"
+                                                >
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+
+                                            {detailsLoading && (
+                                                <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center py-2">
+                                                    <Loader2 className="h-3 w-3 animate-spin" /> Indlæser detaljer...
+                                                </div>
+                                            )}
+
+                                            {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
+                                                <div className="space-y-3 pt-2 border-t border-gray-100">
+                                                    <div className="flex flex-col gap-1">
+                                                        <Label className="text-[11px] font-medium text-gray-500">Sæson</Label>
+                                                        <Input
+                                                            type="number"
+                                                            min="1"
+                                                            className="h-8 text-xs"
+                                                            placeholder="1"
+                                                            value={addSeason}
+                                                            onChange={e => setAddSeason(e.target.value)}
+                                                        />
+                                                    </div>
+
+                                                    {episodesLoading ? (
+                                                        <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center">
+                                                            <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
+                                                        </div>
+                                                    ) : detectedEpisodeCount !== null ? (
+                                                        <div className="space-y-1.5">
+                                                            <div className="flex justify-between items-center text-[11px] text-gray-500">
+                                                                <span>Vælg afsnit:</span>
+                                                                <div className="flex gap-1.5">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setSelectedEpisodes(episodeOptions.map(o => o.number))}
+                                                                        className="hover:underline"
+                                                                    >
+                                                                        Vælg alle
+                                                                    </button>
+                                                                    <span>·</span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setSelectedEpisodes([])}
+                                                                        className="hover:underline"
+                                                                    >
+                                                                        Fravælg alle
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded border-gray-100 bg-gray-50">
+                                                                {episodeOptions.map(opt => {
+                                                                    const checked = selectedEpisodes.includes(opt.number);
+                                                                    return (
+                                                                        <button
+                                                                            key={opt.number}
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                setSelectedEpisodes(prev =>
+                                                                                    prev.includes(opt.number)
+                                                                                        ? prev.filter(n => n !== opt.number)
+                                                                                        : [...prev, opt.number].sort((a, b) => a - b)
+                                                                                )
+                                                                            }
+                                                                            className={`py-1 text-[10px] rounded border text-center font-medium ${
+                                                                                checked
+                                                                                    ? "border-gray-950 bg-gray-955 text-white"
+                                                                                    : "border-gray-200 bg-white hover:bg-gray-100 text-gray-600"
+                                                                            }`}
+                                                                        >
+                                                                            {opt.number}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            )}
+                                        </div>
                                     ) : (
                                         <div className="space-y-2">
                                             <div className="relative">
-                                                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                {isSearching ? (
+                                                    <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                ) : (
+                                                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                )}
                                                 <Input
                                                     className="h-8 pl-8 text-xs"
-                                                    placeholder="Søg efter værk..."
+                                                    placeholder="Søg i alle databaser (onboarding)..."
                                                     value={editWorkSearch}
                                                     onChange={e => setEditWorkSearch(e.target.value)}
                                                 />
                                             </div>
-                                            <div className="max-h-40 space-y-1 overflow-y-auto">
-                                                {editWorkResults.map(work => (
-                                                    <button
-                                                        key={work.id}
-                                                        type="button"
-                                                        className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm hover:bg-muted"
-                                                        onClick={() => {
-                                                            setEditForm(f => f && ({ ...f, work_id: work.id }))
-                                                            setEditWorkSearch(work.title)
-                                                        }}
-                                                    >
-                                                        <span className="font-medium">{work.title}</span>
-                                                        <span className="text-xs text-muted-foreground">{work.year ?? ""}</span>
-                                                    </button>
-                                                ))}
-                                                {editWorkResults.length === 0 && <p className="px-1 py-2 text-xs text-muted-foreground">Ingen værker fundet.</p>}
-                                            </div>
-                                            {editWorkSearch.trim() && editWorkResults.length === 0 && (
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="w-full"
-                                                    onClick={() => {
-                                                        const q = editWorkSearch.trim() || editForm.working_title.trim()
-                                                        setEditContract(null)
-                                                        setEditForm(null)
-                                                        router.push(`/admin/vaerker?add=1&q=${encodeURIComponent(q)}`)
-                                                    }}
-                                                >
-                                                    Tilføj nyt værk
-                                                </Button>
+                                            {unifiedResults.length > 0 && (
+                                                <div className="max-h-40 space-y-1 overflow-y-auto border rounded-md p-1.5 bg-muted/40">
+                                                    {unifiedResults.map(item => (
+                                                        <button
+                                                            key={item.id}
+                                                            type="button"
+                                                            className="flex w-full flex-col text-left text-xs px-2.5 py-1.5 rounded bg-white hover:bg-muted border border-gray-100 transition-colors"
+                                                            onClick={() => pickUnifiedResult(item)}
+                                                        >
+                                                            <div className="flex items-center justify-between gap-1 w-full font-medium">
+                                                                <span className="truncate">{item.title}</span>
+                                                                <span className="text-[9px] uppercase font-bold text-muted-foreground shrink-0">
+                                                                    {item.sources.join("·")}
+                                                                </span>
+                                                            </div>
+                                                            <span className="text-[10px] text-muted-foreground mt-0.5">
+                                                                {item.year ?? "-"} · {item.type}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {editWorkSearch.trim() && unifiedResults.length === 0 && !isSearching && (
+                                                <p className="px-1 py-2 text-xs text-muted-foreground">Ingen værker fundet.</p>
                                             )}
                                         </div>
                                     )}
@@ -2087,7 +2314,7 @@ function AdminKontrakterContent() {
                         </div>
                     )}
                     <DialogFooter>
-                        <Button variant="outline" onClick={() => { setEditContract(null); setEditForm(null) }} disabled={editSaving}>
+                        <Button variant="outline" onClick={closeEditDialog} disabled={editSaving}>
                             Annuller
                         </Button>
                         <Button variant="outline" onClick={() => handleSaveEdit("kladde")} disabled={editSaving}>
