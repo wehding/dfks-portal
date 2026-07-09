@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { Film, Plus, Search, X, RefreshCw, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Film, Plus, Search, X, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -28,6 +28,7 @@ type Work = {
   year: number | null;
   duration_minutes: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
   season_number?: number | null;
   episode_number?: number | null;
   genre: string | null;
@@ -65,6 +66,13 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
+type EpisodeChild = {
+  id: string;
+  title: string;
+  season_number: number | null;
+  episode_number: number | null;
+  poster_url: string | null;
+};
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
@@ -148,6 +156,11 @@ function pendingRequestLabel(work: Work | null) {
   return (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
 }
 
+function isSeriesType(type: string | null | undefined) {
+  const label = typeLabel(type ?? "", "da");
+  return label === "TV-serie" || label === "Dokumentarserie";
+}
+
 export default function MineVaerkerClient({
   initialAssignments, allAssignments, broadcasters, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
 }: {
@@ -190,6 +203,9 @@ export default function MineVaerkerClient({
   const [helpOpen, setHelpOpen] = useState(false);
   const [pageSize, setPageSize] = useState(20);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
+  const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, EpisodeChild[]>>({});
+  const [loadingSeries, setLoadingSeries] = useState<Set<string>>(new Set());
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -258,11 +274,81 @@ export default function MineVaerkerClient({
     });
   const visibleAssignments = filtered.slice(0, pageSize);
 
+  const groupedSeriesEpisodes = (children: EpisodeChild[]) => {
+    const groups = new Map<number, EpisodeChild[]>();
+    for (const child of children) {
+      const season = child.season_number ?? 0;
+      groups.set(season, [...(groups.get(season) ?? []), child]);
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a - b);
+  };
+
+  const renderSeriesEpisodes = (workId: string, children: EpisodeChild[], isLoadingChildren: boolean, className = "px-14") => (
+    <div className="border-b border-gray-100 bg-gray-50/60">
+      {isLoadingChildren ? (
+        <div className={`${className} py-3 text-xs text-gray-400`}>Henter afsnit...</div>
+      ) : children.length === 0 ? (
+        <div className={`${className} py-3 text-xs text-gray-400`}>Ingen af dine afsnit er registreret endnu</div>
+      ) : (
+        groupedSeriesEpisodes(children).map(([season, episodes]) => (
+          <div key={`${workId}-season-${season}`} className="border-t border-gray-100 first:border-t-0">
+            <div className={`${className} pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400`}>
+              {season > 0 ? `Sæson ${season}` : "Uden sæson"}
+            </div>
+            {episodes.map(ep => (
+              <div key={ep.id} className={`${className} flex items-center gap-2 py-2 text-sm text-gray-600`}>
+                <span className="inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-gray-700">
+                  {ep.season_number != null && ep.episode_number != null
+                    ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
+                    : ep.episode_number != null
+                      ? `E${String(ep.episode_number).padStart(2, "0")}`
+                      : "-"}
+                </span>
+                <span className="min-w-0 truncate">{ep.title}</span>
+              </div>
+            ))}
+          </div>
+        ))
+      )}
+    </div>
+  );
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir(key === "date" ? "desc" : "asc"); }
   };
   const sortArrow = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+
+  const toggleSeries = async (workId: string) => {
+    const isOpen = expandedSeries.has(workId);
+    setExpandedSeries(prev => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(workId);
+      else next.add(workId);
+      return next;
+    });
+
+    if (isOpen || seriesEpisodes[workId] || !rightsHolderId) return;
+
+    setLoadingSeries(prev => new Set(prev).add(workId));
+    const { data } = await supabase
+      .from("work_assignments")
+      .select("works!inner(id, title, season_number, episode_number, poster_url)")
+      .eq("rights_holder_id", rightsHolderId)
+      .eq("works.parent_work_id", workId);
+
+    const episodes = ((data ?? []) as unknown as Array<{ works: EpisodeChild | null }>)
+      .map(row => row.works)
+      .filter((work): work is EpisodeChild => Boolean(work))
+      .sort((a, b) => (a.season_number ?? 0) - (b.season_number ?? 0) || (a.episode_number ?? 0) - (b.episode_number ?? 0));
+
+    setSeriesEpisodes(prev => ({ ...prev, [workId]: episodes }));
+    setLoadingSeries(prev => {
+      const next = new Set(prev);
+      next.delete(workId);
+      return next;
+    });
+  };
 
   const totalWorks  = assignments.length;
   const withContract = assignments.filter(a => contractedWorkIds.includes(a.works?.id ?? "")).length;
@@ -274,7 +360,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -505,6 +591,10 @@ export default function MineVaerkerClient({
           const pendingLabel = pendingRequestLabel(w);
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
+          const isSeriesParent = isSeriesType(w.type) && !w.parent_work_id && w.episode_number == null;
+          const isExpanded = expandedSeries.has(w.id);
+          const children = seriesEpisodes[w.id] ?? [];
+          const isLoadingChildren = loadingSeries.has(w.id);
           return (
             <React.Fragment key={a.id}>
             <div
@@ -518,6 +608,18 @@ export default function MineVaerkerClient({
 
               {/* Poster + titel */}
               <div className="flex items-center gap-3">
+                {isSeriesParent ? (
+                  <button
+                    type="button"
+                    onClick={event => { event.stopPropagation(); void toggleSeries(w.id); }}
+                    className="shrink-0 text-gray-400 hover:text-gray-700"
+                    aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                  >
+                    {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                  </button>
+                ) : (
+                  <span className="w-4 shrink-0" />
+                )}
                 <div className="w-8 shrink-0 flex items-center justify-center">
                   {posterSrc ? (
                     <div className="w-8 h-11 rounded overflow-hidden shrink-0">
@@ -605,6 +707,16 @@ export default function MineVaerkerClient({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
+                        {isSeriesParent && (
+                          <button
+                            type="button"
+                            onClick={event => { event.stopPropagation(); void toggleSeries(w.id); }}
+                            className="shrink-0 text-gray-400 hover:text-gray-700"
+                            aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
+                          >
+                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                          </button>
+                        )}
                         <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster ?? undefined}>
@@ -665,6 +777,16 @@ export default function MineVaerkerClient({
                 </div>
               </div>
             </div>
+            {isSeriesParent && isExpanded && (
+              <>
+                <div className="hidden lg:block">
+                  {renderSeriesEpisodes(w.id, children, isLoadingChildren)}
+                </div>
+                <div className="lg:hidden">
+                  {renderSeriesEpisodes(w.id, children, isLoadingChildren, "px-8")}
+                </div>
+              </>
+            )}
             </React.Fragment>
           );
         })}
