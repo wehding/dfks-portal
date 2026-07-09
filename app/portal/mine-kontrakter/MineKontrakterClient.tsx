@@ -1,15 +1,20 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip } from "lucide-react";
+import React, { useMemo, useState, useEffect } from "react";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, CheckCircle2, AlertTriangle, Plus } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { createAndLinkWorkForContract } from "@/app/actions/work-management";
+import { getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { toast } from "sonner";
 import { useRouter, useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -131,6 +136,101 @@ export default function MineKontrakterClient({
   const [viewLoading, setViewLoading] = useState(false);
   const [workSearch, setWorkSearch] = useState("");
   const [linkingSaving, setLinkingSaving] = useState(false);
+  const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  // Series fields
+  const [addSeason, setAddSeason] = useState("");
+  const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
+  const [episodeOptions, setEpisodeOptions] = useState<any[]>([]);
+  const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
+  const [episodesLoading, setEpisodesLoading] = useState(false);
+
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(async () => {
+      const q = workSearch.trim();
+      if (!q) {
+        setUnifiedResults([]);
+        return;
+      }
+      setIsSearching(true);
+      try {
+        const res = await searchWorksUnified(q);
+        if (res.success && res.results) {
+          setUnifiedResults(res.results.slice(0, 8));
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [workSearch]);
+
+  useEffect(() => {
+    const updateTmdbEpisodes = async () => {
+      if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
+        const tmdbId = pickedUnifiedResult.tmdb_id;
+        if (tmdbId) {
+          setEpisodesLoading(true);
+          try {
+            const det = await getTMDBWorkDetails(tmdbId, "tv");
+            if (det.success && det.details) {
+              const d = det.details as any;
+              const sNum = parseInt(addSeason) || 1;
+              const season = d.seasons?.find((s: any) => s.season_number === sNum);
+              const count = season ? season.episode_count : null;
+              if (count) {
+                setDetectedEpisodeCount(count);
+                setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })));
+                setSelectedEpisodes(prev => prev.filter(x => x <= count));
+              }
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setEpisodesLoading(false);
+          }
+        }
+      }
+    };
+    updateTmdbEpisodes();
+  }, [addSeason, pickedUnifiedResult]);
+
+  const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
+    setPickedUnifiedResult(result);
+    setDetectedEpisodeCount(null);
+    setSelectedEpisodes([]);
+    setEpisodeOptions([]);
+    setDetailsLoading(true);
+
+    try {
+      const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie";
+      if (isSeries) {
+        const detRes = await resolveUnifiedSearchResultDetails(result);
+        if (detRes.success && detRes.details) {
+          const d = detRes.details;
+          const options = d.episode_options || [];
+          const count = d.episode_count || options.length;
+
+          if (count) {
+            setDetectedEpisodeCount(count);
+            setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
+            setSelectedEpisodes([]);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
   const [isAddingAllonge, setIsAddingAllonge] = useState(false);
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(20);
@@ -304,6 +404,42 @@ export default function MineKontrakterClient({
       setMsg({ type: "error", text: res.error ?? "Fejl ved kobling" });
     }
     setLinkingSaving(false);
+  }
+
+  async function handleLinkUnifiedWork() {
+    if (!selectedContract || !pickedUnifiedResult) return;
+    setLinkingSaving(true);
+    try {
+      const activeSeason = parseInt(addSeason) || 1;
+      const res = await createAndLinkWorkForContract({
+        contractId: selectedContract.id,
+        result: pickedUnifiedResult,
+        seasonNumber: activeSeason,
+        selectedEpisodes: selectedEpisodes,
+        role: "Klipper",
+      });
+      if (res.success && res.workId) {
+        toast.success("Værket er nu tilknyttet kontrakten.");
+        const updatedContract = {
+          ...selectedContract,
+          works: {
+            id: res.workId,
+            title: pickedUnifiedResult.title,
+            year: pickedUnifiedResult.year
+          }
+        };
+        setSelectedContract(updatedContract as Contract);
+        setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract as Contract : c));
+        setPickedUnifiedResult(null);
+        setWorkSearch("");
+      } else {
+        toast.error(res.error || "Kunne ikke tilknytte værk.");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Der skete en fejl.");
+    } finally {
+      setLinkingSaving(false);
+    }
   }
 
   async function openAttachment(attachment: Attachment) {
@@ -596,40 +732,148 @@ export default function MineKontrakterClient({
                 ) : (
                   <div className="space-y-2">
                     <div className="relative">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400" />
+                      {isSearching ? (
+                        <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-gray-400" />
+                      ) : (
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                      )}
                       <Input
-                        placeholder="Søg i dine værker..."
+                        placeholder="Søg i alle databaser (onboarding)..."
                         value={workSearch}
                         onChange={e => setWorkSearch(e.target.value)}
-                        className="pl-7 h-8 text-sm"
+                        className="pl-8.5 h-9 text-sm"
                       />
                     </div>
-                    <Button type="button" variant="outline" size="sm" onClick={goToAddWork} className="w-full">
-                      Tilføj værk
-                    </Button>
-                    <div className="max-h-40 overflow-y-auto flex flex-col gap-1">
-                      {myWorks
-                        .filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase()))
-                        .map(w => (
+
+                    {unifiedResults.length > 0 && !pickedUnifiedResult && (
+                      <div className="max-h-56 overflow-y-auto flex flex-col gap-1 border border-gray-100 rounded-md p-1.5 bg-gray-50/50">
+                        {unifiedResults.map(item => (
                           <button
-                            key={w.id}
-                            onClick={() => { handleLinkWork(w.id); setWorkSearch(""); }}
-                            disabled={linkingSaving}
-                            className="flex justify-between items-center text-left text-sm px-3 py-2 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors"
+                            key={item.id}
+                            onClick={() => pickUnifiedResult(item)}
+                            className="flex flex-col text-left text-xs px-2.5 py-1.5 rounded bg-white hover:bg-gray-50 border border-gray-100 transition-colors w-full"
                           >
-                            <span className="font-medium text-gray-900">{w.title}</span>
-                            <span className="text-xs text-gray-500">{w.year ?? ""}</span>
+                            <div className="flex items-center justify-between gap-1 w-full">
+                              <span className="font-semibold text-gray-900 truncate">{item.title}</span>
+                              <span className="text-[9px] uppercase font-bold text-gray-400 shrink-0">
+                                {item.sources.join("·")}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-gray-500 mt-0.5">
+                              {item.year ?? "-"} · {item.type}
+                            </span>
                           </button>
                         ))}
-                      {myWorks.filter(w => !workSearch || w.title.toLowerCase().includes(workSearch.toLowerCase())).length === 0 && (
-                        <div className="space-y-2 px-2 py-1.5">
-                          <p className="text-sm text-gray-400 italic">Ingen værker fundet</p>
+                      </div>
+                    )}
+
+                    {pickedUnifiedResult && (
+                      <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-gray-900">{pickedUnifiedResult.title}</p>
+                            <p className="text-[10px] text-gray-500 mt-0.5">
+                              {pickedUnifiedResult.year ?? "-"} · {pickedUnifiedResult.type}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setPickedUnifiedResult(null)}
+                            className="text-gray-400 hover:text-gray-600"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
                         </div>
-                      )}
-                    </div>
-                    {linkingSaving && (
-                      <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                        <Loader2 className="h-3 w-3 animate-spin" /> Gemmer...
+
+                        {detailsLoading && (
+                          <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center py-2">
+                            <Loader2 className="h-3 w-3 animate-spin" /> Indlæser detaljer...
+                          </div>
+                        )}
+
+                        {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
+                          <div className="space-y-3 pt-2 border-t border-gray-100">
+                            <div className="flex flex-col gap-1">
+                              <Label className="text-[11px] font-medium text-gray-500">Sæson</Label>
+                              <Input
+                                type="number"
+                                min="1"
+                                className="h-8 text-xs"
+                                placeholder="1"
+                                value={addSeason}
+                                onChange={e => setAddSeason(e.target.value)}
+                              />
+                            </div>
+
+                            {episodesLoading ? (
+                              <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center">
+                                <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
+                              </div>
+                            ) : detectedEpisodeCount !== null ? (
+                              <div className="space-y-1.5">
+                                <div className="flex justify-between items-center text-[11px] text-gray-500">
+                                  <span>Vælg afsnit:</span>
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedEpisodes(episodeOptions.map(o => o.number))}
+                                      className="hover:underline"
+                                    >
+                                      Vælg alle
+                                    </button>
+                                    <span>·</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedEpisodes([])}
+                                      className="hover:underline"
+                                    >
+                                      Fravælg alle
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded border-gray-100 bg-gray-50">
+                                  {episodeOptions.map(opt => {
+                                    const checked = selectedEpisodes.includes(opt.number);
+                                    return (
+                                      <button
+                                        key={opt.number}
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedEpisodes(prev =>
+                                            prev.includes(opt.number)
+                                              ? prev.filter(n => n !== opt.number)
+                                              : [...prev, opt.number].sort((a, b) => a - b)
+                                          )
+                                        }
+                                        className={`py-1 text-[10px] rounded border text-center font-medium ${
+                                          checked
+                                            ? "border-gray-900 bg-gray-900 text-white"
+                                            : "border-gray-200 bg-white hover:bg-gray-100 text-gray-600"
+                                        }`}
+                                      >
+                                        {opt.number}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+
+                        <Button
+                          type="button"
+                          className="w-full h-8 text-xs font-semibold"
+                          disabled={linkingSaving || (detailsLoading) || (episodesLoading)}
+                          onClick={handleLinkUnifiedWork}
+                        >
+                          {linkingSaving ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                          )}
+                          Tilknyt værk
+                        </Button>
                       </div>
                     )}
                   </div>

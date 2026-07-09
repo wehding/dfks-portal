@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
-import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember } from "@/app/actions/member-works";
+import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 
@@ -364,7 +364,6 @@ export function AddWorkModal({
   initialQuery = "",
 }: AddWorkModalProps) {
   const { t } = useI18n();
-
   const [addQuery, setAddQuery]               = useState("");
   const [addRole, setAddRole]                 = useState("Klipper");
   const [manualMode, setManualMode]           = useState(false);
@@ -378,45 +377,44 @@ export function AddWorkModal({
   const [addComment, setAddComment]           = useState("");
 
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
-  const [localResults, setLocalResults]       = useState<LocalWorkResult[]>([]);
-  const [dfiResults, setDfiResults]           = useState<DfiSearchResult[]>([]);
-  const [tmdbResults, setTmdbResults]         = useState<TmdbSearchResult[]>([]);
-  const [pickedResult, setPickedResult]       = useState<SearchItem | null>(null);
-  const [pickedSource, setPickedSource]       = useState<"local" | "dfi" | "tmdb" | null>(null);
+  const [unifiedResults, setUnifiedResults]   = useState<UnifiedSearchWorkResult[]>([]);
+  const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
-  const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
+  const [detailsLoading, setDetailsLoading]   = useState(false);
   const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
-  const [showExternalResults, setShowExternalResults] = useState(false);
   const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
     const updateTmdbEpisodes = async () => {
-      if (pickedSource === "tmdb" && pickedResult) {
-        const tmdbResult = pickedResult as TmdbSearchResult;
-        setEpisodesLoading(true);
-        try {
-          const det = await getTMDBWorkDetails(tmdbResult.id, "tv");
-          if (det.success && det.details) {
-            const d = det.details as TmdbDetails;
-            const sNum = parseInt(addSeason) || 1;
-            const season = d.seasons?.find(s => s.season_number === sNum);
-            const count = season ? season.episode_count : null;
-            if (count) {
-              setDetectedEpisodeCount(count);
-              setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })));
-              setSelectedEpisodes(prev => prev.filter(x => x <= count));
+      if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
+        const tmdbId = pickedUnifiedResult.tmdb_id;
+        if (tmdbId) {
+          setEpisodesLoading(true);
+          try {
+            const det = await getTMDBWorkDetails(tmdbId, "tv");
+            if (det.success && det.details) {
+              const d = det.details as any;
+              const sNum = parseInt(addSeason) || 1;
+              const season = d.seasons?.find((s: any) => s.season_number === sNum);
+              const count = season ? season.episode_count : null;
+              if (count) {
+                setDetectedEpisodeCount(count);
+                setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })));
+                setSelectedEpisodes(prev => prev.filter(x => x <= count));
+              }
             }
+          } catch (e) {
+            console.error(e);
           }
-        } catch (e) {
-          console.error(e);
-        } finally {
-          setEpisodesLoading(false);
+          finally {
+            setEpisodesLoading(false);
+          }
         }
       }
     };
     updateTmdbEpisodes();
-  }, [addSeason, pickedSource, pickedResult]);
+  }, [addSeason, pickedUnifiedResult]);
 
   useEffect(() => {
     if (manualMode && (manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie")) {
@@ -446,17 +444,13 @@ export function AddWorkModal({
     setAddQuery(initialQuery);
     setAddComment("");
     setAddCoEditors([]);
-    setLocalResults([]);
-    setDfiResults([]);
-    setTmdbResults([]);
-    setPickedResult(null);
-    setPickedSource(null);
+    setUnifiedResults([]);
+    setPickedUnifiedResult(null);
     setAddSeason("");
     setAddEpisode("");
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
-    setShowExternalResults(false);
   }, [initialQuery]);
 
   useEffect(() => {
@@ -470,65 +464,24 @@ export function AddWorkModal({
     if (!query) return;
     if (queryOverride) setAddQuery(query);
     setIsSearching(true);
-    setIsSearchingTmdb(false);
     setHasSearchedAdd(true);
-    setShowExternalResults(false);
-    setLocalResults([]);
-    setDfiResults([]);
-    setTmdbResults([]);
-    setPickedResult(null);
-    setPickedSource(null);
+    setUnifiedResults([]);
+    setPickedUnifiedResult(null);
     setAddCoEditors([]);
 
-    const local = await searchLocalWorksForMember(query).catch(() => ({ success: false, works: [] }));
-    const locals = ((local as { works?: LocalWorkResult[] }).works ?? []).slice(0, 8);
-    setLocalResults(locals);
-
-    if (locals.length > 0) {
-      setPickedResult(locals[0]);
-      setPickedSource("local");
-      setManualMode(false);
-      setAddCoEditors(localWorkToCoEditors(locals[0]));
+    try {
+      const res = await searchWorksUnified(query);
+      if (res.success && res.results) {
+        setUnifiedResults(res.results);
+        if (res.results.length > 0) {
+          await pickUnifiedResult(res.results[0]);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
       setIsSearching(false);
-      return;
     }
-
-    const dfi = await searchDFIFilms(query).catch(() => ({ success: false, results: [] }));
-    const dfiParents = (((dfi as { results?: DfiSearchResult[] }).results ?? [])
-      .filter(result => !isDfiChildResult(result)))
-      .slice(0, 8);
-    setDfiResults(dfiParents);
-
-    if (dfiParents.length > 0) {
-      setManualMode(false);
-      setIsSearching(false);
-      return;
-    }
-
-    setIsSearchingTmdb(true);
-    setShowExternalResults(true);
-    const tmdb = await searchTMDB(query).catch(() => []);
-    const tmdbItems = (Array.isArray(tmdb) ? tmdb : []).slice(0, 8);
-    setTmdbResults(tmdbItems);
-    setIsSearchingTmdb(false);
-    setIsSearching(false);
-
-    if (tmdbItems.length > 0) {
-      setManualMode(false);
-      return;
-    }
-
-    setManualWork(prev => ({ ...prev, title: query }));
-  };
-
-  const handleTmdbSearch = async () => {
-    if (!addQuery.trim()) return;
-    setIsSearchingTmdb(true);
-    setShowExternalResults(true);
-    setTmdbResults([]);
-    const tmdb = await searchTMDB(addQuery).catch(() => []);
-    setTmdbResults((Array.isArray(tmdb) ? tmdb : []).slice(0, 8));
-    setIsSearchingTmdb(false);
   };
 
   useEffect(() => {
@@ -540,133 +493,57 @@ export function AddWorkModal({
       void handleSearch(key);
     }, 0);
     return () => window.clearTimeout(timer);
-    // handleSearch intentionally reads the current modal state after resetAddState has applied initialQuery.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialQuery]);
 
-  const pickLocalResult = async (work: LocalWorkResult) => {
-    setPickedResult(work);
-    setPickedSource("local");
-    setManualMode(false);
-    setAddCoEditors(localWorkToCoEditors(work));
-    setSelectedEpisodes([]);
-    const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
-    if (!isSeries) {
-      setDetectedEpisodeCount(null);
-      setEpisodeOptions([]);
-      return;
-    }
-    // Hvis det valgte lokale værk selv er et afsnit, sæt sæsonen automatisk.
-    if (work.season_number) setAddSeason(String(work.season_number));
-    setDetectedEpisodeCount(null);
-    setEpisodesLoading(true);
-    try {
-      // Lokale serier har ofte ikke episode_count gemt — udled antal afsnit fra
-      // TMDB/DFI (som DFI/TMDB-flowet gør), så afsnitsvælgeren kan vises.
-      let count: number | null = work.episode_count ?? null;
-      if (!count && work.tmdb_id) {
-        const det = await getTMDBWorkDetails(work.tmdb_id, "tv");
-        if (det.success && det.details) {
-          const d = det.details as TmdbDetails;
-          const sNum = work.season_number ?? (parseInt(addSeason) || 1);
-          count = d.seasons?.find(s => s.season_number === sNum)?.episode_count ?? null;
-        }
-      }
-      if (!count && work.dfi_id) {
-        const details = await getDFIFilmDetails(Number(work.dfi_id));
-        if (details.success && details.film) {
-          const options = dfiEpisodeOptions(asDfiFilm(details.film as DfiFilm));
-          count = options.length || countDfiEpisodes(asDfiFilm(details.film as DfiFilm));
-          setEpisodeOptions(options.length ? options : count ? Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })) : []);
-        }
-      } else {
-        setEpisodeOptions(count ? Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })) : []);
-      }
-      setDetectedEpisodeCount(count);
-      // Forvælg det afsnit, brugeren klikkede på (hvis det selv er et afsnit).
-      if (work.episode_number && count && work.episode_number <= count) {
-        setSelectedEpisodes([work.episode_number]);
-      } else if (count) {
-        setSelectedEpisodes(Array.from({ length: count }, (_, idx) => idx + 1));
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setEpisodesLoading(false);
-    }
-  };
-
-  const pickDfiResult = async (result: DfiSearchResult) => {
-    setPickedResult(result);
-    setPickedSource("dfi");
+  const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
+    setPickedUnifiedResult(result);
     setManualMode(false);
     setAddCoEditors([]);
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
-    setEpisodesLoading(true);
+    setDetailsLoading(true);
+
     try {
-      const resolved = await resolveDfiSelection(result);
-      const film = resolved.film;
-      const targetResult = resolved.result;
-      setPickedResult(targetResult);
+      if (result.local_id && result.raw_local) {
+        setAddCoEditors(localWorkToCoEditors(result.raw_local));
+      }
 
-      const editors = extractDfiCoEditors(film);
-      if (editors.length) setAddCoEditors(editors);
+      const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie";
+      if (isSeries) {
+        const detRes = await resolveUnifiedSearchResultDetails(result);
+        if (detRes.success && detRes.details) {
+          const d = detRes.details;
+          const options = d.episode_options || [];
+          const count = d.episode_count || options.length;
 
-      const options = dfiEpisodeOptions(film);
-      const count = options.length || countDfiEpisodes(film);
-      if (count) {
-        setDetectedEpisodeCount(count);
-        setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
-        if (resolved.selectedEpisode) {
-          setSelectedEpisodes([resolved.selectedEpisode]);
-        } else {
-          setSelectedEpisodes([]);
+          if (count) {
+            setDetectedEpisodeCount(count);
+            setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
+            setSelectedEpisodes([]);
+          }
         }
       }
     } catch (e) {
       console.error(e);
-      setAddCoEditors([]);
     } finally {
-      setEpisodesLoading(false);
+      setDetailsLoading(false);
     }
   };
 
   const closeAfterSuccess = () => {
-    // Luk vinduet med det samme; genindlæs listen i baggrunden.
     resetAddState();
     onClose();
     void reloadAssignments();
   };
 
   const handleAddWork = async () => {
-    if ((!manualMode && (!pickedResult || !pickedSource)) || !rightsHolderId) return;
+    if ((!manualMode && !pickedUnifiedResult) || !rightsHolderId) return;
     setIsSaving(true);
     try {
       const selectedSeasonNumber = showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
       if (showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0) {
         throw new Error(locale === "da" ? "Vælg mindst ét afsnit." : "Select at least one episode.");
-      }
-      if (pickedSource === "local" && pickedResult) {
-        const localResult = pickedResult as LocalWorkResult;
-        const res = await linkExistingWorkForMember({
-          rightsHolderId,
-          workId: localResult.id,
-          role: addRole,
-          comment: addComment,
-          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
-          seasonNumber: selectedSeasonNumber,
-          episodeNumber: numberOrNull(addEpisode),
-          selectedEpisodes,
-        });
-        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-        onWorkAdded(
-          res.pending ? t("works.addedPending") : t("works.added"),
-          true
-        );
-        await closeAfterSuccess();
-        return;
       }
 
       if (manualMode) {
@@ -675,7 +552,7 @@ export function AddWorkModal({
           role: addRole,
           comment: addComment,
           source: "manual",
-          overrideLocalMatch: localResults.length > 0,
+          overrideLocalMatch: false,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
           workData: {
             title: manualWork.title,
@@ -697,88 +574,64 @@ export function AddWorkModal({
         return;
       }
 
-      if (pickedSource === "dfi" && pickedResult) {
-        const dfiResult = pickedResult as DfiSearchResult;
-        const resolved = await resolveDfiSelection(dfiResult);
-        const film = resolved.film;
-        const type = mapDfiWorkType(film.Category, film.Type);
-        const dfiPoster = resolved.posterDataUrl ?? extractDfiPosterUrl(film);
-        const director = extractDfiDirectors(film).join(", ") || null;
-        const selectedDfiEpisodes = selectedEpisodes.length > 0
-          ? selectedEpisodes
-          : resolved.selectedEpisode
-          ? [resolved.selectedEpisode]
-          : [];
-        const dfiEpisodeCount = detectedEpisodeCount ?? countDfiEpisodes(film);
-        const res = await addWorkForMemberWithApproval({
-          rightsHolderId,
-          role: addRole,
-          comment: addComment || (localResults.length > 0 ? "Brugeren har valgt DFI frem for lokalt databasehit." : ""),
-          source: "dfi",
-          overrideLocalMatch: localResults.length > 0,
-          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
-          workData: {
-            dfi_id: String(film.Id),
-            title: cleanDfiTitle(film.Title || film.DanishTitle || "Ukendt") || "Ukendt",
-            type,
-            year: extractDfiPremiereYear(film),
-            director,
-            season_number: selectedSeasonNumber,
-            episode_number: numberOrNull(addEpisode),
-            selected_episodes: selectedDfiEpisodes,
-            episode_count: dfiEpisodeCount,
-            description: film.Synopsis || film.ShortSynopsis || null,
-            poster_url: dfiPoster,
-            dfi_metadata: film as unknown as DfiMetadata,
-          },
-        });
-        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-        onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
-        await closeAfterSuccess();
-        return;
-      }
+      if (pickedUnifiedResult) {
+        const u = pickedUnifiedResult;
+        if (u.local_id) {
+          const res = await linkExistingWorkForMember({
+            rightsHolderId,
+            workId: u.local_id,
+            role: addRole,
+            comment: addComment,
+            coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+            seasonNumber: selectedSeasonNumber,
+            episodeNumber: numberOrNull(addEpisode),
+            selectedEpisodes,
+          });
+          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+          onWorkAdded(res.pending ? t("works.addedPending") : t("works.added"), true);
+          await closeAfterSuccess();
+          return;
+        } else {
+          setDetailsLoading(true);
+          const detailsRes = await resolveUnifiedSearchResultDetails(u);
+          setDetailsLoading(false);
+          if (!detailsRes.success || !detailsRes.details) {
+            throw new Error(locale === "da" ? "Kunne ikke hente detaljer for det valgte værk." : "Could not fetch details for selected work.");
+          }
+          const d = detailsRes.details;
 
-      if (pickedSource === "tmdb" && pickedResult) {
-        const tmdbResult = pickedResult as TmdbSearchResult;
-        const det = await getTMDBWorkDetails(tmdbResult.id, tmdbResult.media_type || "movie");
-        const d = det.success ? (det as { details?: TmdbSearchResult }).details ?? tmdbResult : tmdbResult;
-        const title = d.title || d.name || "Ukendt";
-        const year = d.release_date
-          ? parseInt(d.release_date.substring(0, 4))
-          : d.first_air_date
-          ? parseInt(d.first_air_date.substring(0, 4))
-          : null;
-        const tmdbDetail = d as TmdbSearchResult & { runtime?: number | null; episode_run_time?: number[] };
-        const durationMinutes = typeof tmdbDetail.runtime === "number" && tmdbDetail.runtime > 0
-          ? tmdbDetail.runtime
-          : Array.isArray(tmdbDetail.episode_run_time) && tmdbDetail.episode_run_time[0]
-          ? tmdbDetail.episode_run_time[0]
-          : null;
-        const res = await addWorkForMemberWithApproval({
-          rightsHolderId,
-          role: addRole,
-          comment: addComment || (localResults.length > 0 ? "Brugeren har valgt TMDB frem for lokalt databasehit." : ""),
-          source: "tmdb",
-          overrideLocalMatch: localResults.length > 0,
-          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
-          workData: {
-            tmdb_id: tmdbResult.id,
-            title,
-            type: tmdbResult.media_type === "tv" ? "tv-serie" : "spillefilm",
-            year,
-            duration_minutes: durationMinutes,
-            season_number: selectedSeasonNumber,
-            episode_number: numberOrNull(addEpisode),
-            selected_episodes: selectedEpisodes,
-            episode_count: detectedEpisodeCount,
-            description: d.overview || null,
-            poster_url: d.poster_path ? `${TMDB_IMG_W185}${d.poster_path}` : null,
-          },
-        });
-        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-        onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
-        await closeAfterSuccess();
-        return;
+          const res = await addWorkForMemberWithApproval({
+            rightsHolderId,
+            role: addRole,
+            comment: addComment,
+            source: u.sources.includes("dfi") ? "dfi" : "tmdb",
+            overrideLocalMatch: false,
+            coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+            workData: {
+              dfi_id: d.dfi_id ? String(d.dfi_id) : undefined,
+              tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : undefined,
+              imdb_id: d.imdb_id ?? undefined,
+              wikidata_id: d.wikidata_id ?? undefined,
+              title: d.title,
+              type: d.type,
+              year: d.year,
+              director: d.director ?? undefined,
+              genre: d.genre ?? undefined,
+              duration_minutes: d.duration_minutes ?? undefined,
+              season_number: selectedSeasonNumber,
+              episode_number: numberOrNull(addEpisode),
+              selected_episodes: selectedEpisodes,
+              episode_count: d.episode_count ?? undefined,
+              description: d.description,
+              poster_url: d.poster_url,
+              dfi_metadata: d.dfi_metadata ?? undefined,
+            },
+          });
+          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+          onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
+          await closeAfterSuccess();
+          return;
+        }
       }
     } catch (err: unknown) {
       onWorkAdded(err instanceof Error ? err.message : t("common.genericError"), false);
@@ -790,23 +643,19 @@ export function AddWorkModal({
   const showSeriesFields =
     (manualMode && (manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie")) ||
     (!manualMode &&
-      pickedResult &&
-      (pickedSource === "local"
-        ? (pickedResult as LocalWorkResult).type === "tv-serie" || (pickedResult as LocalWorkResult).type === "dokumentar-serie"
-        : pickedSource === "dfi"
-        ? ["tv-serie", "dokumentar-serie"].includes(mapDfiWorkType((pickedResult as DfiSearchResult).Category, (pickedResult as DfiSearchResult).Type)) || detectedEpisodeCount !== null
-        : (pickedResult as TmdbSearchResult).media_type === "tv"));
+      pickedUnifiedResult &&
+      (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie"));
   const selectedEpisodeLabel = selectedEpisodes.length > 0
     ? selectedEpisodes.join(", ")
     : numberOrNull(addEpisode)
     ? String(numberOrNull(addEpisode))
     : "";
-  const chosenTitle = manualMode ? manualWork.title : searchItemTitle(pickedResult);
+  const chosenTitle = manualMode ? manualWork.title : pickedUnifiedResult?.title ?? "";
   const chosenSummary = showSeriesFields && selectedEpisodeLabel
     ? `${chosenTitle}, ${locale === "da" ? "afsnit" : "episodes"} ${selectedEpisodeLabel}`
     : chosenTitle;
   const missingSeriesEpisodes = Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
-  const noSearchResults = hasSearchedAdd && !isSearching && !isSearchingTmdb && localResults.length === 0 && dfiResults.length === 0 && tmdbResults.length === 0;
+  const noSearchResults = hasSearchedAdd && !isSearching && unifiedResults.length === 0;
 
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
@@ -928,8 +777,7 @@ export function AddWorkModal({
             onClick={() => {
               setManualMode(v => !v);
               if (!manualMode) {
-                setPickedResult(null);
-                setPickedSource(null);
+                setPickedUnifiedResult(null);
                 setAddCoEditors([]);
               }
             }}
@@ -1020,61 +868,61 @@ export function AddWorkModal({
       )}
 
 
-      {!manualMode && noSearchResults && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-center text-sm font-semibold text-red-900">
-          {locale === "da" ? "Titel ikke fundet" : "Title not found"}
-        </div>
-      )}
-
-      {!manualMode && localResults.length > 0 && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="mb-2 text-sm font-semibold text-amber-900">{t("works.possibleExisting")}</p>
-          <div className="space-y-1.5">
-            {localResults.map(work => {
-              const sel = pickedSource === "local" && (pickedResult as LocalWorkResult | null)?.id === work.id;
-              return (
-                <React.Fragment key={work.id}>
-                  <button
-                    type="button"
-                    onClick={() => pickLocalResult(work)}
-                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${
-                      sel ? "border-gray-900 bg-white" : "border-amber-200 bg-white/70 hover:bg-white"
-                    }`}
-                  >
-                    <span className="font-medium text-gray-900">{work.title}</span>
-                    <span className="ml-2 text-xs text-gray-500">
-                      {work.year ?? "-"} · {typeLabel(work.type, locale)}
-                    </span>
-                    {work.description ? <span className="mt-0.5 block text-xs text-gray-500">{work.description.slice(0, 90)}</span> : null}
-                  </button>
-                  {sel && showSeriesFields && seriesEpisodePicker}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {!manualMode && dfiResults.length > 0 && (
+      {!manualMode && unifiedResults.length > 0 && (
         <div className="mb-4">
-          <p className="text-xs font-medium text-gray-500 mb-2">DFI ({dfiResults.length})</p>
-          <div className="flex flex-col gap-1.5">
-            {dfiResults.map(item => {
-              const sel = (pickedResult as DfiSearchResult | null)?.Id === item.Id && pickedSource === "dfi";
-              const dfiDescription = item.ShortSynopsis || item.Synopsis || item.Description || "";
+          <p className="text-xs font-medium text-gray-500 mb-2">
+            {locale === "da" ? "Søgeresultater" : "Search results"} ({unifiedResults.length})
+          </p>
+          <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+            {unifiedResults.map(item => {
+              const sel = pickedUnifiedResult?.id === item.id;
               return (
-                <React.Fragment key={String(item.Id)}>
+                <React.Fragment key={item.id}>
                   <button
-                    onClick={() => pickDfiResult(item)}
-                    className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors w-full ${
+                    onClick={() => pickUnifiedResult(item)}
+                    className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-3 items-start w-full ${
                       sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
                     }`}
                   >
-                    <p className="font-medium text-gray-900 truncate">{cleanDfiTitle(item.Title ?? item.DanishTitle ?? "")}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{extractDfiPremiereYear(item) ?? "-"} · {item.Category}</p>
-                    {dfiDescription ? <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{dfiDescription.slice(0, 120)}</p> : null}
+                    {item.poster_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.poster_url} alt={item.title} className="w-8 h-11 object-cover rounded shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-semibold text-gray-900 truncate">{item.title}</p>
+                        <div className="flex gap-1">
+                          {item.sources.map(src => (
+                            <span
+                              key={src}
+                              className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
+                                src === "local"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : src === "dfi"
+                                  ? "bg-blue-100 text-blue-800"
+                                  : "bg-purple-100 text-purple-800"
+                              }`}
+                            >
+                              {src}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {item.year ?? "-"} · {typeLabel(item.type, locale)} {item.director ? `· Instruktør: ${item.director}` : ""}
+                      </p>
+                      {item.description && (
+                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{item.description}</p>
+                      )}
+                    </div>
                   </button>
-                  {sel && showSeriesFields && seriesEpisodePicker}
+                  {sel && detailsLoading && (
+                    <div className="flex items-center justify-center p-3 text-sm text-gray-500 gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      {locale === "da" ? "Indlæser detaljer…" : "Loading details…"}
+                    </div>
+                  )}
+                  {sel && !detailsLoading && showSeriesFields && seriesEpisodePicker}
                 </React.Fragment>
               );
             })}
@@ -1082,81 +930,7 @@ export function AddWorkModal({
         </div>
       )}
 
-      {!manualMode && hasSearchedAdd && !isSearching && !isSearchingTmdb && tmdbResults.length === 0 && !showExternalResults && (localResults.length > 0 || dfiResults.length > 0) && (
-        <div className="mt-3 mb-4 flex justify-center">
-          <Button type="button" variant="outline" size="sm" onClick={handleTmdbSearch} disabled={isSearchingTmdb}>
-            {isSearchingTmdb && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {locale === "da" ? "Led videre på TMDB databasen" : "Search further in the TMDB database"}
-          </Button>
-        </div>
-      )}
-
-      {!manualMode && tmdbResults.length > 0 && showExternalResults && (
-        <div className="grid grid-cols-1 gap-5 mb-4 sm:grid-cols-2">
-          {([
-            {
-              label: `TMDB (${tmdbResults.length})`,
-              items: tmdbResults,
-              getKey: (x: SearchItem) => String((x as TmdbSearchResult).id),
-              isSelected: (x: SearchItem) => (pickedResult as TmdbSearchResult | null)?.id === (x as TmdbSearchResult).id && pickedSource === "tmdb",
-              onSelect: (x: SearchItem) => {
-                const i = x as TmdbSearchResult;
-                setPickedResult(i);
-                setPickedSource("tmdb");
-                setAddCoEditors([]);
-              },
-              getTitle: (x: SearchItem) => {
-                const i = x as TmdbSearchResult;
-                return i.title || i.name || "";
-              },
-              getMeta: (x: SearchItem) => {
-                const i = x as TmdbSearchResult;
-                return `${i.release_date?.substring(0, 4) || i.first_air_date?.substring(0, 4)} · ${
-                  i.media_type === "tv" ? typeLabel("serie", locale) : typeLabel("film", locale)
-                }`;
-              },
-              getPoster: (x: SearchItem) => {
-                const i = x as TmdbSearchResult;
-                return i.poster_path ? `${TMDB_IMG_W185}${i.poster_path}` : null;
-              },
-            },
-          ] as ResultColumnDef[]).map(col => (
-            <div key={col.label}>
-              <p className="text-xs font-medium text-gray-500 mb-2">{col.label}</p>
-              <div className="flex flex-col gap-1.5">
-                {col.items.map((item: SearchItem) => {
-                  const sel = col.isSelected(item);
-                  const poster = col.getPoster(item);
-                  const overview = (item as TmdbSearchResult).overview ?? "";
-                  return (
-                    <React.Fragment key={col.getKey(item)}>
-                      <button
-                        onClick={() => col.onSelect(item)}
-                        className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-2.5 items-start w-full ${
-                          sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
-                        }`}
-                      >
-                        {poster && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={poster} alt={col.getTitle(item)} className="w-7 h-10 object-cover rounded shrink-0" />
-                        )}
-                        <div className="min-w-0">
-                          <p className="font-medium text-gray-900 truncate">{col.getTitle(item)}</p>
-                          <p className="text-xs text-gray-500 mt-0.5">{col.getMeta(item)}</p>
-                          {overview ? <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">{overview.slice(0, 120)}</p> : null}
-                        </div>
-                      </button>
-                      {sel && showSeriesFields && seriesEpisodePicker}
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {(pickedResult || manualMode) && (
+      {(pickedUnifiedResult || manualMode) && (
         <div className="space-y-4 border-t border-gray-100 pt-4">
           <div className="rounded-lg border border-gray-200 p-4">
             <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.coEditors")}</p>
