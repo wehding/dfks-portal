@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -41,6 +41,14 @@ type AdminUserResponse = {
     reset_url?: string
     user_id?: string
 }
+type DfksMemberOption = {
+    display_id: string | null
+    full_name: string
+}
+type RightsHolderCounts = {
+    contracts: number
+    works: number
+}
 
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : "Fejl"
@@ -48,6 +56,22 @@ function errorMessage(error: unknown) {
 
 function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
     return rh.org_affiliations?.find(a => a.org_id === orgId) ?? null
+}
+
+function normalizeName(value: string) {
+    return value
+        .normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim()
+}
+
+function findDfksMemberNo(name: string, members: DfksMemberOption[]) {
+    const normalized = normalizeName(name)
+    if (!normalized) return ""
+    const match = members.find(member => normalizeName(member.full_name) === normalized)
+    return match?.display_id ?? ""
 }
 
 const EMPTY_FORM = {
@@ -66,10 +90,12 @@ export default function RettighedshavereAdminPage() {
     const [createOpen, setCreateOpen] = useState(false)
     const [createSaving, setCreateSaving] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
+    const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
 
     const [editTarget, setEditTarget] = useState<RettighedshaverWithAffiliation | null>(null)
     const [editSaving, setEditSaving] = useState(false)
     const [editForm, setEditForm] = useState({ ...EMPTY_FORM })
+    const [editMemberNoTouched, setEditMemberNoTouched] = useState(false)
 
     // Portal-adgang
     const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reset" } | null>(null)
@@ -78,6 +104,8 @@ export default function RettighedshavereAdminPage() {
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
+    const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
+    const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
 
     useEffect(() => {
         const supabase = createClient()
@@ -85,6 +113,8 @@ export default function RettighedshavereAdminPage() {
             const oid = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
             setOrgId(oid)
             load(oid)
+            loadDfksMembers(oid)
+            loadOverviewCounts(oid)
             refreshMemberSyncStatus()
         })
     }, [])
@@ -94,6 +124,47 @@ export default function RettighedshavereAdminPage() {
         const data = await getRettighedshavere(oid)
         setRows(data)
         setLoading(false)
+    }
+
+    async function loadDfksMembers(oid: string) {
+        const supabase = createClient()
+        const { data } = await supabase
+            .from("dfks_members")
+            .select("display_id, full_name")
+            .eq("org_id", oid)
+            .eq("status", "active")
+            .order("full_name")
+
+        setDfksMembers((data as DfksMemberOption[] | null) ?? [])
+    }
+
+    async function loadOverviewCounts(oid: string) {
+        const supabase = createClient()
+        const [{ data: contracts }, { data: assignments }] = await Promise.all([
+            supabase
+                .from("contracts")
+                .select("rights_holder_id")
+                .eq("org_id", oid)
+                .not("rights_holder_id", "is", null),
+            supabase
+                .from("work_assignments")
+                .select("rights_holder_id")
+                .eq("org_id", oid)
+                .not("rights_holder_id", "is", null),
+        ])
+
+        const next: Record<string, RightsHolderCounts> = {}
+        for (const row of (contracts ?? []) as Array<{ rights_holder_id: string | null }>) {
+            if (!row.rights_holder_id) continue
+            next[row.rights_holder_id] ??= { contracts: 0, works: 0 }
+            next[row.rights_holder_id].contracts += 1
+        }
+        for (const row of (assignments ?? []) as Array<{ rights_holder_id: string | null }>) {
+            if (!row.rights_holder_id) continue
+            next[row.rights_holder_id] ??= { contracts: 0, works: 0 }
+            next[row.rights_holder_id].works += 1
+        }
+        setCountsByRightsHolder(next)
     }
 
     async function refreshMemberSyncStatus() {
@@ -113,7 +184,27 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.count ?? 0} medlemmer opdateret fra DFKS medlemslisten`)
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+        if (orgId) loadDfksMembers(orgId)
     }
+
+    const createMatchedMemberNo = useMemo(
+        () => findDfksMemberNo(createForm.full_name, dfksMembers),
+        [createForm.full_name, dfksMembers]
+    )
+    const editMatchedMemberNo = useMemo(
+        () => findDfksMemberNo(editForm.full_name, dfksMembers),
+        [editForm.full_name, dfksMembers]
+    )
+
+    useEffect(() => {
+        if (!createOpen || createMemberNoTouched || createForm.member_no.trim() || !createMatchedMemberNo) return
+        setCreateForm(form => ({ ...form, member_no: createMatchedMemberNo, is_member: true }))
+    }, [createMatchedMemberNo, createForm.member_no, createMemberNoTouched, createOpen])
+
+    useEffect(() => {
+        if (!editTarget || editMemberNoTouched || editForm.member_no.trim() || !editMatchedMemberNo) return
+        setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
+    }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
 
     const visible = rows.filter(rh => {
         const aff = orgId ? getAffiliation(rh, orgId) : null
@@ -139,7 +230,7 @@ export default function RettighedshavereAdminPage() {
             orgId, createForm.is_member, createForm.member_no || undefined
         )
         setCreateSaving(false)
-        if (result) { toast.success(`${createForm.full_name} er oprettet`); setCreateOpen(false); load(orgId) }
+        if (result) { toast.success(`${createForm.full_name} er oprettet`); setCreateOpen(false); load(orgId); loadOverviewCounts(orgId) }
         else toast.error("Kunne ikke oprette rettighedshaver")
     }
 
@@ -147,6 +238,7 @@ export default function RettighedshavereAdminPage() {
         const aff = orgId ? getAffiliation(rh, orgId) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
         setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
+        setEditMemberNoTouched(false)
         setEditTarget(rh)
     }
 
@@ -159,6 +251,7 @@ export default function RettighedshavereAdminPage() {
         toast.success("Gemt")
         setEditTarget(null)
         load(orgId)
+        loadOverviewCounts(orgId)
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
@@ -237,7 +330,7 @@ export default function RettighedshavereAdminPage() {
                             {syncingMembers ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
                             Opdater DFKS medlemsliste
                         </Button>
-                        <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateOpen(true) }}>
+                        <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Opret ny
                         </Button>
                     </div>
@@ -291,6 +384,7 @@ export default function RettighedshavereAdminPage() {
                 ) : visible.map(rh => {
                     const aff = orgId ? getAffiliation(rh, orgId) : null
                     const hasLogin = !!rh.user_id
+                    const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0 }
                     return (
                         <MobileDataCard key={rh.id}>
                             <div className="flex items-start justify-between gap-3">
@@ -325,6 +419,8 @@ export default function RettighedshavereAdminPage() {
                             <div className="mt-4 grid grid-cols-2 gap-3">
                                 <MobileMetaRow label="Telefon">{rh.phone ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="DFKS nr.">{aff?.member_no ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label="Kontrakter">{counts.contracts}</MobileMetaRow>
+                                <MobileMetaRow label="Værker">{counts.works}</MobileMetaRow>
                                 <MobileMetaRow label="Status">
                                     {aff?.is_member
                                         ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
@@ -349,6 +445,8 @@ export default function RettighedshavereAdminPage() {
                             <TableHead>Email</TableHead>
                             <TableHead>Telefon</TableHead>
                             <TableHead>DFKS medlemsnr.</TableHead>
+                            <TableHead>Kontrakter</TableHead>
+                            <TableHead>Værker</TableHead>
                             <TableHead>Status</TableHead>
                             <TableHead>Portal</TableHead>
                             <TableHead>Onboarding</TableHead>
@@ -357,18 +455,21 @@ export default function RettighedshavereAdminPage() {
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={10} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
                         ) : visible.length === 0 ? (
-                            <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={10} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
                         ) : visible.map(rh => {
                             const aff = orgId ? getAffiliation(rh, orgId) : null
                             const hasLogin = !!rh.user_id
+                            const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0 }
                             return (
                                 <TableRow key={rh.id}>
                                     <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{aff?.member_no ?? "—"}</TableCell>
+                                    <TableCell className="text-sm tabular-nums">{counts.contracts}</TableCell>
+                                    <TableCell className="text-sm tabular-nums">{counts.works}</TableCell>
                                     <TableCell>
                                         {aff?.is_member
                                             ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
@@ -457,7 +558,10 @@ export default function RettighedshavereAdminPage() {
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={createForm.cpr_no} onChange={e => setCreateForm(f => ({ ...f, cpr_no: e.target.value }))} placeholder="DDMMÅÅ-XXXX" /></div>
                             <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={createForm.bank_account} onChange={e => setCreateForm(f => ({ ...f, bank_account: e.target.value }))} placeholder="Reg.nr. og kontonr." /></div>
-                            <div className="space-y-1"><Label>DFKS medlemsnr.</Label><Input value={createForm.member_no} onChange={e => setCreateForm(f => ({ ...f, member_no: e.target.value }))} placeholder="F.eks. 1042" /></div>
+                            <div className="space-y-1">
+                                <Label>DFKS medlemsnr.</Label>
+                                <Input value={createForm.member_no} onChange={e => { setCreateMemberNoTouched(true); setCreateForm(f => ({ ...f, member_no: e.target.value })) }} placeholder="F.eks. 1042" />
+                            </div>
                         </div>
                         <div className="flex items-center gap-2 pt-1">
                             <input type="checkbox" id="create-is-member" checked={createForm.is_member} onChange={e => setCreateForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
@@ -490,7 +594,10 @@ export default function RettighedshavereAdminPage() {
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={editForm.cpr_no} onChange={e => setEditForm(f => ({ ...f, cpr_no: e.target.value }))} /></div>
                             <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={editForm.bank_account} onChange={e => setEditForm(f => ({ ...f, bank_account: e.target.value }))} /></div>
-                            <div className="space-y-1"><Label>DFKS medlemsnr.</Label><Input value={editForm.member_no} onChange={e => setEditForm(f => ({ ...f, member_no: e.target.value }))} /></div>
+                            <div className="space-y-1">
+                                <Label>DFKS medlemsnr.</Label>
+                                <Input value={editForm.member_no} onChange={e => { setEditMemberNoTouched(true); setEditForm(f => ({ ...f, member_no: e.target.value })) }} />
+                            </div>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1">

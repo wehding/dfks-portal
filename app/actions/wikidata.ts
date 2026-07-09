@@ -19,6 +19,10 @@ type SparqlResponse = {
   };
 };
 
+type WikidataSearchResponse = {
+  search?: Array<{ id?: string }>;
+};
+
 async function wikidataFetch(url: string) {
   return fetch(url, {
     headers: {
@@ -32,6 +36,49 @@ async function wikidataFetch(url: string) {
 
 function firstBindingValue(data: SparqlResponse, key: string) {
   return data?.results?.bindings?.[0]?.[key]?.value ?? null;
+}
+
+function parseReleaseYear(value: string | null) {
+  if (typeof value !== "string") return null;
+  const year = Number.parseInt(value.substring(0, 4), 10);
+  return Number.isFinite(year) ? year : null;
+}
+
+function durationToMinutes(value: string | null, unit: string | null) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  if (unit?.endsWith("/Q11574")) return Math.round(amount / 60);
+  return Math.round(amount);
+}
+
+async function findItemByTitleAndYear(title: string, year?: number | null) {
+  const searchRes = await wikidataFetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=da&uselang=da&type=item&search=${encodeURIComponent(title)}`);
+  if (!searchRes.ok) return null;
+
+  const searchData = await searchRes.json() as WikidataSearchResponse;
+  const ids = (searchData.search ?? [])
+    .map(item => item.id)
+    .filter((id): id is string => typeof id === "string" && /^Q\d+$/.test(id))
+    .slice(0, 8);
+
+  if (ids.length === 0) return null;
+  if (!year) return ids[0];
+
+  const values = ids.map(id => `wd:${id}`).join(" ");
+  const query = `
+    SELECT ?item ?releaseDate WHERE {
+      VALUES ?item { ${values} }
+      OPTIONAL { ?item wdt:P577 ?releaseDate. }
+    }
+  `;
+  const res = await wikidataFetch(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(query)}`);
+  if (!res.ok) return ids[0];
+
+  const data = await res.json() as SparqlResponse;
+  const bindings = data.results?.bindings ?? [];
+  const exactYear = bindings.find(binding => parseReleaseYear(binding.releaseDate?.value ?? null) === year);
+  const item = exactYear?.item?.value ?? bindings[0]?.item?.value;
+  return typeof item === "string" ? item.split("/").pop() ?? ids[0] : ids[0];
 }
 
 export async function imdbFromWikidataByTmdb(tmdbId: number, mediaType: string) {
@@ -77,25 +124,24 @@ export async function enrichFromWikidata(input: { imdbId?: string | null; title?
       }
     }
 
-    if (!itemId && input.title) {
-      const res = await wikidataFetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=da&uselang=da&type=item&search=${encodeURIComponent(input.title)}`);
-      if (res.ok) {
-        const data = await res.json();
-        itemId = data?.search?.[0]?.id ?? null;
-      }
-    }
+    if (!itemId && input.title) itemId = await findItemByTitleAndYear(input.title, input.year);
 
     if (!itemId) return empty;
 
     const query = `
-      SELECT ?imdb ?originalTitle ?directorLabel ?genreLabel ?duration ?releaseDate WHERE {
+      SELECT ?imdb ?originalTitle ?directorLabel ?genreLabel ?duration ?durationUnit ?releaseDate WHERE {
         wd:${itemId} rdfs:label ?label.
         FILTER(LANG(?label) IN ("da", "en")).
         OPTIONAL { wd:${itemId} wdt:P345 ?imdb. }
         OPTIONAL { wd:${itemId} wdt:P1476 ?originalTitle. }
         OPTIONAL { wd:${itemId} wdt:P57 ?director. }
         OPTIONAL { wd:${itemId} wdt:P136 ?genre. }
-        OPTIONAL { wd:${itemId} wdt:P2047 ?duration. }
+        OPTIONAL {
+          wd:${itemId} p:P2047 ?durationStatement.
+          ?durationStatement psv:P2047 ?durationValue.
+          ?durationValue wikibase:quantityAmount ?duration.
+          ?durationValue wikibase:quantityUnit ?durationUnit.
+        }
         OPTIONAL { wd:${itemId} wdt:P577 ?releaseDate. }
         SERVICE wikibase:label { bd:serviceParam wikibase:language "da,en". }
       }
@@ -103,10 +149,10 @@ export async function enrichFromWikidata(input: { imdbId?: string | null; title?
     `;
     const res = await wikidataFetch(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(query)}`);
     if (!res.ok) return { ...empty, wikidata_id: itemId };
-    const data = await res.json();
+    const data = await res.json() as SparqlResponse;
     const releaseDate = firstBindingValue(data, "releaseDate");
-    const releaseYear = typeof releaseDate === "string" ? Number.parseInt(releaseDate.substring(0, 4), 10) : null;
-    const duration = Number(firstBindingValue(data, "duration"));
+    const releaseYear = parseReleaseYear(releaseDate);
+    const durationMinutes = durationToMinutes(firstBindingValue(data, "duration"), firstBindingValue(data, "durationUnit"));
 
     return {
       wikidata_id: itemId,
@@ -114,7 +160,7 @@ export async function enrichFromWikidata(input: { imdbId?: string | null; title?
       original_title: firstBindingValue(data, "originalTitle"),
       director: firstBindingValue(data, "directorLabel"),
       genre: firstBindingValue(data, "genreLabel"),
-      duration_minutes: Number.isFinite(duration) ? Math.round(duration / 60) : null,
+      duration_minutes: durationMinutes,
       release_year: Number.isFinite(releaseYear) ? releaseYear : null,
     };
   } catch (error) {
