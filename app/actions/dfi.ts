@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
 const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
@@ -440,7 +441,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     return { success: false, error: message };
   }
   const { db, rightsHolderId, orgId } = context;
-  console.log("[DFI import] Rettighedshaver:", rightsHolderId, "| Credits:", selectedCredits.length);
+  logInfo("DFI import", "Starter import", { credits: selectedCredits.length });
 
   // Gem dfi_person_id på rettighedshaveren
   await db
@@ -459,7 +460,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       if (!filmId) return null;
       const res = await fetchDFI(`/v1/film/${filmId}`);
       if (res.success && res.data) return { credit, film: res.data };
-      console.error(`[DFI import] Film ${filmId} fejlede:`, res.error);
+      logWarn("DFI import", "Filmdetaljer kunne ikke hentes", { filmId: String(filmId), error: res.error });
       errors.push(`Film ID ${filmId}: ${res.error}`);
       return null;
     })
@@ -535,11 +536,10 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
           .single();
 
         if (insertErr || !newWork) {
-          console.error(`[DFI import] INSERT works fejl for "${filmTitle}":`, insertErr);
+          logWarn("DFI import", "Oprettelse af værk fejlede", { filmId: String(filmId), error: insertErr?.message });
           errors.push(`Fejl ved oprettelse af ${filmTitle}: ${insertErr?.message}`);
           continue;
         }
-        console.log(`[DFI import] Oprettet work: "${filmTitle}" (${workId})`);
         workId = newWork.id;
       } else if (existing) {
         // Opdater hvis der mangler plakat eller TMDB id
@@ -599,7 +599,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         );
 
       if (assignErr) {
-        console.error(`[DFI import] UPSERT work_assignments fejl for "${filmTitle}":`, assignErr);
+        logWarn("DFI import", "Kreditering fejlede", { filmId: String(filmId), error: assignErr.message });
         errors.push(`Fejl ved kreditering af ${filmTitle}: ${assignErr.message}`);
         continue;
       }
@@ -684,7 +684,7 @@ export async function searchOnboardingCredits(
   fullName?: string
 ) {
   const nameToSearch = fullName || `${firstName ?? ""} ${lastName ?? ""}`.trim();
-  console.log("[Onboarding search] Navn:", nameToSearch);
+  logInfo("Onboarding search", "Søger krediteringer");
 
   const db = createServiceClient();
   let rightsHolderId: string | null = null;
@@ -716,7 +716,7 @@ export async function searchOnboardingCredits(
       }
     }
   } catch (err) {
-    console.error("DFI raw search error:", err);
+    logWarn("Onboarding search", "DFI-søgning fejlede", { error: errorMessage(err) });
   }
 
   // 2. Hent rådata fra TMDB
@@ -734,7 +734,7 @@ export async function searchOnboardingCredits(
       }
     }
   } catch (err) {
-    console.error("TMDB raw search error:", err);
+    logWarn("Onboarding search", "TMDB-søgning fejlede", { error: errorMessage(err) });
   }
 
   // 3. Tjek den lokale database (works og work_assignments)
@@ -772,7 +772,7 @@ export async function searchOnboardingCredits(
         }
       }
     } catch (err) {
-      console.error("Local assignments query error:", err);
+      logWarn("Onboarding search", "Lokale krediteringer kunne ikke hentes", { error: errorMessage(err) });
     }
   }
 
@@ -795,7 +795,7 @@ export async function searchOnboardingCredits(
         });
       }
     } catch (err) {
-      console.error("Local DFI works lookup error:", err);
+      logWarn("Onboarding search", "Lokalt DFI-opslag fejlede", { error: errorMessage(err) });
     }
   }
 
@@ -817,7 +817,7 @@ export async function searchOnboardingCredits(
         });
       }
     } catch (err) {
-      console.error("Local TMDB works lookup error:", err);
+      logWarn("Onboarding search", "Lokalt TMDB-opslag fejlede", { error: errorMessage(err) });
     }
   }
 

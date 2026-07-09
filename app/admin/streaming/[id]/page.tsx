@@ -1111,7 +1111,7 @@ export default function StreamingDetailPage() {
                 existingExploitations={exploitationOptions}
                 preselectedExploitationId={activeExploitationId}
                 onRegister={(data) => {
-                    console.log("Registreret:", data)
+                    void data
                     setShowRegister(false)
                     setActiveExploitationId(undefined)
                 }}
@@ -1123,7 +1123,7 @@ export default function StreamingDetailPage() {
                 productionTitle={production.title}
                 isSeries={production.type.startsWith("tv_series")}
                 onAdd={(editor) => {
-                    console.log("Tilføjet:", editor)
+                    void editor
                     setShowAddEditor(false)
                 }}
             />
@@ -1134,7 +1134,7 @@ export default function StreamingDetailPage() {
                 productionTitle={production.title}
                 editors={production.editors.map(e => ({ id: e.id, name: e.name }))}
                 onCreate={(shares) => {
-                    console.log("Nøgle oprettet:", shares)
+                    void shares
                     setShowCreateKey(false)
                 }}
             />

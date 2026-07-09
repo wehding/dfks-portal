@@ -16,6 +16,7 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 import { MAIL_FORMAT_PROMPT } from "@/lib/mail-format-prompt"
 import { findParentMember } from "@/lib/db/employers"
+import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -129,7 +130,7 @@ Returnér JSON med disse felter:
 
     if (!response.ok) {
         const err = await response.text()
-        console.warn("[analyse] Klassifikation fejlede:", err)
+        logWarn("analyse", "Klassifikation fejlede", { status: response.status, error: err.slice(0, 120) })
         return defaultKlassifikation
     }
 
@@ -138,7 +139,7 @@ Returnér JSON med disse felter:
     const first = raw.indexOf("{")
     const last = raw.lastIndexOf("}")
     if (first === -1 || last === -1) {
-        console.warn("[analyse] Klassifikation returnerede ingen JSON")
+        logWarn("analyse", "Klassifikation returnerede ingen JSON")
         return defaultKlassifikation
     }
 
@@ -159,7 +160,7 @@ Returnér JSON med disse felter:
             produktionstype: p.produktionstype ?? "ukendt",
         }
     } catch {
-        console.warn("[analyse] Klassifikation JSON parse fejl")
+        logWarn("analyse", "Klassifikation JSON parse fejl")
         return defaultKlassifikation
     }
 }
@@ -536,9 +537,12 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         const tekstTilKlassifikation = contractText || (filename.endsWith(".pdf") ? "[PDF — se dokumentblok]" : "")
         try {
             klassifikation = await klassificerKontrakt(tekstTilKlassifikation, apiKey, safeModel)
-            console.log(`[analyse] Klassifikation: ${JSON.stringify(klassifikation)}`)
+            logInfo("analyse", "Klassifikation gennemført", {
+                kontrakttype: klassifikation.kontrakttype,
+                overenskomst: klassifikation.er_overenskomst,
+            })
         } catch (e) {
-            console.warn("[analyse] Klassifikation fejlede, fortsætter uden:", e)
+            logWarn("analyse", "Klassifikation fejlede, fortsætter uden", { error: errorMessage(e) })
         }
     }
 
@@ -563,7 +567,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
             .order("kategori")
         dbSatser = satser ?? []
     } catch (e) {
-        console.warn("[analyse] Sats-hentning fejlede:", e)
+        logWarn("analyse", "Sats-hentning fejlede", { error: errorMessage(e) })
     }
 
     // ── Hent altid-noteringer ─────────────────────────────────
@@ -580,7 +584,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
             .eq("active", true)
         altidNoteringer = noter ?? []
     } catch (e) {
-        console.warn("[analyse] Altid-noteringer hentning fejlede:", e)
+        logWarn("analyse", "Altid-noteringer hentning fejlede", { error: errorMessage(e) })
     }
 
     // ── Hent godkendte eksempler ──────────────────────────────
@@ -607,7 +611,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
                 .limit(2)
             godkendteEksempler = eksempler ?? []
         } catch (e) {
-            console.warn("[analyse] Eksempel-hentning fejlede:", e)
+            logWarn("analyse", "Eksempel-hentning fejlede", { error: errorMessage(e) })
         }
     }
 
@@ -757,7 +761,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                     kontekst.baggrund.map(n => `${n.title}: ${n.body}`).join("\n\n")
             }
         } catch (ragErr) {
-            console.warn("[analyse] hentKontekst fejlede (fortsætter uden):", ragErr)
+            logWarn("analyse", "Kontekst-hentning fejlede, fortsætter uden", { error: errorMessage(ragErr) })
         }
     }
 
@@ -819,7 +823,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
         })
         if (!response.ok) {
             const err = await response.text()
-            console.error("[analyse] Anthropic error:", err)
+            logWarn("analyse", "Anthropic-kald fejlede", { status: response.status, error: err.slice(0, 120) })
             throw new Error(`Claude API fejl ${response.status}`)
         }
         const data = await response.json()
@@ -846,7 +850,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             try { parsed = JSON.parse(clean.slice(first, last + 1)) } catch { /* falder igennem */ }
         }
         if (!parsed) {
-            console.error("[analyse] JSON parse failed, raw length:", raw.length)
+            logWarn("analyse", "AI returnerede ugyldigt JSON", { rawLength: raw.length })
             throw new Error("AI returnerede ugyldigt svar — prøv igen")
         }
     }
@@ -867,7 +871,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 ]
             }
         } catch (e) {
-            console.warn("[analyse] Navnetjek fejlede:", e)
+            logWarn("analyse", "Navnetjek fejlede", { error: errorMessage(e) })
         }
     }
 

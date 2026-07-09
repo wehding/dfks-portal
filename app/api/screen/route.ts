@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
+import { errorMessage, logWarn } from "@/lib/server-log"
 
 export async function POST(req: NextRequest) {
     try {
@@ -27,8 +28,6 @@ export async function POST(req: NextRequest) {
 
         const text = await callAi({ provider: aiProvider, model: aiModel, system, userMessage, maxTokens: 6000 })
 
-        console.log("[screen] AI raw response (first 500 chars):", text.slice(0, 500))
-
         // Parse JSON on server side so client receives a clean object
         const clean = text
             .replace(/^```json\s*/i, "")
@@ -40,8 +39,7 @@ export async function POST(req: NextRequest) {
         try {
             parsed = JSON.parse(clean)
         } catch (parseErr) {
-            console.error("[screen] JSON parse error:", parseErr)
-            console.error("[screen] Raw text:", text)
+            logWarn("screen", "AI returnerede ugyldigt JSON", { error: errorMessage(parseErr) })
             return NextResponse.json(
                 { error: "AI returnerede ugyldigt JSON — prøv igen" },
                 { status: 500 }
@@ -49,10 +47,10 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json({ result: parsed })
-    } catch (err: any) {
-        console.error("[screen] Caught error:", err)
+    } catch (err: unknown) {
+        logWarn("screen", "Screening fejlede", { error: errorMessage(err) })
         return NextResponse.json(
-            { error: err.message ?? "Ukendt serverfejl" },
+            { error: errorMessage(err, "Ukendt serverfejl") },
             { status: 500 }
         )
     }

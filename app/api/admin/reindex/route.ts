@@ -20,7 +20,8 @@ export async function POST() {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     if (!chunks?.length) return NextResponse.json({ opdateret: 0, uændret: 0, fejl: 0 })
 
-    let opdateret = 0, uændret = 0, fejl = 0
+    let opdateret = 0, fejl = 0
+    const uændret = 0
 
     for (const chunk of chunks) {
         try {

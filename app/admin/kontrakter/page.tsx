@@ -18,6 +18,7 @@ import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
+import { ContextualHelp, HelpButton } from "@/components/help/contextual-help"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -238,6 +239,7 @@ function AdminKontrakterContent() {
     const [works, setWorks] = useState<WorkOption[]>([])
     const [orgId, setOrgId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
+    const [helpOpen, setHelpOpen] = useState(false)
     const [search, setSearch] = useState("")
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
@@ -1281,8 +1283,29 @@ function AdminKontrakterContent() {
                             <Upload className="h-4 w-4" />
                             Upload kontrakter
                         </Button>
+                        <HelpButton onClick={() => setHelpOpen(true)} />
                     </div>
                 }
+            />
+            <ContextualHelp
+                title="Kontraktadministration"
+                intro="Her validerer og kobler du kontrakter til rettighedshavere, producenter og værker."
+                open={helpOpen}
+                onOpenChange={setHelpOpen}
+                topics={[
+                    {
+                        title: "Statusser",
+                        body: "Kladde betyder, at kontrakten kræver gennemgang. Valideret betyder, at den kan bruges i systemets videre udbetalings- og statistikflow.",
+                    },
+                    {
+                        title: "Rettighedshaverfilter",
+                        body: "Når en aktiv rettighedshaver er valgt, ser du kun den persons kontrakter. Filteret deles med Værksadministration, indtil det ryddes.",
+                    },
+                    {
+                        title: "Batch-handlinger",
+                        body: "Marker flere kontrakter, når du vil validere eller rydde beskeder samlet. Permanent sletning bør kun bruges ved dubletter eller fejloprettelser.",
+                    },
+                ]}
             />
 
             {/* Filters */}

@@ -56,7 +56,7 @@ export function UploadContractDialog({
     const handleSubmit = async () => {
         if (!file) return
         setUploading(true)
-        // TODO: upload til storage / database
+        // Prototype-flow: behold lokal upload-simulering indtil streamingmodulet kobles på storage.
         await new Promise((r) => setTimeout(r, 800)) // simulér upload
         onUploaded(productionId, file)
         toast.success("Kontrakt sendt — afventer godkendelse")

@@ -344,8 +344,7 @@ export default function StreamingPage() {
                 onClose={() => setShowNew(false)}
                 nextProductionNumber={String(mockProductions.length + 1).padStart(3, "0")}
                 onCreate={(production) => {
-                    // TODO: gem i database
-                    console.log("Oprettet:", production)
+                    void production
                     setShowNew(false)
                 }}
             />

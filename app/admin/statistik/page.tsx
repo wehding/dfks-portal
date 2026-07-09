@@ -354,7 +354,7 @@ export default function AdminStatistikPage() {
             }))
             .filter(e => e.totalEarnings > 0)
             .sort((a, b) => b.avgWeekly - a.avgWeekly)
-    }, [filteredContracts])
+    }, [filteredContracts, yearNum])
 
     // Producentbidrag per produktion
     const contributionsByProduction = useMemo(() => {
@@ -670,7 +670,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[350px]">
+                            <div className="h-[350px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={filteredSalary}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -762,7 +762,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[350px]">
+                            <div className="h-[350px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={rightsStats}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -813,7 +813,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[350px]">
+                            <div className="h-[350px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={filteredPension}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -914,7 +914,7 @@ export default function AdminStatistikPage() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="h-[300px]">
+                                <div className="h-[300px] min-w-0">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
                                             <Pie
@@ -950,7 +950,7 @@ export default function AdminStatistikPage() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="h-[300px]">
+                                <div className="h-[300px] min-w-0">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={genderData}>
                                             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -1016,7 +1016,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[350px]">
+                            <div className="h-[350px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={filteredWeeks}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -1134,7 +1134,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[350px]">
+                            <div className="h-[350px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={filteredContributions}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -1332,7 +1332,7 @@ export default function AdminStatistikPage() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="h-[300px]">
+                            <div className="h-[300px] min-w-0">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={aiStats.chartData}>
                                         <CartesianGrid
@@ -1419,7 +1419,7 @@ export default function AdminStatistikPage() {
                             <Card>
                                 <CardHeader><CardTitle className="text-sm">Kontrakter per år</CardTitle></CardHeader>
                                 <CardContent>
-                                    <div className="h-[300px]">
+                                    <div className="h-[300px] min-w-0">
                                         <ResponsiveContainer width="100%" height="100%">
                                             <BarChart data={contractsPerYear}>
                                                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />

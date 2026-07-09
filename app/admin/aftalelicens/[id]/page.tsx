@@ -2048,7 +2048,7 @@ function ParringTab({ vaerker, onConfirmed }: {
                                 if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc")
                                 else { setSortCol(col); setSortDir("asc") }
                             }
-                            const SortIcon = ({ col }: { col: typeof sortCol }) =>
+                            const sortIcon = (col: typeof sortCol) =>
                                 sortCol === col
                                     ? (sortDir === "asc" ? <ChevronUp className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />)
                                     : <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-40" />
@@ -2056,19 +2056,19 @@ function ParringTab({ vaerker, onConfirmed }: {
                                 <TableRow>
                                     <TableHead>
                                         <button onClick={() => toggleSort("titel")} className="flex items-center gap-1 hover:text-foreground">
-                                            Titel (batch) <SortIcon col="titel" />
+                                            Titel (batch) {sortIcon("titel")}
                                         </button>
                                     </TableHead>
                                     <TableHead>
                                         <button onClick={() => toggleSort("type")} className="flex items-center gap-1 hover:text-foreground">
-                                            Type <SortIcon col="type" />
+                                            Type {sortIcon("type")}
                                         </button>
                                     </TableHead>
                                     <TableHead>Matchet værk</TableHead>
                                     <TableHead>Rettighedshavere</TableHead>
                                     <TableHead className="w-[100px]">
                                         <button onClick={() => toggleSort("match")} className="flex items-center gap-1 hover:text-foreground">
-                                            Match <SortIcon col="match" />
+                                            Match {sortIcon("match")}
                                         </button>
                                     </TableHead>
                                     <TableHead className="w-[120px]" />

@@ -17,6 +17,7 @@ import {
 import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
+import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -659,6 +660,7 @@ export default function VaerksadministrationPage() {
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
   const [broadcasterOptions, setBroadcasterOptions] = useState<BroadcasterOption[]>(FALLBACK_BROADCASTER_OPTIONS);
   const [loading, setLoading] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [pageSize, setPageSize] = useState(20);
@@ -1538,11 +1540,34 @@ export default function VaerksadministrationPage() {
         title="Værksadministration"
         subtitle={`${filtered.length} af ${works.length} værker`}
         actions={
-          <Button className="gap-2" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" />
-            Tilføj værk
-          </Button>
+          <>
+            <Button className="gap-2" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Tilføj værk
+            </Button>
+            <HelpButton onClick={() => setHelpOpen(true)} />
+          </>
         }
+      />
+      <ContextualHelp
+        title="Værksadministration"
+        intro="Her godkender, retter og kobler du værker til rettighedshavere og kontrakter."
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        topics={[
+          {
+            title: "Til godkendelse",
+            body: "Værker og rettelser med status Til godkendelse skal gennemgås, før data bruges som endelige værksdata.",
+          },
+          {
+            title: "Requests",
+            body: "Pending rettelser vises inde i Rediger værk. Vælg en rettelse for at se, hvilke felter brugeren foreslår ændret.",
+          },
+          {
+            title: "Rettighedshavere og andele",
+            body: "Rolle og andel gemmes på relationen mellem værket og rettighedshaveren. Andelen er informativ og behøver ikke summere til 100%.",
+          },
+        ]}
       />
 
       {notice && (
