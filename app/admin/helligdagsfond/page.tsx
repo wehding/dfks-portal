@@ -1,11 +1,12 @@
 "use client"
 
 import { useState, useMemo } from "react"
-import { CalendarHeart, Download, TrendingUp, Users, Coins, Search } from "lucide-react"
+import { CalendarHeart, Download, TrendingUp, Users, Coins } from "lucide-react"
 import { toast } from "sonner"
 import { useI18n } from "@/lib/i18n"
 import { mockHolidayFundEntries as initialEntries, mockHolidayFundSummaries } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
+import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-container"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,9 +35,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog"
 import type { HolidayFundEntry } from "@/lib/types"
-import {
-    ResponsiveContainer,
-    BarChart,
+import {    BarChart,
     Bar,
     XAxis,
     YAxis,
@@ -264,7 +263,7 @@ export default function AdminHelligdagsfondPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="h-[300px] min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveChartContainer>
                             <BarChart data={chartData}>
                                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                 <XAxis dataKey="year" className="text-xs" />
@@ -291,7 +290,7 @@ export default function AdminHelligdagsfondPage() {
                                     radius={[4, 4, 0, 0]}
                                 />
                             </BarChart>
-                        </ResponsiveContainer>
+                        </ResponsiveChartContainer>
                     </div>
                 </CardContent>
             </Card>

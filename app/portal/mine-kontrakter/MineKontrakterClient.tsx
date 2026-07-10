@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, CheckCircle2, AlertTriangle, Plus } from "lucide-react";
-import { addMemberContractComment, deleteMemberContract, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { getTMDBWorkDetails } from "@/app/actions/tmdb";
@@ -352,14 +352,21 @@ export default function MineKontrakterClient({
   }
 
   async function openContract(contract: Contract) {
-    const normalized = normalizeContract(contract);
+    let normalized = normalizeContract(contract);
     setSelectedContract(normalized);
     setWorkSearch(normalized.works ? "" : normalized.working_title ?? "");
     setViewUrl(null);
-    void markCommentsRead(contract);
-    if (!contract.pdf_url) return;
+    const detail = await fetchMemberContractDetail(contract.id);
+    if (detail.success && detail.contract) {
+      normalized = normalizeContract(detail.contract as unknown as Contract);
+      setSelectedContract(normalized);
+      setContracts(prev => prev.map(c => c.id === contract.id ? normalized : c));
+    }
+    void markCommentsRead(normalized);
+    const pdfUrl = normalized.pdf_url ?? contract.pdf_url;
+    if (!pdfUrl) return;
     setViewLoading(true);
-    const res = await getContractSignedUrl(contract.pdf_url);
+    const res = await getContractSignedUrl(pdfUrl);
     setViewUrl(res.url ?? null);
     setViewLoading(false);
   }

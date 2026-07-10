@@ -13,7 +13,7 @@ const PUBLIC_PATHS = [
     "/favicon",
 ]
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
 
     // Altid tilgængelige stier

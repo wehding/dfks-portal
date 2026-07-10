@@ -33,6 +33,7 @@ import {
   deleteAdminWorkPermanently,
   deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
+  fetchAdminWorkDetail,
   fetchAdminRightsHolders,
   addAdminWorkRequestComment,
   fetchAdminWorksForReview,
@@ -710,7 +711,7 @@ export default function VaerksadministrationPage() {
     setLoading(true);
     try {
       const res = await fetchAdminWorksForReview();
-      if (res.success) setWorks(res.works as WorkRow[]);
+      if (res.success) setWorks(res.works as unknown as WorkRow[]);
 
       try {
         const rightsRes = await fetchAdminRightsHolders();
@@ -930,7 +931,7 @@ export default function VaerksadministrationPage() {
     if (results.some(r => r.success)) notifyWorksUpdated();
   };
 
-  const openEdit = (work: WorkRow) => {
+  const openEdit = async (work: WorkRow) => {
     // Auto-åbn KUN en request med en ulæst besked (så nye beskeder ses).
     // Allerede sete/godkendte rettelser popper ikke op — dem klikker man selv på.
     const requestWithUnread = (work.work_change_requests ?? []).find(request =>
@@ -955,6 +956,27 @@ export default function VaerksadministrationPage() {
     setEditLookupQuery(work.title ?? "");
     setEditDfiResults([]);
     setEditTmdbResults([]);
+
+    const detail = await fetchAdminWorkDetail(work.id);
+    if (!detail.success || !detail.work) return;
+    const detailedWork = detail.work as WorkRow;
+    const detailedRequestWithUnread = (detailedWork.work_change_requests ?? []).find(request =>
+      (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at)
+    ) ?? null;
+    setWorks(prev => prev.map(item => item.id === work.id ? detailedWork : item));
+    setEditing(detailedWork);
+    setEditForm(toForm(detailedWork));
+    setAssignmentDrafts(Object.fromEntries((detailedWork.work_assignments ?? []).map(assignment => [
+      assignment.id,
+      {
+        id: assignment.id,
+        rightsHolderId: assignment.rettighedshavere?.id,
+        role: displayCreditRole(assignment.role),
+        sharePercent: assignment.share_percent === null || assignment.share_percent === undefined ? "" : String(assignment.share_percent),
+      },
+    ])));
+    setActiveRequestId(detailedRequestWithUnread?.id ?? requestWithUnread?.id ?? null);
+    setEditLookupQuery(detailedWork.title ?? "");
   };
 
   const handleSaveWork = async () => {
@@ -1032,7 +1054,7 @@ export default function VaerksadministrationPage() {
       setAdminComment("");
       const res = await fetchAdminWorksForReview();
       if (res.success) {
-        const freshWorks = res.works as WorkRow[];
+        const freshWorks = res.works as unknown as WorkRow[];
         setWorks(freshWorks);
         const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
         if (updatedEditing) {
@@ -1067,7 +1089,7 @@ export default function VaerksadministrationPage() {
       setAdminComment("");
       const res = await fetchAdminWorksForReview();
       if (res.success) {
-        const freshWorks = res.works as WorkRow[];
+        const freshWorks = res.works as unknown as WorkRow[];
         setWorks(freshWorks);
         const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
         if (updatedEditing) setEditing(updatedEditing);

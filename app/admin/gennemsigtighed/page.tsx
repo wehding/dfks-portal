@@ -5,6 +5,7 @@ import { Plus, Download, ChevronDown, ChevronUp, TrendingUp, Users, Coins } from
 import { useI18n } from "@/lib/i18n"
 import { mockTransparencyReports } from "@/lib/mock-data"
 import { PageHeader } from "@/components/page-header"
+import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-container"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -16,9 +17,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import {
-    ResponsiveContainer,
-    BarChart,
+import {    BarChart,
     Bar,
     XAxis,
     YAxis,
@@ -136,7 +135,7 @@ export default function AdminGennemsigtighedPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="h-[300px] min-w-0">
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveChartContainer>
                             <BarChart data={chartData}>
                                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                 <XAxis dataKey="year" className="text-xs" />
@@ -172,7 +171,7 @@ export default function AdminGennemsigtighedPage() {
                                     radius={[4, 4, 0, 0]}
                                 />
                             </BarChart>
-                        </ResponsiveContainer>
+                        </ResponsiveChartContainer>
                     </div>
                 </CardContent>
             </Card>

@@ -95,6 +95,31 @@ async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>,
   return { user, rightsHolder: data };
 }
 
+export async function fetchMemberWorkDetail(params: { rightsHolderId: string; assignmentId: string }) {
+  const db = createServiceClient();
+  const rh = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const { data: assignment, error } = await db
+    .from("work_assignments")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+    .eq("id", params.assignmentId)
+    .eq("rights_holder_id", rh.rightsHolder.id)
+    .maybeSingle();
+
+  if (error) return { success: false, error: error.message };
+  if (!assignment) return { success: false, error: "Værket blev ikke fundet." };
+
+  const workId = (assignment as { works?: { id?: string | null } | null }).works?.id;
+  const { data: coEditors } = workId
+    ? await db
+        .from("work_assignments")
+        .select("id, work_id, role, rights_holder_id, rettighedshavere(id, full_name)")
+        .eq("work_id", workId)
+        .neq("rights_holder_id", rh.rightsHolder.id)
+    : { data: [] };
+
+  return { success: true, assignment, coEditors: coEditors ?? [] };
+}
+
 function normalizeCoEditors(coEditors?: ProposedCoEditor[]) {
   return (coEditors ?? [])
     .map(editor => ({

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
-import { removeWorkAssignments } from "@/app/actions/member-works";
+import { fetchMemberWorkDetail, removeWorkAssignments } from "@/app/actions/member-works";
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
@@ -162,7 +162,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments, broadcasters, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, userName, dfiPersonId, contractedWorkIds,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -174,6 +174,7 @@ export default function MineVaerkerClient({
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
+  const [allAssignments, setAllAssignments] = useState(initialAllAssignments);
 
   const broadcasterLogoMap = React.useMemo(() => {
     const map: Record<string, string> = {};
@@ -360,15 +361,29 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
   };
 
-  const openEdit = (a: Assignment) => {
+  const openEdit = async (a: Assignment) => {
     setEditAssignment(a);
-    void markRequestCommentsRead(a);
+    if (!rightsHolderId) return;
+    const res = await fetchMemberWorkDetail({ rightsHolderId, assignmentId: a.id });
+    if (res.success && res.assignment) {
+      const detailed = res.assignment as unknown as Assignment;
+      setAssignments(prev => prev.map(item => item.id === a.id ? detailed : item));
+      setEditAssignment(detailed);
+      setAllAssignments(prev => {
+        const incoming = (res.coEditors ?? []) as unknown as OtherAssignment[];
+        const retained = prev.filter(item => item.work_id !== detailed.works?.id);
+        return [...retained, ...incoming];
+      });
+      void markRequestCommentsRead(detailed);
+    } else {
+      setMsg({ type: "error", text: res.error ?? "Kunne ikke hente værkdetaljer." });
+    }
   };
 
   async function markRequestCommentsRead(a: Assignment) {

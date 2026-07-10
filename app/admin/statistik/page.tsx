@@ -5,6 +5,7 @@ import { CalendarDays, Loader2 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
+import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-container"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
@@ -23,9 +24,7 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table"
-import {
-    ResponsiveContainer,
-    LineChart,
+import {    LineChart,
     Line,
     XAxis,
     YAxis,
@@ -671,7 +670,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[350px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <LineChart data={filteredSalary}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                         <XAxis dataKey="year" className="text-xs" />
@@ -714,7 +713,7 @@ export default function AdminStatistikPage() {
                                             dot={{ r: 3 }}
                                         />
                                     </LineChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -763,7 +762,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[350px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <BarChart data={rightsStats}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                         <XAxis dataKey="category" className="text-xs" />
@@ -793,7 +792,7 @@ export default function AdminStatistikPage() {
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -814,7 +813,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[350px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <LineChart data={filteredPension}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                         <XAxis dataKey="year" className="text-xs" />
@@ -868,7 +867,7 @@ export default function AdminStatistikPage() {
                                             dot={{ r: 3 }}
                                         />
                                     </LineChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -915,7 +914,7 @@ export default function AdminStatistikPage() {
                             </CardHeader>
                             <CardContent>
                                 <div className="h-[300px] min-w-0">
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveChartContainer>
                                         <PieChart>
                                             <Pie
                                                 data={genderData}
@@ -938,7 +937,7 @@ export default function AdminStatistikPage() {
                                             <Tooltip contentStyle={tooltipStyle}
                                                 wrapperStyle={tooltipWrapperStyle} />
                                         </PieChart>
-                                    </ResponsiveContainer>
+                                    </ResponsiveChartContainer>
                                 </div>
                             </CardContent>
                         </Card>
@@ -951,7 +950,7 @@ export default function AdminStatistikPage() {
                             </CardHeader>
                             <CardContent>
                                 <div className="h-[300px] min-w-0">
-                                    <ResponsiveContainer width="100%" height="100%">
+                                    <ResponsiveChartContainer>
                                         <BarChart data={genderData}>
                                             <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                             <XAxis dataKey="gender" className="text-xs" />
@@ -974,7 +973,7 @@ export default function AdminStatistikPage() {
                                                 ))}
                                             </Bar>
                                         </BarChart>
-                                    </ResponsiveContainer>
+                                    </ResponsiveChartContainer>
                                 </div>
                             </CardContent>
                         </Card>
@@ -1017,7 +1016,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[350px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <BarChart data={filteredWeeks}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                         <XAxis dataKey="year" className="text-xs" />
@@ -1049,7 +1048,7 @@ export default function AdminStatistikPage() {
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -1135,7 +1134,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[350px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <BarChart data={filteredContributions}>
                                         <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                         <XAxis dataKey="year" className="text-xs" />
@@ -1178,7 +1177,7 @@ export default function AdminStatistikPage() {
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -1333,7 +1332,7 @@ export default function AdminStatistikPage() {
                         </CardHeader>
                         <CardContent>
                             <div className="h-[300px] min-w-0">
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChartContainer>
                                     <BarChart data={aiStats.chartData}>
                                         <CartesianGrid
                                             strokeDasharray="3 3"
@@ -1371,7 +1370,7 @@ export default function AdminStatistikPage() {
                                             radius={[4, 4, 0, 0]}
                                         />
                                     </BarChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChartContainer>
                             </div>
                         </CardContent>
                     </Card>
@@ -1420,7 +1419,7 @@ export default function AdminStatistikPage() {
                                 <CardHeader><CardTitle className="text-sm">Kontrakter per år</CardTitle></CardHeader>
                                 <CardContent>
                                     <div className="h-[300px] min-w-0">
-                                        <ResponsiveContainer width="100%" height="100%">
+                                        <ResponsiveChartContainer>
                                             <BarChart data={contractsPerYear}>
                                                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                                                 <XAxis dataKey="year" className="text-xs" />
@@ -1430,7 +1429,7 @@ export default function AdminStatistikPage() {
                                                 <Bar dataKey="aLoen" name="A-løn" fill="hsl(210, 65%, 55%)" stackId="a" radius={[0,0,0,0]} />
                                                 <Bar dataKey="leverandoer" name="Leverandør" fill="hsl(30, 70%, 55%)" stackId="a" radius={[4,4,0,0]} />
                                             </BarChart>
-                                        </ResponsiveContainer>
+                                        </ResponsiveChartContainer>
                                     </div>
                                 </CardContent>
                             </Card>
