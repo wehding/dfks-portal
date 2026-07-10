@@ -183,7 +183,7 @@ export default function AdminHelligdagsfondPage() {
 
             {/* Summary Cards */}
             {summary && (
-                <div className="grid gap-4 sm:grid-cols-4">
+                <div className="hidden gap-4 sm:grid sm:grid-cols-4">
                     <Card>
                         <CardContent className="pt-6">
                             <div className="flex items-center gap-3">
@@ -297,9 +297,9 @@ export default function AdminHelligdagsfondPage() {
             </Card>
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-3">
+            <div className="grid gap-3 sm:flex sm:flex-wrap">
                 <Select value={selectedYear} onValueChange={setSelectedYear}>
-                    <SelectTrigger className="w-[140px] border-primary/30 bg-primary/5 font-medium">
+                    <SelectTrigger className="w-full border-primary/30 bg-primary/5 font-medium sm:w-[140px]">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -313,11 +313,11 @@ export default function AdminHelligdagsfondPage() {
                 </Select>
                 <Input
                     placeholder={t("common.search")}
-                    className="w-[220px]"
+                    className="w-full sm:w-[220px]"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                 />
-                <div className="ml-auto">
+                <div className="sm:ml-auto">
                     <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCsv}>
                         <Download className="h-3.5 w-3.5" />
                         Eksporter

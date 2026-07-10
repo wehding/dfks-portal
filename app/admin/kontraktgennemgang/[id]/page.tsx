@@ -369,7 +369,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
 
             {/* Kontekstkort */}
             <div className="rounded-lg border bg-muted/20 px-5 py-4 space-y-3">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                <div className="grid gap-4 text-xs sm:grid-cols-4">
                     <div>
                         <p className="text-muted-foreground mb-0.5">Ansættelsesform</p>
                         <p className="font-medium capitalize">{review.contract_type?.replace("ansaettelse", "Ansættelse").replace("freelance", "Freelance / leverandør") ?? "—"}</p>
@@ -458,7 +458,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             </div>
 
             {/* Tre-panel layout */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-350px)] min-h-[500px]">
+            <div className="grid min-h-[500px] gap-4 lg:h-[calc(100vh-350px)] lg:grid-cols-3">
 
                 {/* Panel 1: Dokument */}
                 <div className="rounded-lg border flex flex-col min-h-0">

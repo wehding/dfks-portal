@@ -146,7 +146,7 @@ function DetailDialog({
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 text-sm">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <div>
                             <p className="text-xs text-muted-foreground">Producent</p>
                             <p className="font-medium">{form.producerName}</p>
@@ -157,7 +157,7 @@ function DetailDialog({
                         </div>
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-3">
                         <div>
                             <p className="text-xs text-muted-foreground">Optagelsesstart</p>
                             <p>{form.shootingPeriodStart ? formatDate(form.shootingPeriodStart) : "—"}</p>
@@ -172,7 +172,7 @@ function DetailDialog({
                         </div>
                     </div>
                     <Separator />
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <div>
                             <p className="text-xs text-muted-foreground">Ferieberettiget løn</p>
                             <p className="font-medium tabular-nums">{formatKr(form.ferieberettigetLoen)}</p>
@@ -182,7 +182,7 @@ function DetailDialog({
                             <p className="font-medium tabular-nums">{formatKr(form.calculatedContribution)}</p>
                         </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-3">
                         <div>
                             <p className="text-xs text-muted-foreground">1. indbetaling</p>
                             <p className="tabular-nums">{formatKr(form.firstPayment)}</p>
@@ -293,7 +293,7 @@ export default function AdminIndbetalingerPage() {
             />
 
             {/* Summary cards */}
-            <div className="grid gap-4 sm:grid-cols-4">
+            <div className="hidden gap-4 sm:grid sm:grid-cols-4">
                 <Card>
                     <CardHeader className="pb-2">
                         <CardDescription>Indberetninger i alt</CardDescription>
@@ -352,8 +352,8 @@ export default function AdminIndbetalingerPage() {
             </div>
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-3">
-                <div className="relative flex-1 max-w-sm">
+            <div className="grid gap-3 sm:flex sm:flex-wrap">
+                <div className="relative w-full sm:max-w-sm sm:flex-1">
                     <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                         placeholder={t("common.search")}
@@ -363,7 +363,7 @@ export default function AdminIndbetalingerPage() {
                     />
                 </div>
                 <Select value={filterYear} onValueChange={setFilterYear}>
-                    <SelectTrigger className="w-[140px]">
+                    <SelectTrigger className="w-full sm:w-[140px]">
                         <Filter className="mr-2 h-3.5 w-3.5" />
                         <SelectValue />
                     </SelectTrigger>
@@ -379,7 +379,7 @@ export default function AdminIndbetalingerPage() {
                     </SelectContent>
                 </Select>
                 <Select value={filterFund} onValueChange={setFilterFund}>
-                    <SelectTrigger className="w-[180px]">
+                    <SelectTrigger className="w-full sm:w-[180px]">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -391,7 +391,7 @@ export default function AdminIndbetalingerPage() {
                     </SelectContent>
                 </Select>
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-[160px]">
+                    <SelectTrigger className="w-full sm:w-[160px]">
                         <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

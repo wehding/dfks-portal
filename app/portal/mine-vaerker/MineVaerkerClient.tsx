@@ -284,20 +284,20 @@ export default function MineVaerkerClient({
   };
 
   const renderSeriesEpisodes = (workId: string, children: EpisodeChild[], isLoadingChildren: boolean, className = "px-14") => (
-    <div className="border-b border-gray-100 bg-gray-50/60">
+    <div className="border-b bg-muted/40">
       {isLoadingChildren ? (
-        <div className={`${className} py-3 text-xs text-gray-400`}>Henter afsnit...</div>
+        <div className={`${className} py-3 text-xs text-muted-foreground`}>Henter afsnit...</div>
       ) : children.length === 0 ? (
-        <div className={`${className} py-3 text-xs text-gray-400`}>Ingen af dine afsnit er registreret endnu</div>
+        <div className={`${className} py-3 text-xs text-muted-foreground`}>Ingen af dine afsnit er registreret endnu</div>
       ) : (
         groupedSeriesEpisodes(children).map(([season, episodes]) => (
-          <div key={`${workId}-season-${season}`} className="border-t border-gray-100 first:border-t-0">
-            <div className={`${className} pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400`}>
+          <div key={`${workId}-season-${season}`} className="border-t first:border-t-0">
+            <div className={`${className} pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground`}>
               {season > 0 ? `Sæson ${season}` : "Uden sæson"}
             </div>
             {episodes.map(ep => (
-              <div key={ep.id} className={`${className} flex items-center gap-2 py-2 text-sm text-gray-600`}>
-                <span className="inline-flex items-center rounded border border-gray-200 bg-white px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-gray-700">
+              <div key={ep.id} className={`${className} flex items-center gap-2 py-2 text-sm text-muted-foreground`}>
+                <span className="inline-flex items-center rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-foreground">
                   {ep.season_number != null && ep.episode_number != null
                     ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
                     : ep.episode_number != null
@@ -449,8 +449,8 @@ export default function MineVaerkerClient({
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-gray-900">{t("works.title")}</h1>
-          <p className="text-sm text-gray-500 mt-1">{t("works.registeredSubtitle")}</p>
+          <h1 className="text-2xl font-bold text-foreground">{t("works.title")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("works.registeredSubtitle")}</p>
         </div>
         <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
           <HelpButton onClick={() => setHelpOpen(true)} />
@@ -464,15 +464,15 @@ export default function MineVaerkerClient({
       </div>
 
       {/* Statistik */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+      <div className="hidden gap-3 sm:grid sm:grid-cols-3 sm:gap-4">
         {[
           { label: t("works.totalWorks"),  value: totalWorks },
           { label: t("works.withContract"),  value: withContract },
           { label: t("works.missingContract"), value: missingContract },
         ].map(s => (
-          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
-            <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
-            <p className="text-2xl font-bold text-gray-900 sm:text-3xl">{s.value}</p>
+          <div key={s.label} className="rounded-lg border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5">
+            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
+            <p className="text-2xl font-bold text-foreground sm:text-3xl">{s.value}</p>
           </div>
         ))}
       </div>
@@ -490,10 +490,10 @@ export default function MineVaerkerClient({
       )}
 
       {/* Tabel */}
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+      <div className="rounded-lg border bg-card text-card-foreground overflow-hidden">
 
         {/* Toolbar */}
-        <div className="flex flex-col px-4 py-3.5 border-b border-gray-100 gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col px-4 py-3.5 border-b gap-3 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="flex w-full flex-col gap-2.5 sm:flex-row sm:flex-wrap md:w-auto md:items-center">
             {selected.length > 0 ? (
               <>
@@ -524,16 +524,16 @@ export default function MineVaerkerClient({
               <button
                 type="button"
                 onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-700"
+                className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border text-muted-foreground hover:text-foreground"
                 aria-label="Tøm søgefelt"
               >
                 <X className="h-3 w-3" />
               </button>
             )}
           </div>
-          <label className="flex items-center gap-2 text-sm text-gray-500">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Vis
-            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
+            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
               {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
             </select>
           </label>
@@ -556,7 +556,7 @@ export default function MineVaerkerClient({
 
         {/* Kolonnehoveder */}
         <div
-          className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 select-none lg:grid"
+          className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground select-none lg:grid"
           style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
         >
           <input
@@ -565,19 +565,19 @@ export default function MineVaerkerClient({
             onChange={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))}
             className="cursor-pointer w-4 h-4"
           />
-          <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-gray-700">{t("works.workTitle")}{sortArrow("title")}</div>
-          <div onClick={() => handleSort("year")}  className="cursor-pointer hover:text-gray-700">{t("works.year")}{sortArrow("year")}</div>
-          <div onClick={() => handleSort("type")}  className="cursor-pointer hover:text-gray-700">{t("works.type")}{sortArrow("type")}</div>
-          <div onClick={() => handleSort("role")} className="cursor-pointer hover:text-gray-700">{t("works.role")}{sortArrow("role")}</div>
-          <div onClick={() => handleSort("episode")} className="cursor-pointer hover:text-gray-700">{t("works.episodes")}{sortArrow("episode")}</div>
-          <div onClick={() => handleSort("coEditors")} className="cursor-pointer hover:text-gray-700">{t("works.coEditors")}{sortArrow("coEditors")}</div>
-          <div onClick={() => handleSort("contract")} className="text-right cursor-pointer hover:text-gray-700">{t("works.contract")}{sortArrow("contract")}</div>
+          <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-foreground">{t("works.workTitle")}{sortArrow("title")}</div>
+          <div onClick={() => handleSort("year")}  className="cursor-pointer hover:text-foreground">{t("works.year")}{sortArrow("year")}</div>
+          <div onClick={() => handleSort("type")}  className="cursor-pointer hover:text-foreground">{t("works.type")}{sortArrow("type")}</div>
+          <div onClick={() => handleSort("role")} className="cursor-pointer hover:text-foreground">{t("works.role")}{sortArrow("role")}</div>
+          <div onClick={() => handleSort("episode")} className="cursor-pointer hover:text-foreground">{t("works.episodes")}{sortArrow("episode")}</div>
+          <div onClick={() => handleSort("coEditors")} className="cursor-pointer hover:text-foreground">{t("works.coEditors")}{sortArrow("coEditors")}</div>
+          <div onClick={() => handleSort("contract")} className="text-right cursor-pointer hover:text-foreground">{t("works.contract")}{sortArrow("contract")}</div>
         </div>
 
         {/* Rækker */}
         {filtered.length === 0 ? (
-          <div className="py-12 text-center text-sm text-gray-500">
-            <Film className="mx-auto h-10 w-10 text-gray-300 mb-3" />
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            <Film className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
             <p>{assignments.length === 0 ? t("works.emptyHint") : t("works.noSearchResults")}</p>
           </div>
         ) : visibleAssignments.map(a => {
@@ -599,7 +599,7 @@ export default function MineVaerkerClient({
             <React.Fragment key={a.id}>
             <div
               onClick={() => openEdit(a)}
-              className="hidden items-center px-5 py-3 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors lg:grid"
+              className="hidden items-center px-5 py-3 border-b cursor-pointer hover:bg-muted/50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
               <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }}>
@@ -612,7 +612,7 @@ export default function MineVaerkerClient({
                   <button
                     type="button"
                     onClick={event => { event.stopPropagation(); void toggleSeries(w.id); }}
-                    className="shrink-0 text-gray-400 hover:text-gray-700"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
                     aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
                   >
                     {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -627,20 +627,20 @@ export default function MineVaerkerClient({
                       <img src={posterSrc} alt={w.title} className="w-full h-full object-cover" loading="lazy" />
                     </div>
                   ) : (
-                    <Film className="h-4 w-4 text-gray-300" />
+                    <Film className="h-4 w-4 text-muted-foreground/50" />
                   )}
                 </div>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                    <p className="font-semibold text-sm text-foreground leading-snug">{w.title}</p>
                     {broadcasterLogo && (
-                      <span className="inline-flex h-6 max-w-20 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster ?? undefined}>
+                      <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
                       </span>
                     )}
                   </div>
-                  {w.description && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-[260px]">{w.description}</p>}
+                  {w.description && <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[260px]">{w.description}</p>}
                   {(pendingLabel || adminComment) && (
                     <p className="mt-1 max-w-[300px] truncate text-xs text-amber-700">
                       {pendingLabel ? `${pendingLabel}${adminComment ? ": " : ""}` : ""}
@@ -650,23 +650,23 @@ export default function MineVaerkerClient({
                 </div>
               </div>
 
-              <div className="text-sm text-gray-500">{w.year ?? "–"}</div>
-              <div className="text-sm text-gray-500">{typeLabel(w.type, locale)}</div>
-              <div className="text-sm text-gray-500">{displayRole(a.role)}</div>
-              <div className="text-sm text-gray-500">
+              <div className="text-sm text-muted-foreground">{w.year ?? "–"}</div>
+              <div className="text-sm text-muted-foreground">{typeLabel(w.type, locale)}</div>
+              <div className="text-sm text-muted-foreground">{displayRole(a.role)}</div>
+              <div className="text-sm text-muted-foreground">
                 {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
-                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700">
+                  <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
                     S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                   </span>
                 ) : w.episode_number !== undefined && w.episode_number !== null ? (
-                  <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700">
+                  <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
                     E{String(w.episode_number).padStart(2, "0")}
                   </span>
                 ) : (
                   "–"
                 )}
               </div>
-              <div className="text-xs text-gray-500 truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
+              <div className="text-xs text-muted-foreground truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
                 {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
               </div>
 
@@ -685,7 +685,7 @@ export default function MineVaerkerClient({
             <div
               key={`${a.id}-mobile`}
               onClick={() => openEdit(a)}
-              className="border-b border-gray-100 px-4 py-4 transition-colors active:bg-gray-50 lg:hidden"
+              className="border-b px-4 py-4 transition-colors active:bg-muted/50 lg:hidden"
             >
               <div className="flex gap-3">
                 <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }} className="pt-1">
@@ -698,8 +698,8 @@ export default function MineVaerkerClient({
                       <img src={posterSrc} alt={w.title} className="h-full w-full object-cover" loading="lazy" />
                     </div>
                   ) : (
-                    <div className="flex h-14 w-10 items-center justify-center rounded bg-gray-50">
-                      <Film className="h-4 w-4 text-gray-300" />
+                    <div className="flex h-14 w-10 items-center justify-center rounded bg-muted">
+                      <Film className="h-4 w-4 text-muted-foreground" />
                     </div>
                   )}
                 </div>
@@ -717,15 +717,15 @@ export default function MineVaerkerClient({
                             {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                           </button>
                         )}
-                        <p className="font-semibold text-sm text-gray-900 leading-snug">{w.title}</p>
+                        <p className="font-semibold text-sm text-foreground leading-snug">{w.title}</p>
                         {broadcasterLogo && (
-                          <span className="inline-flex h-6 max-w-20 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster ?? undefined}>
+                          <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{w.year ?? "–"} · {typeLabel(w.type, locale)}</p>
                       {(pendingLabel || adminComment) && (
                         <p className="mt-1 text-xs text-amber-700">
                           {pendingLabel ? `${pendingLabel}${adminComment ? ": " : ""}` : ""}
@@ -747,18 +747,18 @@ export default function MineVaerkerClient({
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
                     <div>
-                      <p className="font-medium text-gray-400">Rolle</p>
-                      <p className="mt-0.5 text-gray-700">{displayRole(a.role)}</p>
+                      <p className="font-medium text-muted-foreground">Rolle</p>
+                      <p className="mt-0.5 text-foreground">{displayRole(a.role)}</p>
                     </div>
                     <div>
-                      <p className="font-medium text-gray-400">{t("works.episodes")}</p>
-                      <p className="mt-0.5 text-gray-700">
+                      <p className="font-medium text-muted-foreground">{t("works.episodes")}</p>
+                      <p className="mt-0.5 text-foreground">
                         {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
-                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700 font-mono">
+                          <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground font-mono">
                             S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                           </span>
                         ) : w.episode_number !== undefined && w.episode_number !== null ? (
-                          <span className="inline-flex items-center rounded bg-gray-100 border border-gray-200 px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-gray-700 font-mono">
+                          <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground font-mono">
                             E{String(w.episode_number).padStart(2, "0")}
                           </span>
                         ) : (

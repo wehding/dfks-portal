@@ -529,10 +529,10 @@ export default function AdminStatistikPage() {
             />
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-3">
+            <div className="grid gap-3 sm:flex sm:flex-wrap">
                 {/* YEAR SELECTOR — primary filter */}
                 <Select value={selectedYear} onValueChange={setSelectedYear}>
-                    <SelectTrigger className="w-[160px] border-primary/30 bg-primary/5 font-medium">
+                    <SelectTrigger className="w-full border-primary/30 bg-primary/5 font-medium sm:w-[160px]">
                         <CalendarDays className="mr-2 h-3.5 w-3.5 text-primary" />
                         <SelectValue placeholder={t("admin.stats.filterYear")} />
                     </SelectTrigger>
@@ -547,7 +547,7 @@ export default function AdminStatistikPage() {
                 </Select>
 
                 <Select defaultValue="all">
-                    <SelectTrigger className="w-[160px]">
+                    <SelectTrigger className="w-full sm:w-[160px]">
                         <SelectValue placeholder={t("admin.stats.filterCategory")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -558,7 +558,7 @@ export default function AdminStatistikPage() {
                     </SelectContent>
                 </Select>
                 <Select defaultValue="all">
-                    <SelectTrigger className="w-[160px]">
+                    <SelectTrigger className="w-full sm:w-[160px]">
                         <SelectValue placeholder={t("admin.stats.filterRole")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -568,7 +568,7 @@ export default function AdminStatistikPage() {
                     </SelectContent>
                 </Select>
                 <Select value={selectedGender} onValueChange={setSelectedGender}>
-                    <SelectTrigger className="w-[140px]">
+                    <SelectTrigger className="w-full sm:w-[140px]">
                         <SelectValue placeholder={t("admin.stats.filterGender")} />
                     </SelectTrigger>
                     <SelectContent>
@@ -595,7 +595,7 @@ export default function AdminStatistikPage() {
 
             {/* Summary cards for selected year */}
             {yearNum && yearSummary.salary && (
-                <div className="grid gap-4 sm:grid-cols-4">
+                <div className="hidden gap-4 sm:grid sm:grid-cols-4">
                     <Card>
                         <CardContent className="pt-6 text-center">
                             <p className="text-2xl font-bold tabular-nums">
@@ -1089,7 +1089,7 @@ export default function AdminStatistikPage() {
                     )}
 
                     {/* Summary cards */}
-                    <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="hidden gap-4 sm:grid sm:grid-cols-3">
                         <Card>
                             <CardContent className="pt-6 text-center">
                                 <p className="text-2xl font-bold tabular-nums">
@@ -1294,7 +1294,7 @@ export default function AdminStatistikPage() {
                             Data filtreret for {yearNum}
                         </Badge>
                     )}
-                    <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="hidden gap-4 sm:grid sm:grid-cols-3">
                         <Card>
                             <CardContent className="pt-6 text-center">
                                 <p className="text-4xl font-bold">{aiStats.pct}%</p>
@@ -1394,7 +1394,7 @@ export default function AdminStatistikPage() {
                     ) : (
                         <>
                             {/* Overblik */}
-                            <div className="grid grid-cols-3 gap-4">
+                            <div className="hidden grid-cols-3 gap-4 sm:grid">
                                 <Card>
                                     <CardHeader className="pb-2"><CardTitle className="text-xs text-muted-foreground font-normal">Kontrakter i alt</CardTitle></CardHeader>
                                     <CardContent><p className="text-3xl font-bold">{contractsPerYear.reduce((s, y) => s + y.total, 0)}</p></CardContent>

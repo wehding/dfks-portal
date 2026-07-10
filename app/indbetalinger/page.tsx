@@ -93,9 +93,9 @@ export default function PublicIndbetalingerPage() {
 
     if (submitted) {
         return (
-            <div className="min-h-svh bg-gray-50 flex flex-col">
+            <div className="min-h-svh bg-background text-foreground flex flex-col">
                 {/* Header */}
-                <header className="bg-white border-b py-6">
+                <header className="bg-card border-b py-6">
                     <div className="mx-auto max-w-2xl px-4 flex flex-col items-center">
                         <Image
                             src="/logo.png"
@@ -164,7 +164,7 @@ export default function PublicIndbetalingerPage() {
                 </main>
 
                 {/* Footer */}
-                <footer className="bg-white border-t py-6">
+                <footer className="bg-card border-t py-6">
                     <div className="mx-auto max-w-2xl px-4 text-center text-xs text-muted-foreground space-y-1">
                         <p className="font-medium">Dansk Filmklipperselskab (DFKS)</p>
                         <p>Vermlandsgade 68 · 2300 København S</p>
@@ -176,9 +176,9 @@ export default function PublicIndbetalingerPage() {
     }
 
     return (
-        <div className="min-h-svh bg-gray-50 flex flex-col">
+        <div className="min-h-svh bg-background text-foreground flex flex-col">
             {/* Header */}
-            <header className="bg-white border-b py-6">
+            <header className="bg-card border-b py-6">
                 <div className="mx-auto max-w-2xl px-4 flex flex-col items-center gap-3">
                     <Image
                         src="/logo.png"
@@ -488,7 +488,7 @@ export default function PublicIndbetalingerPage() {
             </main>
 
             {/* Footer */}
-            <footer className="bg-white border-t py-6 mt-8">
+            <footer className="bg-card border-t py-6 mt-8">
                 <div className="mx-auto max-w-2xl px-4 text-center text-xs text-muted-foreground space-y-1">
                     <p className="font-medium">Dansk Filmklipperselskab (DFKS)</p>
                     <p>Vermlandsgade 68 · 2300 København S</p>

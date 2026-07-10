@@ -276,7 +276,7 @@ function AddChunkDialog({ open, onClose, onSaved }: { open: boolean; onClose: ()
             <DialogContent className="sm:max-w-[560px]">
                 <DialogHeader><DialogTitle className="flex items-center gap-2"><BookOpen className="h-4 w-4" />Tilføj chunk</DialogTitle></DialogHeader>
                 <div className="space-y-3 py-2">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1"><Label className="text-xs">ID (unikt)</Label><Input className="h-8 text-xs" placeholder="fx erfaring-001" value={form.kilde_id} onChange={e => setForm(f => ({ ...f, kilde_id: e.target.value }))} /></div>
                         <div className="space-y-1"><Label className="text-xs">Titel</Label><Input className="h-8 text-xs" value={form.kilde_titel} onChange={e => setForm(f => ({ ...f, kilde_titel: e.target.value }))} /></div>
                     </div>
@@ -593,7 +593,7 @@ function NoteringerTab() {
                                                 rows={5}
                                                 className="text-sm font-mono"
                                             />
-                                            <div className="grid grid-cols-2 gap-3">
+                                            <div className="grid gap-3 sm:grid-cols-2">
                                                 <div className="space-y-1">
                                                     <Label className="text-xs text-muted-foreground">Gyldig fra</Label>
                                                     <Input type="date" className="h-7 text-xs" value={note.gyldig_fra ?? ""} onChange={e => updateLocal(note.id, { gyldig_fra: e.target.value || null })} />
@@ -937,7 +937,7 @@ function KvalitetTab() {
 
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="hidden grid-cols-2 gap-4 sm:grid sm:grid-cols-4">
                 {[
                     { label: "Fund vurderet", value: stats.total },
                     { label: "Samlet præcision", value: stats.pct === null ? "—" : `${stats.pct}%` },
@@ -1386,7 +1386,7 @@ function OverenskomsterTab() {
                             </>
                         )}
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1">
                             <Label className="text-xs">Overenskomst</Label>
                             <Select value={nyOverenskomst} onValueChange={setNyOverenskomst}>

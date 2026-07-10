@@ -459,7 +459,7 @@ export default function AdminBrugerePage() {
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </div>
-                        <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <MobileMetaRow label="Telefon">{u.phone ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Titel">{u.title ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Status"><StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} /></MobileMetaRow>
@@ -605,7 +605,7 @@ export default function AdminBrugerePage() {
                                     placeholder="navn@dfks.dk"
                                 />
                             </div>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
                                 <div className="space-y-1.5">
                                     <Label>Telefon</Label>
                                     <Input

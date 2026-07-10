@@ -16,7 +16,7 @@ export function Modal({ onClose, maxWidth = "max-w-xl", children }: ModalProps) 
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${maxWidth} max-h-[96svh] overflow-y-auto rounded-t-xl border border-gray-200 bg-white p-4 text-gray-900 sm:max-h-[90vh] sm:rounded-xl sm:p-7 dark:border-border dark:bg-background dark:text-foreground`}>
+      <div className={`w-full ${maxWidth} max-h-[96svh] overflow-y-auto rounded-t-xl border bg-background p-4 text-foreground shadow-lg sm:max-h-[90vh] sm:rounded-xl sm:p-7`}>
         {children}
       </div>
     </div>

@@ -339,16 +339,16 @@ export default function RettighedshavereAdminPage() {
 
             {/* Stats strip */}
             {!loading && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="hidden gap-3 sm:grid sm:grid-cols-4">
                     {[
                         { label: "I alt",             value: rows.length    },
                         { label: "Aktive medlemmer",  value: memberCount    },
                         { label: "Ikke-medlemmer",    value: nonMemberCount },
                         { label: "Med portal-adgang", value: portalCount    },
                     ].map(s => (
-                        <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-5 py-4">
-                            <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
-                            <p className="text-2xl font-bold text-gray-900 tabular-nums">{s.value}</p>
+                        <div key={s.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
+                            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
+                            <p className="text-2xl font-bold text-foreground tabular-nums">{s.value}</p>
                         </div>
                     ))}
                 </div>
@@ -416,7 +416,7 @@ export default function RettighedshavereAdminPage() {
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
-                            <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
                                 <MobileMetaRow label="Telefon">{rh.phone ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="DFKS nr.">{aff?.member_no ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="Kontrakter">{counts.contracts}</MobileMetaRow>
@@ -550,12 +550,12 @@ export default function RettighedshavereAdminPage() {
                             <Label>Fuldt navn *</Label>
                             <Input value={createForm.full_name} onChange={e => setCreateForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Fornavn Efternavn" autoFocus />
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>Email</Label><Input type="email" value={createForm.email} onChange={e => setCreateForm(f => ({ ...f, email: e.target.value }))} placeholder="email@example.dk" /></div>
                             <div className="space-y-1"><Label>Telefon</Label><Input value={createForm.phone} onChange={e => setCreateForm(f => ({ ...f, phone: e.target.value }))} placeholder="+45 12 34 56 78" /></div>
                         </div>
                         <div className="space-y-1"><Label>Adresse</Label><Input value={createForm.address} onChange={e => setCreateForm(f => ({ ...f, address: e.target.value }))} placeholder="Gade 1, 2100 København Ø" /></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={createForm.cpr_no} onChange={e => setCreateForm(f => ({ ...f, cpr_no: e.target.value }))} placeholder="DDMMÅÅ-XXXX" /></div>
                             <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={createForm.bank_account} onChange={e => setCreateForm(f => ({ ...f, bank_account: e.target.value }))} placeholder="Reg.nr. og kontonr." /></div>
                             <div className="space-y-1">
@@ -586,12 +586,12 @@ export default function RettighedshavereAdminPage() {
                     </DialogHeader>
                     <div className="space-y-3 py-2">
                         <div className="space-y-1"><Label>Fuldt navn *</Label><Input value={editForm.full_name} onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))} /></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>Email</Label><Input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} /></div>
                             <div className="space-y-1"><Label>Telefon</Label><Input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} /></div>
                         </div>
                         <div className="space-y-1"><Label>Adresse</Label><Input value={editForm.address} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} /></div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={editForm.cpr_no} onChange={e => setEditForm(f => ({ ...f, cpr_no: e.target.value }))} /></div>
                             <div className="space-y-1"><Label>Bankkonto</Label><Input autoComplete="off" value={editForm.bank_account} onChange={e => setEditForm(f => ({ ...f, bank_account: e.target.value }))} /></div>
                             <div className="space-y-1">
@@ -599,7 +599,7 @@ export default function RettighedshavereAdminPage() {
                                 <Input value={editForm.member_no} onChange={e => { setEditMemberNoTouched(true); setEditForm(f => ({ ...f, member_no: e.target.value })) }} />
                             </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1">
                                 <Label>Køn (statistik)</Label>
                                 <Select value={editForm.gender || "__none__"} onValueChange={v => setEditForm(f => ({ ...f, gender: v === "__none__" ? "" : v }))}>

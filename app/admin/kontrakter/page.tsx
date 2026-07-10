@@ -1585,7 +1585,7 @@ function AdminKontrakterContent() {
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </div>
-                            <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
                                 <MobileMetaRow label="Klipper">{c.rights_holder_name ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="Producent">{c.employer_name ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="Type">{c.type === "a-løn" ? "A-løn" : "Leverandør"}</MobileMetaRow>
@@ -1938,7 +1938,7 @@ function AdminKontrakterContent() {
                                                         type="button"
                                                         variant="outline"
                                                         size="sm"
-                                                        className="mt-1.5 h-6 text-[10px] bg-white border-gray-200 hover:bg-gray-50"
+                                                        className="mt-1.5 h-6 text-[10px]"
                                                         onClick={() => {
                                                             const idIRegister = navneTjekResult.idIRegister
                                                             if (!idIRegister) return
@@ -2155,33 +2155,33 @@ function AdminKontrakterContent() {
                                             <span className="text-xs text-muted-foreground">{works.find(w => w.id === editForm.work_id)?.year ?? ""}</span>
                                         </div>
                                     ) : pickedUnifiedResult ? (
-                                        <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-3">
+                                        <div className="rounded-lg border bg-card p-3 text-card-foreground space-y-3">
                                             <div className="flex items-start justify-between gap-2">
                                                 <div>
-                                                    <p className="text-xs font-semibold text-gray-900">{pickedUnifiedResult.title}</p>
-                                                    <p className="text-[10px] text-gray-500 mt-0.5">
+                                                    <p className="text-xs font-semibold text-foreground">{pickedUnifiedResult.title}</p>
+                                                    <p className="text-[10px] text-muted-foreground mt-0.5">
                                                         {pickedUnifiedResult.year ?? "-"} · {pickedUnifiedResult.type}
                                                     </p>
                                                 </div>
                                                 <button
                                                     type="button"
                                                     onClick={() => setPickedUnifiedResult(null)}
-                                                    className="text-gray-400 hover:text-gray-600"
+                                                    className="text-muted-foreground hover:text-foreground"
                                                 >
                                                     <X className="h-3.5 w-3.5" />
                                                 </button>
                                             </div>
 
                                             {detailsLoading && (
-                                                <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center py-2">
+                                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
                                                     <Loader2 className="h-3 w-3 animate-spin" /> Indlæser detaljer...
                                                 </div>
                                             )}
 
                                             {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
-                                                <div className="space-y-3 pt-2 border-t border-gray-100">
+                                                <div className="space-y-3 pt-2 border-t">
                                                     <div className="flex flex-col gap-1">
-                                                        <Label className="text-[11px] font-medium text-gray-500">Sæson</Label>
+                                                        <Label className="text-[11px] font-medium text-muted-foreground">Sæson</Label>
                                                         <Input
                                                             type="number"
                                                             min="1"
@@ -2193,12 +2193,12 @@ function AdminKontrakterContent() {
                                                     </div>
 
                                                     {episodesLoading ? (
-                                                        <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center">
+                                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
                                                             <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
                                                         </div>
                                                     ) : detectedEpisodeCount !== null ? (
                                                         <div className="space-y-1.5">
-                                                            <div className="flex justify-between items-center text-[11px] text-gray-500">
+                                                            <div className="flex justify-between items-center text-[11px] text-muted-foreground">
                                                                 <span>Vælg afsnit:</span>
                                                                 <div className="flex gap-1.5">
                                                                     <button
@@ -2218,7 +2218,7 @@ function AdminKontrakterContent() {
                                                                     </button>
                                                                 </div>
                                                             </div>
-                                                            <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded border-gray-100 bg-gray-50">
+                                                            <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded bg-muted/40">
                                                                 {episodeOptions.map(opt => {
                                                                     const checked = selectedEpisodes.includes(opt.number);
                                                                     return (
@@ -2234,8 +2234,8 @@ function AdminKontrakterContent() {
                                                                             }
                                                                             className={`py-1 text-[10px] rounded border text-center font-medium ${
                                                                                 checked
-                                                                                    ? "border-gray-950 bg-gray-955 text-white"
-                                                                                    : "border-gray-200 bg-white hover:bg-gray-100 text-gray-600"
+                                                                                    ? "border-primary bg-primary text-primary-foreground"
+                                                                                    : "border-border bg-background hover:bg-muted text-muted-foreground"
                                                                             }`}
                                                                         >
                                                                             {opt.number}
@@ -2269,7 +2269,7 @@ function AdminKontrakterContent() {
                                                         <button
                                                             key={item.id}
                                                             type="button"
-                                                            className="flex w-full flex-col text-left text-xs px-2.5 py-1.5 rounded bg-white hover:bg-muted border border-gray-100 transition-colors"
+                                                            className="flex w-full flex-col text-left text-xs px-2.5 py-1.5 rounded bg-background hover:bg-muted border transition-colors"
                                                             onClick={() => pickUnifiedResult(item)}
                                                         >
                                                             <div className="flex items-center justify-between gap-1 w-full font-medium">

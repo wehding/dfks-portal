@@ -221,7 +221,7 @@ export default function ProducenterPage() {
                                 </div>
                                 <ChevronRight className={`mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded === emp.id ? "rotate-90" : ""}`} />
                             </button>
-                            <div className="mt-4 grid grid-cols-2 gap-3">
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
                                 <MobileMetaRow label="Kontrakter">{emp.contract_count}</MobileMetaRow>
                                 <MobileMetaRow label="Seneste">
                                     {emp.latest_contract ? new Date(emp.latest_contract).toLocaleDateString("da-DK") : "—"}

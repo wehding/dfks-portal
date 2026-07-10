@@ -242,18 +242,18 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   };
 
   // Fælles select-stil (shadcn Select er overkill her — native select er tilstrækkeligt)
-  const selectCls = "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400";
+  const selectCls = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
   return (
     <div
       className="fixed inset-0 bg-black/45 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className={`bg-white rounded-t-xl border border-gray-200 flex max-h-[96svh] w-full overflow-hidden transition-all duration-300 sm:rounded-xl sm:max-h-[92vh] ${pdfUrl ? "max-w-4xl" : "max-w-lg"}`}>
+      <div className={`flex max-h-[96svh] w-full overflow-hidden rounded-t-xl border bg-background text-foreground shadow-lg transition-all duration-300 sm:max-h-[92vh] sm:rounded-xl ${pdfUrl ? "max-w-4xl" : "max-w-lg"}`}>
 
         {/* PDF preview */}
         {pdfUrl && (
-          <div className="hidden flex-1 bg-gray-100 border-r border-gray-200 min-w-0 md:block">
+          <div className="hidden flex-1 bg-muted border-r min-w-0 md:block">
             <iframe src={`${pdfUrl}#navpanes=0`} className="w-full h-full border-0" title="Forhåndsvisning" />
           </div>
         )}
@@ -264,15 +264,15 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           {/* Header */}
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Upload kontrakt</h2>
-              <p className="text-sm text-gray-500 mt-1">Du kan godt uploade flere kontrakter ad gangen.</p>
+              <h2 className="text-lg font-semibold text-foreground">Upload kontrakt</h2>
+              <p className="text-sm text-muted-foreground mt-1">Du kan godt uploade flere kontrakter ad gangen.</p>
               {workTitle && (
-                <p className="text-sm text-gray-500 mt-0.5">
-                  til <strong className="text-gray-900">{workTitle}</strong>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  til <strong className="text-foreground">{workTitle}</strong>
                 </p>
               )}
             </div>
-            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
               <X className="h-5 w-5" />
             </button>
           </div>
@@ -287,30 +287,30 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={e => { e.preventDefault(); setIsDragging(false); handleFiles(Array.from(e.dataTransfer.files)); }}
-            className={`rounded-lg border-2 border-dashed p-7 text-center transition-colors ${isDragging ? "border-gray-400 bg-gray-50" : "border-gray-200 hover:border-gray-300"}`}
+            className={`rounded-lg border-2 border-dashed p-7 text-center transition-colors ${isDragging ? "border-primary/60 bg-primary/10" : "border-border hover:border-muted-foreground/40"}`}
           >
-            <Upload className="mx-auto h-7 w-7 text-gray-300 mb-2.5" />
-            <p className="text-sm text-gray-500 mb-2">Træk fil hertil eller</p>
+            <Upload className="mx-auto h-7 w-7 text-muted-foreground/50 mb-2.5" />
+            <p className="text-sm text-muted-foreground mb-2">Træk fil hertil eller</p>
             <label className="cursor-pointer">
               <input type="file" accept=".pdf,.doc,.docx" multiple className="hidden" onChange={e => e.target.files && handleFiles(Array.from(e.target.files))} />
-              <span className="text-sm font-medium px-4 py-1.5 rounded-md border border-gray-300 hover:bg-gray-50 transition-colors cursor-pointer">
+              <span className="text-sm font-medium px-4 py-1.5 rounded-md border hover:bg-muted transition-colors cursor-pointer">
                 Vælg filer
               </span>
             </label>
-            <p className="text-xs text-gray-400 mt-2">PDF eller DOCX. Maks. {MAX_FILES} filer.</p>
+            <p className="text-xs text-muted-foreground mt-2">PDF eller DOCX. Maks. {MAX_FILES} filer.</p>
           </div>
 
           {/* Fil + screening-status */}
           {files.length > 0 && (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 px-3.5 py-3">
+            <div className="rounded-lg border bg-muted/40 px-3.5 py-3">
               <div className="flex items-center gap-3">
                 {screening
                   ? <Loader2 className="h-4 w-4 shrink-0 text-purple-600 animate-spin" />
                   : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
                 }
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">{file?.name}</p>
-                  {isBatchUpload && <p className="text-xs text-gray-500 mt-0.5">Kontrakt 1 af {files.length} - systemet forsøger automatisk at koble alle kontrakterne til værker</p>}
+                  <p className="text-sm font-medium text-foreground truncate">{file?.name}</p>
+                  {isBatchUpload && <p className="text-xs text-muted-foreground mt-0.5">Kontrakt 1 af {files.length} - systemet forsøger automatisk at koble alle kontrakterne til værker</p>}
                   {screening && (
                     <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
                       <Sparkles className="h-3 w-3" /> Screener første kontrakt med Claude AI...
@@ -320,16 +320,16 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 {!screening && (
                   <button
                     onClick={() => { setFiles([]); setPdfUrl(null); setTitle(workTitle ?? ""); setSelectedWorkId(workId ?? ""); setWorkSearch(workTitle ?? ""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
-                    className="text-gray-400 hover:text-gray-600 shrink-0"
+                    className="text-muted-foreground hover:text-foreground shrink-0"
                   >
                     <X className="h-4 w-4" />
                   </button>
                 )}
               </div>
               {files.length > 1 && (
-                <div className="mt-2 max-h-24 overflow-y-auto border-t border-gray-200 pt-2">
+                <div className="mt-2 max-h-24 overflow-y-auto border-t pt-2">
                   {files.slice(1).map(extraFile => (
-                    <p key={`${extraFile.name}-${extraFile.size}`} className="truncate text-xs text-gray-500">
+                    <p key={`${extraFile.name}-${extraFile.size}`} className="truncate text-xs text-muted-foreground">
                       {extraFile.name}
                     </p>
                   ))}
@@ -350,7 +350,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
               {/* Titel */}
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                   Produktionstitel
                   {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
                 </Label>
@@ -364,20 +364,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
               {/* Værkskobling */}
               {!isBatchUpload && (
-              <div className="space-y-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
-                <Label className="text-sm font-medium text-gray-500">
+              <div className="space-y-2 rounded-lg border bg-muted/40 px-3 py-3">
+                <Label className="text-sm font-medium text-muted-foreground">
                   Koblet værk
                 </Label>
                 {selectedWork ? (
-                  <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                  <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2.5">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-gray-900">{selectedWork.title}</p>
-                      {selectedWork.year && <p className="text-xs text-gray-500">{selectedWork.year}</p>}
+                      <p className="truncate text-sm font-medium text-foreground">{selectedWork.title}</p>
+                      {selectedWork.year && <p className="text-xs text-muted-foreground">{selectedWork.year}</p>}
                     </div>
                     <button
                       type="button"
                       onClick={() => setSelectedWorkId("")}
-                      className="ml-2 shrink-0 text-gray-400 hover:text-gray-600"
+                      className="ml-2 shrink-0 text-muted-foreground hover:text-foreground"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -390,10 +390,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                         placeholder="Søg i dine værker..."
                         value={workSearch}
                         onChange={e => setWorkSearch(e.target.value)}
-                        className="h-8 pl-7 text-sm bg-white"
+                        className="h-8 pl-7 text-sm bg-background"
                       />
                     </div>
-                    <Button type="button" variant="outline" size="sm" onClick={handleSaveAndAddWork} disabled={saving || (files.length > 0 && !canSubmit)} className="w-full bg-white">
+                    <Button type="button" variant="outline" size="sm" onClick={handleSaveAndAddWork} disabled={saving || (files.length > 0 && !canSubmit)} className="w-full">
                       {saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
                       Tilføj værk
                     </Button>
@@ -403,14 +403,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                           key={w.id}
                           type="button"
                           onClick={() => { setSelectedWorkId(w.id); setWorkSearch(""); setTitle(w.title); }}
-                          className="flex items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100"
+                          className="flex items-center justify-between rounded-md border bg-background px-3 py-2 text-left text-sm transition-colors hover:bg-muted"
                         >
-                          <span className="font-medium text-gray-900">{w.title}</span>
-                          <span className="text-xs text-gray-500">{w.year ?? ""}</span>
+                          <span className="font-medium text-foreground">{w.title}</span>
+                          <span className="text-xs text-muted-foreground">{w.year ?? ""}</span>
                         </button>
                       ))}
                       {filteredWorks.length === 0 && (
-                        <p className="px-2 py-1.5 text-sm italic text-gray-400">Ingen værker fundet</p>
+                        <p className="px-2 py-1.5 text-sm italic text-muted-foreground">Ingen værker fundet</p>
                       )}
                     </div>
                   </>
@@ -420,7 +420,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
               {/* Kategori */}
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                   Kategori
                   {aiFields.has("category") && <Sparkles className="h-3 w-3 text-purple-500" />}
                 </Label>
@@ -454,7 +454,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       {creditedRoles.length > 1 && (
                         <button
                           onClick={() => setCreditedRoles(prev => prev.filter((_, i) => i !== idx))}
-                          className="px-2.5 rounded-md border border-gray-300 text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                          className="px-2.5 rounded-md border text-muted-foreground hover:bg-muted hover:text-foreground"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
@@ -471,10 +471,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               ) : (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <Label className="text-sm font-medium text-gray-500">Afsnit og kreditering</Label>
+                    <Label className="text-sm font-medium text-muted-foreground">Afsnit og kreditering</Label>
                     <button
                       onClick={() => setEpisodeCredits(prev => [...prev, { number: (prev.at(-1)?.number ?? 0) + 1, role: prev.at(-1)?.role ?? "Klipper" }])}
-                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50"
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border hover:bg-muted"
                     >
                       <Plus className="h-3 w-3" /> Tilføj afsnit
                     </button>
@@ -482,11 +482,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   {episodeCredits.map((ec, idx) => (
                     <div key={idx} className="grid gap-1.5 mb-1.5 items-center" style={{ gridTemplateColumns: "52px 1fr 32px" }}>
                       <div className="relative">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">#</span>
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">#</span>
                         <input
                           type="number" value={ec.number} min={1}
                           onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x))}
-                          className="w-full pl-5 pr-2 py-2 rounded-md border border-gray-300 text-sm focus:outline-none focus:ring-1 focus:ring-gray-400"
+                          className="w-full pl-5 pr-2 py-2 rounded-md border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                         />
                       </div>
                       <select
@@ -499,7 +499,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       </select>
                       <button
                         onClick={() => setEpisodeCredits(prev => prev.filter((_, i) => i !== idx))}
-                        className="text-gray-400 hover:text-gray-600"
+                        className="text-muted-foreground hover:text-foreground"
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -510,9 +510,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
               {/* Varighed / premieredato */}
               {!isSeries && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                       Varighed (min)
                       {aiFields.has("duration") && <Sparkles className="h-3 w-3 text-purple-500" />}
                     </Label>
@@ -524,7 +524,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                       Premieredato
                       {aiFields.has("premiereDate") && <Sparkles className="h-3 w-3 text-purple-500" />}
                     </Label>
@@ -544,11 +544,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             <div className="flex flex-col gap-2.5">
               {saving && (
                 <div className="space-y-2">
-                  <p className="flex items-center gap-2 text-sm text-gray-500">
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploader og gemmer {files.length === 1 ? "kontrakt" : `${files.length} kontrakter`}...
                   </p>
-                  <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gray-900 rounded-full" style={{ animation: "upload-progress 8s ease-out forwards" }} />
+                  <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-primary rounded-full" style={{ animation: "upload-progress 8s ease-out forwards" }} />
                   </div>
                   <style>{`@keyframes upload-progress{0%{width:0%}40%{width:55%}80%{width:85%}95%{width:93%}}`}</style>
                 </div>

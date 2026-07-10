@@ -224,7 +224,7 @@ export function ContractAiDataEditor({
             {GROUPS.map(g => (
                 <div key={g.title}>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</p>
-                    <div className={g.title === "Rettigheder" ? "flex flex-wrap gap-x-4 gap-y-2" : "grid grid-cols-2 gap-3"}>
+                    <div className={g.title === "Rettigheder" ? "flex flex-wrap gap-x-4 gap-y-2" : "grid gap-3 sm:grid-cols-2"}>
                         {g.fields.map(f => {
                             const sourceKey = FIELD_TO_SOURCE_KEY[f.key];
                             const quote = sources?.[sourceKey];
