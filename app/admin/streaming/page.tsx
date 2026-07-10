@@ -244,7 +244,7 @@ export default function StreamingPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="hidden grid-cols-3 gap-4 sm:grid">
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Værker</p>
                     <p className="mt-1 text-2xl font-semibold">{mockProductions.length}</p>

@@ -330,7 +330,7 @@ export default function PortalLayout({
 
                 <SidebarFooter>
                     {!hasAdminMenu && (
-                        <div className="mx-2 mb-2 rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-transparent px-3 py-2.5 space-y-1">
+                        <div className="mx-2 mb-2 rounded-lg border bg-card px-3 py-2.5 text-card-foreground space-y-1">
                             <div className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">
                                 <Info className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                                 AI-assisteret system

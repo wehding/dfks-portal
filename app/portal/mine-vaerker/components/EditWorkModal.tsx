@@ -388,8 +388,8 @@ export function EditWorkModal({
   return (
     <Modal onClose={onClose} maxWidth="max-w-2xl">
       <div className="flex items-center justify-between mb-5">
-        <h2 className="font-semibold text-gray-900">{assignment.works?.title}</h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+        <h2 className="font-semibold text-foreground">{assignment.works?.title}</h2>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -399,24 +399,24 @@ export function EditWorkModal({
           : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
       </div>
       {editAdminSummaries.length > 0 && (
-        <div className="mb-5 rounded-lg border border-gray-200 p-4">
-          <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.adminComments")}</p>
+        <div className="mb-5 rounded-lg border p-4">
+          <p className="mb-3 text-sm font-semibold text-foreground">{t("works.adminComments")}</p>
           <div className="space-y-2">
             {editAdminSummaries.map(summary => (
-              <div key={summary.id} className="rounded-md bg-gray-50 px-3 py-2 text-sm">
-                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                  <span className="font-medium text-gray-700">{summary.kind}</span>
+              <div key={summary.id} className="rounded-md bg-muted/40 px-3 py-2 text-sm">
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{summary.kind}</span>
                   <span>{summary.status}</span>
                   {summary.createdAt && <span>{new Date(summary.createdAt).toLocaleString("da-DK")}</span>}
                 </div>
-                <p className="text-gray-800">{summary.message}</p>
+                <p className="text-foreground">{summary.message}</p>
               </div>
             ))}
           </div>
         </div>
       )}
       <div className="space-y-1.5 mb-6">
-        <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
+        <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
         <select value={editRole} onChange={e => setEditRole(e.target.value)} className={selectCls}>
           {ROLES.map(r => (
             <option key={r} value={r}>
@@ -427,13 +427,13 @@ export function EditWorkModal({
       </div>
 
       {directSeriesEpisodeCount > 0 && (
-        <div className="mb-6 rounded-lg border border-gray-200 p-4 dark:border-border">
+        <div className="mb-6 rounded-lg border p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-semibold text-gray-900 dark:text-foreground">
+              <p className="text-sm font-semibold text-foreground">
                 {locale === "da" ? "Dine afsnit" : "Your episodes"}
               </p>
-              <p className="mt-1 text-xs text-gray-500 dark:text-muted-foreground">
+              <p className="mt-1 text-xs text-muted-foreground">
                 {locale === "da"
                   ? "Vælg de afsnit, du har klippet. Valget sendes til admin, når du gemmer."
                   : "Choose the episodes you edited. The selection is sent to admin when you save."}
@@ -465,7 +465,7 @@ export function EditWorkModal({
               Fravælg alle
             </button>
           </div>
-          <div className="mt-3 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-md border border-gray-200 bg-white p-2 sm:grid-cols-4 dark:border-border dark:bg-muted/20">
+          <div className="mt-3 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-md border bg-muted/20 p-2 sm:grid-cols-4">
             {Array.from({ length: directSeriesEpisodeCount }, (_, idx) => {
               const epNum = idx + 1;
               const isChecked = selectedEpisodes[epNum] || false;
@@ -475,7 +475,7 @@ export function EditWorkModal({
                   className={`flex cursor-pointer select-none items-center gap-2 rounded border p-2 text-xs transition-colors ${
                     isChecked
                       ? "border-blue-500 bg-blue-50/80 text-blue-900 dark:bg-blue-500/15 dark:text-blue-100"
-                      : "border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-border dark:text-muted-foreground dark:hover:bg-muted/40"
+                      : "border-border text-muted-foreground hover:bg-muted"
                   }`}
                 >
                   <input
@@ -498,8 +498,8 @@ export function EditWorkModal({
       )}
 
       {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
-      <div className="rounded-lg border border-gray-200 p-4 mb-6">
-        <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.coEditors")}</p>
+      <div className="rounded-lg border p-4 mb-6">
+        <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
         <div className="space-y-2">
           {editCoEditors.map(editor => (
             <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
@@ -521,12 +521,12 @@ export function EditWorkModal({
                   placeholder={t("works.namePlaceholder")}
                 />
                 {(coEditorSuggestions[editor.id] ?? []).length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full rounded-md border border-gray-200 bg-white shadow-sm">
+                  <div className="absolute z-10 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-sm">
                     {(coEditorSuggestions[editor.id] ?? []).map(suggestion => (
                       <button
                         key={suggestion.id}
                         type="button"
-                        className="block w-full px-3 py-2 text-left text-sm hover:bg-gray-50"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-muted"
                         onClick={() => {
                           setEditCoEditors(prev =>
                             prev.map(item =>
@@ -643,11 +643,11 @@ export function EditWorkModal({
       )}
 
       {/* FORESLÅ MANUEL RETTELSE SEKTION */}
-      <div className="mb-6 rounded-lg border border-gray-200 p-4">
+      <div className="mb-6 rounded-lg border p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-sm font-semibold text-gray-900">{t("works.manualWorkData")}</p>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="text-sm font-semibold text-foreground">{t("works.manualWorkData")}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
               {locale === "da"
                 ? "Foreslå rettelser til titel, type, premiereår, varighed, sæson, afsnit, og instruktør."
                 : "Suggest corrections to title, type, premiere year, duration, season, episodes, and director."}
@@ -666,7 +666,7 @@ export function EditWorkModal({
         {showWorkCorrection && workCorrection && (
           <div className="mt-4 grid gap-3">
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.titleField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.titleField")}</Label>
               <Input
                 value={workCorrection.title}
                 onChange={e => setWorkCorrection({ ...workCorrection, title: e.target.value })}
@@ -674,7 +674,7 @@ export function EditWorkModal({
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium text-gray-500">{t("works.typeField")}</Label>
+                <Label className="text-sm font-medium text-muted-foreground">{t("works.typeField")}</Label>
                 <select
                   value={workCorrection.type}
                   onChange={e => setWorkCorrection({ ...workCorrection, type: e.target.value })}
@@ -688,7 +688,7 @@ export function EditWorkModal({
                 </select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium text-gray-500">{t("works.yearField")}</Label>
+                <Label className="text-sm font-medium text-muted-foreground">{t("works.yearField")}</Label>
                 <Input
                   value={workCorrection.year}
                   onChange={e => setWorkCorrection({ ...workCorrection, year: e.target.value })}
@@ -696,7 +696,7 @@ export function EditWorkModal({
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium text-gray-500">{t("works.durationField")}</Label>
+                <Label className="text-sm font-medium text-muted-foreground">{t("works.durationField")}</Label>
                 <Input
                   value={workCorrection.duration_minutes}
                   onChange={e => setWorkCorrection({ ...workCorrection, duration_minutes: e.target.value })}
@@ -705,7 +705,7 @@ export function EditWorkModal({
               </div>
               {isSeriesType(workCorrection.type) && (
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-gray-500">Sæson</Label>
+                  <Label className="text-sm font-medium text-muted-foreground">Sæson</Label>
                   <Input
                     value={workCorrection.season_count}
                     onChange={e => setWorkCorrection({ ...workCorrection, season_count: e.target.value })}
@@ -715,7 +715,7 @@ export function EditWorkModal({
               )}
               {isSeriesType(workCorrection.type) && (
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-gray-500">{t("works.episodesField")}</Label>
+                  <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
                   <Input
                     value={workCorrection.episode_count}
                     onChange={e => setWorkCorrection({ ...workCorrection, episode_count: e.target.value })}
@@ -728,9 +728,9 @@ export function EditWorkModal({
                   const epCount = parseInt(workCorrection.episode_count || "0", 10) || 0;
                   if (epCount <= 0) return null;
                   return (
-                    <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border border-gray-200 p-4 bg-gray-50/50">
+                    <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border bg-muted/30 p-4">
                       <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold text-gray-900">Vælg afsnit du har klippet</Label>
+                        <Label className="text-sm font-semibold text-foreground">Vælg afsnit du har klippet</Label>
                         <div className="flex gap-2">
                           <button
                             type="button"
@@ -743,17 +743,17 @@ export function EditWorkModal({
                           >
                             Vælg alle
                           </button>
-                          <span className="text-gray-300 text-xs">|</span>
+                          <span className="text-muted-foreground text-xs">|</span>
                           <button
                             type="button"
-                            className="text-xs text-gray-500 hover:text-gray-700 font-medium bg-transparent border-0 cursor-pointer"
+                            className="text-xs text-muted-foreground hover:text-foreground font-medium bg-transparent border-0 cursor-pointer"
                             onClick={() => setSelectedEpisodes({})}
                           >
                             Fravælg alle
                           </button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1 bg-white rounded-md border border-gray-200">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1 bg-muted/20 rounded-md border">
                         {Array.from({ length: epCount }, (_, idx) => {
                           const epNum = idx + 1;
                           const isChecked = selectedEpisodes[epNum] || false;
@@ -763,7 +763,7 @@ export function EditWorkModal({
                               className={`flex items-center gap-2 rounded border p-2 text-xs cursor-pointer select-none transition-colors ${
                                 isChecked
                                   ? "border-blue-500 bg-blue-50/50 text-blue-900"
-                                  : "border-gray-200 hover:bg-gray-50 text-gray-700"
+                                  : "border-border hover:bg-muted text-muted-foreground"
                               }`}
                             >
                               <input

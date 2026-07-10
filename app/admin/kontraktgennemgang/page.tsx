@@ -901,7 +901,7 @@ function ManuelGennemgang() {
                 </span>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-110px)]">
+            <div className="grid gap-4 lg:h-[calc(100vh-110px)] lg:grid-cols-3">
                 {/* Panel 1: Kontrakt */}
                 <div className="rounded-lg border flex flex-col min-h-0">
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
@@ -1203,7 +1203,7 @@ function ManuelGennemgang() {
                         <DialogDescription>Dette gemmer hele analysen som et godkendt eksempel AI&apos;en kan lære af ved fremtidige gennemgange af lignende kontrakter.</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 py-2">
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1">
                                 <Label className="text-xs text-muted-foreground">Kontrakttype</Label>
                                 <div className="text-sm font-medium px-3 py-2 bg-muted rounded-md">{klassifikation?.kontrakttype ?? result?.overblik?.erLeverandoerkontrakt ? "leverandoer" : "a-loen"}</div>

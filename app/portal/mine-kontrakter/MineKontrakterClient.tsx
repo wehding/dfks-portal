@@ -458,8 +458,8 @@ export default function MineKontrakterClient({
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Mine Kontrakter</h1>
-          <p className="text-sm text-gray-500 mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
+          <h1 className="text-2xl font-bold text-foreground">Mine Kontrakter</h1>
+          <p className="text-sm text-muted-foreground mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
         </div>
         <div className="flex gap-2">
           <HelpButton onClick={() => setHelpOpen(true)} />
@@ -470,15 +470,15 @@ export default function MineKontrakterClient({
       </div>
 
       {/* Statistik */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="hidden grid-cols-3 gap-4 sm:grid">
         {[
           { label: "Total",               value: total },
           { label: "Validerede",          value: validerede },
           { label: "Afventer validering", value: afventer },
         ].map(s => (
-          <div key={s.label} className="rounded-lg border border-gray-200 bg-white px-6 py-5">
-            <p className="text-sm font-medium text-gray-500 mb-1">{s.label}</p>
-            <p className="text-3xl font-bold text-gray-900">{s.value}</p>
+          <div key={s.label} className="rounded-lg border bg-card px-6 py-5 text-card-foreground">
+            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
+            <p className="text-3xl font-bold text-foreground">{s.value}</p>
           </div>
         ))}
       </div>
@@ -496,10 +496,10 @@ export default function MineKontrakterClient({
       )}
 
       {/* Tabel */}
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+      <div className="rounded-lg border bg-card text-card-foreground overflow-hidden">
 
         {/* Søgefelt */}
-        <div className="flex flex-col gap-3 px-5 py-3.5 border-b border-gray-100 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 px-5 py-3.5 border-b sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {selectedIds.length > 0 ? (
               <>
@@ -523,14 +523,14 @@ export default function MineKontrakterClient({
                     <button
                       type="button"
                       onClick={() => setSearch("")}
-                      className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border border-gray-300 text-gray-400 hover:border-gray-500 hover:text-gray-700"
+                      className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border text-muted-foreground hover:text-foreground"
                       aria-label="Tøm søgefelt"
                     >
                       <X className="h-3 w-3" />
                     </button>
                   )}
                 </div>
-                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
                   <option value="all">Status</option>
                   <option value="missingWork">Mangler værk</option>
                   <option value="linked">Værk tilknyttet</option>
@@ -541,29 +541,29 @@ export default function MineKontrakterClient({
               </>
             )}
           </div>
-          <label className="flex items-center gap-2 text-sm text-gray-500">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Vis
-            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900">
+            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
               {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
             </select>
           </label>
         </div>
 
         {/* Kolonnehoveder */}
-        <div className="hidden px-5 py-2.5 border-b border-gray-100 text-sm font-medium text-gray-500 md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
+        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
-          <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-gray-700">Værk{sortArrow("title")}</button>
-          <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-gray-700">Producent{sortArrow("employer")}</button>
-          <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-gray-700">Overenskomst{sortArrow("overenskomst")}</button>
-          <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-gray-700">Rettigheder{sortArrow("rights")}</button>
-          <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-gray-700">Status{sortArrow("status")}</button>
+          <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">Værk{sortArrow("title")}</button>
+          <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">Producent{sortArrow("employer")}</button>
+          <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">Overenskomst{sortArrow("overenskomst")}</button>
+          <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">Rettigheder{sortArrow("rights")}</button>
+          <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-foreground">Status{sortArrow("status")}</button>
           <div />
         </div>
 
         {/* Rækker */}
         {filtered.length === 0 ? (
-          <div className="py-12 text-center text-sm text-gray-500">
-            <FileText className="mx-auto h-10 w-10 text-gray-300 mb-3" />
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            <FileText className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
           <p>{contracts.length === 0 ? "Ingen kontrakter endnu. Klik 'Upload kontrakt' for at starte." : "Ingen resultater."}</p>
           </div>
         ) : visibleContracts.map(c => {
@@ -573,21 +573,21 @@ export default function MineKontrakterClient({
             <div
               key={c.id}
               onClick={() => openContract(c)}
-              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]"
+              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]"
             >
               <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
                 <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
               </div>
               <div className="min-w-0">
-                <div className="font-semibold text-gray-900">{title}</div>
-                {c.contract_date && <div className="text-xs text-gray-500 mt-0.5">{c.contract_date.substring(0, 10)}</div>}
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-500 md:hidden">
+                <div className="font-semibold text-foreground">{title}</div>
+                {c.contract_date && <div className="text-xs text-muted-foreground mt-0.5">{c.contract_date.substring(0, 10)}</div>}
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground md:hidden">
                   <span className="truncate">Producent: {c.employers?.name ?? "–"}</span>
                   <span>{overenskomstLabel(c.overenskomst)}</span>
                 </div>
               </div>
-              <div className="hidden text-gray-500 truncate md:block">{c.employers?.name ?? "–"}</div>
-              <div className="hidden text-gray-500 md:block">{overenskomstLabel(c.overenskomst)}</div>
+              <div className="hidden text-muted-foreground truncate md:block">{c.employers?.name ?? "–"}</div>
+              <div className="hidden text-muted-foreground md:block">{overenskomstLabel(c.overenskomst)}</div>
               <div className="hidden gap-1 flex-wrap md:flex">
                 {val?.validated_at ? (
                   <>
@@ -598,7 +598,7 @@ export default function MineKontrakterClient({
                       Kreditering {val.has_credit_clause ? "✓" : "✗"}
                     </span>
                   </>
-                ) : <span className="text-xs text-gray-400 italic">Afventer</span>}
+                ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
               </div>
               <div className="space-y-1">
                 <WorkLinkBadge linked={Boolean(c.works)} />
@@ -606,7 +606,7 @@ export default function MineKontrakterClient({
               </div>
               <div
                 onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
-                className="flex justify-center text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                className="flex justify-center text-muted-foreground hover:text-red-500 transition-colors cursor-pointer"
               >
                 <Trash2 className="h-4 w-4" />
               </div>
@@ -666,11 +666,11 @@ export default function MineKontrakterClient({
           className="fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
           onClick={e => { if (e.target === e.currentTarget) setSelectedContract(null); }}
         >
-          <div className={`bg-white rounded-t-xl border border-gray-200 flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
+          <div className={`bg-background text-foreground rounded-t-xl border flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
 
             {/* PDF-viewer */}
             {viewUrl && (
-              <div className="hidden flex-1 bg-gray-100 md:block">
+              <div className="hidden flex-1 bg-muted md:block">
                 <iframe src={`${viewUrl}#navpanes=0`} className="w-full h-full border-0" title="Kontrakt" />
               </div>
             )}
@@ -680,7 +680,7 @@ export default function MineKontrakterClient({
 
               {/* Titel + luk */}
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold text-gray-900">{contractDisplayTitle(selectedContract)}</h2>
+                <h2 className="font-semibold text-foreground">{contractDisplayTitle(selectedContract)}</h2>
                 <button onClick={() => setSelectedContract(null)} className="text-gray-400 hover:text-gray-600">
                   <X className="h-5 w-5" />
                 </button>
@@ -711,9 +711,9 @@ export default function MineKontrakterClient({
                   { label: "Startdato",   value: selectedContract.start_date?.substring(0, 10) },
                   { label: "Slutdato",    value: selectedContract.end_date?.substring(0, 10) },
                 ].filter(r => r.value).map(row => (
-                  <div key={row.label} className="flex justify-between text-sm bg-gray-50 rounded-md px-3 py-2">
-                    <span className="text-gray-500">{row.label}</span>
-                    <span className="font-medium text-gray-900">{row.value}</span>
+                  <div key={row.label} className="flex justify-between text-sm bg-muted rounded-md px-3 py-2">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <span className="font-medium text-foreground">{row.value}</span>
                   </div>
                 ))}
               </div>
@@ -722,10 +722,10 @@ export default function MineKontrakterClient({
               <div>
                 <p className="text-xs font-medium text-gray-500 mb-2">Forbind med værk</p>
                 {selectedContract.works ? (
-                  <div className="flex items-center justify-between bg-gray-50 rounded-lg border border-gray-200 px-3 py-2.5">
+                  <div className="flex items-center justify-between bg-muted rounded-lg border px-3 py-2.5">
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{selectedContract.works.title}</p>
-                      {selectedContract.works.year && <p className="text-xs text-gray-500">{selectedContract.works.year}</p>}
+                      <p className="text-sm font-medium text-foreground">{selectedContract.works.title}</p>
+                      {selectedContract.works.year && <p className="text-xs text-muted-foreground">{selectedContract.works.year}</p>}
                     </div>
                     <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} className="text-gray-400 hover:text-gray-600 p-1">
                       <X className="h-3.5 w-3.5" />
@@ -748,15 +748,15 @@ export default function MineKontrakterClient({
                     </div>
 
                     {unifiedResults.length > 0 && !pickedUnifiedResult && (
-                      <div className="max-h-56 overflow-y-auto flex flex-col gap-1 border border-gray-100 rounded-md p-1.5 bg-gray-50/50">
+                      <div className="max-h-56 overflow-y-auto flex flex-col gap-1 border rounded-md p-1.5 bg-muted/40">
                         {unifiedResults.map(item => (
                           <button
                             key={item.id}
                             onClick={() => pickUnifiedResult(item)}
-                            className="flex flex-col text-left text-xs px-2.5 py-1.5 rounded bg-white hover:bg-gray-50 border border-gray-100 transition-colors w-full"
+                            className="flex flex-col text-left text-xs px-2.5 py-1.5 rounded bg-background hover:bg-muted border transition-colors w-full"
                           >
                             <div className="flex items-center justify-between gap-1 w-full">
-                              <span className="font-semibold text-gray-900 truncate">{item.title}</span>
+                              <span className="font-semibold text-foreground truncate">{item.title}</span>
                               <span className="text-[9px] uppercase font-bold text-gray-400 shrink-0">
                                 {item.sources.join("·")}
                               </span>
@@ -770,33 +770,33 @@ export default function MineKontrakterClient({
                     )}
 
                     {pickedUnifiedResult && (
-                      <div className="rounded-lg border border-gray-200 p-3 bg-white space-y-3">
+                      <div className="rounded-lg border bg-card p-3 text-card-foreground space-y-3">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <p className="text-xs font-semibold text-gray-900">{pickedUnifiedResult.title}</p>
-                            <p className="text-[10px] text-gray-500 mt-0.5">
+                            <p className="text-xs font-semibold text-foreground">{pickedUnifiedResult.title}</p>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
                               {pickedUnifiedResult.year ?? "-"} · {pickedUnifiedResult.type}
                             </p>
                           </div>
                           <button
                             type="button"
                             onClick={() => setPickedUnifiedResult(null)}
-                            className="text-gray-400 hover:text-gray-600"
+                            className="text-muted-foreground hover:text-foreground"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
                         </div>
 
                         {detailsLoading && (
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center py-2">
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
                             <Loader2 className="h-3 w-3 animate-spin" /> Indlæser detaljer...
                           </div>
                         )}
 
                         {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
-                          <div className="space-y-3 pt-2 border-t border-gray-100">
+                          <div className="space-y-3 pt-2 border-t">
                             <div className="flex flex-col gap-1">
-                              <Label className="text-[11px] font-medium text-gray-500">Sæson</Label>
+                              <Label className="text-[11px] font-medium text-muted-foreground">Sæson</Label>
                               <Input
                                 type="number"
                                 min="1"
@@ -808,12 +808,12 @@ export default function MineKontrakterClient({
                             </div>
 
                             {episodesLoading ? (
-                              <div className="flex items-center gap-1.5 text-xs text-gray-500 justify-center">
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
                                 <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
                               </div>
                             ) : detectedEpisodeCount !== null ? (
                               <div className="space-y-1.5">
-                                <div className="flex justify-between items-center text-[11px] text-gray-500">
+                                <div className="flex justify-between items-center text-[11px] text-muted-foreground">
                                   <span>Vælg afsnit:</span>
                                   <div className="flex gap-1.5">
                                     <button
@@ -833,7 +833,7 @@ export default function MineKontrakterClient({
                                     </button>
                                   </div>
                                 </div>
-                                <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded border-gray-100 bg-gray-50">
+                                <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded bg-muted/40">
                                   {episodeOptions.map(opt => {
                                     const checked = selectedEpisodes.includes(opt.number);
                                     return (
@@ -849,8 +849,8 @@ export default function MineKontrakterClient({
                                         }
                                         className={`py-1 text-[10px] rounded border text-center font-medium ${
                                           checked
-                                            ? "border-gray-900 bg-gray-900 text-white"
-                                            : "border-gray-200 bg-white hover:bg-gray-100 text-gray-600"
+                                            ? "border-primary bg-primary text-primary-foreground"
+                                            : "border-border bg-background hover:bg-muted text-muted-foreground"
                                         }`}
                                       >
                                         {opt.number}
@@ -888,7 +888,7 @@ export default function MineKontrakterClient({
                 const data = val?.extracted_data ?? null;
                 return val?.validated_at ? (
                   <div>
-                    <p className="text-xs font-medium text-gray-500 mb-2">Rettigheder</p>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Rettigheder</p>
                     <div className="flex gap-2 flex-wrap">
                       <RightsBadge label="Copydan" active={aiValue(data, ["copydan", "copydanReservation", "copydanforbehold"])} />
                       <RightsBadge label="Streaming" active={aiValue(data, ["svod", "streaming", "streamingReservation", "streamingforbehold"])} />
@@ -909,16 +909,16 @@ export default function MineKontrakterClient({
               {/* Allonger */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-medium text-gray-500">Allonger</p>
+                  <p className="text-xs font-medium text-muted-foreground">Allonger</p>
                   <button
                     onClick={() => setIsAddingAllonge(true)}
-                    className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50"
+                    className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border hover:bg-muted"
                   >
                     <Paperclip className="h-3 w-3" /> Tilføj allonge
                   </button>
                 </div>
                 {(selectedContract.contract_attachments ?? []).length === 0 ? (
-                  <p className="text-sm text-gray-400 italic">Ingen allonger endnu</p>
+                  <p className="text-sm text-muted-foreground italic">Ingen allonger endnu</p>
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {(selectedContract.contract_attachments ?? []).map(a => (
@@ -926,13 +926,13 @@ export default function MineKontrakterClient({
                         key={a.id}
                         onClick={() => openAttachment(a)}
                         disabled={openingAttachmentId === a.id}
-                        className="flex items-center justify-between text-left text-sm px-3 py-2 rounded-md border border-gray-200 bg-gray-50 hover:bg-gray-100 transition-colors"
+                        className="flex items-center justify-between text-left text-sm px-3 py-2 rounded-md border bg-muted/40 hover:bg-muted transition-colors"
                       >
                         <span className="flex items-center gap-1.5 min-w-0">
-                          <FileText className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                          <span className="font-medium text-gray-900 truncate">{a.title ?? "Allonge"}</span>
+                          <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <span className="font-medium text-foreground truncate">{a.title ?? "Allonge"}</span>
                         </span>
-                        <span className="text-xs text-gray-500 shrink-0 ml-2">
+                        <span className="text-xs text-muted-foreground shrink-0 ml-2">
                           {openingAttachmentId === a.id
                             ? <Loader2 className="h-3 w-3 animate-spin" />
                             : a.created_at.substring(0, 10)}
@@ -945,16 +945,16 @@ export default function MineKontrakterClient({
 
               {/* Kommentarer */}
               <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">Kommentarer</p>
-                <div className="max-h-44 space-y-2 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2">
+                <p className="text-xs font-medium text-muted-foreground mb-2">Kommentarer</p>
+                <div className="max-h-44 space-y-2 overflow-y-auto rounded-lg border bg-muted/40 p-2">
                   {(selectedContract.contract_comments ?? []).length === 0 ? (
-                    <p className="px-1 py-2 text-sm italic text-gray-400">Ingen kommentarer endnu</p>
+                    <p className="px-1 py-2 text-sm italic text-muted-foreground">Ingen kommentarer endnu</p>
                   ) : (selectedContract.contract_comments ?? []).map(comment => (
-                    <div key={comment.id} className="rounded-md bg-white px-3 py-2 text-sm">
-                      <div className="mb-1 text-xs text-gray-500">
+                    <div key={comment.id} className="rounded-md bg-background px-3 py-2 text-sm">
+                      <div className="mb-1 text-xs text-muted-foreground">
                         {comment.author_role === "admin" ? "DFKS" : "Dig"} · {new Date(comment.created_at).toLocaleString("da-DK")}
                       </div>
-                      <p className="text-gray-800">{comment.message}</p>
+                      <p className="text-foreground">{comment.message}</p>
                     </div>
                   ))}
                 </div>
@@ -963,7 +963,7 @@ export default function MineKontrakterClient({
                     value={commentDraft}
                     onChange={e => setCommentDraft(e.target.value)}
                     placeholder="Skriv en kommentar til DFKS..."
-                    className="min-h-20 w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-gray-400"
+                    className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
                   />
                   <Button onClick={handleAddComment} disabled={commentSaving || !commentDraft.trim()} className="w-full">
                     {commentSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

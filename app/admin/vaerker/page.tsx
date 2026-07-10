@@ -276,7 +276,7 @@ const STATUS_CLASS: Record<string, string> = {
   godkendt: "border-green-300 bg-green-50 text-green-700",
   aktiv: "border-green-300 bg-green-50 text-green-700",
   afsluttet: "border-slate-300 bg-slate-50 text-slate-700",
-  arkiveret: "border-gray-300 bg-gray-50 text-gray-700",
+  arkiveret: "border-border bg-muted text-muted-foreground",
 };
 
 const REQUEST_STATUS_LABELS: Record<string, string> = {
@@ -1544,7 +1544,7 @@ export default function VaerksadministrationPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="hidden gap-3 sm:grid sm:grid-cols-3">
         {[
           { label: "Total værker", value: stats.total },
           { label: "Med kontrakt tilknyttet", value: stats.withContract },
@@ -1660,7 +1660,7 @@ export default function VaerksadministrationPage() {
                   </div>
                 </button>
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <MobileMetaRow label="Type">{workTypeLabel(work.type)}</MobileMetaRow>
                 <MobileMetaRow label="År">{work.year ?? "—"}</MobileMetaRow>
                 <MobileMetaRow label="Status">
@@ -1671,7 +1671,7 @@ export default function VaerksadministrationPage() {
                 <MobileMetaRow label="Broadcast">
                   {broadcaster ? (
                     broadcasterLogo ? (
-                      <span className="inline-flex h-6 w-14 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster}>
+                      <span className="inline-flex h-6 w-14 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
                       </span>
@@ -1769,7 +1769,7 @@ export default function VaerksadministrationPage() {
                     {broadcaster ? (
                       broadcasterLogo ? (
                         <div className="flex items-center">
-                          <span className="inline-flex h-6 w-14 items-center rounded border border-gray-200 bg-white px-1.5 py-0.5" title={broadcaster}>
+                          <span className="inline-flex h-6 w-14 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={broadcasterLogo} alt={`${broadcaster} logo`} className="max-h-4 max-w-full object-contain" loading="lazy" />
                           </span>
@@ -2635,7 +2635,7 @@ export default function VaerksadministrationPage() {
                 </div>
                 <div className="max-h-52 space-y-2 overflow-auto">
                   {selectedContracts.map(({ work, contract }) => (
-                    <div key={`${work.id}-${contract.id}`} className="rounded bg-white/70 px-2 py-1">
+                    <div key={`${work.id}-${contract.id}`} className="rounded bg-background/70 px-2 py-1">
                       {work.title}: {contract.rettighedshavere?.full_name ?? "Ukendt medlem"} · {contract.type ?? "kontrakt"} · {contract.status ?? "ukendt status"}
                     </div>
                   ))}

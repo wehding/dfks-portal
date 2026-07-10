@@ -973,7 +973,7 @@ function AiProviderPicker({ useCase, title, description }: { useCase: AiUseCase;
                 <h3 className="text-sm font-medium">{title}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                     <Label className="text-xs text-muted-foreground">Udbyder</Label>
                     <Select value={config.provider} onValueChange={v => handleProviderChange(v as AiProvider)}>

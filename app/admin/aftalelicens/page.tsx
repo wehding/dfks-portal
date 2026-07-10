@@ -570,7 +570,7 @@ export default function AftalelicensPage() {
             />
 
             {/* Stats */}
-            <div className="grid gap-4 sm:grid-cols-4">
+            <div className="hidden gap-4 sm:grid sm:grid-cols-4">
                 <div className="rounded-lg border p-4">
                     <p className="text-sm text-muted-foreground">Batches i alt</p>
                     <p className="text-3xl font-semibold mt-1">{batches.length}</p>

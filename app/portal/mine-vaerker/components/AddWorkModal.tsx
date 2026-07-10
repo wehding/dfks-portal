@@ -660,7 +660,7 @@ export function AddWorkModal({
 
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
           <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
@@ -674,16 +674,16 @@ export function AddWorkModal({
       </div>
 
       {episodesLoading && (
-        <div className="flex items-center gap-2 text-sm text-gray-500">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           {locale === "da" ? "Henter afsnit…" : "Loading episodes…"}
         </div>
       )}
 
       {!episodesLoading && detectedEpisodeCount !== null && (
-        <div className="rounded-lg border border-gray-200 p-4 bg-white/50">
+        <div className="rounded-lg border bg-muted/30 p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-            <Label className="text-sm font-semibold text-gray-900">
+            <Label className="text-sm font-semibold text-foreground">
               {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
             </Label>
             <div className="grid grid-cols-2 gap-2 sm:flex">
@@ -716,8 +716,8 @@ export function AddWorkModal({
                   key={epNum}
                   className={`flex min-h-12 items-start gap-2 border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
                     isChecked
-                      ? "border-gray-900 bg-gray-900 font-semibold text-white"
-                      : "border-gray-200 bg-white hover:bg-gray-50 text-gray-600"
+                      ? "border-primary bg-primary font-semibold text-primary-foreground"
+                      : "border-border bg-background hover:bg-muted text-muted-foreground"
                   }`}
                 >
                   <input
@@ -748,8 +748,8 @@ export function AddWorkModal({
   return (
     <Modal onClose={onClose} maxWidth="max-w-2xl">
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-semibold text-gray-900">{t("works.addWork")}</h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+        <h2 className="text-lg font-semibold text-foreground">{t("works.addWork")}</h2>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -789,7 +789,7 @@ export function AddWorkModal({
       </div>
 
       <div className="mb-4 space-y-1.5">
-        <Label className="text-sm font-medium text-gray-500">{t("works.yourRole")}</Label>
+        <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
         <select value={addRole} onChange={e => setAddRole(e.target.value)} className={selectCls}>
           {ROLES.map(r => (
             <option key={r} value={r}>
@@ -800,18 +800,18 @@ export function AddWorkModal({
       </div>
 
       {manualMode && (
-        <div className="mb-4 rounded-lg border border-gray-200 p-4">
-          <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.manualWorkData")}</p>
+        <div className="mb-4 rounded-lg border p-4">
+          <p className="mb-3 text-sm font-semibold text-foreground">{t("works.manualWorkData")}</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.titleField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.titleField")}</Label>
               <Input
                 value={manualWork.title}
                 onChange={e => setManualWork({ ...manualWork, title: e.target.value })}
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.typeField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.typeField")}</Label>
               <select
                 value={manualWork.type}
                 onChange={e => setManualWork({ ...manualWork, type: e.target.value })}
@@ -825,7 +825,7 @@ export function AddWorkModal({
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.yearField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.yearField")}</Label>
               <Input
                 value={manualWork.year}
                 onChange={e => setManualWork({ ...manualWork, year: e.target.value })}
@@ -833,7 +833,7 @@ export function AddWorkModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.durationField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.durationField")}</Label>
               <Input
                 value={manualWork.duration_minutes}
                 onChange={e => setManualWork({ ...manualWork, duration_minutes: e.target.value })}
@@ -841,7 +841,7 @@ export function AddWorkModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.episodesField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
               <Input
                 value={manualWork.episode_count}
                 onChange={e => setManualWork({ ...manualWork, episode_count: e.target.value })}
@@ -849,24 +849,24 @@ export function AddWorkModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.genreField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.genreField")}</Label>
               <Input
                 value={manualWork.genre}
                 onChange={e => setManualWork({ ...manualWork, genre: e.target.value })}
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">Instruktør</Label>
+              <Label className="text-sm font-medium text-muted-foreground">Instruktør</Label>
               <Input
                 value={manualWork.director}
                 onChange={e => setManualWork({ ...manualWork, director: e.target.value })}
               />
             </div>
           </div>
-          <p className="mt-3 text-xs text-gray-500">{t("works.posterHint")}</p>
+          <p className="mt-3 text-xs text-muted-foreground">{t("works.posterHint")}</p>
           {showSeriesFields && seriesEpisodePicker}
           <div className="mt-4 space-y-1.5">
-            <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
+            <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
             <Textarea
               value={addComment}
               onChange={e => setAddComment(e.target.value)}
@@ -879,7 +879,7 @@ export function AddWorkModal({
 
       {!manualMode && unifiedResults.length > 0 && (
         <div className="mb-4">
-          <p className="text-xs font-medium text-gray-500 mb-2">
+          <p className="text-xs font-medium text-muted-foreground mb-2">
             {locale === "da" ? "Søgeresultater" : "Search results"} ({unifiedResults.length})
           </p>
           <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
@@ -890,7 +890,7 @@ export function AddWorkModal({
                   <button
                     onClick={() => pickUnifiedResult(item)}
                     className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-3 items-start w-full ${
-                      sel ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:bg-gray-50"
+                      sel ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
                     }`}
                   >
                     {item.poster_url && (
@@ -899,7 +899,7 @@ export function AddWorkModal({
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-gray-900 truncate">{item.title}</p>
+                        <p className="font-semibold text-foreground truncate">{item.title}</p>
                         <div className="flex gap-1">
                           {item.sources.map(src => (
                             <span
@@ -917,16 +917,16 @@ export function AddWorkModal({
                           ))}
                         </div>
                       </div>
-                      <p className="text-xs text-gray-500 mt-0.5">
+                      <p className="text-xs text-muted-foreground mt-0.5">
                         {item.year ?? "-"} · {typeLabel(item.type, locale)} {item.director ? `· Instruktør: ${item.director}` : ""}
                       </p>
                       {item.description && (
-                        <p className="mt-1 text-xs text-gray-500 line-clamp-2">{item.description}</p>
+                        <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{item.description}</p>
                       )}
                     </div>
                   </button>
                   {sel && detailsLoading && (
-                    <div className="flex items-center justify-center p-3 text-sm text-gray-500 gap-2">
+                    <div className="flex items-center justify-center p-3 text-sm text-muted-foreground gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       {locale === "da" ? "Indlæser detaljer…" : "Loading details…"}
                     </div>
@@ -940,9 +940,9 @@ export function AddWorkModal({
       )}
 
       {(pickedUnifiedResult || manualMode) && (
-        <div className="space-y-4 border-t border-gray-100 pt-4">
-          <div className="rounded-lg border border-gray-200 p-4">
-            <p className="mb-3 text-sm font-semibold text-gray-900">{t("works.coEditors")}</p>
+        <div className="space-y-4 border-t pt-4">
+          <div className="rounded-lg border p-4">
+            <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
             <div className="space-y-2">
               {addCoEditors.map(editor => (
                 <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
@@ -993,18 +993,18 @@ export function AddWorkModal({
               {t("works.addCoEditor")}
             </Button>
             {addCoEditors.some(editor => editor.locked) && (
-              <p className="mt-2 text-xs text-gray-500">{t("works.lockedCoEditorsHint")}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{t("works.lockedCoEditorsHint")}</p>
             )}
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               {showSeriesFields && selectedEpisodeLabel
                 ? t("works.chosen")
                 : manualMode
                 ? t("works.manualWork")
                 : t("works.chosen")}
               :{" "}
-              <strong className="text-gray-900">
+              <strong className="text-foreground">
                 {chosenSummary}
               </strong>
             </p>

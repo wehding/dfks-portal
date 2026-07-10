@@ -693,7 +693,7 @@ export default function StreamingDetailPage() {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="hidden grid-cols-3 gap-4 sm:grid">
                 <div className="rounded-lg border bg-card p-4">
                     <p className="text-sm text-muted-foreground">Modtaget i alt</p>
                     <p className="mt-1 text-xl font-semibold tabular-nums">{fmt(totalReceived + alTotal)}</p>

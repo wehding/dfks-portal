@@ -168,7 +168,7 @@ export function DfiImportWizard({
   return (
     <Modal onClose={onClose} maxWidth="max-w-lg">
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-semibold text-gray-900">{t("works.importFromDfi")}</h2>
+        <h2 className="text-lg font-semibold text-foreground">{t("works.importFromDfi")}</h2>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
           <X className="h-5 w-5" />
         </button>
@@ -209,10 +209,10 @@ export function DfiImportWizard({
           ) : (
             <>
               <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-muted-foreground">
                   <p>Fandt {wizardCredits.length} nye titler. Vælg dem, du vil importere.</p>
                   {wizardSkippedExistingCount > 0 && (
-                    <p className="mt-1 text-xs text-gray-400">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       {wizardSkippedExistingCount} titel{wizardSkippedExistingCount === 1 ? "" : "r"} var allerede på din liste og blev sprunget over.
                     </p>
                   )}
@@ -227,12 +227,12 @@ export function DfiImportWizard({
                     setWizardSelected(s);
                     setWizardValidationError(null);
                   }}
-                  className="w-full text-xs px-2.5 py-1 rounded-md border border-gray-300 hover:bg-gray-50 text-gray-600 sm:w-auto"
+                  className="w-full text-xs px-2.5 py-1 rounded-md border hover:bg-muted text-muted-foreground sm:w-auto"
                 >
                   {Object.values(wizardSelected).every(v => v) ? t("works.deselectAll") : t("works.selectAll")}
                 </button>
               </div>
-              <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
+              <div className="max-h-72 overflow-y-auto rounded-lg border divide-y">
                 {wizardCredits.map((c, i) => {
                   const isSeries = isSeriesCredit(c);
                   const episodeCount = episodeCountForCredit(c);
@@ -241,7 +241,7 @@ export function DfiImportWizard({
                     <div
                       key={`${c.id}-${i}`}
                       className={`px-4 py-3 transition-colors ${
-                        wizardSelected[c.id] ? "bg-gray-50" : "hover:bg-gray-50"
+                        wizardSelected[c.id] ? "bg-muted/60" : "hover:bg-muted/50"
                       }`}
                     >
                       <label className="flex cursor-pointer items-start gap-3">
@@ -252,30 +252,30 @@ export function DfiImportWizard({
                             setWizardSelected(prev => ({ ...prev, [c.id]: e.target.checked }));
                             setWizardValidationError(null);
                           }}
-                          className="mt-0.5 w-4 h-4 accent-gray-900"
+                          className="mt-0.5 w-4 h-4 accent-primary"
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-900">
+                          <p className="text-sm font-medium text-foreground">
                             {c.title} {c.year ? `(${c.year})` : ""}
                           </p>
-                          <p className="text-xs text-gray-500 mt-0.5">
+                          <p className="text-xs text-muted-foreground mt-0.5">
                             <span className="font-medium">{c.role}</span> · {c.category} · {c.source.toUpperCase()}
                             {c.imdb_id ? ` · IMDb ${c.imdb_id}` : ""}
                           </p>
                         </div>
                       </label>
                       {isSeries && wizardSelected[c.id] && (
-                        <div className="mt-3 ml-7 rounded-md border border-gray-200 bg-white p-3">
+                        <div className="mt-3 ml-7 rounded-md border bg-background p-3">
                           <button
                             type="button"
-                            className="text-sm font-medium text-gray-900"
+                            className="text-sm font-medium text-foreground"
                             onClick={() => setExpandedSeries(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
                           >
                             {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
                           </button>
                           {expandedSeries[c.id] && (
                             <div className="mt-3 space-y-3">
-                              <label className="flex items-center gap-2 text-xs text-gray-500">
+                              <label className="flex items-center gap-2 text-xs text-muted-foreground">
                                 Sæson
                                 <Input
                                   type="number"
@@ -285,7 +285,7 @@ export function DfiImportWizard({
                                   className="h-8 w-20"
                                 />
                               </label>
-                              <div className="sticky top-0 z-10 grid grid-cols-2 gap-2 bg-white py-1 sm:flex">
+                              <div className="sticky top-0 z-10 grid grid-cols-2 gap-2 bg-background py-1 sm:flex">
                                 <Button
                                   type="button"
                                   size="sm"
@@ -313,7 +313,7 @@ export function DfiImportWizard({
                                       key={episodeNumber}
                                       type="button"
                                       className={`rounded-md border px-2 py-2 text-left text-xs ${
-                                        checked ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                                        checked ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"
                                       }`}
                                       onClick={() => toggleEpisode(c, episodeNumber)}
                                     >

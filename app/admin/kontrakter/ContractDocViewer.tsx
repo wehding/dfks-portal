@@ -49,7 +49,7 @@ export function ContractDocViewer({ url, filename, highlights, activeHighlight }
         if (loading) {
             return <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter dokument…</div>;
         }
-        return <div className="h-full overflow-auto whitespace-pre-wrap bg-white p-4 text-sm">{docxText ?? "Kunne ikke vise dokumentet."}</div>;
+        return <div className="h-full overflow-auto whitespace-pre-wrap bg-background p-4 text-sm text-foreground">{docxText ?? "Kunne ikke vise dokumentet."}</div>;
     }
     // Fallback: lad browseren forsøge (PDF/billeder renderes, andet downloades).
     return <iframe src={url} className="h-full w-full" title="Kontrakt" />;
