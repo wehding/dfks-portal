@@ -21,7 +21,7 @@ const WORK_TYPES = [
 ];
 
 const selectCls =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400";
+  "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
 
 interface CoEditorDraft {
   id: string;
@@ -300,7 +300,13 @@ export function EditWorkModal({
 
     // "Gem" sender også en åben værks-rettelse med — så indtastede felter
     // ikke tabes fordi brugeren trykkede "Gem" i stedet for "Send rettelse".
-    const wantsCorrection = showWorkCorrection && !!workCorrection;
+    const selectedEpisodeNumbers = Object.entries(selectedEpisodes)
+      .filter(([, checked]) => checked)
+      .map(([num]) => parseInt(num, 10))
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const wantsEpisodeUpdate = selectedEpisodeNumbers.length > 0 && !!workCorrection && isSeriesType(workCorrection.type);
+    const wantsCorrection = (showWorkCorrection || wantsEpisodeUpdate) && !!workCorrection;
     const willSubmit = coEditorChanges.length > 0 || wantsCorrection;
 
     if (willSubmit && !workCorrectionComment.trim()) {
@@ -352,6 +358,7 @@ export function EditWorkModal({
           data,
           comment: workCorrectionComment,
           coEditors: coEditorChanges,
+          myEpisodes: selectedEpisodeNumbers,
         });
       }
 
@@ -369,6 +376,14 @@ export function EditWorkModal({
   const coEditorChanges = editCoEditors.filter(
     editor => !editor.locked || editor.action === "remove" || editor.action === "change"
   );
+  const directSeriesEpisodeCount = workCorrection && isSeriesType(workCorrection.type)
+    ? parseInt(workCorrection.episode_count || "0", 10) || 0
+    : 0;
+  const directSelectedEpisodeNumbers = Object.entries(selectedEpisodes)
+    .filter(([, checked]) => checked)
+    .map(([num]) => parseInt(num, 10))
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b);
 
   return (
     <Modal onClose={onClose} maxWidth="max-w-2xl">
@@ -410,6 +425,77 @@ export function EditWorkModal({
           ))}
         </select>
       </div>
+
+      {directSeriesEpisodeCount > 0 && (
+        <div className="mb-6 rounded-lg border border-gray-200 p-4 dark:border-border">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-900 dark:text-foreground">
+                {locale === "da" ? "Dine afsnit" : "Your episodes"}
+              </p>
+              <p className="mt-1 text-xs text-gray-500 dark:text-muted-foreground">
+                {locale === "da"
+                  ? "Vælg de afsnit, du har klippet. Valget sendes til admin, når du gemmer."
+                  : "Choose the episodes you edited. The selection is sent to admin when you save."}
+              </p>
+            </div>
+            {directSelectedEpisodeNumbers.length > 0 && (
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">
+                {directSelectedEpisodeNumbers.length} valgt
+              </span>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200"
+              onClick={() => {
+                const all: Record<number, boolean> = {};
+                for (let i = 1; i <= directSeriesEpisodeCount; i++) all[i] = true;
+                setSelectedEpisodes(all);
+              }}
+            >
+              Vælg alle
+            </button>
+            <button
+              type="button"
+              className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-muted-foreground dark:hover:text-foreground"
+              onClick={() => setSelectedEpisodes({})}
+            >
+              Fravælg alle
+            </button>
+          </div>
+          <div className="mt-3 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-md border border-gray-200 bg-white p-2 sm:grid-cols-4 dark:border-border dark:bg-muted/20">
+            {Array.from({ length: directSeriesEpisodeCount }, (_, idx) => {
+              const epNum = idx + 1;
+              const isChecked = selectedEpisodes[epNum] || false;
+              return (
+                <label
+                  key={epNum}
+                  className={`flex cursor-pointer select-none items-center gap-2 rounded border p-2 text-xs transition-colors ${
+                    isChecked
+                      ? "border-blue-500 bg-blue-50/80 text-blue-900 dark:bg-blue-500/15 dark:text-blue-100"
+                      : "border-gray-200 text-gray-700 hover:bg-gray-50 dark:border-border dark:text-muted-foreground dark:hover:bg-muted/40"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={(e) =>
+                      setSelectedEpisodes((prev) => ({
+                        ...prev,
+                        [epNum]: e.target.checked,
+                      }))
+                    }
+                    className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>Afsnit {epNum}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
       <div className="rounded-lg border border-gray-200 p-4 mb-6">
@@ -539,7 +625,7 @@ export function EditWorkModal({
       </div>
 
       {/* BEMÆRKNING VED MEDKLIPPER-ÆNDRINGER ELLER MANUEL RETTELSE */}
-      {(coEditorChanges.length > 0 || showWorkCorrection) && (
+      {(coEditorChanges.length > 0 || showWorkCorrection || directSelectedEpisodeNumbers.length > 0) && (
         <div className="space-y-1.5 mb-6">
           <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
           <Textarea

@@ -42,6 +42,7 @@ import {
   updateAdminWorkData,
 } from "@/app/actions/work-management";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
+import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
@@ -684,11 +685,14 @@ export default function VaerksadministrationPage() {
   const [addQuery, setAddQuery] = useState("");
   const [addForm, setAddForm] = useState<AddWorkForm>(defaultAddForm);
   const [addSource, setAddSource] = useState<"manual" | "local" | "dfi" | "tmdb">("manual");
-  const [localResults, setLocalResults] = useState<SearchResult[]>([]);
-  const [dfiResults, setDfiResults] = useState<SearchResult[]>([]);
-  const [tmdbResults, setTmdbResults] = useState<SearchResult[]>([]);
+  const [addForceExternalSearch, setAddForceExternalSearch] = useState(false);
+  const [unifiedAddResults, setUnifiedAddResults] = useState<UnifiedSearchWorkResult[]>([]);
+  const [pickedUnifiedAddResult, setPickedUnifiedAddResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [pickedResult, setPickedResult] = useState<SearchResult | null>(null);
   const [pickedSource, setPickedSource] = useState<"local" | "dfi" | "tmdb" | null>(null);
+  const [addSeasonNumber, setAddSeasonNumber] = useState("1");
+  const [addEpisodeOptions, setAddEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
+  const [addSelectedEpisodes, setAddSelectedEpisodes] = useState<number[]>([]);
   const [isSearchingAdd, setIsSearchingAdd] = useState(false);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
   const [newAssignment, setNewAssignment] = useState<AssignmentDraft>({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
@@ -1233,45 +1237,17 @@ export default function VaerksadministrationPage() {
   const handleAddSearch = async () => {
     if (!addQuery.trim()) return;
     setIsSearchingAdd(true);
-    setLocalResults([]);
-    setDfiResults([]);
-    setTmdbResults([]);
+    setUnifiedAddResults([]);
+    setPickedUnifiedAddResult(null);
     setPickedResult(null);
     setPickedSource(null);
-    const normalizedQuery = addQuery.trim().toLowerCase();
-    const localMatches = works
-      .filter(work =>
-        work.title?.toLowerCase().includes(normalizedQuery) ||
-        String(work.year ?? "").includes(normalizedQuery) ||
-        work.dfi_id?.toLowerCase().includes(normalizedQuery) ||
-        String(work.tmdb_id ?? "").includes(normalizedQuery)
-      )
-      .slice(0, 8)
-      .map(work => ({ ...work }));
-    setLocalResults(localMatches);
-    if (localMatches.length > 0) {
-      const first = localMatches[0];
-      setPickedResult(first);
-      setPickedSource("local");
-      setAddSource("local");
-      setAddForm(form => ({
-        ...form,
-        title: textValue(first.title),
-        type: textValue(first.type) || form.type,
-        year: first.year ? String(first.year) : "",
-        duration_minutes: first.duration_minutes ? String(first.duration_minutes) : "",
-        episode_count: first.episode_count ? String(first.episode_count) : "",
-        genre: textValue(first.genre),
-      }));
-    }
+    setAddEpisodeOptions([]);
+    setAddSelectedEpisodes([]);
     try {
-      const [dfi, tmdb] = await Promise.all([
-        searchDFIFilms(addQuery).catch(() => ({ success: false, results: [] })),
-        searchTMDB(addQuery).catch(() => []),
-      ]);
-      const dfiPayload = dfi as { results?: SearchResult[] };
-      setDfiResults(newestFirst(dfiPayload.results ?? []).slice(0, 8));
-      setTmdbResults(newestFirst(Array.isArray(tmdb) ? tmdb as SearchResult[] : []).slice(0, 8));
+      const unified = await searchWorksUnified(addQuery, { preferLocalOnly: !addForceExternalSearch });
+      const results = (unified.success ? unified.results ?? [] : []).slice(0, 12);
+      setUnifiedAddResults(results);
+      if (results[0]) await pickUnifiedAddResult(results[0]);
     } finally {
       setIsSearchingAdd(false);
     }
@@ -1382,61 +1358,41 @@ export default function VaerksadministrationPage() {
     }
   };
 
-  const pickLocalResult = (result: SearchResult) => {
-    setPickedResult(result);
-    setPickedSource("local");
-    setAddSource("local");
-    setAddForm(form => ({
-      ...form,
-      title: textValue(result.title),
-      type: textValue(result.type) || form.type,
-      year: result.year ? String(result.year) : "",
-      duration_minutes: result.duration_minutes ? String(result.duration_minutes) : "",
-      episode_count: result.episode_count ? String(result.episode_count) : "",
-      genre: textValue(result.genre),
-      director: textValue(result.director),
-      alternative_titles: joinList(result.alternative_titles as string[] | null | undefined),
-      production_countries: joinList(result.production_countries as string[] | null | undefined),
-      production_companies: joinList(result.production_companies as string[] | null | undefined),
-      dfi_title: textValue(result.dfi_title),
-      dfi_danish_title: textValue(result.dfi_danish_title),
-      dfi_original_title: textValue(result.dfi_original_title),
-      dfi_category: textValue(result.dfi_category),
-      dfi_type: textValue(result.dfi_type),
-    }));
-  };
+  const pickUnifiedAddResult = async (result: UnifiedSearchWorkResult) => {
+    setPickedUnifiedAddResult(result);
+    setAddSource(result.local_id ? "local" : result.dfi_id ? "dfi" : result.tmdb_id ? "tmdb" : "manual");
+    setPickedSource(result.local_id ? "local" : result.dfi_id ? "dfi" : result.tmdb_id ? "tmdb" : null);
+    setPickedResult(result.local_id
+      ? { id: result.local_id }
+      : result.dfi_id
+        ? { Id: result.dfi_id }
+        : result.tmdb_id
+          ? { id: result.tmdb_id, media_type: result.type === "tv-serie" || result.type === "dokumentar-serie" ? "tv" : "movie" }
+          : null
+    );
 
-  const pickDfiResult = (result: SearchResult) => {
-    setPickedResult(result);
-    setPickedSource("dfi");
-    setAddSource("dfi");
-    const type = mapDfiWorkType(result.Category, result.Type);
+    const details = await resolveUnifiedSearchResultDetails(result);
+    const d = details.success ? details.details : null;
+    const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
+    const episodeCount = d?.episode_count ?? episodeOptions.length;
+    setAddSeasonNumber(result.season_hint ? String(result.season_hint) : "1");
+    setAddEpisodeOptions(
+      episodeOptions.length
+        ? episodeOptions
+        : episodeCount
+          ? Array.from({ length: episodeCount }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }))
+          : []
+    );
+    setAddSelectedEpisodes([]);
     setAddForm(form => ({
       ...form,
-      title: textValue(result.Title) || textValue(result.DanishTitle) || textValue(result.OriginalTitle),
-      type,
-      year: extractDfiPremiereYear(result) ? String(extractDfiPremiereYear(result)) : "",
-      genre: textValue(result.Genre),
-      director: dfiDirector(result),
-      alternative_titles: dfiAlternativeTitles(result).join(", "),
-      production_countries: dfiProductionCountries(result).join(", "),
-      production_companies: dfiProductionCompanies(result).join(", "),
-      ...dfiFieldValues(result),
-    }));
-  };
-
-  const pickTmdbResult = (result: SearchResult) => {
-    setPickedResult(result);
-    setPickedSource("tmdb");
-    setAddSource("tmdb");
-    const releaseDate = textValue(result.release_date);
-    const firstAirDate = textValue(result.first_air_date);
-    const year = releaseDate.substring(0, 4) || firstAirDate.substring(0, 4) || "";
-    setAddForm(form => ({
-      ...form,
-      title: textValue(result.title) || textValue(result.name),
-      type: result.media_type === "tv" ? "tv-serie" : "spillefilm",
-      year,
+      title: d?.title ?? result.title,
+      type: d?.type ?? result.type ?? form.type,
+      year: d?.year ? String(d.year) : result.year ? String(result.year) : "",
+      duration_minutes: d?.duration_minutes ? String(d.duration_minutes) : result.duration_minutes ? String(result.duration_minutes) : "",
+      episode_count: d?.episode_count ? String(d.episode_count) : "",
+      genre: d?.genre ?? result.genre ?? "",
+      director: d?.director ?? result.director ?? "",
     }));
   };
 
@@ -1512,6 +1468,8 @@ export default function VaerksadministrationPage() {
         role: addForm.role || null,
         sharePercent: nullableNumber(addForm.sharePercent),
         broadcaster: addForm.broadcaster === NO_BROADCASTER ? null : addForm.broadcaster,
+        seasonNumber: nullableNumber(addSeasonNumber),
+        selectedEpisodes: addSelectedEpisodes,
       });
       setNotice("Værket er tilføjet.");
       setAddOpen(false);
@@ -1520,9 +1478,12 @@ export default function VaerksadministrationPage() {
       setAddSource("manual");
       setPickedResult(null);
       setPickedSource(null);
-      setLocalResults([]);
-      setDfiResults([]);
-      setTmdbResults([]);
+      setPickedUnifiedAddResult(null);
+      setUnifiedAddResults([]);
+      setAddEpisodeOptions([]);
+      setAddSelectedEpisodes([]);
+      setAddSeasonNumber("1");
+      setAddForceExternalSearch(false);
       await load();
       notifyWorksUpdated();
     } catch (err: unknown) {
@@ -1533,6 +1494,12 @@ export default function VaerksadministrationPage() {
   };
 
   if (loading) return <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Henter værker...</div>;
+
+  const addRequiresEpisodeSelection =
+    Boolean(addForm.rightsHolderId) &&
+    (addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") &&
+    addEpisodeOptions.length > 0 &&
+    addSelectedEpisodes.length === 0;
 
   return (
     <div className="space-y-6">
@@ -2411,7 +2378,19 @@ export default function VaerksadministrationPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={addOpen} onOpenChange={open => { setAddOpen(open); if (!open) { setPickedResult(null); setPickedSource(null); setLocalResults([]); } }}>
+      <Dialog open={addOpen} onOpenChange={open => {
+        setAddOpen(open);
+        if (!open) {
+          setPickedResult(null);
+          setPickedSource(null);
+          setPickedUnifiedAddResult(null);
+          setUnifiedAddResults([]);
+          setAddEpisodeOptions([]);
+          setAddSelectedEpisodes([]);
+          setAddSeasonNumber("1");
+          setAddForceExternalSearch(false);
+        }
+      }}>
         <DialogContent className="max-h-[92vh] sm:max-w-5xl md:max-w-5xl lg:max-w-5xl xl:max-w-5xl overflow-y-auto">
           <DialogHeader><DialogTitle>Tilføj værk</DialogTitle></DialogHeader>
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
@@ -2430,7 +2409,16 @@ export default function VaerksadministrationPage() {
                     Søg
                   </Button>
                 </div>
-                {localResults.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={addForceExternalSearch}
+                    onChange={e => setAddForceExternalSearch(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-input"
+                  />
+                  Tving ekstern søgning
+                </label>
+                {unifiedAddResults.some(result => result.sources.includes("local")) && (
                   <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                     <div className="flex items-start gap-2">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -2441,37 +2429,46 @@ export default function VaerksadministrationPage() {
                     </div>
                   </div>
                 )}
-                {(localResults.length > 0 || dfiResults.length > 0 || tmdbResults.length > 0) && (
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <SearchColumn
-                      title={`Lokal database (${localResults.length})`}
-                      items={localResults}
-                      selected={pickedSource === "local" ? pickedResult : null}
-                      getKey={item => String(item.id)}
-                      getTitle={item => textValue(item.title) || "Ukendt"}
-                      getMeta={item => `${item.year || "-"} · ${textValue(item.type) || "-"}`}
-                      getPoster={item => posterSrc(textValue(item.poster_url))}
-                      onSelect={pickLocalResult}
-                    />
-                    <SearchColumn
-                      title={`DFI (${dfiResults.length})`}
-                      items={dfiResults}
-                      selected={pickedSource === "dfi" ? pickedResult : null}
-                      getKey={item => String(item.Id)}
-                      getTitle={item => textValue(item.Title) || textValue(item.DanishTitle) || "Ukendt"}
-                      getMeta={item => `${extractDfiPremiereYear(item) ?? "-"} · ${textValue(item.Category)}`}
-                      onSelect={pickDfiResult}
-                    />
-                    <SearchColumn
-                      title={`TMDB (${tmdbResults.length})`}
-                      items={tmdbResults}
-                      selected={pickedSource === "tmdb" ? pickedResult : null}
-                      getKey={item => String(item.id)}
-                      getTitle={item => textValue(item.title) || textValue(item.name) || "Ukendt"}
-                      getMeta={item => `${textValue(item.release_date).substring(0, 4) || textValue(item.first_air_date).substring(0, 4) || "-"} · ${item.media_type === "tv" ? "Tv-serie" : "Spillefilm"}`}
-                      getPoster={item => textValue(item.poster_path) ? `${TMDB_IMG_W185}${textValue(item.poster_path)}` : null}
-                      onSelect={pickTmdbResult}
-                    />
+                {unifiedAddResults.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="max-h-80 overflow-auto rounded-md border">
+                      {unifiedAddResults.map(result => {
+                        const selected = pickedUnifiedAddResult?.id === result.id;
+                        return (
+                          <button
+                            key={result.id}
+                            type="button"
+                            className={`flex w-full items-start gap-3 border-b p-3 text-left last:border-b-0 hover:bg-muted/60 ${selected ? "bg-muted" : ""}`}
+                            onClick={() => void pickUnifiedAddResult(result)}
+                          >
+                            {result.poster_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={result.poster_url} alt="" className="h-16 w-11 rounded object-cover" loading="lazy" />
+                            ) : (
+                              <div className="flex h-16 w-11 items-center justify-center rounded bg-muted">
+                                <Film className="h-4 w-4 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="truncate font-medium">{result.title}</p>
+                                {result.sources.map(source => (
+                                  <Badge key={source} variant={source === "local" ? "default" : "secondary"} className="uppercase">
+                                    {source}
+                                  </Badge>
+                                ))}
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {result.year ?? "-"} · {workTypeLabel(result.type)}{result.imdb_id ? ` · IMDb ${result.imdb_id}` : ""}
+                              </p>
+                              {result.description && (
+                                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{result.description}</p>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </InfoPanel>
@@ -2481,7 +2478,7 @@ export default function VaerksadministrationPage() {
                   <Button type="button" size="sm" variant={addSource === "manual" ? "default" : "outline"} onClick={() => { setAddSource("manual"); setPickedResult(null); setPickedSource(null); }}>
                     Manuel
                   </Button>
-                  <Button type="button" size="sm" variant="outline" onClick={() => { setAddForm(defaultAddForm()); setPickedResult(null); setPickedSource(null); setAddSource("manual"); }}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setAddForm(defaultAddForm()); setPickedResult(null); setPickedSource(null); setPickedUnifiedAddResult(null); setAddEpisodeOptions([]); setAddSelectedEpisodes([]); setAddSeasonNumber("1"); setAddSource("manual"); }}>
                     Ryd
                   </Button>
                 </div>
@@ -2498,6 +2495,61 @@ export default function VaerksadministrationPage() {
                   <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
                   <Field label="Afsnit"><Input value={addForm.episode_count} onChange={e => setAddForm({ ...addForm, episode_count: e.target.value })} /></Field>
+                  {(addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") && addEpisodeOptions.length > 0 && (
+                    <div className="md:col-span-2 rounded-md border p-3">
+                      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <Field label="Sæson">
+                          <Input
+                            inputMode="numeric"
+                            className="w-24"
+                            value={addSeasonNumber}
+                            onChange={e => setAddSeasonNumber(e.target.value)}
+                          />
+                        </Field>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setAddSelectedEpisodes(addEpisodeOptions.map(option => option.number))}
+                          >
+                            Vælg alle
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setAddSelectedEpisodes([])}
+                          >
+                            Fravælg alle
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="grid max-h-48 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4">
+                        {addEpisodeOptions.map(option => {
+                          const checked = addSelectedEpisodes.includes(option.number);
+                          return (
+                            <button
+                              key={option.number}
+                              type="button"
+                              className={`rounded-md border px-2 py-2 text-left text-xs ${checked ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}
+                              onClick={() => setAddSelectedEpisodes(prev =>
+                                checked
+                                  ? prev.filter(number => number !== option.number)
+                                  : [...prev, option.number].sort((a, b) => a - b)
+                              )}
+                            >
+                              <span className="font-medium">Afsnit {option.number}</span>
+                              <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{option.title}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Hvis du vælger en rettighedshaver, tilknyttes personen de valgte afsnit.
+                      </p>
+                    </div>
+                  )}
                   <Field label="Genre"><Input value={addForm.genre} onChange={e => setAddForm({ ...addForm, genre: e.target.value })} /></Field>
                   <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
@@ -2553,12 +2605,17 @@ export default function VaerksadministrationPage() {
                 <p className="text-xs text-muted-foreground">
                   Manuel oprettelse gemmer ikke poster-url. Poster hentes fra DFI eller TMDB og indtastes ikke manuelt.
                 </p>
+                {addRequiresEpisodeSelection && (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Vælg mindst ét afsnit, når du tilknytter en rettighedshaver til en serie.
+                  </p>
+                )}
               </InfoPanel>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Annuller</Button>
-            <Button onClick={handleCreateWork} disabled={saving || !addForm.title.trim()}>
+            <Button onClick={handleCreateWork} disabled={saving || !addForm.title.trim() || addRequiresEpisodeSelection}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Tilføj værk
             </Button>
@@ -2705,41 +2762,6 @@ function InfoPanel({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-function DiffPanel({
-  title,
-  rows,
-  emptyText,
-}: {
-  title: string;
-  rows: { key: string; oldValue: unknown; newValue: unknown }[];
-  emptyText: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium">{title}</p>
-      {rows.length === 0 ? (
-        <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>
-      ) : (
-        <div className="space-y-2">
-          {rows.map(row => (
-            <div key={row.key} className="grid gap-2 rounded-md border px-3 py-2 text-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="font-medium">{FIELD_LABELS[row.key] ?? row.key}</div>
-              <div>
-                <div className="text-xs text-muted-foreground">Gammel værdi</div>
-                <div className="break-words">{formatDiffValue(row.oldValue)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Ny værdi</div>
-                <div className="break-words font-medium text-foreground">{formatDiffValue(row.newValue)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SearchColumn({
   title,
   items,
@@ -2788,6 +2810,41 @@ function SearchColumn({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function DiffPanel({
+  title,
+  rows,
+  emptyText,
+}: {
+  title: string;
+  rows: { key: string; oldValue: unknown; newValue: unknown }[];
+  emptyText: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{title}</p>
+      {rows.length === 0 ? (
+        <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(row => (
+            <div key={row.key} className="grid gap-2 rounded-md border px-3 py-2 text-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="font-medium">{FIELD_LABELS[row.key] ?? row.key}</div>
+              <div>
+                <div className="text-xs text-muted-foreground">Gammel værdi</div>
+                <div className="break-words">{formatDiffValue(row.oldValue)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">Ny værdi</div>
+                <div className="break-words font-medium text-foreground">{formatDiffValue(row.newValue)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

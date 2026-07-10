@@ -24,7 +24,7 @@ const WORK_TYPES = [
 ];
 
 const selectCls =
-  "w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-400";
+  "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
 
 interface CoEditorDraft {
   id: string;
@@ -502,6 +502,7 @@ export function AddWorkModal({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
+    setAddSeason(result.season_hint ? String(result.season_hint) : "");
     setDetailsLoading(true);
 
     try {
@@ -581,7 +582,7 @@ export function AddWorkModal({
             rightsHolderId,
             workId: u.local_id,
             role: addRole,
-            comment: addComment,
+            comment: manualMode ? addComment : "",
             coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
             seasonNumber: selectedSeasonNumber,
             episodeNumber: numberOrNull(addEpisode),
@@ -603,7 +604,7 @@ export function AddWorkModal({
           const res = await addWorkForMemberWithApproval({
             rightsHolderId,
             role: addRole,
-            comment: addComment,
+            comment: manualMode ? addComment : "",
             source: u.sources.includes("dfi") ? "dfi" : "tmdb",
             overrideLocalMatch: false,
             coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
@@ -685,12 +686,12 @@ export function AddWorkModal({
             <Label className="text-sm font-semibold text-gray-900">
               {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
             </Label>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex">
               <Button
                 type="button"
                 variant="outline"
-                size="xs"
-                className="h-7 text-xs px-2"
+                size="sm"
+                className="h-8 px-2 text-xs"
                 onClick={() => setSelectedEpisodes(episodeOptions.length ? episodeOptions.map(option => option.number) : Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
               >
                 {locale === "da" ? "Vælg alle" : "Select all"}
@@ -698,8 +699,8 @@ export function AddWorkModal({
               <Button
                 type="button"
                 variant="outline"
-                size="xs"
-                className="h-7 text-xs px-2"
+                size="sm"
+                className="h-8 px-2 text-xs"
                 onClick={() => setSelectedEpisodes([])}
               >
                 {locale === "da" ? "Fravælg alle" : "Deselect all"}
@@ -864,6 +865,14 @@ export function AddWorkModal({
           </div>
           <p className="mt-3 text-xs text-gray-500">{t("works.posterHint")}</p>
           {showSeriesFields && seriesEpisodePicker}
+          <div className="mt-4 space-y-1.5">
+            <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
+            <Textarea
+              value={addComment}
+              onChange={e => setAddComment(e.target.value)}
+              placeholder={t("works.commentPlaceholder")}
+            />
+          </div>
         </div>
       )}
 
@@ -986,14 +995,6 @@ export function AddWorkModal({
             {addCoEditors.some(editor => editor.locked) && (
               <p className="mt-2 text-xs text-gray-500">{t("works.lockedCoEditorsHint")}</p>
             )}
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
-            <Textarea
-              value={addComment}
-              onChange={e => setAddComment(e.target.value)}
-              placeholder={t("works.commentPlaceholder")}
-            />
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-gray-500">

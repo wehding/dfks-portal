@@ -111,6 +111,15 @@ export default function OnboardingClient({
     });
   };
 
+  const revealCreditsProgressively = async (credits: OnboardingCredit[]) => {
+    setDfiCredits([]);
+    const delay = credits.length > 25 ? 25 : 65;
+    for (let index = 0; index < credits.length; index += 1) {
+      setDfiCredits(credits.slice(0, index + 1));
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  };
+
   const handleComplete = async () => {
     setIsSaving(true);
     const payload = new FormData();
@@ -139,10 +148,10 @@ export default function OnboardingClient({
       if (searchResult.success && searchResult.credits?.length > 0) {
         setDfiPersonId(searchResult.dfiPersonId);
         setTmdbPersonId(searchResult.tmdbPersonId);
-        setDfiCredits(searchResult.credits);
         const sel: Record<string, boolean> = {};
         searchResult.credits.forEach((c) => { sel[c.id] = true; });
         setSelectedDfiCredits(sel);
+        await revealCreditsProgressively(searchResult.credits);
       } else {
         setDfiError(`Ingen film fundet for "${dfiSearchQuery}" i DFI eller TMDb.`);
       }
@@ -173,10 +182,10 @@ export default function OnboardingClient({
         if (searchResult.success && searchResult.credits?.length > 0) {
           setDfiPersonId(searchResult.dfiPersonId);
           setTmdbPersonId(searchResult.tmdbPersonId);
-          setDfiCredits(searchResult.credits);
           const sel: Record<string, boolean> = {};
           searchResult.credits.forEach((c) => { sel[c.id] = true; });
           setSelectedDfiCredits(sel);
+          await revealCreditsProgressively(searchResult.credits);
         }
       } catch {
         setDfiError("Kunne ikke kontakte DFI Filmdatabasen.");
@@ -466,16 +475,19 @@ export default function OnboardingClient({
                 </div>
               )}
 
-              {isSearchingDfi ? (
+              {isSearchingDfi && dfiCredits.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>
                   <Loader2 size={36} style={{ animation: "spin 1s linear infinite", color: "var(--primary)" }} />
-                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i DFI og TMDb...</div>
+                  <div style={{ color: "var(--on-surface-variant)", fontSize: "14px" }}>Søger i lokale data, DFI, TMDb og Wikidata...</div>
                 </div>
               ) : dfiCredits.length > 0 ? (
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                    <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)" }}>
-                      Fundet {dfiCredits.length} titler
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 500, color: "var(--on-surface-variant)" }}>
+                      {isSearchingDfi && <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />}
+                      <span>
+                        {isSearchingDfi ? `Finder titler... ${dfiCredits.length} fundet` : `Fundet ${dfiCredits.length} titler`}
+                      </span>
                     </div>
                     <button
                       onClick={() => {

@@ -1314,6 +1314,7 @@ function AdminKontrakterContent() {
         if (activeRh) list = list.filter(c => c.rights_holder_id === activeRh.id)
         if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
         else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
+        else if (filterStatus === "missingWork") list = list.filter(c => !c.work_id)
         else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
         else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
         if (filterType !== "all") list = list.filter(c => c.type === filterType)
@@ -1468,6 +1469,7 @@ function AdminKontrakterContent() {
                         <SelectItem value="kladde">Kladde</SelectItem>
                         <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
                         <SelectItem value="missingOwner">Mangler ejer</SelectItem>
+                        <SelectItem value="missingWork">Mangler værk</SelectItem>
                         <SelectItem value="valideret">Valideret</SelectItem>
                         <SelectItem value="arkiveret">Arkiveret</SelectItem>
                         <SelectItem value="beskeder">Beskeder</SelectItem>
@@ -2001,7 +2003,7 @@ function AdminKontrakterContent() {
                                     </div>
                                 </div>
                                 <div className="space-y-1">
-                                    <div className="flex items-center justify-between">
+                                    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                                         <Label className="text-xs">Producent (juridisk)</Label>
                                         {(() => {
                                             const validation = editContract?.validation_data
@@ -2012,7 +2014,7 @@ function AdminKontrakterContent() {
                                                     type="button"
                                                     variant="link"
                                                     size="xs"
-                                                    className="h-auto p-0 text-[10px] text-primary hover:underline"
+                                                    className="h-auto max-w-full justify-start whitespace-normal p-0 text-left text-[10px] leading-snug text-primary hover:underline"
                                                     disabled={creatingEmployer}
                                                     onClick={async () => {
                                                         const cvr = window.prompt(`Opret nyt selskab "${extractedEmployer}" i databasen.\n\nIndtast CVR-nummer (valgfrit):`, "")
@@ -2087,16 +2089,31 @@ function AdminKontrakterContent() {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="space-y-1">
+                                <div className="space-y-1 md:col-span-2">
                                     <Label className="text-xs">Status</Label>
-                                    <Select value={editForm.status} onValueChange={v => setEditForm(f => f && ({ ...f, status: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="kladde">Kladde</SelectItem>
-                                            <SelectItem value="valideret">Valideret</SelectItem>
-                                            <SelectItem value="arkiveret">Arkiveret</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                        {[
+                                            { value: "kladde", label: "Kladde" },
+                                            { value: "valideret", label: "Valideret" },
+                                            { value: "arkiveret", label: "Arkiveret" },
+                                        ].map(option => {
+                                            const active = editForm.status === option.value
+                                            return (
+                                                <button
+                                                    key={option.value}
+                                                    type="button"
+                                                    onClick={() => setEditForm(f => f && ({ ...f, status: option.value }))}
+                                                    className={`h-8 rounded-md border px-3 text-xs font-medium transition-colors ${
+                                                        active
+                                                            ? "border-primary bg-primary text-primary-foreground"
+                                                            : "border-input bg-background text-muted-foreground hover:bg-muted"
+                                                    }`}
+                                                >
+                                                    {option.label}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
                                 </div>
                                 <div className="space-y-1">
                                     <Label className="text-xs">Kontraktdato</Label>
