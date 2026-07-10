@@ -17,6 +17,7 @@ import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
+import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -112,6 +113,10 @@ function normalizeContract(contract: Contract): Contract {
     contract_attachments: contract.contract_attachments ?? [],
     contract_comments: contract.contract_comments ?? [],
   };
+}
+
+function hasWorkLink(contract: Contract) {
+  return Boolean(contract.works) || contract.status === "valideret";
 }
 
 function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
@@ -237,6 +242,7 @@ export default function MineKontrakterClient({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
+    setAddSeason(result.season_hint ? String(result.season_hint) : "");
     setDetailsLoading(true);
 
     try {
@@ -247,6 +253,8 @@ export default function MineKontrakterClient({
           const d = detRes.details;
           const options = d.episode_options || [];
           const count = d.episode_count || options.length;
+          const hintedSeason = d.season_hint ?? result.season_hint ?? null;
+          if (hintedSeason) setAddSeason(String(hintedSeason));
 
           if (count) {
             setDetectedEpisodeCount(count);
@@ -289,8 +297,8 @@ export default function MineKontrakterClient({
     );
   }).filter(c => {
     if (statusFilter === "all") return true;
-    if (statusFilter === "linked") return Boolean(c.works);
-    if (statusFilter === "missingWork") return !c.works;
+    if (statusFilter === "linked") return hasWorkLink(c);
+    if (statusFilter === "missingWork") return !hasWorkLink(c);
     return c.status === statusFilter;
   }).sort((a, b) => {
     const direction = sortDir === "asc" ? 1 : -1;
@@ -298,7 +306,7 @@ export default function MineKontrakterClient({
       const val = getValidation(contract);
       return Number(Boolean(val?.has_overenskomst_incorporation)) + Number(Boolean(val?.has_credit_clause));
     };
-    const statusValue = (contract: Contract) => !contract.works ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
+    const statusValue = (contract: Contract) => !hasWorkLink(contract) ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
     const values: Record<SortKey, [SortValue, SortValue]> = {
       title: [contractDisplayTitle(a), contractDisplayTitle(b)],
       employer: [a.employers?.name ?? "", b.employers?.name ?? ""],
@@ -574,6 +582,10 @@ export default function MineKontrakterClient({
                   <option value="valideret">Valideret</option>
                   <option value="arkiveret">Arkiveret</option>
                 </select>
+                <ResetFiltersButton
+                  active={Boolean(search || statusFilter !== "all")}
+                  onReset={() => { setSearch(""); setStatusFilter("all"); setSelectedIds([]); setPageSize(20); }}
+                />
               </>
             )}
           </div>
@@ -637,7 +649,7 @@ export default function MineKontrakterClient({
                 ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
               </div>
               <div className="space-y-1">
-                <WorkLinkBadge linked={Boolean(c.works)} />
+                <WorkLinkBadge linked={hasWorkLink(c)} />
                 {c.works && <StatusBadge status={c.status} />}
               </div>
               <div
@@ -734,7 +746,7 @@ export default function MineKontrakterClient({
               )}
 
               <StatusBadge status={selectedContract.status} />
-              <WorkLinkBadge linked={Boolean(selectedContract.works)} />
+              <WorkLinkBadge linked={hasWorkLink(selectedContract)} />
 
               {/* Metadata-rækker */}
               <div className="flex flex-col gap-2">

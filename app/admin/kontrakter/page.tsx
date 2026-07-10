@@ -37,6 +37,7 @@ import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
+import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -210,6 +211,10 @@ function isMissingOwner(contract: ContractRow) {
     return !contract.rights_holder_id
 }
 
+function hasContractWorkLink(contract: ContractRow) {
+    return Boolean(contract.work_id) || contract.status === "valideret"
+}
+
 function ContractStatusBadges({ contract, compact = false }: { contract: ContractRow; compact?: boolean }) {
     const badgeClass = compact ? "text-[10px]" : "text-xs"
     return (
@@ -231,9 +236,9 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
                     Validering anbefalet
                 </Badge>
             )}
-            {(contract.status !== "valideret" || !contract.work_id) && (
-                <Badge variant="outline" className={`w-fit font-normal ${badgeClass} ${contract.work_id ? WORK_LINK_CLASS.linked : WORK_LINK_CLASS.missing}`}>
-                    {contract.work_id ? "Værk tilknyttet" : "Mangler værk"}
+            {contract.status !== "valideret" && (
+                <Badge variant="outline" className={`w-fit font-normal ${badgeClass} ${hasContractWorkLink(contract) ? WORK_LINK_CLASS.linked : WORK_LINK_CLASS.missing}`}>
+                    {hasContractWorkLink(contract) ? "Værk tilknyttet" : "Mangler værk"}
                 </Badge>
             )}
             {isMissingOwner(contract) && (
@@ -843,7 +848,7 @@ function AdminKontrakterContent() {
 
     const handleApproveSelected = async () => {
         if (selectedIds.length === 0) return
-        const missingWork = contracts.filter(c => selectedIds.includes(c.id) && !c.work_id)
+        const missingWork = contracts.filter(c => selectedIds.includes(c.id) && !hasContractWorkLink(c))
         if (missingWork.length > 0) {
             toast.error(`${missingWork.length} kontrakt(er) kan ikke valideres, fordi de mangler værktilknytning`)
             return
@@ -1405,7 +1410,7 @@ function AdminKontrakterContent() {
         if (activeRh) list = list.filter(c => c.rights_holder_id === activeRh.id)
         if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
         else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
-        else if (filterStatus === "missingWork") list = list.filter(c => !c.work_id)
+        else if (filterStatus === "missingWork") list = list.filter(c => !hasContractWorkLink(c))
         else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
         else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
         if (filterType !== "all") list = list.filter(c => c.type === filterType)
@@ -1575,6 +1580,10 @@ function AdminKontrakterContent() {
                     </SelectContent>
                 </Select>
                 <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
+                <ResetFiltersButton
+                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
+                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20) }}
+                />
                 <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
                     Find dubletter

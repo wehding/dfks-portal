@@ -17,6 +17,7 @@ import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MINE_VAERKER_HELP } from "@/lib/portal-help";
+import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -546,6 +547,10 @@ export default function MineVaerkerClient({
               </button>
             )}
           </div>
+          <ResetFiltersButton
+            active={Boolean(search || catFilter !== "all")}
+            onReset={() => { setSearch(""); setCatFilter("all"); setSelected([]); setPageSize(20); }}
+          />
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Vis
             <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">

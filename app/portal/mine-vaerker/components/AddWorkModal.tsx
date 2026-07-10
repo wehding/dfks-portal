@@ -517,6 +517,8 @@ export function AddWorkModal({
           const d = detRes.details;
           const options = d.episode_options || [];
           const count = d.episode_count || options.length;
+          const hintedSeason = d.season_hint ?? result.season_hint ?? null;
+          if (hintedSeason) setAddSeason(String(hintedSeason));
 
           if (count) {
             setDetectedEpisodeCount(count);

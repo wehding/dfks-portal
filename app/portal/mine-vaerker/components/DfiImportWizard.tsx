@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Modal } from "./Modal";
 import { importApprovedOnboardingWorks, searchNewCreditsForCurrentMember, type OnboardingCredit } from "@/app/actions/dfi";
 import { useI18n } from "@/lib/i18n";
+import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -48,6 +49,12 @@ export function DfiImportWizard({
     return text.includes("serie") || text.includes("tv");
   };
 
+  const seasonForCredit = (credit: OnboardingCredit) => {
+    const raw = credit.raw ?? {};
+    const rawTitle = raw.title ?? raw.name ?? raw.Title ?? raw.DanishTitle ?? raw.OriginalTitle;
+    return credit.season_number ?? parseSeasonNumberFromTitle(credit.title) ?? parseSeasonNumberFromTitle(rawTitle) ?? 1;
+  };
+
   const episodeCountForCredit = (credit: OnboardingCredit) => {
     const raw = credit.raw ?? {};
     const rawCount = raw.number_of_episodes ?? raw.episode_count ?? raw.EpisodeCount;
@@ -83,10 +90,13 @@ export function DfiImportWizard({
       setWizardTmdbPersonId(res.tmdbPersonId ?? null);
       setWizardSkippedExistingCount(res.skippedAlreadyAssignedCount ?? 0);
       const sel: Record<string, boolean> = {};
+      const seasons: Record<string, number> = {};
       newCredits.forEach((c: OnboardingCredit) => {
         if (c.id) sel[c.id] = true;
+        if (c.id && isSeriesCredit(c)) seasons[c.id] = seasonForCredit(c);
       });
       setWizardSelected(sel);
+      setSeriesSeasons(seasons);
     } else {
       setWizardError(res.error ?? "Kunne ikke finde nye titler.");
     }
@@ -134,7 +144,7 @@ export function DfiImportWizard({
     const approved = wizardCredits
       .filter(c => wizardSelected[c.id])
       .map(c => isSeriesCredit(c)
-        ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
+        ? { ...c, season_number: seriesSeasons[c.id] ?? seasonForCredit(c), selected_episodes: selectedEpisodesForCredit(c) }
         : c
       );
     if (!approved.length) {
@@ -280,7 +290,7 @@ export function DfiImportWizard({
                                 <Input
                                   type="number"
                                   min="1"
-                                  value={seriesSeasons[c.id] ?? 1}
+                                  value={seriesSeasons[c.id] ?? seasonForCredit(c)}
                                   onChange={event => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
                                   className="h-8 w-20"
                                 />

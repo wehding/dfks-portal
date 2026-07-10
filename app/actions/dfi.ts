@@ -7,7 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
@@ -840,6 +840,7 @@ export async function searchOnboardingCredits(
       wikidata_id: w.wikidata_id ?? null,
       poster_url: w.poster_url ?? null,
       director: w.director ?? null,
+      season_number: w.season_number ?? parseSeasonNumberFromTitle(w.title),
       raw: w
     });
   });
@@ -861,6 +862,7 @@ export async function searchOnboardingCredits(
         source: "dfi",
         poster_url: extractDfiPosterUrl(c as DfiMetadata),
         director: extractDfiDirectors(c as DfiMetadata).join(", ") || null,
+        season_number: parseSeasonNumberFromTitle(title),
         raw: c
       });
     }
@@ -886,6 +888,7 @@ export async function searchOnboardingCredits(
         category: c.media_type === "tv" ? "TV-serie" : "Spillefilm",
         source: "tmdb",
         poster_url: c.poster_path ? `https://image.tmdb.org/t/p/w185${c.poster_path}` : null,
+        season_number: parseSeasonNumberFromTitle(title),
         raw: c
       });
     }

@@ -383,7 +383,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -1048,6 +1048,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   const results: UnifiedSearchWorkResult[] = [];
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const querySeasonHint = parseSeasonNumberFromTitle(q);
 
   // 1. Add Local works (parents only)
   localWorks.forEach(w => {
@@ -1067,7 +1068,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       tmdb_id: w.tmdb_id ? Number(w.tmdb_id) : null,
       imdb_id: w.imdb_id ?? null,
       wikidata_id: w.wikidata_id ?? null,
-      season_hint: w.season_number ?? parseSeasonNumberFromTitle(w.title),
+      season_hint: w.season_number ?? parseSeasonNumberFromTitle(w.title) ?? querySeasonHint,
       sources: ["local"],
       raw_local: w,
     });
@@ -1097,7 +1098,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     const dfiId = String(film.Id);
     const mappedType = mapDfiWorkType(film.Category, film.Type);
     const director = extractDfiDirectors(film).join(", ") || null;
-    const seasonHint = parseSeasonNumberFromTitle(title);
+    const seasonHint = parseSeasonNumberFromTitle(title) ?? querySeasonHint;
 
     const existingIndex = results.findIndex(r => {
       if (r.dfi_id && r.dfi_id === dfiId) return true;
@@ -1152,6 +1153,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       if (!match.tmdb_id) match.tmdb_id = tmdbId;
       if (!match.raw_tmdb) match.raw_tmdb = item;
       if (!match.poster_url && item.poster_path) match.poster_url = `https://image.tmdb.org/t/p/w185${item.poster_path}`;
+      if (!match.season_hint) match.season_hint = parseSeasonNumberFromTitle(title) ?? querySeasonHint;
     } else {
       results.push({
         id: `tmdb-${tmdbId}`,
@@ -1164,7 +1166,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
         genre: null,
         duration_minutes: null,
         tmdb_id: tmdbId,
-        season_hint: parseSeasonNumberFromTitle(title),
+        season_hint: parseSeasonNumberFromTitle(title) ?? querySeasonHint,
         sources: ["tmdb"],
         raw_tmdb: item,
       });
@@ -1173,6 +1175,23 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
   return { success: true, results };
+}
+
+export async function searchRightsHoldersForMember(query: string) {
+  const q = query.trim();
+  if (q.length < 2) return { success: true, results: [] };
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+  const { data, error } = await db
+    .from("rettighedshavere")
+    .select("id, full_name")
+    .eq("org_id", orgId)
+    .ilike("full_name", `%${q}%`)
+    .order("full_name")
+    .limit(8);
+  if (error) return { success: false, error: error.message, results: [] };
+  return { success: true, results: data ?? [] };
 }
 
 export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult) {
@@ -1299,6 +1318,7 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       dfi_metadata: dfiMetadata,
       episode_count: episodeCount,
       episode_options: episodeOptions,
+      season_hint: result.season_hint ?? parseSeasonNumberFromTitle(result.title),
     }
   };
 }

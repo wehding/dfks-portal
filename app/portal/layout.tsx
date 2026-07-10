@@ -49,13 +49,13 @@ import { Separator } from "@/components/ui/separator"
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: FileText,    labelKey: "nav.contracts"          },
     { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
+    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Play,        labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
     { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",          href: "/admin/streaming",          icon: Play,        labelKey: "nav.streaming"        },
-    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Layers,      labelKey: "nav.aftalelicens"     },
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "stamdata",           href: "/admin/stamdata",           icon: Database,    labelKey: "nav.masterData"       },
     { key: "gennemsigtighed",    href: "/admin/gennemsigtighed",    icon: ScrollText,  labelKey: "nav.transparency"     },
@@ -167,9 +167,9 @@ export default function PortalLayout({
             icon: Wallet,
         },
         {
-            label: "Aftalelicens",
-            href: "/portal/aftalelicens",
-            icon: Layers,
+            label: t("nav.mineVisninger"),
+            href: "/portal/mine-visninger",
+            icon: Play,
         },
         {
             label: "Kontraktgennemgang",

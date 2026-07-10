@@ -47,6 +47,7 @@ import { Separator } from "@/components/ui/separator"
 const ADMIN_NAV_ITEMS = [
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: FileText,    labelKey: "nav.contracts"        },
     { key: "vaerker",             href: "/admin/vaerker",             icon: Library,     labelKey: "nav.works"            },
+    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: Play,        labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"    },
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },
     { key: "kontraktgennemgang",  href: "/admin/kontraktgennemgang",  icon: Scale,       labelKey: "nav.contractReview"   },
@@ -59,7 +60,6 @@ const ADMIN_NAV_ITEMS = [
 const RETTIGHEDS_NAV_ITEMS = [
     { key: "udbetalinger",        href: "/admin/udbetalinger",        icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",           href: "/admin/streaming",           icon: Play,        labelKey: "nav.streaming"        },
-    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: Layers,      labelKey: "nav.aftalelicens"     },
     { key: "stamdata",            href: "/admin/stamdata",            icon: Database,    labelKey: "nav.masterData"       },
     { key: "gennemsigtighed",     href: "/admin/gennemsigtighed",     icon: ScrollText,  labelKey: "nav.transparency"     },
 ]
@@ -68,7 +68,7 @@ const USER_NAV_ITEMS = [
     { key: "mine-vaerker",        href: "/portal/mine-vaerker",       icon: Film,     labelKey: "nav.myWorks"        },
     { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",    icon: FileText, labelKey: "nav.myContracts"    },
     { key: "okonomi",             href: "/portal/okonomi",            icon: Wallet,   labelKey: "nav.economy"        },
-    { key: "portal-aftalelicens", href: "/portal/aftalelicens",       icon: Layers,   labelKey: "nav.aftalelicens"   },
+    { key: "portal-aftalelicens", href: "/portal/mine-visninger",     icon: Play,     labelKey: "nav.mineVisninger"  },
     { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
 

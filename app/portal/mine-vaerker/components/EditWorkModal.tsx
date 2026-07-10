@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
+import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 const WORK_TYPES = [
@@ -49,6 +50,10 @@ interface WorkCorrectionForm {
   genre: string;
   director: string;
   description: string;
+  dfi_id: string;
+  tmdb_id: string;
+  imdb_id: string;
+  field_sources: Record<string, string>;
 }
 
 function isSeriesType(type: string) {
@@ -86,6 +91,8 @@ type Work = {
   status: string | null;
   dfi_id: string | null;
   tmdb_id: number | string | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string> | null;
   poster_url: string | null;
   description: string | null;
   work_change_requests?: ChangeRequest[] | null;
@@ -131,6 +138,10 @@ function workToCorrectionForm(w: Work): WorkCorrectionForm {
     genre: w.genre ?? "",
     director: w.director ?? "",
     description: w.description ?? "",
+    dfi_id: w.dfi_id ?? "",
+    tmdb_id: w.tmdb_id != null ? String(w.tmdb_id) : "",
+    imdb_id: w.imdb_id ?? "",
+    field_sources: w.field_sources ?? {},
   };
 }
 
@@ -190,6 +201,9 @@ export function EditWorkModal({
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
   const [commentError, setCommentError]                 = useState(false);
   const [selectedEpisodes, setSelectedEpisodes]         = useState<Record<number, boolean>>({});
+  const [externalQuery, setExternalQuery] = useState("");
+  const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
+  const [externalLoading, setExternalLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && assignment) {
@@ -221,16 +235,52 @@ export function EditWorkModal({
       setCoEditorSuggestions(prev => ({ ...prev, [editorId]: [] }));
       return;
     }
-    const supabase = createClient();
-    const { data } = await supabase
-      .from("rettighedshavere")
-      .select("id, full_name")
-      .ilike("full_name", `%${q}%`)
-      .limit(6);
+    const result = await searchRightsHoldersForMember(q);
+    const data = result.success ? result.results : [];
     const existingIds = new Set(editCoEditors.map(editor => editor.rightsHolderId).filter(Boolean));
     const suggestions = ((data ?? []) as CoEditorSuggestion[])
       .filter(suggestion => !existingIds.has(suggestion.id));
     setCoEditorSuggestions(prev => ({ ...prev, [editorId]: suggestions }));
+  };
+
+  const handleExternalSearch = async () => {
+    if (!externalQuery.trim()) return;
+    setExternalLoading(true);
+    try {
+      const result = await searchWorksUnified(externalQuery);
+      setExternalResults((result.success ? result.results ?? [] : []).slice(0, 10));
+    } finally {
+      setExternalLoading(false);
+    }
+  };
+
+  const applyExternalResult = async (result: UnifiedSearchWorkResult) => {
+    if (!workCorrection) return;
+    setExternalLoading(true);
+    try {
+      const resolved = await resolveUnifiedSearchResultDetails(result);
+      if (!resolved.success || !resolved.details) throw new Error("Kunne ikke hente værksdata.");
+      const d = resolved.details;
+      const source = result.sources.includes("dfi") ? "dfi" : result.sources.includes("tmdb") ? "tmdb" : "manual";
+      setWorkCorrection({
+        ...workCorrection,
+        title: d.title || workCorrection.title,
+        type: d.type || workCorrection.type,
+        year: d.year != null ? String(d.year) : workCorrection.year,
+        duration_minutes: d.duration_minutes != null ? String(d.duration_minutes) : workCorrection.duration_minutes,
+        episode_count: d.episode_count != null ? String(d.episode_count) : workCorrection.episode_count,
+        genre: d.genre || workCorrection.genre,
+        director: d.director || workCorrection.director,
+        description: d.description || workCorrection.description,
+        dfi_id: d.dfi_id ? String(d.dfi_id) : workCorrection.dfi_id,
+        tmdb_id: d.tmdb_id ? String(d.tmdb_id) : workCorrection.tmdb_id,
+        imdb_id: d.imdb_id || workCorrection.imdb_id,
+        field_sources: { ...workCorrection.field_sources, title: source, type: source, year: source, duration_minutes: source, genre: source, director: source, description: source, imdb_id: d.imdb_id ? "tmdb" : source },
+      });
+      setExternalResults([]);
+    } finally {
+      setExternalLoading(false);
+    }
   };
 
   const handleSendWorkCorrection = async () => {
@@ -257,6 +307,10 @@ export function EditWorkModal({
           genre: workCorrection.genre || null,
           director: workCorrection.director || null,
           description: workCorrection.description || null,
+          dfi_id: workCorrection.dfi_id || null,
+          tmdb_id: numberOrNull(workCorrection.tmdb_id),
+          imdb_id: workCorrection.imdb_id || null,
+          field_sources: workCorrection.field_sources,
         },
         comment: workCorrectionComment,
         coEditors: editCoEditors.filter(
@@ -325,6 +379,10 @@ export function EditWorkModal({
               genre: workCorrection.genre || null,
               director: workCorrection.director || null,
               description: workCorrection.description || null,
+              dfi_id: workCorrection.dfi_id || null,
+              tmdb_id: numberOrNull(workCorrection.tmdb_id),
+              imdb_id: workCorrection.imdb_id || null,
+              field_sources: workCorrection.field_sources,
             }
           : {
               title: assignment.works.title,
@@ -336,6 +394,10 @@ export function EditWorkModal({
               genre: assignment.works.genre,
               director: assignment.works.director,
               description: assignment.works.description,
+              dfi_id: assignment.works.dfi_id,
+              tmdb_id: assignment.works.tmdb_id == null ? null : Number(assignment.works.tmdb_id),
+              imdb_id: null,
+              field_sources: {},
             };
         await submitWorkDataCorrection({
           assignmentId: assignment.id,
@@ -646,6 +708,20 @@ export function EditWorkModal({
 
         {showWorkCorrection && workCorrection && (
           <div className="mt-4 grid gap-3">
+            <div className="rounded-md border bg-muted/20 p-3">
+              <Label className="text-sm font-medium">Find og kombiner data fra DFI og TMDB</Label>
+              <div className="mt-2 flex gap-2">
+                <Input value={externalQuery} onChange={e => setExternalQuery(e.target.value)} onKeyDown={e => { if (e.key === "Enter") void handleExternalSearch(); }} placeholder="Søg efter værket…" />
+                <Button type="button" variant="outline" onClick={handleExternalSearch} disabled={externalLoading} className="gap-2">
+                  {externalLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Søg
+                </Button>
+              </div>
+              {externalResults.length > 0 && <div className="mt-2 space-y-1">
+                {externalResults.map(result => <button key={result.id} type="button" onClick={() => applyExternalResult(result)} className="flex w-full items-center justify-between rounded border px-3 py-2 text-left text-sm hover:bg-muted">
+                  <span>{result.title} · {result.year ?? "-"}</span><span className="text-xs uppercase text-muted-foreground">{result.sources.join(" + ")}</span>
+                </button>)}
+              </div>}
+            </div>
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-muted-foreground">{t("works.titleField")}</Label>
               <Input
@@ -774,6 +850,11 @@ export function EditWorkModal({
                 value={workCorrection.director}
                 onChange={e => setWorkCorrection({ ...workCorrection, director: e.target.value })}
               />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="space-y-1.5"><Label>DFI-id</Label><Input value={workCorrection.dfi_id} onChange={e => setWorkCorrection({ ...workCorrection, dfi_id: e.target.value, field_sources: { ...workCorrection.field_sources, dfi_id: "manual" } })} /></div>
+              <div className="space-y-1.5"><Label>TMDB-id</Label><Input value={workCorrection.tmdb_id} onChange={e => setWorkCorrection({ ...workCorrection, tmdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, tmdb_id: "manual" } })} /></div>
+              <div className="space-y-1.5"><Label>IMDb-id</Label><Input value={workCorrection.imdb_id} onChange={e => setWorkCorrection({ ...workCorrection, imdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, imdb_id: "manual" } })} /></div>
             </div>
             <div className="flex justify-end mt-2">
               <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">

@@ -47,6 +47,7 @@ import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSear
 import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
+import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -169,6 +170,8 @@ type WorkRow = {
   status: string;
   dfi_id: string | null;
   tmdb_id: string | number | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string> | null;
   description: string | null;
   poster_url: string | null;
   dfi_title?: string | null;
@@ -198,6 +201,8 @@ type WorkForm = {
   description: string;
   dfi_id: string;
   tmdb_id: string;
+  imdb_id: string;
+  field_sources: Record<string, string>;
   poster_url: string;
   dfi_title: string;
   dfi_danish_title: string;
@@ -538,6 +543,8 @@ function toForm(work: WorkRow): WorkForm {
     description: work.description ?? "",
     dfi_id: work.dfi_id ?? "",
     tmdb_id: work.tmdb_id?.toString() ?? "",
+    imdb_id: work.imdb_id ?? "",
+    field_sources: work.field_sources ?? {},
     poster_url: work.poster_url ?? "",
     dfi_title: work.dfi_title ?? textValue(work.dfi_metadata?.Title),
     dfi_danish_title: work.dfi_danish_title ?? textValue(work.dfi_metadata?.DanishTitle),
@@ -730,6 +737,7 @@ export default function VaerksadministrationPage() {
   const [editLookupQuery, setEditLookupQuery] = useState("");
   const [editDfiResults, setEditDfiResults] = useState<SearchResult[]>([]);
   const [editTmdbResults, setEditTmdbResults] = useState<SearchResult[]>([]);
+  const [editUnifiedResults, setEditUnifiedResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [isSearchingEdit, setIsSearchingEdit] = useState(false);
   const [masterId, setMasterId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1029,6 +1037,8 @@ export default function VaerksadministrationPage() {
           description: editForm.description || null,
           dfi_id: editForm.dfi_id || null,
           tmdb_id: nullableNumber(editForm.tmdb_id),
+          imdb_id: editForm.imdb_id || null,
+          field_sources: editForm.field_sources,
           poster_url: editForm.poster_url || null,
           dfi_title: editForm.dfi_title || null,
           dfi_danish_title: editForm.dfi_danish_title || null,
@@ -1326,18 +1336,58 @@ export default function VaerksadministrationPage() {
   const handleEditSearch = async () => {
     if (!editLookupQuery.trim()) return;
     setIsSearchingEdit(true);
-    setEditDfiResults([]);
-    setEditTmdbResults([]);
+    setEditUnifiedResults([]);
     try {
-      const [dfi, tmdb] = await Promise.all([
-        searchDFIFilms(editLookupQuery).catch(() => ({ success: false, results: [] })),
-        searchTMDB(editLookupQuery).catch(() => []),
-      ]);
-      const dfiPayload = dfi as { results?: SearchResult[] };
-      setEditDfiResults(newestFirst(dfiPayload.results ?? []).slice(0, 8));
-      setEditTmdbResults(newestFirst(Array.isArray(tmdb) ? tmdb as SearchResult[] : []).slice(0, 8));
+      const result = await searchWorksUnified(editLookupQuery);
+      setEditUnifiedResults((result.success ? result.results ?? [] : []).slice(0, 12));
     } finally {
       setIsSearchingEdit(false);
+    }
+  };
+
+  const applyUnifiedToEdit = async (result: UnifiedSearchWorkResult) => {
+    if (!editForm) return;
+    setSaving(true);
+    try {
+      const resolved = await resolveUnifiedSearchResultDetails(result);
+      if (!resolved.success || !resolved.details) throw new Error("Kunne ikke hente værksdata.");
+      const details = resolved.details;
+      const sources = result.sources.filter(source => source !== "local");
+      const primarySource = sources.includes("dfi") ? "dfi" : sources.includes("tmdb") ? "tmdb" : "manual";
+      const nextValues: Partial<WorkForm> = {
+        title: details.title || editForm.title,
+        type: details.type || editForm.type,
+        year: details.year != null ? String(details.year) : editForm.year,
+        duration_minutes: details.duration_minutes != null ? String(details.duration_minutes) : editForm.duration_minutes,
+        episode_count: details.episode_count != null ? String(details.episode_count) : editForm.episode_count,
+        genre: details.genre || editForm.genre,
+        director: details.director || editForm.director,
+        description: details.description || editForm.description,
+        dfi_id: details.dfi_id ? String(details.dfi_id) : editForm.dfi_id,
+        tmdb_id: details.tmdb_id ? String(details.tmdb_id) : editForm.tmdb_id,
+        imdb_id: details.imdb_id || editForm.imdb_id,
+        poster_url: details.poster_url || editForm.poster_url,
+        dfi_metadata: details.dfi_metadata || editForm.dfi_metadata,
+        field_sources: {
+          ...editForm.field_sources,
+          title: primarySource,
+          type: primarySource,
+          year: primarySource,
+          duration_minutes: details.duration_minutes != null ? primarySource : editForm.field_sources.duration_minutes,
+          genre: details.genre ? primarySource : editForm.field_sources.genre,
+          director: details.director ? primarySource : editForm.field_sources.director,
+          description: details.description ? primarySource : editForm.field_sources.description,
+          poster_url: result.sources.includes("tmdb") ? "tmdb" : primarySource,
+          imdb_id: details.imdb_id ? "tmdb" : editForm.field_sources.imdb_id,
+        },
+      };
+      setImportPreview({ source: primarySource === "tmdb" ? "TMDB" : "DFI", rows: importDiffRows(editForm, nextValues) });
+      setEditForm({ ...editForm, ...nextValues });
+      setNotice("Kombinerede værksdata er hentet. Gennemgå ændringerne og gem værket.");
+    } catch (err: unknown) {
+      setNotice(errorMessage(err, "Kunne ikke hente kombinerede værksdata."));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1426,7 +1476,8 @@ export default function VaerksadministrationPage() {
     const d = details.success ? details.details : null;
     const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
     const episodeCount = d?.episode_count ?? episodeOptions.length;
-    setAddSeasonNumber(result.season_hint ? String(result.season_hint) : "1");
+    const hintedSeason = d?.season_hint ?? result.season_hint ?? null;
+    setAddSeasonNumber(hintedSeason ? String(hintedSeason) : "1");
     setAddEpisodeOptions(
       episodeOptions.length
         ? episodeOptions
@@ -1634,6 +1685,10 @@ export default function VaerksadministrationPage() {
           </SelectContent>
         </Select>
         <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
+        <ResetFiltersButton
+          active={Boolean(search || filterStatus !== "all" || activeRh)}
+          onReset={() => { setSearch(""); setFilterStatus("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
+        />
         <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
           Find dubletter
@@ -2007,7 +2062,7 @@ export default function VaerksadministrationPage() {
                     ) : null}
                     <div className="grid flex-1 gap-4 sm:grid-cols-2">
                       <DiffField diff={activeDiffMap.title}>
-                        <Field label="Titel"><Input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value })} /></Field>
+                        <Field label="Titel" source={editForm.field_sources.title}><Input value={editForm.title} onChange={e => setEditForm({ ...editForm, title: e.target.value, field_sources: { ...editForm.field_sources, title: "manual" } })} /></Field>
                       </DiffField>
                       <DiffField diff={activeDiffMap.type}>
                         <Field label="Værktype">
@@ -2029,7 +2084,7 @@ export default function VaerksadministrationPage() {
                   )}
                   <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     <DiffField diff={activeDiffMap.year}>
-                      <Field label="Premiereår"><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value })} /></Field>
+                      <Field label="Premiereår" source={editForm.field_sources.year}><Input value={editForm.year} onChange={e => setEditForm({ ...editForm, year: e.target.value, field_sources: { ...editForm.field_sources, year: "manual" } })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
@@ -2068,6 +2123,9 @@ export default function VaerksadministrationPage() {
                     <DiffField diff={activeDiffMap.tmdb_id}>
                       <Field label="TMDB-id"><Input value={editForm.tmdb_id} onChange={e => setEditForm({ ...editForm, tmdb_id: e.target.value })} /></Field>
                     </DiffField>
+                    <Field label="IMDb-id" source={editForm.field_sources.imdb_id}>
+                      <Input value={editForm.imdb_id} onChange={e => setEditForm({ ...editForm, imdb_id: e.target.value, field_sources: { ...editForm.field_sources, imdb_id: "manual" } })} />
+                    </Field>
                     <Field label="Broadcast/stream">
                       <Select value={editForm.broadcaster} onValueChange={broadcaster => setEditForm({ ...editForm, broadcaster })}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
@@ -2246,7 +2304,7 @@ export default function VaerksadministrationPage() {
                   </div>
                 ))}
               </InfoPanel>
-              <InfoPanel title="Hent data fra DFI eller TMDB">
+              <InfoPanel title="Hent og kombiner værksdata">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     placeholder="Søg titel i DFI og TMDB..."
@@ -2259,27 +2317,14 @@ export default function VaerksadministrationPage() {
                     Søg
                   </Button>
                 </div>
-                {(editDfiResults.length > 0 || editTmdbResults.length > 0) && (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <SearchColumn
-                      title={`DFI (${editDfiResults.length})`}
-                      items={editDfiResults}
-                      selected={null}
-                      getKey={item => String(item.Id)}
-                      getTitle={item => textValue(item.Title) || textValue(item.DanishTitle) || "Ukendt"}
-                      getMeta={item => `${extractDfiPremiereYear(item) ?? "-"} · ${textValue(item.Category)}`}
-                      onSelect={applyDfiToEdit}
-                    />
-                    <SearchColumn
-                      title={`TMDB (${editTmdbResults.length})`}
-                      items={editTmdbResults}
-                      selected={null}
-                      getKey={item => String(item.id)}
-                      getTitle={item => textValue(item.title) || textValue(item.name) || "Ukendt"}
-                      getMeta={item => `${textValue(item.release_date).substring(0, 4) || textValue(item.first_air_date).substring(0, 4) || "-"} · ${item.media_type === "tv" ? "Tv-serie" : "Spillefilm"}`}
-                      getPoster={item => textValue(item.poster_path) ? `${TMDB_IMG_W185}${textValue(item.poster_path)}` : null}
-                      onSelect={applyTmdbToEdit}
-                    />
+                {editUnifiedResults.length > 0 && (
+                  <div className="space-y-2">
+                    {editUnifiedResults.map(result => (
+                      <button key={result.id} type="button" onClick={() => applyUnifiedToEdit(result)} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted">
+                        <span><span className="font-medium">{result.title}</span><span className="ml-2 text-xs text-muted-foreground">{result.year ?? "-"} · {workTypeLabel(result.type)}</span></span>
+                        <span className="flex gap-1">{result.sources.map(source => <Badge key={source} variant="secondary" className="uppercase">{source}</Badge>)}</span>
+                      </button>
+                    ))}
                   </div>
                 )}
                 {importPreview && (
@@ -2754,10 +2799,13 @@ export default function VaerksadministrationPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, source, children }: { label: string; source?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
+      <Label className="flex items-center gap-2">
+        {label}
+        {source && <span title={`Kilde: ${source}`} className="rounded-full border px-1.5 py-0.5 text-[10px] font-normal uppercase text-muted-foreground">{source}</span>}
+      </Label>
       {children}
     </div>
   );

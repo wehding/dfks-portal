@@ -27,11 +27,17 @@ type WorkCorrectionData = {
   production_countries?: string[];
   production_companies?: string[];
   description: string | null;
+  dfi_id?: string | null;
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string>;
 };
 
 type AdminWorkData = WorkCorrectionData & {
   dfi_id: string | null;
   tmdb_id: number | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string>;
   poster_url: string | null;
   status: string;
   dfi_metadata?: DfiMetadata | null;
@@ -98,12 +104,18 @@ const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
   "production_countries",
   "production_companies",
   "description",
+  "dfi_id",
+  "tmdb_id",
+  "imdb_id",
+  "field_sources",
 ];
 
 const ADMIN_EDITABLE_KEYS: (keyof AdminWorkData)[] = [
   ...CORRECTABLE_KEYS,
   "dfi_id",
   "tmdb_id",
+  "imdb_id",
+  "field_sources",
   "poster_url",
   "status",
   "dfi_metadata",
@@ -156,6 +168,10 @@ function normalizeData(data: WorkCorrectionData): WorkCorrectionData {
     production_countries: cleanTextList(data.production_countries),
     production_companies: cleanTextList(data.production_companies),
     description: cleanText(data.description),
+    dfi_id: cleanText(data.dfi_id),
+    tmdb_id: data.tmdb_id ?? null,
+    imdb_id: cleanText(data.imdb_id),
+    field_sources: data.field_sources ?? {},
   };
 }
 
@@ -164,6 +180,8 @@ function normalizeAdminData(data: AdminWorkData): AdminWorkData {
     ...normalizeData(data),
     dfi_id: cleanText(data.dfi_id),
     tmdb_id: data.tmdb_id,
+    imdb_id: cleanText(data.imdb_id),
+    field_sources: data.field_sources ?? {},
     poster_url: cleanText(data.poster_url),
     status: cleanText(data.status) ?? "godkendt",
     dfi_metadata: data.dfi_metadata ?? null,
@@ -181,6 +199,17 @@ function cleanSharePercent(value: number | null | undefined) {
 
 function isMissingSharePercentError(error: { message?: string; code?: string } | null | undefined) {
   return error?.code === "42703" || error?.message?.includes("share_percent");
+}
+
+function isMissingWorkMetadataColumnError(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42703"
+    || (/schema cache/i.test(message) && /(imdb_id|wikidata_id|dfi_metadata)/i.test(message));
+}
+
+function withoutOptionalWorkMetadata<T extends Record<string, unknown>>(payload: T) {
+  const { imdb_id: _imdbId, wikidata_id: _wikidataId, dfi_metadata: _dfiMetadata, ...rest } = payload;
+  return rest;
 }
 
 function isMissingRelationError(error: { message?: string; code?: string } | null | undefined) {
@@ -382,7 +411,7 @@ export async function submitWorkDataCorrection(params: {
 
   const { data: work, error: workError } = await db
     .from("works")
-    .select("id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, description, status")
+    .select("id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, description, status, dfi_id, tmdb_id, imdb_id, field_sources")
     .eq("id", params.workId)
     .single();
 
@@ -436,7 +465,7 @@ export async function fetchAdminWorksForReview() {
 
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
-  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_countries, production_companies, status, dfi_id, tmdb_id, description, poster_url, dfi_title, dfi_danish_title, dfi_original_title, dfi_category, dfi_type, created_at";
+  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_countries, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, description, poster_url, dfi_title, dfi_danish_title, dfi_original_title, dfi_category, dfi_type, created_at";
   const withSharePercent = await db
     .from("works")
     .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)`)
@@ -453,13 +482,32 @@ export async function fetchAdminWorksForReview() {
 
   if (error) throw new Error(error.message);
   const rows = data ?? [];
+  const { data: unreadComments, error: unreadError } = await db
+    .from("work_change_request_comments")
+    .select("id, request_id, author_role, message, created_at, member_read_at, admin_read_at, work_change_requests!inner(id, work_id, org_id)")
+    .eq("author_role", "member")
+    .is("admin_read_at", null)
+    .eq("work_change_requests.org_id", orgId);
+  if (unreadError) throw new Error(unreadError.message);
+
+  const commentsByRequest = new Map<string, typeof unreadComments>();
+  for (const comment of unreadComments ?? []) {
+    commentsByRequest.set(comment.request_id, [...(commentsByRequest.get(comment.request_id) ?? []), comment]);
+  }
+  const rowsWithUnread = rows.map(work => ({
+    ...work,
+    work_change_requests: (work.work_change_requests ?? []).map(request => ({
+      ...request,
+      work_change_request_comments: commentsByRequest.get(request.id) ?? [],
+    })),
+  }));
   // Skjul KUN tekniske serie-parents der faktisk har afsnit (children). Et childless
   // serie-værk (fx ældre data hvor brugeren er tildelt direkte på serien) er et rigtigt
   // værk og skal vises — ellers bliver det usynligt i admin selvom det har tildelinger/beskeder.
   const parentIdsWithChildren = new Set(
-    rows.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
+    rowsWithUnread.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
   );
-  const visibleWorks = rows.filter(work => {
+  const visibleWorks = rowsWithUnread.filter(work => {
     const isTechnicalSeriesParent =
       (work.type === "tv-serie" || work.type === "dokumentar-serie") &&
       work.parent_work_id === null &&
@@ -1329,26 +1377,36 @@ export async function createAndLinkWorkForContract(params: {
     }
     const d = detailsRes.details;
 
-    const { data: newWork, error: insertErr } = await db
+    const insertPayload = {
+      title: d.title,
+      type: d.type,
+      year: d.year,
+      org_id: DFKS_ORG_ID,
+      description: d.description,
+      director: d.director,
+      genre: d.genre,
+      poster_url: d.poster_url,
+      dfi_id: d.dfi_id ? String(d.dfi_id) : null,
+      tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : null,
+      imdb_id: d.imdb_id ?? null,
+      wikidata_id: d.wikidata_id ?? null,
+      dfi_metadata: d.dfi_metadata,
+      status: "godkendt",
+    };
+
+    let { data: newWork, error: insertErr } = await db
       .from("works")
-      .insert({
-        title: d.title,
-        type: d.type,
-        year: d.year,
-        org_id: DFKS_ORG_ID,
-        description: d.description,
-        director: d.director,
-        genre: d.genre,
-        poster_url: d.poster_url,
-        dfi_id: d.dfi_id ? String(d.dfi_id) : null,
-        tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : null,
-        imdb_id: d.imdb_id ?? null,
-        wikidata_id: d.wikidata_id ?? null,
-        dfi_metadata: d.dfi_metadata,
-        status: "godkendt",
-      })
+      .insert(insertPayload)
       .select("id")
       .single();
+
+    if (isMissingWorkMetadataColumnError(insertErr)) {
+      ({ data: newWork, error: insertErr } = await db
+        .from("works")
+        .insert(withoutOptionalWorkMetadata(insertPayload))
+        .select("id")
+        .single());
+    }
 
     if (insertErr || !newWork) {
       return { success: false, error: `Fejl ved oprettelse af værk: ${insertErr?.message}` };
