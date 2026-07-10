@@ -185,6 +185,37 @@ export function parseDfiEpisodeTitleInfo(title: string | null | undefined) {
   return null;
 }
 
+function romanToNumber(value: string) {
+  const roman: Record<string, number> = {
+    I: 1,
+    II: 2,
+    III: 3,
+    IV: 4,
+    V: 5,
+    VI: 6,
+    VII: 7,
+    VIII: 8,
+    IX: 9,
+    X: 10,
+    XI: 11,
+    XII: 12,
+  };
+  return roman[value.toUpperCase()] ?? null;
+}
+
+export function parseSeasonNumberFromTitle(title: string | null | undefined): number | null {
+  const cleaned = cleanDfiTitle(title).trim();
+  if (!cleaned) return null;
+
+  const explicit = cleaned.match(/\b(?:sæson|season)\s*(\d{1,2}|[ivx]{1,5})\s*$/i);
+  const suffix = explicit ?? cleaned.match(/(?:\s|[-–—:])(\d{1,2}|[ivx]{1,5})\s*$/i);
+  if (!suffix) return null;
+
+  const raw = suffix[1];
+  const parsed = /^\d+$/.test(raw) ? Number.parseInt(raw, 10) : romanToNumber(raw);
+  return parsed != null && parsed >= 1 && parsed <= 30 ? parsed : null;
+}
+
 
 /**
  * Fjerner "oversigt" fra DFI parent-titler (fx serie-oversigter).

@@ -6,7 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
-import { extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import { extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
@@ -994,13 +994,14 @@ export type UnifiedSearchWorkResult = {
   tmdb_id?: number | null;
   imdb_id?: string | null;
   wikidata_id?: string | null;
+  season_hint?: number | null;
   sources: ("local" | "dfi" | "tmdb")[];
   raw_local?: any;
   raw_dfi?: any;
   raw_tmdb?: any;
 };
 
-export async function searchWorksUnified(query: string) {
+export async function searchWorksUnified(query: string, options: { preferLocalOnly?: boolean } = {}) {
   const q = query.trim();
   if (!q) return { success: true, results: [] };
 
@@ -1011,7 +1012,7 @@ export async function searchWorksUnified(query: string) {
   let localWorks: any[] = [];
   try {
     const { data } = await db.from("works")
-      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
+      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
       .eq("org_id", orgId)
       .ilike("title", `%${q}%`)
       .limit(15);
@@ -1019,15 +1020,6 @@ export async function searchWorksUnified(query: string) {
   } catch (e) {
     console.error("Local search error in searchWorksUnified:", e);
   }
-
-  // Fetch in parallel: DFI, TMDB
-  const [dfiRes, tmdbRes] = await Promise.all([
-    searchDFIFilms(q).catch(() => ({ success: false, results: [] })),
-    searchTMDB(q).catch(() => []),
-  ]);
-
-  const dfiFilms = (dfiRes.success ? dfiRes.results ?? [] : []) as any[];
-  const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
 
   const results: UnifiedSearchWorkResult[] = [];
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1050,10 +1042,25 @@ export async function searchWorksUnified(query: string) {
       tmdb_id: w.tmdb_id ? Number(w.tmdb_id) : null,
       imdb_id: w.imdb_id ?? null,
       wikidata_id: w.wikidata_id ?? null,
+      season_hint: w.season_number ?? parseSeasonNumberFromTitle(w.title),
       sources: ["local"],
       raw_local: w,
     });
   });
+
+  if (options.preferLocalOnly && results.length > 0) {
+    results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
+    return { success: true, results };
+  }
+
+  // Fetch in parallel: DFI, TMDB
+  const [dfiRes, tmdbRes] = await Promise.all([
+    searchDFIFilms(q).catch(() => ({ success: false, results: [] })),
+    searchTMDB(q).catch(() => []),
+  ]);
+
+  const dfiFilms = (dfiRes.success ? dfiRes.results ?? [] : []) as any[];
+  const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
 
   // 2. Merge DFI results
   dfiFilms.forEach((film: any) => {
@@ -1065,6 +1072,7 @@ export async function searchWorksUnified(query: string) {
     const dfiId = String(film.Id);
     const mappedType = mapDfiWorkType(film.Category, film.Type);
     const director = extractDfiDirectors(film).join(", ") || null;
+    const seasonHint = parseSeasonNumberFromTitle(title);
 
     const existingIndex = results.findIndex(r => {
       if (r.dfi_id && r.dfi_id === dfiId) return true;
@@ -1079,6 +1087,7 @@ export async function searchWorksUnified(query: string) {
       if (!match.raw_dfi) match.raw_dfi = film;
       if (!match.director && director) match.director = director;
       if (!match.poster_url) match.poster_url = extractDfiPosterUrl(film);
+      if (!match.season_hint) match.season_hint = seasonHint;
     } else {
       results.push({
         id: `dfi-${dfiId}`,
@@ -1091,6 +1100,7 @@ export async function searchWorksUnified(query: string) {
         genre: typeof film.Genre === "string" ? film.Genre : typeof film.Category === "string" ? film.Category : null,
         duration_minutes: typeof film.Duration === "number" ? film.Duration : null,
         dfi_id: dfiId,
+        season_hint: seasonHint,
         sources: ["dfi"],
         raw_dfi: film,
       });
@@ -1129,6 +1139,7 @@ export async function searchWorksUnified(query: string) {
         genre: null,
         duration_minutes: null,
         tmdb_id: tmdbId,
+        season_hint: parseSeasonNumberFromTitle(title),
         sources: ["tmdb"],
         raw_tmdb: item,
       });
@@ -1266,4 +1277,3 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
     }
   };
 }
-

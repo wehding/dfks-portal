@@ -41,8 +41,8 @@ export const MINE_VAERKER_HELP: HelpTopic[] = [
     ],
   },
   {
-    title: "Importer fra DFI",
-    body: "DFI-guiden finder dine krediteringer og frasorterer værker, der allerede er knyttet til dig. Lokale værker bliver koblet til dig uden at overskrive eksisterende data.",
+    title: "Søg nye titler på dit navn",
+    body: "Søgningen finder nye titler, som ikke allerede optræder på din værksliste. Resultater fra lokale data, DFI, TMDB og Wikidata samles, så du kan vælge de relevante titler.",
   },
   {
     title: "Kontraktstatus",

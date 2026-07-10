@@ -779,6 +779,8 @@ export async function createAdminWork(params: {
   role?: string | null;
   sharePercent?: number | null;
   broadcaster?: string | null;
+  seasonNumber?: number | null;
+  selectedEpisodes?: number[] | null;
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -875,28 +877,48 @@ export async function createAdminWork(params: {
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");
 
   if (params.rightsHolderId && params.role) {
+    let assignmentWorkIds = [workId];
+    const selectedEpisodes = (params.selectedEpisodes ?? []).filter(Number.isFinite);
+    const isSeries = normalized.type === "tv-serie" || normalized.type === "dokumentar-serie";
+    if (isSeries && selectedEpisodes.length > 0) {
+      const { data: parentWork } = await db
+        .from("works")
+        .select("*")
+        .eq("id", workId)
+        .maybeSingle();
+      if (parentWork) {
+        const episodes = await ensureOnboardingEpisodes({
+          db,
+          parent: parentWork as any,
+          seasonNumber: params.seasonNumber ?? 1,
+          selectedEpisodes,
+        });
+        if (episodes.length > 0) assignmentWorkIds = episodes.map(episode => episode.id);
+      }
+    }
+
     const { error: assignmentError } = await retryWithoutSharePercent(
       await db
         .from("work_assignments")
         .upsert(
-          {
-            work_id: workId,
+          assignmentWorkIds.map(targetWorkId => ({
+            work_id: targetWorkId,
             org_id: orgId,
             rights_holder_id: params.rightsHolderId,
             role: params.role,
             share_percent: cleanSharePercent(params.sharePercent),
-          },
+          })),
           { onConflict: "work_id,rights_holder_id,role" }
         ),
       async () => await db
         .from("work_assignments")
         .upsert(
-          {
-            work_id: workId,
+          assignmentWorkIds.map(targetWorkId => ({
+            work_id: targetWorkId,
             org_id: orgId,
             rights_holder_id: params.rightsHolderId,
             role: params.role,
-          },
+          })),
           { onConflict: "work_id,rights_holder_id,role" }
         )
     );
@@ -1367,4 +1389,3 @@ export async function createAndLinkWorkForContract(params: {
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, workId: targetWorkId };
 }
-

@@ -5,26 +5,8 @@ import { Loader2, Search, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "./Modal";
-import { searchDFIPerson, getDFIPersonCredits, importApprovedDFIWorks, prepareDFIImportCredits } from "@/app/actions/dfi";
+import { importApprovedOnboardingWorks, searchNewCreditsForCurrentMember, type OnboardingCredit } from "@/app/actions/dfi";
 import { useI18n } from "@/lib/i18n";
-
-interface DfiSearchResult {
-  Id: number;
-  Title?: string;
-  ReleaseYear?: number;
-  ProductionYear?: number;
-  Category?: string;
-  Description?: string;
-  Type?: string;
-}
-
-interface DfiPersonResult {
-  Id: number;
-  Name?: string;
-  FirstName?: string;
-  LastName?: string;
-  BirthYear?: number | string | null;
-}
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -45,47 +27,71 @@ export function DfiImportWizard({
 }: DfiImportWizardProps) {
   const { t } = useI18n();
 
-  const [wizardStep, setWizardStep]         = useState<"search" | "persons" | "credits">("search");
+  const [wizardStep, setWizardStep]         = useState<"search" | "credits">("search");
   const [wizardQuery, setWizardQuery]       = useState(userName);
-  const [wizardPersons, setWizardPersons]   = useState<DfiPersonResult[]>([]);
-  const [wizardPerson, setWizardPerson]     = useState<DfiPersonResult | null>(null);
-  const [wizardCredits, setWizardCredits]   = useState<DfiSearchResult[]>([]);
-  const [wizardSelected, setWizardSelected] = useState<Record<number, boolean>>({});
-  const [wizardLinkedExistingCount, setWizardLinkedExistingCount] = useState(0);
+  const [wizardCredits, setWizardCredits]   = useState<OnboardingCredit[]>([]);
+  const [wizardSelected, setWizardSelected] = useState<Record<string, boolean>>({});
+  const [wizardDfiPersonId, setWizardDfiPersonId] = useState<number | null>(dfiPersonId);
+  const [wizardTmdbPersonId, setWizardTmdbPersonId] = useState<number | null>(null);
+  const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
+  const [seriesSeasons, setSeriesSeasons] = useState<Record<string, number>>({});
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, number[]>>({});
   const [wizardSkippedExistingCount, setWizardSkippedExistingCount] = useState(0);
   const [wizardSearching, setWizardSearching] = useState(false);
   const [wizardImporting, setWizardImporting] = useState(false);
   const [wizardError, setWizardError]       = useState<string | null>(null);
   const [wizardValidationError, setWizardValidationError] = useState<string | null>(null);
 
-  const loadWizardCredits = useCallback(async (personId: number) => {
+  const isSeriesCredit = (credit: OnboardingCredit) => {
+    const raw = credit.raw ?? {};
+    const text = `${credit.category} ${raw.media_type ?? ""} ${raw.type ?? ""} ${raw.Type ?? ""}`.toLowerCase();
+    return text.includes("serie") || text.includes("tv");
+  };
+
+  const episodeCountForCredit = (credit: OnboardingCredit) => {
+    const raw = credit.raw ?? {};
+    const rawCount = raw.number_of_episodes ?? raw.episode_count ?? raw.EpisodeCount;
+    const parsed = Number(rawCount);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 80);
+    return 10;
+  };
+
+  const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
+    const count = episodeCountForCredit(credit);
+    return seriesEpisodes[credit.id] ?? Array.from({ length: count }, (_, index) => index + 1);
+  };
+
+  const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
+    setSeriesEpisodes(prev => {
+      const current = selectedEpisodesForCredit(credit);
+      const next = current.includes(episodeNumber)
+        ? current.filter(number => number !== episodeNumber)
+        : [...current, episodeNumber].sort((a, b) => a - b);
+      return { ...prev, [credit.id]: next };
+    });
+  };
+
+  const loadWizardCredits = useCallback(async (query: string) => {
     setWizardSearching(true);
     setWizardError(null);
     setWizardValidationError(null);
-    const res = await getDFIPersonCredits(personId);
-    if (res.success && res.credits) {
-      const unique = (res.credits as DfiSearchResult[]).filter((c, i, arr) => arr.findIndex(x => x.Id === c.Id) === i);
-      const prepared = await prepareDFIImportCredits(personId, unique);
-      const newCredits: DfiSearchResult[] = prepared.success ? ((prepared.credits ?? []) as DfiSearchResult[]) : unique;
+    const res = await searchNewCreditsForCurrentMember(query);
+    if (res.success) {
+      const newCredits = res.credits ?? [];
       setWizardCredits(newCredits);
-      setWizardLinkedExistingCount(prepared.linkedExistingCount ?? 0);
-      setWizardSkippedExistingCount(prepared.skippedAlreadyAssignedCount ?? 0);
-      const sel: Record<number, boolean> = {};
-      newCredits.forEach((c: DfiSearchResult) => {
-        if (c.Id != null) sel[Number(c.Id)] = true;
+      setWizardDfiPersonId(res.dfiPersonId ?? null);
+      setWizardTmdbPersonId(res.tmdbPersonId ?? null);
+      setWizardSkippedExistingCount(res.skippedAlreadyAssignedCount ?? 0);
+      const sel: Record<string, boolean> = {};
+      newCredits.forEach((c: OnboardingCredit) => {
+        if (c.id) sel[c.id] = true;
       });
       setWizardSelected(sel);
-      if (prepared.success && (prepared.linkedExistingCount ?? 0) > 0) {
-        await reloadAssignments();
-      }
-      if (!prepared.success) {
-        setWizardError(prepared.error ?? "Kunne ikke tjekke lokale værker før import.");
-      }
     } else {
-      setWizardError(res.error ?? "Kunne ikke hente krediteringer.");
+      setWizardError(res.error ?? "Kunne ikke finde nye titler.");
     }
     setWizardSearching(false);
-  }, [reloadAssignments]);
+  }, []);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -93,17 +99,19 @@ export function DfiImportWizard({
     queueMicrotask(() => {
       if (cancelled) return;
       setWizardQuery(userName);
-      setWizardPersons([]);
-      setWizardPerson(null);
       setWizardCredits([]);
       setWizardSelected({});
+      setExpandedSeries({});
+      setSeriesSeasons({});
+      setSeriesEpisodes({});
       setWizardError(null);
       setWizardValidationError(null);
-      setWizardLinkedExistingCount(0);
       setWizardSkippedExistingCount(0);
+      setWizardDfiPersonId(dfiPersonId);
+      setWizardTmdbPersonId(null);
       if (dfiPersonId) {
         setWizardStep("credits");
-        loadWizardCredits(dfiPersonId);
+        loadWizardCredits(userName);
       } else {
         setWizardStep("search");
       }
@@ -116,38 +124,31 @@ export function DfiImportWizard({
   const handleWizardSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!wizardQuery.trim()) return;
-    setWizardSearching(true);
     setWizardError(null);
     setWizardValidationError(null);
-    const res = await searchDFIPerson(undefined, undefined, wizardQuery);
-    if (res.success && res.results?.length) {
-      const persons = res.results as DfiPersonResult[];
-      if (res.results.length === 1) {
-        setWizardPerson(persons[0]);
-        setWizardStep("credits");
-        loadWizardCredits(persons[0].Id);
-      } else {
-        setWizardPersons(persons);
-        setWizardStep("persons");
-      }
-    } else {
-      setWizardError(res.error ?? `Ingen personer fundet med "${wizardQuery}".`);
-    }
-    setWizardSearching(false);
+    setWizardStep("credits");
+    await loadWizardCredits(wizardQuery);
   };
 
   const handleWizardImport = async () => {
-    const approved = wizardCredits.filter(c => wizardSelected[c.Id]);
+    const approved = wizardCredits
+      .filter(c => wizardSelected[c.id])
+      .map(c => isSeriesCredit(c)
+        ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
+        : c
+      );
     if (!approved.length) {
       setWizardValidationError(t("works.chooseAtLeastOne"));
       return;
     }
-    const personId = wizardPerson?.Id ?? dfiPersonId;
-    if (!personId) return;
+    if (approved.some(c => isSeriesCredit(c) && (!c.selected_episodes || c.selected_episodes.length === 0))) {
+      setWizardValidationError("Vælg mindst ét afsnit for hver serie, du vil importere.");
+      return;
+    }
     setWizardImporting(true);
     setWizardError(null);
     setWizardValidationError(null);
-    const res = await importApprovedDFIWorks(personId, approved);
+    const res = await importApprovedOnboardingWorks(wizardDfiPersonId, wizardTmdbPersonId, approved);
     if (res.success) {
       const linkedCount = res.linkedExistingCount ?? 0;
       const importedText = t("works.importedFromDfi").replace("{count}", String(res.importedCount));
@@ -194,28 +195,6 @@ export function DfiImportWizard({
         </form>
       )}
 
-      {wizardStep === "persons" && (
-        <div className="space-y-3">
-          <p className="text-sm text-gray-500">
-            {t("works.foundPersons").replace("{count}", String(wizardPersons.length))}
-          </p>
-          {wizardPersons.map(p => (
-            <button
-              key={p.Id}
-              onClick={() => {
-                setWizardPerson(p);
-                setWizardStep("credits");
-                loadWizardCredits(p.Id);
-              }}
-              className="w-full text-left px-4 py-3 rounded-md border border-gray-200 hover:bg-gray-50 transition-colors"
-            >
-              <p className="font-medium text-gray-900">{p.Name || `${p.FirstName} ${p.LastName}`}</p>
-              {p.BirthYear && <p className="text-xs text-gray-500">f. {p.BirthYear}</p>}
-            </button>
-          ))}
-        </div>
-      )}
-
       {wizardStep === "credits" && (
         <div>
           {wizardSearching ? (
@@ -232,21 +211,18 @@ export function DfiImportWizard({
               <div className="flex flex-col gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-sm text-gray-500">
                   <p>Fandt {wizardCredits.length} nye titler. Vælg dem, du vil importere.</p>
-                  {(wizardLinkedExistingCount > 0 || wizardSkippedExistingCount > 0) && (
+                  {wizardSkippedExistingCount > 0 && (
                     <p className="mt-1 text-xs text-gray-400">
-                      {wizardLinkedExistingCount > 0 &&
-                        `${wizardLinkedExistingCount} eksisterende titel${wizardLinkedExistingCount === 1 ? "" : "r"} blev tilføjet fra databasen.`}
-                      {wizardSkippedExistingCount > 0 &&
-                        ` ${wizardSkippedExistingCount} titel${wizardSkippedExistingCount === 1 ? "" : "r"} var allerede på din liste.`}
+                      {wizardSkippedExistingCount} titel{wizardSkippedExistingCount === 1 ? "" : "r"} var allerede på din liste og blev sprunget over.
                     </p>
                   )}
                 </div>
                 <button
                   onClick={() => {
                     const all = Object.values(wizardSelected).every(v => v);
-                    const s: Record<number, boolean> = {};
+                    const s: Record<string, boolean> = {};
                     wizardCredits.forEach(c => {
-                      s[c.Id] = !all;
+                      s[c.id] = !all;
                     });
                     setWizardSelected(s);
                     setWizardValidationError(null);
@@ -257,32 +233,102 @@ export function DfiImportWizard({
                 </button>
               </div>
               <div className="max-h-72 overflow-y-auto rounded-lg border border-gray-200 divide-y divide-gray-100">
-                {wizardCredits.map((c, i) => (
-                  <label
-                    key={`${c.Id}-${i}`}
-                    className={`flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors ${
-                      wizardSelected[c.Id] ? "bg-gray-50" : "hover:bg-gray-50"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={wizardSelected[c.Id] || false}
-                      onChange={e => {
-                        setWizardSelected(prev => ({ ...prev, [c.Id]: e.target.checked }));
-                        setWizardValidationError(null);
-                      }}
-                      className="mt-0.5 w-4 h-4 accent-gray-900"
-                    />
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {c.Title} {c.ReleaseYear ? `(${c.ReleaseYear})` : ""}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        <span className="font-medium">{c.Description || c.Type}</span> · {c.Category}
-                      </p>
+                {wizardCredits.map((c, i) => {
+                  const isSeries = isSeriesCredit(c);
+                  const episodeCount = episodeCountForCredit(c);
+                  const selectedEpisodes = selectedEpisodesForCredit(c);
+                  return (
+                    <div
+                      key={`${c.id}-${i}`}
+                      className={`px-4 py-3 transition-colors ${
+                        wizardSelected[c.id] ? "bg-gray-50" : "hover:bg-gray-50"
+                      }`}
+                    >
+                      <label className="flex cursor-pointer items-start gap-3">
+                        <input
+                          type="checkbox"
+                          checked={wizardSelected[c.id] || false}
+                          onChange={e => {
+                            setWizardSelected(prev => ({ ...prev, [c.id]: e.target.checked }));
+                            setWizardValidationError(null);
+                          }}
+                          className="mt-0.5 w-4 h-4 accent-gray-900"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-gray-900">
+                            {c.title} {c.year ? `(${c.year})` : ""}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            <span className="font-medium">{c.role}</span> · {c.category} · {c.source.toUpperCase()}
+                            {c.imdb_id ? ` · IMDb ${c.imdb_id}` : ""}
+                          </p>
+                        </div>
+                      </label>
+                      {isSeries && wizardSelected[c.id] && (
+                        <div className="mt-3 ml-7 rounded-md border border-gray-200 bg-white p-3">
+                          <button
+                            type="button"
+                            className="text-sm font-medium text-gray-900"
+                            onClick={() => setExpandedSeries(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                          >
+                            {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
+                          </button>
+                          {expandedSeries[c.id] && (
+                            <div className="mt-3 space-y-3">
+                              <label className="flex items-center gap-2 text-xs text-gray-500">
+                                Sæson
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  value={seriesSeasons[c.id] ?? 1}
+                                  onChange={event => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
+                                  className="h-8 w-20"
+                                />
+                              </label>
+                              <div className="sticky top-0 z-10 grid grid-cols-2 gap-2 bg-white py-1 sm:flex">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 text-xs"
+                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: Array.from({ length: episodeCount }, (_, index) => index + 1) }))}
+                                >
+                                  Vælg alle
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 text-xs"
+                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }))}
+                                >
+                                  Fravælg alle
+                                </Button>
+                              </div>
+                              <div className="grid max-h-52 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4">
+                                {Array.from({ length: episodeCount }, (_, index) => index + 1).map(episodeNumber => {
+                                  const checked = selectedEpisodes.includes(episodeNumber);
+                                  return (
+                                    <button
+                                      key={episodeNumber}
+                                      type="button"
+                                      className={`rounded-md border px-2 py-2 text-left text-xs ${
+                                        checked ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                                      }`}
+                                      onClick={() => toggleEpisode(c, episodeNumber)}
+                                    >
+                                      Afsnit {episodeNumber}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                  </label>
-                ))}
+                  );
+                })}
               </div>
               {wizardValidationError && (
                 <div className="mt-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">

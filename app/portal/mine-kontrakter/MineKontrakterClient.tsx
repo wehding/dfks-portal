@@ -80,7 +80,9 @@ function aiValue(data: Record<string, unknown> | null | undefined, keys: string[
 function RightsBadge({ label, active }: { label: string; active: boolean }) {
   return (
     <span
-      className={TAG_CLASS}
+      role="status"
+      aria-label={`${label}: ${active ? "ja" : "nej"}`}
+      className={`${TAG_CLASS} pointer-events-none select-none border`}
       style={{ backgroundColor: active ? "#18181b" : "#f4f4f5", color: active ? "white" : "#71717a" }}
     >
       {label} {active ? "✓" : "✗"}

@@ -904,6 +904,69 @@ export async function searchOnboardingCredits(
   };
 }
 
+export async function searchNewCreditsForCurrentMember(fullName: string) {
+  const db = createServiceClient();
+  let context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>;
+  try {
+    context = await currentRightsHolderAndOrg();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Du skal være logget ind for at søge.";
+    return { success: false, error: message, credits: [], dfiPersonId: null, tmdbPersonId: null, skippedAlreadyAssignedCount: 0 };
+  }
+
+  const searchResult = await searchOnboardingCredits(undefined, undefined, fullName);
+  if (!searchResult.success || !searchResult.credits) {
+    return {
+      ...searchResult,
+      credits: [],
+      skippedAlreadyAssignedCount: 0,
+    };
+  }
+
+  const { data: assignments } = await db
+    .from("work_assignments")
+    .select("works(id, title, year, dfi_id, tmdb_id)")
+    .eq("rights_holder_id", context.rightsHolderId);
+
+  const assignedWorkIds = new Set<string>();
+  const assignedDfiIds = new Set<string>();
+  const assignedTmdbIds = new Set<number>();
+  const assignedTitleYears: Array<{ title: string; year: number | null }> = [];
+
+  for (const assignment of (assignments ?? []) as Array<{ works?: any | any[] | null }>) {
+    const work = Array.isArray(assignment.works) ? assignment.works[0] : assignment.works;
+    if (!work) continue;
+    if (work.id) assignedWorkIds.add(String(work.id));
+    if (work.dfi_id) assignedDfiIds.add(String(work.dfi_id));
+    if (work.tmdb_id) assignedTmdbIds.add(Number(work.tmdb_id));
+    if (work.title) assignedTitleYears.push({ title: String(work.title), year: work.year ?? null });
+  }
+
+  let skippedAlreadyAssignedCount = 0;
+  const credits = searchResult.credits.filter(credit => {
+    const raw = credit.raw as any;
+    const localId = credit.source === "lokal" ? String(raw?.id ?? credit.id.replace(/^local-/, "")) : null;
+    const dfiId = raw?.dfi_id ?? raw?.Id ?? (credit.id.startsWith("dfi-") ? credit.id.replace("dfi-", "") : null);
+    const tmdbId = raw?.tmdb_id ?? raw?.id ?? (credit.id.startsWith("tmdb-") ? credit.id.replace("tmdb-", "") : null);
+
+    const isAssigned =
+      (localId && assignedWorkIds.has(String(localId))) ||
+      (dfiId && assignedDfiIds.has(String(dfiId))) ||
+      (tmdbId && assignedTmdbIds.has(Number(tmdbId))) ||
+      assignedTitleYears.some(item => isSameCredit(item.title, item.year, credit.title, credit.year));
+
+    if (isAssigned) skippedAlreadyAssignedCount += 1;
+    return !isAssigned;
+  });
+
+  return {
+    ...searchResult,
+    success: true,
+    credits,
+    skippedAlreadyAssignedCount,
+  };
+}
+
 export async function importApprovedOnboardingWorks(
   dfiPersonId: number | null,
   tmdbPersonId: number | null,
