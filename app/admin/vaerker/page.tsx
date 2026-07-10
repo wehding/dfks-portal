@@ -18,6 +18,7 @@ import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -25,7 +26,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import {
   archiveAdminWorks,
   approveAdminWorks,
@@ -309,6 +309,35 @@ function latestUnreadMemberMessage(work: WorkRow): string | null {
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   const last = unread[unread.length - 1];
   return last ? last.message.split("\n")[0] : null;
+}
+
+function requestMessages(request: ChangeRequest | null): MessageThreadMessage[] {
+  return (request?.work_change_request_comments ?? []).map(comment => ({
+    id: comment.id,
+    authorRole: comment.author_role,
+    message: comment.message,
+    createdAt: comment.created_at,
+    memberReadAt: comment.member_read_at,
+    adminReadAt: comment.admin_read_at,
+  }));
+}
+
+function requestNextActionLabel(request: ChangeRequest | null) {
+  if (!request) return null;
+  const latest = requestMessages(request).at(-1);
+  if (request.status === "approved") return "Godkendt og afsluttet";
+  if (request.status === "rejected") return "Afvist og afsluttet";
+  if (latest?.authorRole === "member" && !latest.adminReadAt) return "Kræver svar fra DFKS";
+  if (latest?.authorRole === "admin") return "Afventer bruger";
+  return "Afventer DFKS-behandling";
+}
+
+function requestNextActionTone(request: ChangeRequest | null): "neutral" | "attention" | "done" {
+  if (!request) return "neutral";
+  if (request.status === "approved" || request.status === "rejected") return "done";
+  const latest = requestMessages(request).at(-1);
+  if (latest?.authorRole === "member" && !latest.adminReadAt) return "attention";
+  return "neutral";
 }
 
 function displayStatus(work: WorkRow) {
@@ -1933,39 +1962,33 @@ export default function VaerksadministrationPage() {
                             ))}
                           </div>
                         )}
-                        {(activeRequest.work_change_request_comments ?? []).length > 0 && (
-                          <div className="space-y-2">
-                            <p className="text-sm font-medium">Kommentartråd</p>
-                            {(activeRequest.work_change_request_comments ?? []).map(comment => (
-                              <div key={comment.id} className="rounded bg-muted px-2 py-1 text-sm">
-                                <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin · " : ""}{new Date(comment.created_at).toLocaleString("da-DK")}</div>
-                                <div>{comment.message}</div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <div className="space-y-3">
-                          <Field label="Svar til bruger">
-                            <Textarea value={adminComment} onChange={e => setAdminComment(e.target.value)} placeholder="Skriv et svar til brugeren…" />
-                          </Field>
-                          <div className="flex justify-end gap-2">
-                            <Button variant="outline" onClick={handleSendReply} disabled={saving || !adminComment.trim()}>
-                              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                              Send svar
-                            </Button>
-                            {activeRequest.status === "pending" && (
-                              <>
-                                <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
-                                  <XCircle className="mr-2 h-4 w-4" />
-                                  Afvis
-                                </Button>
-                                <Button onClick={() => handleReview("approved")} disabled={saving}>
-                                  Godkend
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
+                        <MessageThread
+                          title="Beskeder med medlem"
+                          messages={requestMessages(activeRequest)}
+                          viewerRole="admin"
+                          memberLabel="Medlem"
+                          adminLabel="DFKS"
+                          emptyText="Der er endnu ingen beskeder på denne request."
+                          nextActionLabel={requestNextActionLabel(activeRequest)}
+                          nextActionTone={requestNextActionTone(activeRequest)}
+                          composerValue={adminComment}
+                          onComposerChange={setAdminComment}
+                          onSend={handleSendReply}
+                          composerLoading={saving}
+                          composerPlaceholder="Skriv et svar til brugeren…"
+                          sendLabel="Send svar"
+                          footer={activeRequest.status === "pending" ? (
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
+                                <XCircle className="mr-2 h-4 w-4" />
+                                Afvis
+                              </Button>
+                              <Button onClick={() => handleReview("approved")} disabled={saving}>
+                                Godkend
+                              </Button>
+                            </div>
+                          ) : null}
+                        />
                       </div>
                     )}
                   </div>

@@ -19,11 +19,11 @@ import { PageHeader } from "@/components/page-header"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help"
+import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select"
@@ -75,6 +75,33 @@ type ContractComment = {
     created_at: string
     member_read_at?: string | null
     admin_read_at?: string | null
+}
+
+function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
+    return comments.map(comment => ({
+        id: comment.id,
+        authorRole: comment.author_role,
+        message: comment.message,
+        createdAt: comment.created_at,
+        memberReadAt: comment.member_read_at,
+        adminReadAt: comment.admin_read_at,
+    }))
+}
+
+function adminContractNextAction(contract: ContractRow | null) {
+    const latest = contract?.contract_comments?.at(-1)
+    if (!latest) return "Ingen beskeder endnu"
+    if (latest.author_role === "member" && !latest.admin_read_at) return "Kræver svar fra DFKS"
+    if (latest.author_role === "admin") return "Afventer bruger"
+    return "Samtalen er ajour"
+}
+
+function adminContractNextActionTone(contract: ContractRow | null): "neutral" | "attention" | "done" {
+    const latest = contract?.contract_comments?.at(-1)
+    if (!latest) return "neutral"
+    if (latest.author_role === "member" && !latest.admin_read_at) return "attention"
+    if (latest.author_role === "admin") return "neutral"
+    return "done"
 }
 
 type EditForm = {
@@ -2367,30 +2394,28 @@ function AdminKontrakterContent() {
                                     />
                                 )}
                             </div>
-                            <div className="rounded-md border p-3">
-                                <p className="mb-2 text-sm font-medium">Kommentarer</p>
-                                <div className="max-h-40 space-y-2 overflow-y-auto">
-                                    {editContract?.contract_comments.length ? editContract.contract_comments.map(comment => (
-                                        <div key={comment.id} className="rounded bg-muted px-3 py-2 text-sm">
-                                            <div className="text-xs text-muted-foreground">{comment.author_role === "admin" ? "Admin · " : ""}{new Date(comment.created_at).toLocaleString("da-DK")}</div>
-                                            <div>{comment.message}</div>
-                                        </div>
-                                    )) : (
-                                        <p className="text-sm text-muted-foreground">Ingen kommentarer.</p>
-                                    )}
-                                </div>
-                                <div className="mt-3 space-y-2">
-                                    <Textarea value={adminReply} onChange={e => setAdminReply(e.target.value)} placeholder="Svar brugeren..." />
-                                    <Button type="button" variant="outline" onClick={handleAdminReply} disabled={replySaving || !adminReply.trim()} className="w-full">
-                                        {replySaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        Send kommentar
-                                    </Button>
-                                    <Button type="button" variant="outline" onClick={() => handleSaveEdit()} disabled={editSaving} className="w-full">
+                            <MessageThread
+                                title="Beskeder med medlem"
+                                messages={contractMessages(editContract?.contract_comments ?? [])}
+                                viewerRole="admin"
+                                memberLabel="Medlem"
+                                adminLabel="DFKS"
+                                emptyText="Ingen beskeder endnu."
+                                nextActionLabel={adminContractNextAction(editContract)}
+                                nextActionTone={adminContractNextActionTone(editContract)}
+                                composerValue={adminReply}
+                                onComposerChange={setAdminReply}
+                                onSend={handleAdminReply}
+                                composerLoading={replySaving}
+                                composerPlaceholder="Svar medlemmet..."
+                                sendLabel="Send besked"
+                                footer={(
+                                    <Button type="button" variant="outline" onClick={() => handleSaveEdit()} disabled={editSaving} className="w-full sm:w-auto">
                                         {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                         Gem kontrakt
                                     </Button>
-                                </div>
-                            </div>
+                                )}
+                            />
                         </div>
                         </div>
                     )}

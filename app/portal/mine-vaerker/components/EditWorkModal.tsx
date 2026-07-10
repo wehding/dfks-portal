@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
@@ -59,6 +60,8 @@ type RequestComment = {
   author_role: "member" | "admin";
   message: string;
   created_at: string;
+  member_read_at?: string | null;
+  admin_read_at?: string | null;
 };
 
 type ChangeRequest = {
@@ -100,14 +103,6 @@ type Assignment = {
   } | null;
 };
 
-type AdminRequestSummary = {
-  id: string;
-  kind: string;
-  status: string;
-  message: string;
-  createdAt: string;
-};
-
 interface EditWorkModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -139,46 +134,36 @@ function workToCorrectionForm(w: Work): WorkCorrectionForm {
   };
 }
 
-function requestKindLabel(request: ChangeRequest) {
-  const kind = request.proposed_data?.kind;
-  if (kind === "creation") return "Nyt værk";
-  if (kind === "co_editors") return "Medklippere";
-  return "Rettelse";
+function requestThreadMessages(work: Work | null | undefined): MessageThreadMessage[] {
+  return (work?.work_change_requests ?? []).flatMap(request =>
+    (request.work_change_request_comments ?? []).map(comment => ({
+      id: comment.id,
+      authorRole: comment.author_role,
+      message: comment.message,
+      createdAt: comment.created_at,
+      memberReadAt: comment.member_read_at,
+      adminReadAt: comment.admin_read_at,
+    }))
+  );
 }
 
-function requestStatusLabel(status: ChangeRequest["status"]) {
-  if (status === "pending") return "Afventer";
-  if (status === "approved") return "Godkendt";
-  return "Afvist";
+function workNextActionLabel(work: Work | null | undefined) {
+  const requests = work?.work_change_requests ?? [];
+  const pending = requests.some(request => request.status === "pending");
+  const latest = requestThreadMessages(work).at(-1);
+  if (latest?.authorRole === "admin" && !latest.memberReadAt) return "Nyt svar fra DFKS";
+  if (pending) return "Afventer DFKS";
+  if (requests.some(request => request.status === "rejected")) return "Afvist rettelse";
+  if (requests.some(request => request.status === "approved")) return "Godkendt rettelse";
+  return "Ingen aktive beskeder";
 }
 
-function adminRequestSummaries(work: Work | null | undefined): AdminRequestSummary[] {
-  return (work?.work_change_requests ?? [])
-    .flatMap((request): AdminRequestSummary[] => {
-      const comments = (request.work_change_request_comments ?? [])
-        .filter(comment => comment.author_role === "admin")
-        .map(comment => ({
-          id: `${request.id}-${comment.id}`,
-          kind: requestKindLabel(request),
-          status: requestStatusLabel(request.status),
-          message: comment.message,
-          createdAt: comment.created_at,
-        }));
-      return comments.length
-        ? comments
-        : request.admin_comment
-        ? [
-            {
-              id: request.id,
-              kind: requestKindLabel(request),
-              status: requestStatusLabel(request.status),
-              message: request.admin_comment,
-              createdAt: "",
-            },
-          ]
-        : [];
-    })
-    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+function workNextActionTone(work: Work | null | undefined): "neutral" | "attention" | "done" {
+  const latest = requestThreadMessages(work).at(-1);
+  if (latest?.authorRole === "admin" && !latest.memberReadAt) return "attention";
+  const requests = work?.work_change_requests ?? [];
+  if (requests.some(request => request.status === "approved")) return "done";
+  return "neutral";
 }
 
 function numberOrNull(val: string) {
@@ -372,7 +357,6 @@ export function EditWorkModal({
 
   if (!isOpen) return null;
 
-  const editAdminSummaries = adminRequestSummaries(assignment.works);
   const coEditorChanges = editCoEditors.filter(
     editor => !editor.locked || editor.action === "remove" || editor.action === "change"
   );
@@ -398,21 +382,18 @@ export function EditWorkModal({
           ? "Bemærk: Forkerte værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af dine rettighedsmidler. Alle rettelser skal derfor godkendes af administrator."
           : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
       </div>
-      {editAdminSummaries.length > 0 && (
-        <div className="mb-5 rounded-lg border p-4">
-          <p className="mb-3 text-sm font-semibold text-foreground">{t("works.adminComments")}</p>
-          <div className="space-y-2">
-            {editAdminSummaries.map(summary => (
-              <div key={summary.id} className="rounded-md bg-muted/40 px-3 py-2 text-sm">
-                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">{summary.kind}</span>
-                  <span>{summary.status}</span>
-                  {summary.createdAt && <span>{new Date(summary.createdAt).toLocaleString("da-DK")}</span>}
-                </div>
-                <p className="text-foreground">{summary.message}</p>
-              </div>
-            ))}
-          </div>
+      {(assignment.works?.work_change_requests ?? []).length > 0 && (
+        <div className="mb-5">
+          <MessageThread
+            title={t("works.adminComments")}
+            messages={requestThreadMessages(assignment.works)}
+            viewerRole="member"
+            memberLabel="Dig"
+            adminLabel="DFKS"
+            emptyText="Der er endnu ingen beskeder på rettelsen."
+            nextActionLabel={workNextActionLabel(assignment.works)}
+            nextActionTone={workNextActionTone(assignment.works)}
+          />
         </div>
       )}
       <div className="space-y-1.5 mb-6">
