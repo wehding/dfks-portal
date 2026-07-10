@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, Suspense, useRef } from "react"
+import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
@@ -13,10 +14,7 @@ import { addAdminContractComment, deleteAdminContractsPermanently, markContractC
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { getTMDBWorkDetails } from "@/app/actions/tmdb"
-import { ContractAiDataEditor } from "./ContractAiDataEditor"
-import { ContractDocViewer } from "./ContractDocViewer"
 import { useI18n } from "@/lib/i18n"
-import { PdfViewer } from "@/components/pdf-viewer"
 import { PageHeader } from "@/components/page-header"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
@@ -39,6 +37,10 @@ import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
+
+const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
+const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
+const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false })
 
 type ContractRow = {
     id: string
@@ -466,7 +468,7 @@ function AdminKontrakterContent() {
                             employers (name),
                             rettighedshavere (full_name),
                             works (id, title, poster_url),
-                            contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+                            contract_validations (has_credit_clause, has_overenskomst_incorporation)
                         `)
                         .eq("org_id", resolvedOrgId)
                         .order("created_at", { ascending: false }),
@@ -494,11 +496,14 @@ function AdminKontrakterContent() {
                                 .from("contract_comments")
                                 .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
                                 .in("contract_id", rawContracts.map(r => r.id))
+                                .eq("author_role", "member")
+                                .is("admin_read_at", null)
                                 .order("created_at", { ascending: true }),
                             supabase
                                 .from("contract_ai_jobs")
                                 .select("contract_id, status, error_message, created_at")
                                 .in("contract_id", rawContracts.map(r => r.id))
+                                .neq("status", "done")
                                 .order("created_at", { ascending: false }),
                         ])
                         if (commentsRes.data) {
@@ -534,7 +539,7 @@ function AdminKontrakterContent() {
                         work_title: r.works?.title ?? null,
                         work_poster_url: r.works?.poster_url ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
-                        validation_data: validation?.extracted_data ?? null,
+                        validation_data: null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                         ai_job_status: latestJobByContract[r.id]?.status ?? null,
@@ -590,7 +595,7 @@ function AdminKontrakterContent() {
                     .select(`
                         id, type, overenskomst, status, employer_id, rights_holder_id, working_title,
                         employers (name), rettighedshavere (full_name), works (id, title, poster_url),
-                        contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+                        contract_validations (has_credit_clause, has_overenskomst_incorporation)
                     `)
                     .in("id", doneIds)
                 for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
@@ -607,7 +612,7 @@ function AdminKontrakterContent() {
                         working_title: r.working_title ?? null,
                         work_title: r.works?.title ?? null,
                         work_poster_url: r.works?.poster_url ?? null,
-                        validation_data: validation?.extracted_data ?? null,
+                        validation_data: null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                     }
@@ -921,17 +926,6 @@ function AdminKontrakterContent() {
         setActiveHighlight(null)
         setNavneTjekResult(null)
 
-        const rightsHolderName = c.validation_data?.rightsHolderName as string | undefined
-        if (rightsHolderName) {
-            setNavneTjekLoading(true)
-            checkRightsHolderName(rightsHolderName).then(res => {
-                if (res.success && res.result) {
-                    setNavneTjekResult(res.result)
-                }
-                setNavneTjekLoading(false)
-            }).catch(() => setNavneTjekLoading(false))
-        }
-
         if (c.pdf_url) {
             const supabase = createClient()
             supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 3600).then(({ data }) => {
@@ -952,6 +946,76 @@ function AdminKontrakterContent() {
         })
         setEditWorkSearch(c.work_title ?? c.working_title ?? "")
         setEditRightsHolderSearch(c.rights_holder_name ?? "")
+        void loadContractDetail(c)
+    }
+
+    const loadContractDetail = async (c: ContractRow) => {
+        const supabase = createClient()
+        const { data } = await supabase
+            .from("contracts")
+            .select(`
+                id, type, overenskomst, status, pdf_url,
+                contract_date, start_date, end_date, created_at,
+                employer_id, rights_holder_id, working_title,
+                employers (name),
+                rettighedshavere (full_name),
+                works (id, title, poster_url),
+                contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+            `)
+            .eq("id", c.id)
+            .maybeSingle()
+        const { data: comments } = await supabase
+            .from("contract_comments")
+            .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+            .eq("contract_id", c.id)
+            .order("created_at", { ascending: true })
+        const { data: jobs } = await supabase
+            .from("contract_ai_jobs")
+            .select("contract_id, status, error_message, created_at")
+            .eq("contract_id", c.id)
+            .order("created_at", { ascending: false })
+            .limit(1)
+
+        if (!data) return
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
+        const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
+        const detail: ContractRow = {
+            id: row.id,
+            type: row.type,
+            overenskomst: row.overenskomst,
+            status: row.status,
+            pdf_url: row.pdf_url,
+            contract_date: row.contract_date,
+            start_date: row.start_date,
+            end_date: row.end_date,
+            created_at: row.created_at,
+            employer_id: row.employer_id ?? null,
+            employer_name: row.employers?.name ?? null,
+            rights_holder_id: row.rights_holder_id ?? null,
+            rights_holder_name: row.rettighedshavere?.full_name ?? null,
+            work_id: row.works?.id ?? null,
+            working_title: row.working_title ?? null,
+            work_title: row.works?.title ?? null,
+            work_poster_url: row.works?.poster_url ?? null,
+            contract_comments: ((comments ?? []) as unknown as ContractComment[]),
+            validation_data: validation?.extracted_data ?? null,
+            validation_has_credit_clause: validation?.has_credit_clause ?? null,
+            validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+            ai_job_status: latestJob?.status ?? null,
+            ai_job_error: latestJob?.error_message ?? null,
+        }
+        setEditContract(prev => prev?.id === c.id ? detail : prev)
+        setContracts(prev => prev.map(contract => contract.id === c.id ? { ...contract, ...detail } : contract))
+
+        const rightsHolderName = detail.validation_data?.rightsHolderName as string | undefined
+        if (rightsHolderName) {
+            setNavneTjekLoading(true)
+            checkRightsHolderName(rightsHolderName).then(res => {
+                if (res.success && res.result) setNavneTjekResult(res.result)
+                setNavneTjekLoading(false)
+            }).catch(() => setNavneTjekLoading(false))
+        }
     }
 
     const markAdminCommentsRead = async (c: ContractRow) => {

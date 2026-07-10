@@ -436,16 +436,17 @@ export async function fetchAdminWorksForReview() {
 
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
+  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_countries, production_companies, status, dfi_id, tmdb_id, description, poster_url, dfi_title, dfi_danish_title, dfi_original_title, dfi_category, dfi_type, created_at";
   const withSharePercent = await db
     .from("works")
-    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+    .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
   const { data, error } = await retryWithoutSharePercent(
     withSharePercent,
     async () => await db
       .from("works")
-      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+      .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)`)
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
   );
@@ -467,6 +468,34 @@ export async function fetchAdminWorksForReview() {
     return !isTechnicalSeriesParent;
   });
   return { success: true, works: visibleWorks };
+}
+
+export async function fetchAdminWorkDetail(workId: string) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const withSharePercent = await db
+    .from("works")
+    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+    .eq("org_id", orgId)
+    .eq("id", workId)
+    .maybeSingle();
+  const { data, error } = await retryWithoutSharePercent(
+    withSharePercent,
+    async () => await db
+      .from("works")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+      .eq("org_id", orgId)
+      .eq("id", workId)
+      .maybeSingle()
+  );
+
+  if (error) return { success: false, error: error.message };
+  if (!data) return { success: false, error: "Værket blev ikke fundet." };
+  return { success: true, work: data };
 }
 
 export async function deleteAdminWorkPermanently(params: { workId: string }) {

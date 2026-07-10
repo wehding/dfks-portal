@@ -9,6 +9,7 @@ import type { Contract } from "./MineKontrakterClient";
 
 type WorkRelation = { id: string; title: string; year: number | null; type: string };
 type WorkAssignmentRow = { works: WorkRelation | WorkRelation[] | null };
+type ContractComment = { id: string; author_role: "member" | "admin"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
 type RawContract = Omit<Contract, "works" | "employers"> & {
   works: Contract["works"] | Contract["works"][];
   employers: Contract["employers"] | Contract["employers"][];
@@ -16,9 +17,7 @@ type RawContract = Omit<Contract, "works" | "employers"> & {
   contract_comments?: Contract["contract_comments"] | null;
 };
 
-const CONTRACT_SELECT_WITH_ATTACHMENTS = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)";
-const CONTRACT_SELECT_BASE = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)";
-const CONTRACT_SELECT_LEGACY = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)";
+const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
 
 function getWorkRelation(row: WorkAssignmentRow) {
   return Array.isArray(row.works) ? row.works[0] ?? null : row.works;
@@ -58,37 +57,33 @@ export default async function MineKontrakterPage() {
     .maybeSingle();
 
   let contracts: unknown[] = [];
+  let unreadCommentsByContract: Record<string, Contract["contract_comments"]> = {};
   if (rh) {
-    const withAttachments = await db
+    const listRes = await db
       .from("contracts")
-      .select(CONTRACT_SELECT_WITH_ATTACHMENTS)
+      .select(CONTRACT_LIST_SELECT)
       .eq("rights_holder_id", rh.id)
       .order("created_at", { ascending: false });
 
-    if (withAttachments.error && isMissingAttachmentRelationError(withAttachments.error)) {
-      const fallback = await db
-        .from("contracts")
-        .select(CONTRACT_SELECT_BASE)
-        .eq("rights_holder_id", rh.id)
-        .order("created_at", { ascending: false });
-      if (fallback.error) {
-        const legacy = await db
-          .from("contracts")
-          .select(CONTRACT_SELECT_LEGACY)
-          .eq("rights_holder_id", rh.id)
-          .order("created_at", { ascending: false });
-        if (legacy.error) {
-          console.error("Kunne ikke hente kontrakter:", legacy.error.message);
-        } else {
-          contracts = legacy.data ?? [];
-        }
-      } else {
-        contracts = fallback.data ?? [];
-      }
-    } else if (withAttachments.error) {
-      console.error("Kunne ikke hente kontrakter:", withAttachments.error.message);
+    if (listRes.error && !isMissingAttachmentRelationError(listRes.error)) {
+      console.error("Kunne ikke hente kontrakter:", listRes.error.message);
     } else {
-      contracts = withAttachments.data ?? [];
+      contracts = listRes.data ?? [];
+      const contractIds = contracts.map(row => (row as { id?: string }).id).filter((id): id is string => Boolean(id));
+      if (contractIds.length) {
+        const { data: unreadComments } = await db
+          .from("contract_comments")
+          .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+          .in("contract_id", contractIds)
+          .eq("author_role", "admin")
+          .is("member_read_at", null)
+          .order("created_at", { ascending: true });
+        unreadCommentsByContract = ((unreadComments ?? []) as Array<ContractComment & { contract_id: string }>).reduce<Record<string, Contract["contract_comments"]>>((acc, comment) => {
+          if (!acc[comment.contract_id]) acc[comment.contract_id] = [];
+          acc[comment.contract_id].push(comment);
+          return acc;
+        }, {});
+      }
     }
   }
 
@@ -113,10 +108,8 @@ export default async function MineKontrakterPage() {
     ...contract,
     works: firstRelation(contract.works),
     employers: firstRelation(contract.employers),
-    contract_attachments: Array.isArray(contract.contract_attachments) ? contract.contract_attachments : [],
-    contract_comments: Array.isArray(contract.contract_comments)
-      ? [...contract.contract_comments].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-      : [],
+    contract_attachments: [],
+    contract_comments: unreadCommentsByContract[contract.id] ?? [],
   }));
 
   return (

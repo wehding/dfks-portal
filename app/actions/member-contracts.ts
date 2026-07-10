@@ -233,6 +233,30 @@ export async function linkContractToWork(contractId: string, workId: string | nu
   return { success: true };
 }
 
+export async function fetchMemberContractDetail(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
+
+  const { data, error } = await db
+    .from("contracts")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .eq("id", contractId)
+    .eq("rights_holder_id", rh.id)
+    .maybeSingle();
+
+  if (error) return { success: false, error: error.message };
+  if (!data) return { success: false, error: "Kontrakten blev ikke fundet." };
+  return { success: true, contract: data };
+}
+
 export async function getContractSignedUrl(pdfUrl: string) {
   const db = createServiceClient();
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
