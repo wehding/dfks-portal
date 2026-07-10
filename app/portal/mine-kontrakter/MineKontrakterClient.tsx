@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 
@@ -111,6 +112,34 @@ function normalizeContract(contract: Contract): Contract {
     contract_attachments: contract.contract_attachments ?? [],
     contract_comments: contract.contract_comments ?? [],
   };
+}
+
+function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
+  return comments.map(comment => ({
+    id: comment.id,
+    authorRole: comment.author_role,
+    message: comment.message,
+    createdAt: comment.created_at,
+    memberReadAt: comment.member_read_at,
+    adminReadAt: comment.admin_read_at,
+  }));
+}
+
+function contractNextAction(contract: Contract) {
+  const comments = contract.contract_comments ?? [];
+  const latest = comments.at(-1);
+  if (!latest) return "Ingen beskeder endnu";
+  if (latest.author_role === "admin" && !latest.member_read_at) return "Nyt svar fra DFKS";
+  if (latest.author_role === "member") return "Afventer DFKS";
+  return "Samtalen er ajour";
+}
+
+function contractNextActionTone(contract: Contract): "neutral" | "attention" | "done" {
+  const latest = (contract.contract_comments ?? []).at(-1);
+  if (!latest) return "neutral";
+  if (latest.author_role === "admin" && !latest.member_read_at) return "attention";
+  if (latest.author_role === "member") return "neutral";
+  return "done";
 }
 
 type MyWork = { id: string; title: string; year: number | null; type: string };
@@ -950,37 +979,27 @@ export default function MineKontrakterClient({
                 )}
               </div>
 
-              {/* Kommentarer */}
-              <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Kommentarer</p>
-                <div className="max-h-44 space-y-2 overflow-y-auto rounded-lg border bg-muted/40 p-2">
-                  {(selectedContract.contract_comments ?? []).length === 0 ? (
-                    <p className="px-1 py-2 text-sm italic text-muted-foreground">Ingen kommentarer endnu</p>
-                  ) : (selectedContract.contract_comments ?? []).map(comment => (
-                    <div key={comment.id} className="rounded-md bg-background px-3 py-2 text-sm">
-                      <div className="mb-1 text-xs text-muted-foreground">
-                        {comment.author_role === "admin" ? "DFKS" : "Dig"} · {new Date(comment.created_at).toLocaleString("da-DK")}
-                      </div>
-                      <p className="text-foreground">{comment.message}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-2 space-y-2">
-                  <textarea
-                    value={commentDraft}
-                    onChange={e => setCommentDraft(e.target.value)}
-                    placeholder="Skriv en kommentar til DFKS..."
-                    className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <Button onClick={handleAddComment} disabled={commentSaving || !commentDraft.trim()} className="w-full">
-                    {commentSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Send kommentar
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setSelectedContract(null)} className="w-full">
+              <MessageThread
+                title="Beskeder med DFKS"
+                messages={contractMessages(selectedContract.contract_comments ?? [])}
+                viewerRole="member"
+                memberLabel="Medlem"
+                adminLabel="DFKS"
+                emptyText="Ingen beskeder endnu. Skriv til DFKS, hvis der er noget ved kontrakten, der skal afklares."
+                nextActionLabel={contractNextAction(selectedContract)}
+                nextActionTone={contractNextActionTone(selectedContract)}
+                composerValue={commentDraft}
+                onComposerChange={setCommentDraft}
+                onSend={handleAddComment}
+                composerLoading={commentSaving}
+                composerPlaceholder="Skriv en besked til DFKS..."
+                sendLabel="Send besked"
+                footer={(
+                  <Button type="button" variant="outline" onClick={() => setSelectedContract(null)} className="w-full sm:w-auto">
                     Gem kontrakt
                   </Button>
-                </div>
-              </div>
+                )}
+              />
 
               {/* Slet */}
               <button
