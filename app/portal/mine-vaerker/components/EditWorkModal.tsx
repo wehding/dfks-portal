@@ -12,6 +12,7 @@ import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { EpisodePicker } from "@/components/works/episode-picker";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 const WORK_TYPES = [
@@ -20,6 +21,7 @@ const WORK_TYPES = [
   { value: "tv-serie", label: "Tv-serie" },
   { value: "dokumentarfilm", label: "Dokumentarfilm" },
   { value: "dokumentar-serie", label: "Dokumentar-serie" },
+  { value: "dokudrama", label: "Dokudrama" },
 ];
 
 const selectCls =
@@ -231,7 +233,7 @@ export function EditWorkModal({
 
   const searchCoEditors = async (editorId: string, query: string) => {
     const q = query.trim();
-    if (q.length < 2) {
+    if (q.length === 1) {
       setCoEditorSuggestions(prev => ({ ...prev, [editorId]: [] }));
       return;
     }
@@ -508,35 +510,7 @@ export function EditWorkModal({
               Fravælg alle
             </button>
           </div>
-          <div className="mt-3 grid max-h-56 grid-cols-2 gap-2 overflow-y-auto rounded-md border bg-muted/20 p-2 sm:grid-cols-4">
-            {Array.from({ length: directSeriesEpisodeCount }, (_, idx) => {
-              const epNum = idx + 1;
-              const isChecked = selectedEpisodes[epNum] || false;
-              return (
-                <label
-                  key={epNum}
-                  className={`flex cursor-pointer select-none items-center gap-2 rounded border p-2 text-xs transition-colors ${
-                    isChecked
-                      ? "border-blue-500 bg-blue-50/80 text-blue-900 dark:bg-blue-500/15 dark:text-blue-100"
-                      : "border-border text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={(e) =>
-                      setSelectedEpisodes((prev) => ({
-                        ...prev,
-                        [epNum]: e.target.checked,
-                      }))
-                    }
-                    className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Afsnit {epNum}</span>
-                </label>
-              );
-            })}
-          </div>
+          <div className="mt-3"><EpisodePicker compact options={Array.from({ length: directSeriesEpisodeCount }, (_, index) => ({ number: index + 1 }))} selected={directSelectedEpisodeNumbers} onChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))} /></div>
         </div>
       )}
 
@@ -550,6 +524,9 @@ export function EditWorkModal({
                 <Input
                   value={editor.name}
                   disabled={editor.locked && editor.action !== "change"}
+                  onFocus={() => {
+                    if (!editor.locked || editor.action === "change") void searchCoEditors(editor.id, editor.name);
+                  }}
                   onChange={e => {
                       const value = e.target.value;
                       setEditCoEditors(prev =>
@@ -810,35 +787,7 @@ export function EditWorkModal({
                           </button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1 bg-muted/20 rounded-md border">
-                        {Array.from({ length: epCount }, (_, idx) => {
-                          const epNum = idx + 1;
-                          const isChecked = selectedEpisodes[epNum] || false;
-                          return (
-                            <label
-                              key={epNum}
-                              className={`flex items-center gap-2 rounded border p-2 text-xs cursor-pointer select-none transition-colors ${
-                                isChecked
-                                  ? "border-blue-500 bg-blue-50/50 text-blue-900"
-                                  : "border-border hover:bg-muted text-muted-foreground"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={(e) =>
-                                  setSelectedEpisodes((prev) => ({
-                                    ...prev,
-                                    [epNum]: e.target.checked,
-                                  }))
-                                }
-                                className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              />
-                              <span>Afsnit {epNum}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
+                      <EpisodePicker compact options={Array.from({ length: epCount }, (_, index) => ({ number: index + 1 }))} selected={directSelectedEpisodeNumbers} onChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))} />
                     </div>
                   );
                 })()

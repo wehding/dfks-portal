@@ -34,6 +34,8 @@ type MessageThreadProps = {
   onComposerChange?: (value: string) => void
   onSend?: () => void
   footer?: ReactNode
+  onDeleteMessage?: (messageId: string) => Promise<void> | void
+  onClearThread?: () => Promise<void> | void
 }
 
 function roleLabel(role: MessageThreadRole, memberLabel: string, adminLabel: string) {
@@ -87,6 +89,8 @@ export function MessageThread({
   onComposerChange,
   onSend,
   footer,
+  onDeleteMessage,
+  onClearThread,
 }: MessageThreadProps) {
   const sorted = [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   const unreadCount = sorted.filter(message => unreadForViewer(message, viewerRole)).length
@@ -102,6 +106,9 @@ export function MessageThread({
         <div className="flex items-center gap-2">
           {unreadCount > 0 && <MessageStatusBadge count={unreadCount} label="Ulæst" tone="attention" />}
           {nextActionLabel && <MessageStatusBadge label={nextActionLabel} tone={nextActionTone} />}
+          {viewerRole === "admin" && onClearThread && messages.length > 0 && (
+            <button type="button" className="text-xs text-destructive hover:underline" onClick={() => { if (window.confirm("Ryd alle beskeder i tråden? Handlingen kan ikke fortrydes.")) void onClearThread(); }}>Ryd tråd</button>
+          )}
         </div>
       </div>
 
@@ -130,7 +137,12 @@ export function MessageThread({
                   <span>{new Date(message.createdAt).toLocaleString("da-DK")}</span>
                   {unread && <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">Ny</span>}
                 </div>
-                <p className="whitespace-pre-wrap leading-relaxed">{message.message}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="whitespace-pre-wrap leading-relaxed">{message.message}</p>
+                  {viewerRole === "admin" && onDeleteMessage && (
+                    <button type="button" className={`shrink-0 text-xs hover:underline ${own ? "text-primary-foreground/80" : "text-destructive"}`} onClick={() => { if (window.confirm("Slet denne besked? Handlingen kan ikke fortrydes.")) void onDeleteMessage(message.id); }}>Slet</button>
+                  )}
+                </div>
               </article>
             )
           })

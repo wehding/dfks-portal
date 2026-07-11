@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
@@ -48,6 +49,8 @@ import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tm
 import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
+import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
+import { EpisodePicker } from "@/components/works/episode-picker";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -57,6 +60,7 @@ const WORK_TYPES = [
   { value: "tv-serie", label: "Tv-serie" },
   { value: "dokumentar-serie", label: "Dokumentar-serie" },
   { value: "dokumentarfilm", label: "Dokumentarfilm" },
+  { value: "dokudrama", label: "Dokudrama" },
 ];
 
 const WORK_TYPE_VALUES = WORK_TYPES.map(type => type.value) as DfiWorkType[];
@@ -153,6 +157,15 @@ type WorkProductionNumber = {
   tv_station: string;
   number: string | null;
 };
+type WorkDistribution = {
+  id?: string;
+  broadcaster_name?: string | null;
+  distribution_type: "tv" | "streaming" | "both";
+  valid_from_year?: number | null;
+  valid_to_year?: number | null;
+  broadcasters?: { name?: string | null; logo_path?: string | null } | null;
+};
+type DistributionDraft = { broadcasterName: string; distributionType: "tv" | "streaming" | "both"; validFromYear: string; validToYear: string };
 
 type WorkRow = {
   id: string;
@@ -184,6 +197,7 @@ type WorkRow = {
   contracts?: ContractLink[];
   work_assignments?: WorkAssignment[];
   work_production_numbers?: WorkProductionNumber[];
+  work_distributions?: WorkDistribution[];
 };
 
 type WorkForm = {
@@ -226,6 +240,12 @@ type AddWorkForm = {
   alternative_titles: string;
   production_countries: string;
   production_companies: string;
+  description: string;
+  dfi_id: string;
+  tmdb_id: string;
+  imdb_id: string;
+  poster_url: string;
+  status: string;
   dfi_title: string;
   dfi_danish_title: string;
   dfi_original_title: string;
@@ -262,9 +282,11 @@ type AdminCreateWorkData = {
   dfi_original_title: string | null;
   dfi_category: string | null;
   dfi_type: string | null;
-  description: null;
+  description: string | null;
   dfi_id: string | null;
   tmdb_id: number | null;
+  imdb_id: string | null;
+  field_sources: Record<string, string>;
   poster_url: string | null;
   dfi_metadata: DfiMetadata | null;
 };
@@ -504,6 +526,10 @@ function similarity(a: string, b: string) {
 }
 
 function getWorkBroadcaster(work: WorkRow) {
+  const distributions = (work.work_distributions ?? [])
+    .map(item => item.broadcasters?.name ?? item.broadcaster_name)
+    .filter((name): name is string => Boolean(name));
+  if (distributions.length > 0) return distributions.join(", ");
   return (work.work_production_numbers ?? []).find(item => item.number === BROADCAST_STREAM_NUMBER)?.tv_station
     ?? (work.work_production_numbers ?? [])[0]?.tv_station
     ?? null;
@@ -681,6 +707,12 @@ function defaultAddForm(): AddWorkForm {
     alternative_titles: "",
     production_countries: "",
     production_companies: "",
+    description: "",
+    dfi_id: "",
+    tmdb_id: "",
+    imdb_id: "",
+    poster_url: "",
+    status: "godkendt",
     dfi_title: "",
     dfi_danish_title: "",
     dfi_original_title: "",
@@ -691,6 +723,28 @@ function defaultAddForm(): AddWorkForm {
     sharePercent: "",
     broadcaster: NO_BROADCASTER,
   };
+}
+
+function toDistributionDrafts(work: WorkRow): DistributionDraft[] {
+  if ((work.work_distributions ?? []).length > 0) {
+    return (work.work_distributions ?? []).map(item => ({
+      broadcasterName: item.broadcasters?.name ?? item.broadcaster_name ?? "",
+      distributionType: item.distribution_type ?? "both",
+      validFromYear: item.valid_from_year == null ? "" : String(item.valid_from_year),
+      validToYear: item.valid_to_year == null ? "" : String(item.valid_to_year),
+    }));
+  }
+  const legacy = getWorkBroadcaster(work);
+  return legacy ? [{ broadcasterName: legacy, distributionType: "both", validFromYear: "", validToYear: "" }] : [];
+}
+
+function distributionPayload(items: DistributionDraft[]) {
+  return items.filter(item => item.broadcasterName).map(item => ({
+    broadcasterName: item.broadcasterName,
+    distributionType: item.distributionType,
+    validFromYear: nullableNumber(item.validFromYear),
+    validToYear: nullableNumber(item.validToYear),
+  }));
 }
 
 export default function VaerksadministrationPage() {
@@ -720,8 +774,12 @@ export default function VaerksadministrationPage() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addQuery, setAddQuery] = useState("");
+  const [addTypeFilter, setAddTypeFilter] = useState("all");
   const [addForm, setAddForm] = useState<AddWorkForm>(defaultAddForm);
-  const [addSource, setAddSource] = useState<"manual" | "local" | "dfi" | "tmdb">("manual");
+  const [addManualMode, setAddManualMode] = useState(false);
+  const [addAssignments, setAddAssignments] = useState<AssignmentDraft[]>([]);
+  const [addDistributions, setAddDistributions] = useState<DistributionDraft[]>([]);
+  const [editDistributions, setEditDistributions] = useState<DistributionDraft[]>([]);
   const [addForceExternalSearch, setAddForceExternalSearch] = useState(false);
   const [unifiedAddResults, setUnifiedAddResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [pickedUnifiedAddResult, setPickedUnifiedAddResult] = useState<UnifiedSearchWorkResult | null>(null);
@@ -977,6 +1035,7 @@ export default function VaerksadministrationPage() {
     void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
+    setEditDistributions(toDistributionDrafts(work));
     setAssignmentDrafts(Object.fromEntries((work.work_assignments ?? []).map(assignment => [
       assignment.id,
       {
@@ -1003,6 +1062,7 @@ export default function VaerksadministrationPage() {
     setWorks(prev => prev.map(item => item.id === work.id ? detailedWork : item));
     setEditing(detailedWork);
     setEditForm(toForm(detailedWork));
+    setEditDistributions(toDistributionDrafts(detailedWork));
     setAssignmentDrafts(Object.fromEntries((detailedWork.work_assignments ?? []).map(assignment => [
       assignment.id,
       {
@@ -1048,7 +1108,7 @@ export default function VaerksadministrationPage() {
           status: editForm.status === "arkiveret" ? "godkendt" : editForm.status,
           dfi_metadata: editForm.dfi_metadata || null,
         },
-        broadcaster: editForm.broadcaster === NO_BROADCASTER ? null : editForm.broadcaster,
+        distributions: distributionPayload(editDistributions),
         assignments: [
           ...Object.values(assignmentDrafts).map(assignment => ({
             id: assignment.id,
@@ -1096,7 +1156,7 @@ export default function VaerksadministrationPage() {
         const freshWorks = res.works as unknown as WorkRow[];
         setWorks(freshWorks);
         const updatedEditing = freshWorks.find(work => work.id === editingWorkId) ?? null;
-        if (updatedEditing) {
+        if (decision !== "approved" && updatedEditing) {
           setEditing(updatedEditing);
           setEditForm(toForm(updatedEditing));
           setAssignmentDrafts(Object.fromEntries((updatedEditing.work_assignments ?? []).map(assignment => [
@@ -1111,6 +1171,11 @@ export default function VaerksadministrationPage() {
         }
       }
       setActiveRequestId(null);
+      if (decision === "approved") {
+        setEditing(null);
+        setEditForm(null);
+        setImportPreview(null);
+      }
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke behandle rettelsen."));
@@ -1161,8 +1226,11 @@ export default function VaerksadministrationPage() {
   const handleApproveSelected = async () => {
     setSaving(true);
     try {
-      await approveAdminWorks({ workIds: selectedIds });
-      setNotice(`${selectedIds.length} værk(er) er godkendt.`);
+      const result = await approveAdminWorks({ workIds: selectedIds });
+      setNotice(
+        `${result.approvedWorks} værk(er) og ${result.approvedRequests} oprettelsesanmodning(er) er godkendt.`
+        + (result.skippedWorks ? ` ${result.skippedWorks} værk(er) kræver individuel gennemgang.` : "")
+      );
       setSelectedIds([]);
       await load();
       notifyWorksUpdated();
@@ -1460,8 +1528,8 @@ export default function VaerksadministrationPage() {
   };
 
   const pickUnifiedAddResult = async (result: UnifiedSearchWorkResult) => {
+    setAddManualMode(false);
     setPickedUnifiedAddResult(result);
-    setAddSource(result.local_id ? "local" : result.dfi_id ? "dfi" : result.tmdb_id ? "tmdb" : "manual");
     setPickedSource(result.local_id ? "local" : result.dfi_id ? "dfi" : result.tmdb_id ? "tmdb" : null);
     setPickedResult(result.local_id
       ? { id: result.local_id }
@@ -1495,6 +1563,11 @@ export default function VaerksadministrationPage() {
       episode_count: d?.episode_count ? String(d.episode_count) : "",
       genre: d?.genre ?? result.genre ?? "",
       director: d?.director ?? result.director ?? "",
+      description: d?.description ?? result.description ?? "",
+      dfi_id: d?.dfi_id ? String(d.dfi_id) : result.dfi_id ? String(result.dfi_id) : "",
+      tmdb_id: d?.tmdb_id ? String(d.tmdb_id) : result.tmdb_id ? String(result.tmdb_id) : "",
+      imdb_id: d?.imdb_id ?? result.imdb_id ?? "",
+      poster_url: d?.poster_url ?? result.poster_url ?? "",
     }));
   };
 
@@ -1518,10 +1591,12 @@ export default function VaerksadministrationPage() {
           dfi_original_title: addForm.dfi_original_title || null,
           dfi_category: addForm.dfi_category || null,
           dfi_type: addForm.dfi_type || null,
-        description: null,
-        dfi_id: null as string | null,
-        tmdb_id: null as number | null,
-        poster_url: null as string | null,
+        description: addForm.description || null,
+        dfi_id: addForm.dfi_id || null,
+        tmdb_id: nullableNumber(addForm.tmdb_id),
+        imdb_id: addForm.imdb_id || null,
+        field_sources: {},
+        poster_url: addForm.poster_url || null,
         dfi_metadata: null,
       };
 
@@ -1566,18 +1641,26 @@ export default function VaerksadministrationPage() {
       await createAdminWork({
         workId: pickedSource === "local" && pickedResult ? textValue(pickedResult.id) : null,
         data,
-        rightsHolderId: addForm.rightsHolderId || null,
-        role: addForm.role || null,
-        sharePercent: nullableNumber(addForm.sharePercent),
+        assignments: addAssignments
+          .filter(assignment => assignment.rightsHolderId && assignment.role)
+          .map(assignment => ({
+            rightsHolderId: assignment.rightsHolderId as string,
+            role: assignment.role,
+            sharePercent: nullableNumber(assignment.sharePercent),
+          })),
         broadcaster: addForm.broadcaster === NO_BROADCASTER ? null : addForm.broadcaster,
         seasonNumber: nullableNumber(addSeasonNumber),
         selectedEpisodes: addSelectedEpisodes,
+        status: addForm.status,
+        distributions: distributionPayload(addDistributions),
       });
       setNotice("Værket er tilføjet.");
       setAddOpen(false);
       setAddQuery("");
       setAddForm(defaultAddForm());
-      setAddSource("manual");
+      setAddManualMode(false);
+      setAddAssignments([]);
+      setAddDistributions([]);
       setPickedResult(null);
       setPickedSource(null);
       setPickedUnifiedAddResult(null);
@@ -1598,7 +1681,7 @@ export default function VaerksadministrationPage() {
   if (loading) return <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Henter værker...</div>;
 
   const addRequiresEpisodeSelection =
-    Boolean(addForm.rightsHolderId) &&
+    addAssignments.some(assignment => Boolean(assignment.rightsHolderId)) &&
     (addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") &&
     addEpisodeOptions.length > 0 &&
     addSelectedEpisodes.length === 0;
@@ -1759,7 +1842,6 @@ export default function VaerksadministrationPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium leading-snug">{work.title}</p>
-                      {pendingCount > 0 && <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">Skal godkendes</Badge>}
                       {unreadMemberMessageCount(work) > 0 && <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">Besked</Badge>}
                     </div>
                     {latestUnreadMemberMessage(work) && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnreadMemberMessage(work)}</p>}
@@ -1839,11 +1921,6 @@ export default function VaerksadministrationPage() {
                           {unreadMemberMessageCount(work) > 0 && (
                             <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                               {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
-                            </Badge>
-                          )}
-                          {pendingCount > 0 && (
-                            <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-800">
-                              Skal godkendes
                             </Badge>
                           )}
                         </div>
@@ -1986,21 +2063,7 @@ export default function VaerksadministrationPage() {
                             {Number(reviewEpisodeCount) > 0 && (
                               <div>
                                 <p className="mb-1 text-xs text-muted-foreground">Afsnit medlemmet er krediteret på (klik for at vælge til/fra):</p>
-                                <div className="grid grid-cols-6 gap-1.5 sm:grid-cols-10">
-                                  {Array.from({ length: Number(reviewEpisodeCount) }, (_, i) => i + 1).map(n => {
-                                    const on = reviewEpisodes.includes(n);
-                                    return (
-                                      <button
-                                        key={n}
-                                        type="button"
-                                        onClick={() => setReviewEpisodes(prev => prev.includes(n) ? prev.filter(x => x !== n) : [...prev, n].sort((a, b) => a - b))}
-                                        className={`rounded border px-2 py-1 text-xs ${on ? "border-foreground bg-foreground text-background" : "hover:bg-muted"}`}
-                                      >
-                                        {n}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
+                                <EpisodePicker compact options={Array.from({ length: Number(reviewEpisodeCount) }, (_, index) => ({ number: index + 1 }))} selected={reviewEpisodes} onChange={setReviewEpisodes} label="Afsnit medlemmet er krediteret på" />
                               </div>
                             )}
                           </div>
@@ -2032,6 +2095,14 @@ export default function VaerksadministrationPage() {
                           composerLoading={saving}
                           composerPlaceholder="Skriv et svar til brugeren…"
                           sendLabel="Send svar"
+                          onDeleteMessage={async messageId => {
+                            await deleteAdminMessage({ kind: "work", threadId: activeRequest.id, messageId });
+                            setEditing(prev => prev ? { ...prev, work_change_requests: (prev.work_change_requests ?? []).map(request => request.id === activeRequest.id ? { ...request, work_change_request_comments: (request.work_change_request_comments ?? []).filter(comment => comment.id !== messageId) } : request) } : prev);
+                          }}
+                          onClearThread={async () => {
+                            await clearAdminMessageThread({ kind: "work", threadId: activeRequest.id });
+                            setEditing(prev => prev ? { ...prev, work_change_requests: (prev.work_change_requests ?? []).map(request => request.id === activeRequest.id ? { ...request, work_change_request_comments: [] } : request) } : prev);
+                          }}
                           footer={activeRequest.status === "pending" ? (
                             <div className="flex flex-wrap justify-end gap-2">
                               <Button variant="outline" onClick={() => handleReview("rejected")} disabled={saving}>
@@ -2126,25 +2197,7 @@ export default function VaerksadministrationPage() {
                     <Field label="IMDb-id" source={editForm.field_sources.imdb_id}>
                       <Input value={editForm.imdb_id} onChange={e => setEditForm({ ...editForm, imdb_id: e.target.value, field_sources: { ...editForm.field_sources, imdb_id: "manual" } })} />
                     </Field>
-                    <Field label="Broadcast/stream">
-                      <Select value={editForm.broadcaster} onValueChange={broadcaster => setEditForm({ ...editForm, broadcaster })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                          {broadcasterOptions.map(broadcaster => (
-                            <SelectItem key={broadcaster.name} value={broadcaster.name}>
-                              <span className="flex items-center gap-2">
-                                {broadcaster.logo_path && (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
-                                )}
-                                <span>{broadcaster.name}</span>
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
+                    <div className="md:col-span-2"><DistributionEditor value={editDistributions} onChange={setEditDistributions} options={broadcasterOptions} /></div>
 
                     {editForm.dfi_id && !editForm.dfi_metadata && (
                       <div className="col-span-full mt-2 rounded border border-dashed p-3 flex items-center justify-between text-sm bg-muted/40">
@@ -2471,6 +2524,11 @@ export default function VaerksadministrationPage() {
       <Dialog open={addOpen} onOpenChange={open => {
         setAddOpen(open);
         if (!open) {
+          setAddManualMode(false);
+          setAddTypeFilter("all");
+          setAddAssignments([]);
+          setAddDistributions([]);
+          setAddForm(defaultAddForm());
           setPickedResult(null);
           setPickedSource(null);
           setPickedUnifiedAddResult(null);
@@ -2494,6 +2552,13 @@ export default function VaerksadministrationPage() {
                     onChange={e => setAddQuery(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") handleAddSearch(); }}
                   />
+                  <Select value={addTypeFilter} onValueChange={setAddTypeFilter}>
+                    <SelectTrigger className="sm:w-48"><SelectValue placeholder="Alle typer" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Alle typer</SelectItem>
+                      {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                   <Button variant="outline" onClick={handleAddSearch} disabled={isSearchingAdd} className="gap-2">
                     {isSearchingAdd ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                     Søg
@@ -2521,8 +2586,9 @@ export default function VaerksadministrationPage() {
                 )}
                 {unifiedAddResults.length > 0 && (
                   <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">{unifiedAddResults.filter(result => addTypeFilter === "all" || result.type === addTypeFilter).length} resultater</p>
                     <div className="max-h-80 overflow-auto rounded-md border">
-                      {unifiedAddResults.map(result => {
+                      {unifiedAddResults.filter(result => addTypeFilter === "all" || result.type === addTypeFilter).map(result => {
                         const selected = pickedUnifiedAddResult?.id === result.id;
                         return (
                           <button
@@ -2544,7 +2610,7 @@ export default function VaerksadministrationPage() {
                                 <p className="truncate font-medium">{result.title}</p>
                                 {result.sources.map(source => (
                                   <Badge key={source} variant={source === "local" ? "default" : "secondary"} className="uppercase">
-                                    {source}
+                                    {source === "local" ? "Findes allerede" : source}
                                   </Badge>
                                 ))}
                               </div>
@@ -2563,12 +2629,25 @@ export default function VaerksadministrationPage() {
                 )}
               </InfoPanel>
 
-              <InfoPanel title="Manuel oprettelse eller valgte data">
+              {!pickedUnifiedAddResult && !addManualMode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddManualMode(true);
+                    setPickedResult(null);
+                    setPickedSource(null);
+                    setAddForm(form => ({ ...defaultAddForm(), title: form.title || addQuery }));
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed px-4 py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Plus className="h-4 w-4" />
+                  Opret værk manuelt
+                </button>
+              )}
+
+              {(addManualMode || pickedUnifiedAddResult) && <InfoPanel title={addManualMode ? "Manuel oprettelse" : "Gennemgå valgte data"}>
                 <div className="mb-2 flex gap-2">
-                  <Button type="button" size="sm" variant={addSource === "manual" ? "default" : "outline"} onClick={() => { setAddSource("manual"); setPickedResult(null); setPickedSource(null); }}>
-                    Manuel
-                  </Button>
-                  <Button type="button" size="sm" variant="outline" onClick={() => { setAddForm(defaultAddForm()); setPickedResult(null); setPickedSource(null); setPickedUnifiedAddResult(null); setAddEpisodeOptions([]); setAddSelectedEpisodes([]); setAddSeasonNumber("1"); setAddSource("manual"); }}>
+                  <Button type="button" size="sm" variant="outline" onClick={() => { setAddForm(defaultAddForm()); setPickedResult(null); setPickedSource(null); setPickedUnifiedAddResult(null); setAddEpisodeOptions([]); setAddSelectedEpisodes([]); setAddSeasonNumber("1"); }}>
                     Ryd
                   </Button>
                 </div>
@@ -2584,6 +2663,7 @@ export default function VaerksadministrationPage() {
                   </Field>
                   <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
+                  <Field label="Sæsoner"><Input value={addForm.season_count} onChange={e => setAddForm({ ...addForm, season_count: e.target.value })} /></Field>
                   <Field label="Afsnit"><Input value={addForm.episode_count} onChange={e => setAddForm({ ...addForm, episode_count: e.target.value })} /></Field>
                   {(addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") && addEpisodeOptions.length > 0 && (
                     <div className="md:col-span-2 rounded-md border p-3">
@@ -2615,26 +2695,7 @@ export default function VaerksadministrationPage() {
                           </Button>
                         </div>
                       </div>
-                      <div className="grid max-h-48 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4">
-                        {addEpisodeOptions.map(option => {
-                          const checked = addSelectedEpisodes.includes(option.number);
-                          return (
-                            <button
-                              key={option.number}
-                              type="button"
-                              className={`rounded-md border px-2 py-2 text-left text-xs ${checked ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"}`}
-                              onClick={() => setAddSelectedEpisodes(prev =>
-                                checked
-                                  ? prev.filter(number => number !== option.number)
-                                  : [...prev, option.number].sort((a, b) => a - b)
-                              )}
-                            >
-                              <span className="font-medium">Afsnit {option.number}</span>
-                              <span className="mt-0.5 block line-clamp-2 text-muted-foreground">{option.title}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      <EpisodePicker compact options={addEpisodeOptions} selected={addSelectedEpisodes} onChange={setAddSelectedEpisodes} />
                       <p className="mt-2 text-xs text-muted-foreground">
                         Hvis du vælger en rettighedshaver, tilknyttes personen de valgte afsnit.
                       </p>
@@ -2645,62 +2706,64 @@ export default function VaerksadministrationPage() {
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
                   <Field label="Produktionslande"><Input value={addForm.production_countries} onChange={e => setAddForm({ ...addForm, production_countries: e.target.value })} /></Field>
                   <Field label="Produktionsselskaber"><Input value={addForm.production_companies} onChange={e => setAddForm({ ...addForm, production_companies: e.target.value })} /></Field>
+                  <div className="md:col-span-2"><Field label="Beskrivelse"><Textarea value={addForm.description} onChange={e => setAddForm({ ...addForm, description: e.target.value })} /></Field></div>
+                  <Field label="DFI ID"><Input value={addForm.dfi_id} onChange={e => setAddForm({ ...addForm, dfi_id: e.target.value })} /></Field>
+                  <Field label="TMDB ID"><Input value={addForm.tmdb_id} onChange={e => setAddForm({ ...addForm, tmdb_id: e.target.value })} /></Field>
+                  <Field label="IMDb ID"><Input value={addForm.imdb_id} onChange={e => setAddForm({ ...addForm, imdb_id: e.target.value })} /></Field>
+                  <Field label="Poster-link"><Input value={addForm.poster_url} onChange={e => setAddForm({ ...addForm, poster_url: e.target.value })} /></Field>
+                  <Field label="DFI titel"><Input value={addForm.dfi_title} onChange={e => setAddForm({ ...addForm, dfi_title: e.target.value })} /></Field>
                   <Field label="DanishTitle"><Input value={addForm.dfi_danish_title} onChange={e => setAddForm({ ...addForm, dfi_danish_title: e.target.value })} /></Field>
                   <Field label="Original / work Title"><Input value={addForm.dfi_original_title} onChange={e => setAddForm({ ...addForm, dfi_original_title: e.target.value })} /></Field>
-                  <Field label="Broadcast/stream">
-                    <Select value={addForm.broadcaster} onValueChange={broadcaster => setAddForm({ ...addForm, broadcaster })}>
+                  <Field label="DFI kategori"><Input value={addForm.dfi_category} onChange={e => setAddForm({ ...addForm, dfi_category: e.target.value })} /></Field>
+                  <Field label="DFI type"><Input value={addForm.dfi_type} onChange={e => setAddForm({ ...addForm, dfi_type: e.target.value })} /></Field>
+                  <Field label="Status">
+                    <Select value={addForm.status} onValueChange={status => setAddForm({ ...addForm, status })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value={NO_BROADCASTER}>Ingen</SelectItem>
-                        {broadcasterOptions.map(broadcaster => (
-                          <SelectItem key={broadcaster.name} value={broadcaster.name}>
-                            <span className="flex items-center gap-2">
-                              {broadcaster.logo_path && (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={broadcaster.logo_path} alt="" className="h-4 w-8 object-contain" loading="lazy" />
-                              )}
-                              <span>{broadcaster.name}</span>
-                            </span>
-                          </SelectItem>
-                        ))}
+                        <SelectItem value="godkendt">Godkendt</SelectItem>
+                        <SelectItem value="til_godkendelse">Til godkendelse</SelectItem>
+                        <SelectItem value="afsluttet">Afsluttet</SelectItem>
+                        <SelectItem value="arkiveret">Arkiveret</SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
+                  <div className="md:col-span-2"><DistributionEditor value={addDistributions} onChange={setAddDistributions} options={broadcasterOptions} /></div>
                 </div>
-              </InfoPanel>
+              </InfoPanel>}
             </div>
             <div className="space-y-4">
-              <InfoPanel title="Rettighedshaver og kreditering">
-                <Field label="Rettighedshaver">
-                  <Select value={addForm.rightsHolderId} onValueChange={rightsHolderId => setAddForm({ ...addForm, rightsHolderId })}>
-                    <SelectTrigger><SelectValue placeholder="Vælg rettighedshaver" /></SelectTrigger>
-                    <SelectContent>
-                      {rightsHolders.map(rightsHolder => (
-                        <SelectItem key={rightsHolder.id} value={rightsHolder.id}>{rightsHolder.full_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Kreditering">
-                  <Select value={addForm.role} onValueChange={role => setAddForm({ ...addForm, role })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {CREDIT_ROLES.map(role => <SelectItem key={role} value={role}>{role}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Andel %">
-                  <Input inputMode="numeric" maxLength={3} className="w-20" value={addForm.sharePercent} onChange={e => setAddForm({ ...addForm, sharePercent: e.target.value })} />
-                </Field>
-                <p className="text-xs text-muted-foreground">
-                  Manuel oprettelse gemmer ikke poster-url. Poster hentes fra DFI eller TMDB og indtastes ikke manuelt.
-                </p>
+              {(addManualMode || pickedUnifiedAddResult) && <InfoPanel title="Rettighedshavere og kreditering">
+                <div className="space-y-3">
+                  {addAssignments.map((assignment, index) => (
+                    <div key={`${assignment.rightsHolderId}-${index}`} className="space-y-2 rounded-md border p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Rettighedshaver {index + 1}</span>
+                        <Button type="button" size="icon" variant="ghost" onClick={() => setAddAssignments(prev => prev.filter((_, itemIndex) => itemIndex !== index))} aria-label="Fjern rettighedshaver">
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                      <Select value={assignment.rightsHolderId ?? ""} onValueChange={rightsHolderId => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, rightsHolderId } : item))}>
+                        <SelectTrigger><SelectValue placeholder="Vælg rettighedshaver" /></SelectTrigger>
+                        <SelectContent>{rightsHolders.filter(holder => !addAssignments.some((item, itemIndex) => itemIndex !== index && item.rightsHolderId === holder.id)).map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Select value={assignment.role} onValueChange={role => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, role } : item))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{CREDIT_ROLES.map(role => <SelectItem key={role} value={role}>{role}</SelectItem>)}</SelectContent>
+                      </Select>
+                      <Field label="Andel %"><Input inputMode="numeric" maxLength={3} className="w-20" value={assignment.sharePercent} onChange={e => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, sharePercent: e.target.value } : item))} /></Field>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" className="w-full gap-2" onClick={() => setAddAssignments(prev => [...prev, { rightsHolderId: "", role: "Klipper", sharePercent: "" }])}>
+                    <Plus className="h-4 w-4" /> Tilføj rettighedshaver
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Du kan tilføje og redigere flere rettighedshavere, før værket gemmes.</p>
                 {addRequiresEpisodeSelection && (
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     Vælg mindst ét afsnit, når du tilknytter en rettighedshaver til en serie.
                   </p>
                 )}
-              </InfoPanel>
+              </InfoPanel>}
             </div>
           </div>
           <DialogFooter>
@@ -2795,6 +2858,24 @@ export default function VaerksadministrationPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function DistributionEditor({ value, onChange, options }: { value: DistributionDraft[]; onChange: (value: DistributionDraft[]) => void; options: BroadcasterOption[] }) {
+  const update = (index: number, patch: Partial<DistributionDraft>) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  return (
+    <div className="space-y-3 rounded-md border p-3">
+      <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "" }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
+      {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
+        <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_130px_100px_100px_auto]">
+          <Select value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>
+          <Select value={item.distributionType} onValueChange={distributionType => update(index, { distributionType: distributionType as DistributionDraft["distributionType"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="both">TV + streaming</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="streaming">Streaming</SelectItem></SelectContent></Select>
+          <Input inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
+          <Input inputMode="numeric" placeholder="Til år" value={item.validToYear} onChange={event => update(index, { validToYear: event.target.value })} />
+          <Button type="button" size="icon" variant="ghost" aria-label="Fjern broadcaster" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="h-4 w-4" /></Button>
+        </div>
+      ))}
     </div>
   );
 }

@@ -70,6 +70,13 @@ type ProposedCoEditor = {
   action?: "add" | "remove" | "change";
 };
 
+type WorkDistributionInput = {
+  broadcasterName: string;
+  distributionType?: "tv" | "streaming" | "both";
+  validFromYear?: number | null;
+  validToYear?: number | null;
+};
+
 type WorkRequestPayload = Partial<WorkCorrectionData> & {
   kind?: "creation" | "correction" | "co_editors";
   workData?: Partial<CreateWorkData>;
@@ -147,7 +154,7 @@ function cleanTextList(value: string[] | null | undefined) {
 }
 
 function cleanWorkType(value: string) {
-  const allowed = ["kortfilm", "spillefilm", "tv-serie", "dokumentar-serie", "dokumentarfilm"];
+  const allowed = ["kortfilm", "spillefilm", "tv-serie", "dokumentar-serie", "dokumentarfilm", "dokudrama"];
   return allowed.includes(value) ? value : "spillefilm";
 }
 
@@ -468,14 +475,14 @@ export async function fetchAdminWorksForReview() {
   const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_countries, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, description, poster_url, dfi_title, dfi_danish_title, dfi_original_title, dfi_category, dfi_type, created_at";
   const withSharePercent = await db
     .from("works")
-    .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)`)
+    .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
   const { data, error } = await retryWithoutSharePercent(
     withSharePercent,
     async () => await db
       .from("works")
-      .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)`)
+      .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
       .eq("org_id", orgId)
       .order("created_at", { ascending: false })
   );
@@ -527,7 +534,7 @@ export async function fetchAdminWorkDetail(workId: string) {
   const orgId = await currentOrgId(db, user.id);
   const withSharePercent = await db
     .from("works")
-    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
     .eq("org_id", orgId)
     .eq("id", workId)
     .maybeSingle();
@@ -535,7 +542,7 @@ export async function fetchAdminWorkDetail(workId: string) {
     withSharePercent,
     async () => await db
       .from("works")
-      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number)")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
       .eq("org_id", orgId)
       .eq("id", workId)
       .maybeSingle()
@@ -760,11 +767,43 @@ async function updateWorkBroadcaster(db: ReturnType<typeof createServiceClient>,
   if (insertError) throw new Error(insertError.message);
 }
 
+async function updateWorkDistributions(db: ReturnType<typeof createServiceClient>, workId: string, orgId: string, distributions: WorkDistributionInput[]) {
+  const normalized = distributions
+    .map(item => ({ ...item, broadcasterName: item.broadcasterName.trim(), distributionType: item.distributionType ?? "both" }))
+    .filter(item => item.broadcasterName);
+  const keys = new Set<string>();
+  for (const item of normalized) {
+    const key = `${item.broadcasterName.toLowerCase()}|${item.distributionType}|${item.validFromYear ?? ""}|${item.validToYear ?? ""}`;
+    if (keys.has(key)) throw new Error("Den samme broadcaster og periode er tilføjet flere gange.");
+    keys.add(key);
+  }
+  const { error: deleteError } = await db.from("work_distributions").delete().eq("work_id", workId).eq("org_id", orgId);
+  if (deleteError) throw new Error(deleteError.message);
+  if (!normalized.length) {
+    await updateWorkBroadcaster(db, workId, null);
+    return;
+  }
+  const { data: broadcasters } = await db.from("broadcasters").select("id, name").in("name", normalized.map(item => item.broadcasterName));
+  const ids = new Map((broadcasters ?? []).map(item => [item.name.toLowerCase(), item.id]));
+  const { error } = await db.from("work_distributions").insert(normalized.map(item => ({
+    org_id: orgId,
+    work_id: workId,
+    broadcaster_id: ids.get(item.broadcasterName.toLowerCase()) ?? null,
+    broadcaster_name: ids.has(item.broadcasterName.toLowerCase()) ? null : item.broadcasterName,
+    distribution_type: item.distributionType,
+    valid_from_year: item.validFromYear ?? null,
+    valid_to_year: item.validToYear ?? null,
+  })));
+  if (error) throw new Error(error.message);
+  await updateWorkBroadcaster(db, workId, normalized[0]?.broadcasterName ?? null);
+}
+
 export async function updateAdminWorkData(params: {
   workId: string;
   data: AdminWorkData;
   assignments?: { id?: string; rightsHolderId?: string; role: string; sharePercent?: number | null }[];
   broadcaster?: string | null;
+  distributions?: WorkDistributionInput[];
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -789,7 +828,8 @@ export async function updateAdminWorkData(params: {
 
   if (error) throw new Error(error.message);
 
-  await updateWorkBroadcaster(db, params.workId, params.broadcaster);
+  if (params.distributions) await updateWorkDistributions(db, params.workId, orgId, params.distributions);
+  else await updateWorkBroadcaster(db, params.workId, params.broadcaster);
 
   for (const assignment of params.assignments ?? []) {
     const role = cleanText(assignment.role);
@@ -852,12 +892,15 @@ export async function updateAdminWorkData(params: {
 export async function createAdminWork(params: {
   data: CreateWorkData;
   workId?: string | null;
+  assignments?: { rightsHolderId: string; role: string; sharePercent?: number | null }[];
   rightsHolderId?: string | null;
   role?: string | null;
   sharePercent?: number | null;
   broadcaster?: string | null;
   seasonNumber?: number | null;
   selectedEpisodes?: number[] | null;
+  status?: string | null;
+  distributions?: WorkDistributionInput[];
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -925,7 +968,9 @@ export async function createAdminWork(params: {
         dfi_original_title: cleanText(params.data.dfi_original_title),
         dfi_category: cleanText(params.data.dfi_category),
         dfi_type: cleanText(params.data.dfi_type),
-        status: "godkendt",
+        status: ["godkendt", "til_godkendelse", "afsluttet", "arkiveret"].includes(params.status ?? "")
+          ? params.status
+          : "godkendt",
       })
       .select("id")
       .single();
@@ -953,7 +998,13 @@ export async function createAdminWork(params: {
 
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");
 
-  if (params.rightsHolderId && params.role) {
+  const assignments = params.assignments?.length
+    ? params.assignments
+    : params.rightsHolderId && params.role
+      ? [{ rightsHolderId: params.rightsHolderId, role: params.role, sharePercent: params.sharePercent }]
+      : [];
+
+  if (assignments.length > 0) {
     let assignmentWorkIds = [workId];
     const selectedEpisodes = (params.selectedEpisodes ?? []).filter(Number.isFinite);
     const isSeries = normalized.type === "tv-serie" || normalized.type === "dokumentar-serie";
@@ -974,27 +1025,25 @@ export async function createAdminWork(params: {
       }
     }
 
+    const assignmentRows = assignments.flatMap(assignment => assignmentWorkIds.map(targetWorkId => ({
+      work_id: targetWorkId,
+      org_id: orgId,
+      rights_holder_id: assignment.rightsHolderId,
+      role: assignment.role,
+      share_percent: cleanSharePercent(assignment.sharePercent),
+    })));
     const { error: assignmentError } = await retryWithoutSharePercent(
       await db
         .from("work_assignments")
-        .upsert(
-          assignmentWorkIds.map(targetWorkId => ({
-            work_id: targetWorkId,
-            org_id: orgId,
-            rights_holder_id: params.rightsHolderId,
-            role: params.role,
-            share_percent: cleanSharePercent(params.sharePercent),
-          })),
-          { onConflict: "work_id,rights_holder_id,role" }
-        ),
+        .upsert(assignmentRows, { onConflict: "work_id,rights_holder_id,role" }),
       async () => await db
         .from("work_assignments")
         .upsert(
-          assignmentWorkIds.map(targetWorkId => ({
-            work_id: targetWorkId,
-            org_id: orgId,
-            rights_holder_id: params.rightsHolderId,
-            role: params.role,
+          assignmentRows.map(row => ({
+            work_id: row.work_id,
+            org_id: row.org_id,
+            rights_holder_id: row.rights_holder_id,
+            role: row.role,
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         )
@@ -1002,7 +1051,8 @@ export async function createAdminWork(params: {
     if (assignmentError) throw new Error(assignmentError.message);
   }
 
-  await updateWorkBroadcaster(db, workId, params.broadcaster);
+  if (params.distributions) await updateWorkDistributions(db, workId, orgId, params.distributions);
+  else await updateWorkBroadcaster(db, workId, params.broadcaster);
 
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
@@ -1041,16 +1091,60 @@ export async function approveAdminWorks(params: { workIds: string[] }) {
 
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
-  const { error } = await db
+  const { data: selectedWorks, error: worksError } = await db
     .from("works")
-    .update({ status: "godkendt" })
+    .select("id, status")
     .eq("org_id", orgId)
     .in("id", ids);
+  if (worksError) throw new Error(worksError.message);
 
-  if (error) throw new Error(error.message);
+  const { data: pendingRequests, error: requestsError } = await db
+    .from("work_change_requests")
+    .select("id, work_id, source, proposed_data")
+    .eq("org_id", orgId)
+    .eq("status", "pending")
+    .in("work_id", ids);
+  if (requestsError) throw new Error(requestsError.message);
+
+  const requestsByWork = new Map<string, typeof pendingRequests>();
+  for (const request of pendingRequests ?? []) {
+    requestsByWork.set(request.work_id, [...(requestsByWork.get(request.work_id) ?? []), request]);
+  }
+  const isCreationRequest = (request: NonNullable<typeof pendingRequests>[number]) => {
+    const proposed = request.proposed_data as { kind?: string } | null;
+    return proposed?.kind === "creation" || request.source.toLowerCase().includes("oprettelse");
+  };
+  const approvableWorkIds = (selectedWorks ?? [])
+    .filter(work => (requestsByWork.get(work.id) ?? []).every(isCreationRequest))
+    .map(work => work.id);
+  const creationRequestIds = (pendingRequests ?? [])
+    .filter(request => approvableWorkIds.includes(request.work_id) && isCreationRequest(request))
+    .map(request => request.id);
+
+  if (approvableWorkIds.length > 0) {
+    const { error } = await db
+      .from("works")
+      .update({ status: "godkendt" })
+      .eq("org_id", orgId)
+      .in("id", approvableWorkIds);
+    if (error) throw new Error(error.message);
+  }
+  if (creationRequestIds.length > 0) {
+    const { error: requestUpdateError } = await db
+      .from("work_change_requests")
+      .update({ status: "approved", reviewed_by_user_id: user.id, reviewed_at: new Date().toISOString() })
+      .eq("org_id", orgId)
+      .in("id", creationRequestIds);
+    if (requestUpdateError) throw new Error(requestUpdateError.message);
+  }
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
-  return { success: true };
+  return {
+    success: true,
+    approvedWorks: approvableWorkIds.length,
+    approvedRequests: creationRequestIds.length,
+    skippedWorks: ids.length - approvableWorkIds.length,
+  };
 }
 
 export async function mergeAdminWorks(params: {

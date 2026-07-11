@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
+import { EpisodePicker } from "@/components/works/episode-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
@@ -299,6 +300,12 @@ export default function MineKontrakterClient({
     if (statusFilter === "all") return true;
     if (statusFilter === "linked") return hasWorkLink(c);
     if (statusFilter === "missingWork") return !hasWorkLink(c);
+    if (statusFilter === "messages") return c.contract_comments.some(comment => comment.author_role === "admin" && !comment.member_read_at);
+    if (statusFilter === "missingDocument") return !c.pdf_url;
+    if (statusFilter === "actionRequired") {
+      const latest = c.contract_comments.at(-1);
+      return !hasWorkLink(c) || !c.pdf_url || c.status === "kladde" || Boolean(latest?.author_role === "admin" && !latest.member_read_at);
+    }
     return c.status === statusFilter;
   }).sort((a, b) => {
     const direction = sortDir === "asc" ? 1 : -1;
@@ -581,6 +588,9 @@ export default function MineKontrakterClient({
                   <option value="kladde">Afventer validering</option>
                   <option value="valideret">Valideret</option>
                   <option value="arkiveret">Arkiveret</option>
+                  <option value="messages">Nye beskeder fra DFKS</option>
+                  <option value="missingDocument">Mangler dokument</option>
+                  <option value="actionRequired">Kræver handling</option>
                 </select>
                 <ResetFiltersButton
                   active={Boolean(search || statusFilter !== "all")}
@@ -881,31 +891,7 @@ export default function MineKontrakterClient({
                                     </button>
                                   </div>
                                 </div>
-                                <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded bg-muted/40">
-                                  {episodeOptions.map(opt => {
-                                    const checked = selectedEpisodes.includes(opt.number);
-                                    return (
-                                      <button
-                                        key={opt.number}
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedEpisodes(prev =>
-                                            prev.includes(opt.number)
-                                              ? prev.filter(n => n !== opt.number)
-                                              : [...prev, opt.number].sort((a, b) => a - b)
-                                          )
-                                        }
-                                        className={`py-1 text-[10px] rounded border text-center font-medium ${
-                                          checked
-                                            ? "border-primary bg-primary text-primary-foreground"
-                                            : "border-border bg-background hover:bg-muted text-muted-foreground"
-                                        }`}
-                                      >
-                                        {opt.number}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
+                                <EpisodePicker compact options={episodeOptions} selected={selectedEpisodes} onChange={setSelectedEpisodes} />
                               </div>
                             ) : null}
                           </div>

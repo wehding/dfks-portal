@@ -1,5 +1,5 @@
 export type DfiMetadata = Record<string, unknown>;
-export type DfiWorkType = "kortfilm" | "spillefilm" | "tv-serie" | "dokumentar-serie" | "dokumentarfilm";
+export type DfiWorkType = "kortfilm" | "spillefilm" | "tv-serie" | "dokumentar-serie" | "dokumentarfilm" | "dokudrama";
 
 const DFI_CATEGORY_TO_WORK_TYPE: Record<string, DfiWorkType> = {
   "dk/spillefilm": "spillefilm",

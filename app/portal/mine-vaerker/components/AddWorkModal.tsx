@@ -12,6 +12,7 @@ import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
+import { EpisodePicker } from "@/components/works/episode-picker";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -21,6 +22,7 @@ const WORK_TYPES = [
   { value: "tv-serie", label: "Tv-serie" },
   { value: "dokumentarfilm", label: "Dokumentarfilm" },
   { value: "dokumentar-serie", label: "Dokumentar-serie" },
+  { value: "dokudrama", label: "Dokudrama" },
 ];
 
 const selectCls =
@@ -232,6 +234,7 @@ function typeLabel(type: string | null, lang: string) {
     if (t === "tv-serie" || t === "serie") return "TV Series";
     if (t === "dokumentarfilm") return "Documentary";
     if (t === "dokumentar-serie") return "Docu-Series";
+    if (t === "dokudrama") return "Docudrama";
     return type;
   }
   if (t === "spillefilm") return "Spillefilm";
@@ -239,6 +242,7 @@ function typeLabel(type: string | null, lang: string) {
   if (t === "tv-serie" || t === "serie") return "Tv-serie";
   if (t === "dokumentarfilm") return "Dokumentarfilm";
   if (t === "dokumentar-serie") return "Dokumentar-serie";
+  if (t === "dokudrama") return "Dokudrama";
   return type;
 }
 
@@ -365,6 +369,7 @@ export function AddWorkModal({
 }: AddWorkModalProps) {
   const { t } = useI18n();
   const [addQuery, setAddQuery]               = useState("");
+  const [typeFilter, setTypeFilter]           = useState("all");
   const [addRole, setAddRole]                 = useState("Klipper");
   const [manualMode, setManualMode]           = useState(false);
   const [manualWork, setManualWork]           = useState<ManualWorkForm>(emptyManualWorkForm());
@@ -381,7 +386,6 @@ export function AddWorkModal({
   const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
   const [detailsLoading, setDetailsLoading]   = useState(false);
-  const [hasSearchedAdd, setHasSearchedAdd]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
   const autoSearchKeyRef = React.useRef("");
 
@@ -439,7 +443,7 @@ export function AddWorkModal({
   const resetAddState = React.useCallback(() => {
     autoSearchKeyRef.current = "";
     setManualMode(false);
-    setHasSearchedAdd(false);
+    setTypeFilter("all");
     setManualWork(emptyManualWorkForm());
     setAddQuery(initialQuery);
     setAddComment("");
@@ -464,7 +468,6 @@ export function AddWorkModal({
     if (!query) return;
     if (queryOverride) setAddQuery(query);
     setIsSearching(true);
-    setHasSearchedAdd(true);
     setUnifiedResults([]);
     setPickedUnifiedResult(null);
     setAddCoEditors([]);
@@ -591,7 +594,12 @@ export function AddWorkModal({
             selectedEpisodes,
           });
           if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-          onWorkAdded(res.pending ? t("works.addedPending") : t("works.added"), true);
+          onWorkAdded(
+            res.alreadyExists
+              ? (locale === "da" ? "Værket findes allerede under Mine værker." : "The work is already listed under My works.")
+              : res.pending ? t("works.addedPending") : t("works.added"),
+            true
+          );
           await closeAfterSuccess();
           return;
         } else {
@@ -658,7 +666,6 @@ export function AddWorkModal({
     ? `${chosenTitle}, ${locale === "da" ? "afsnit" : "episodes"} ${selectedEpisodeLabel}`
     : chosenTitle;
   const missingSeriesEpisodes = Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
-  const noSearchResults = hasSearchedAdd && !isSearching && unifiedResults.length === 0;
 
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
@@ -684,62 +691,7 @@ export function AddWorkModal({
 
       {!episodesLoading && detectedEpisodeCount !== null && (
         <div className="rounded-lg border bg-muted/30 p-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-3">
-            <Label className="text-sm font-semibold text-foreground">
-              {locale === "da" ? "Vælg de afsnit, du har arbejdet på:" : "Select the episodes you worked on:"}
-            </Label>
-            <div className="grid grid-cols-2 gap-2 sm:flex">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 px-2 text-xs"
-                onClick={() => setSelectedEpisodes(episodeOptions.length ? episodeOptions.map(option => option.number) : Array.from({ length: detectedEpisodeCount }, (_, i) => i + 1))}
-              >
-                {locale === "da" ? "Vælg alle" : "Select all"}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 px-2 text-xs"
-                onClick={() => setSelectedEpisodes([])}
-              >
-                {locale === "da" ? "Fravælg alle" : "Deselect all"}
-              </Button>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 max-h-48 overflow-y-auto p-1">
-            {(episodeOptions.length ? episodeOptions : Array.from({ length: detectedEpisodeCount }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` }))).map(option => {
-              const epNum = option.number;
-              const isChecked = selectedEpisodes.includes(epNum);
-              return (
-                <label
-                  key={epNum}
-                  className={`flex min-h-12 items-start gap-2 border rounded px-2 py-1.5 text-sm cursor-pointer transition-colors ${
-                    isChecked
-                      ? "border-primary bg-primary font-semibold text-primary-foreground"
-                      : "border-border bg-background hover:bg-muted text-muted-foreground"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    className="sr-only"
-                    checked={isChecked}
-                    onChange={() => {
-                      setSelectedEpisodes(prev =>
-                        prev.includes(epNum)
-                          ? prev.filter(x => x !== epNum)
-                          : [...prev, epNum].sort((a, b) => a - b)
-                      );
-                    }}
-                  />
-                  <span className="shrink-0 tabular-nums">{epNum}</span>
-                  <span className="min-w-0 text-left text-xs leading-snug line-clamp-2">{option.title}</span>
-                </label>
-              );
-            })}
-          </div>
+          <EpisodePicker options={episodeOptions.length ? episodeOptions : Array.from({ length: detectedEpisodeCount }, (_, index) => ({ number: index + 1 }))} selected={selectedEpisodes} onChange={setSelectedEpisodes} label={locale === "da" ? "Vælg de afsnit, du har arbejdet på" : "Select the episodes you worked on"} />
         </div>
       )}
     </div>
@@ -766,14 +718,17 @@ export function AddWorkModal({
             if (e.key === "Enter") handleSearch();
           }}
         />
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={`${selectCls} sm:w-48`}>
+          <option value="all">Alle typer</option>
+          {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+        </select>
         <Button variant="outline" onClick={() => handleSearch()} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
           {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
         </Button>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {noSearchResults && (
-          <Button
+        <Button
             type="button"
             size="sm"
             variant={manualMode ? "default" : "outline"}
@@ -786,8 +741,7 @@ export function AddWorkModal({
             }}
           >
             {manualMode ? (locale === "da" ? "Skift til søgning" : "Switch to search") : t("works.createManual")}
-          </Button>
-        )}
+        </Button>
       </div>
 
       <div className="mb-4 space-y-1.5">
@@ -882,10 +836,10 @@ export function AddWorkModal({
       {!manualMode && unifiedResults.length > 0 && (
         <div className="mb-4">
           <p className="text-xs font-medium text-muted-foreground mb-2">
-            {locale === "da" ? "Søgeresultater" : "Search results"} ({unifiedResults.length})
+            {locale === "da" ? "Søgeresultater" : "Search results"} ({unifiedResults.filter(item => typeFilter === "all" || item.type === typeFilter).length})
           </p>
           <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
-            {unifiedResults.map(item => {
+            {unifiedResults.filter(item => typeFilter === "all" || item.type === typeFilter).map(item => {
               const sel = pickedUnifiedResult?.id === item.id;
               return (
                 <React.Fragment key={item.id}>
@@ -914,7 +868,7 @@ export function AddWorkModal({
                                   : "bg-purple-100 text-purple-800"
                               }`}
                             >
-                              {src}
+                              {src === "local" ? (locale === "da" ? "Findes allerede" : "Already exists") : src}
                             </span>
                           ))}
                         </div>
@@ -941,8 +895,8 @@ export function AddWorkModal({
         </div>
       )}
 
-      {(pickedUnifiedResult || manualMode) && (
-        <div className="space-y-4 border-t pt-4">
+      <div className="space-y-4 border-t pt-4">
+        {(pickedUnifiedResult || manualMode) && (
           <div className="rounded-lg border p-4">
             <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
             <div className="space-y-2">
@@ -998,6 +952,7 @@ export function AddWorkModal({
               <p className="mt-2 text-xs text-muted-foreground">{t("works.lockedCoEditorsHint")}</p>
             )}
           </div>
+        )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-muted-foreground">
               {showSeriesFields && selectedEpisodeLabel
@@ -1010,13 +965,12 @@ export function AddWorkModal({
                 {chosenSummary}
               </strong>
             </p>
-            <Button onClick={handleAddWork} disabled={isSaving || (manualMode && !manualWork.title.trim()) || missingSeriesEpisodes} className="w-full gap-2 sm:w-auto">
+            <Button onClick={handleAddWork} disabled={isSaving || (!manualMode && !pickedUnifiedResult) || (manualMode && !manualWork.title.trim()) || missingSeriesEpisodes} className="w-full gap-2 sm:w-auto">
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               {isSaving ? t("works.adding") : t("works.addWork")}
             </Button>
           </div>
-        </div>
-      )}
+      </div>
     </Modal>
   );
 }

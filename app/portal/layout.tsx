@@ -45,11 +45,12 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
+import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 
 const ALL_ADMIN_NAV_ITEMS = [
-    { key: "kontrakter",           href: "/admin/kontrakter",           icon: FileText,    labelKey: "nav.contracts"          },
-    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
-    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Play,        labelKey: "nav.visningsadmin"    },
+    { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
+    { key: "vaerker",            href: "/admin/vaerker",            icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
+    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
     { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
@@ -154,12 +155,12 @@ export default function PortalLayout({
         {
             label: t("nav.myWorks"),
             href: "/portal/mine-vaerker",
-            icon: Film,
+            icon: SHARED_NAV_ICONS.works,
         },
         {
             label: t("nav.myContracts"),
             href: "/portal/mine-kontrakter",
-            icon: FileText,
+            icon: SHARED_NAV_ICONS.contracts,
         },
         {
             label: t("nav.economy"),
@@ -169,7 +170,7 @@ export default function PortalLayout({
         {
             label: t("nav.mineVisninger"),
             href: "/portal/mine-visninger",
-            icon: Play,
+            icon: SHARED_NAV_ICONS.screenings,
         },
         {
             label: "Kontraktgennemgang",

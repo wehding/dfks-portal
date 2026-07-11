@@ -40,6 +40,7 @@ type Work = {
   poster_url: string | null;
   description: string | null;
   work_production_numbers?: WorkProductionNumber[];
+  work_distributions?: Array<{ broadcaster_name?: string | null; broadcasters?: { name?: string | null } | null }>;
   work_change_requests?: ChangeRequest[];
 };
 export type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
@@ -77,7 +78,7 @@ type EpisodeChild = {
 
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
-  const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "short" | "animation"> = {
+  const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "docudrama" | "short" | "animation"> = {
     fiktion: "feature",
     spillefilm: "feature",
     film: "feature",
@@ -91,14 +92,15 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
     dokumentarserie: "docSeries",
     "dokumentar-serie": "docSeries",
     docseries: "docSeries",
+    dokudrama: "docudrama",
     kort: "short",
     kortfilm: "short",
     short: "short",
     animation: "animation",
   };
   const labels = {
-    da: { feature: "Feature", series: "TV-serie", documentary: "Dokumentar", docSeries: "Dokumentarserie", short: "Kortfilm", animation: "Animation" },
-    en: { feature: "Feature", series: "TV series", documentary: "Documentary", docSeries: "Documentary series", short: "Short film", animation: "Animation" },
+    da: { feature: "Feature", series: "TV-serie", documentary: "Dokumentar", docSeries: "Dokumentarserie", docudrama: "Dokudrama", short: "Kortfilm", animation: "Animation" },
+    en: { feature: "Feature", series: "TV series", documentary: "Documentary", docSeries: "Documentary series", docudrama: "Docudrama", short: "Short film", animation: "Animation" },
   };
   const type = canonical[key] ?? null;
   return type ? labels[locale][type] : t ?? (locale === "da" ? "Ukendt" : "Unknown");
@@ -150,6 +152,8 @@ function latestAdminComment(work: Work | null) {
 }
 
 function getWorkBroadcaster(work: Work | null) {
+  const distributions = (work?.work_distributions ?? []).map(item => item.broadcasters?.name ?? item.broadcaster_name).filter(Boolean);
+  if (distributions.length > 0) return distributions.join(", ");
   return (work?.work_production_numbers ?? []).find(item => item.number === "broadcast/stream")?.tv_station ?? null;
 }
 
@@ -198,6 +202,7 @@ export default function MineVaerkerClient({
 
   const [search, setSearch]     = useState("");
   const [catFilter, setCatFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [sortKey, setSortKey]   = useState<SortKey>("date");
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
@@ -243,6 +248,20 @@ export default function MineVaerkerClient({
       const t = search.toLowerCase();
       if (t && !w.title.toLowerCase().includes(t)) return false;
       if (catFilter !== "all" && typeLabel(w.type, "da") !== catFilter) return false;
+      const requests = w.work_change_requests ?? [];
+      const hasUnread = requests.some(request => (request.work_change_request_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at));
+      const hasPending = requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
+      const hasRejected = requests.some(request => request.status === "rejected");
+      const hasContract = contractedWorkIds.includes(w.id);
+      const missingData = !w.year || !w.type || !w.title?.trim();
+      const missingEpisodes = isSeriesType(w.type) && !w.episode_count;
+      if (statusFilter === "messages" && !hasUnread) return false;
+      if (statusFilter === "pending" && !hasPending) return false;
+      if (statusFilter === "rejected" && !hasRejected) return false;
+      if (statusFilter === "missingContract" && hasContract) return false;
+      if (statusFilter === "hasContract" && !hasContract) return false;
+      if (statusFilter === "missingData" && !missingData) return false;
+      if (statusFilter === "missingEpisodes" && !missingEpisodes) return false;
       return true;
     })
     .sort((a, b) => {
@@ -362,7 +381,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -520,12 +539,27 @@ export default function MineVaerkerClient({
                 <Button size="sm" variant="outline" onClick={() => setSelected([])} className="h-8 w-full text-xs sm:w-auto">{t("common.cancel")}</Button>
               </>
             ) : (
+              <>
               <Select value={catFilter} onValueChange={setCatFilter}>
                 <SelectTrigger className="h-9 w-full text-sm sm:w-[160px]"><SelectValue placeholder={t("works.allCategories")} /></SelectTrigger>
                 <SelectContent>
                   {categories.map(cat => <SelectItem key={cat.value} value={cat.value}>{locale === "da" ? cat.da : cat.en}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="h-9 w-full text-sm sm:w-[210px]"><SelectValue placeholder="Status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Alle statusser</SelectItem>
+                  <SelectItem value="messages">Nye beskeder fra DFKS</SelectItem>
+                  <SelectItem value="pending">Afventer godkendelse</SelectItem>
+                  <SelectItem value="rejected">Afvist rettelse</SelectItem>
+                  <SelectItem value="missingContract">Mangler kontrakt</SelectItem>
+                  <SelectItem value="hasContract">Har kontrakt</SelectItem>
+                  <SelectItem value="missingData">Mangler værksdata</SelectItem>
+                  <SelectItem value="missingEpisodes">Serie mangler afsnit</SelectItem>
+                </SelectContent>
+              </Select>
+              </>
             )}
           </div>
           <div className="relative w-full md:w-auto">
@@ -548,8 +582,8 @@ export default function MineVaerkerClient({
             )}
           </div>
           <ResetFiltersButton
-            active={Boolean(search || catFilter !== "all")}
-            onReset={() => { setSearch(""); setCatFilter("all"); setSelected([]); setPageSize(20); }}
+            active={Boolean(search || catFilter !== "all" || statusFilter !== "all")}
+            onReset={() => { setSearch(""); setCatFilter("all"); setStatusFilter("all"); setSelected([]); setPageSize(20); }}
           />
           <label className="flex items-center gap-2 text-sm text-muted-foreground">
             Vis

@@ -43,11 +43,12 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
+import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 
 const ADMIN_NAV_ITEMS = [
-    { key: "kontrakter",          href: "/admin/kontrakter",          icon: FileText,    labelKey: "nav.contracts"        },
-    { key: "vaerker",             href: "/admin/vaerker",             icon: Library,     labelKey: "nav.works"            },
-    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: Play,        labelKey: "nav.visningsadmin"    },
+    { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
+    { key: "vaerker",             href: "/admin/vaerker",             icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
+    { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"    },
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },
     { key: "kontraktgennemgang",  href: "/admin/kontraktgennemgang",  icon: Scale,       labelKey: "nav.contractReview"   },
@@ -65,10 +66,10 @@ const RETTIGHEDS_NAV_ITEMS = [
 ]
 
 const USER_NAV_ITEMS = [
-    { key: "mine-vaerker",        href: "/portal/mine-vaerker",       icon: Film,     labelKey: "nav.myWorks"        },
-    { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",    icon: FileText, labelKey: "nav.myContracts"    },
+    { key: "mine-vaerker",        href: "/portal/mine-vaerker",       icon: SHARED_NAV_ICONS.works,     labelKey: "nav.myWorks"        },
+    { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",    icon: SHARED_NAV_ICONS.contracts, labelKey: "nav.myContracts"    },
     { key: "okonomi",             href: "/portal/okonomi",            icon: Wallet,   labelKey: "nav.economy"        },
-    { key: "portal-aftalelicens", href: "/portal/mine-visninger",     icon: Play,     labelKey: "nav.mineVisninger"  },
+    { key: "portal-aftalelicens", href: "/portal/mine-visninger",     icon: SHARED_NAV_ICONS.screenings, labelKey: "nav.mineVisninger"  },
     { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
 

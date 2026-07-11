@@ -46,6 +46,15 @@ function cleanText(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
+function isMissingOptionalWorkColumn(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42703" || (/schema cache/i.test(message) && /(imdb_id|wikidata_id|dfi_metadata)/i.test(message));
+}
+
+function withoutOptionalWorkColumns<T extends Record<string, unknown>>(payload: T) {
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => !["imdb_id", "wikidata_id", "dfi_metadata"].includes(key)));
+}
+
 function normalizeTitle(title: string) {
   return title
     .toLowerCase()
@@ -520,6 +529,15 @@ export async function linkExistingWorkForMember(params: {
     role: params.role,
   }));
 
+  const { data: existingAssignments, error: existingError } = await db
+    .from("work_assignments")
+    .select("work_id")
+    .eq("rights_holder_id", params.rightsHolderId)
+    .eq("role", params.role)
+    .in("work_id", targetWorkIds);
+  if (existingError) return { success: false, error: existingError.message };
+  const alreadyExists = targetWorkIds.length > 0 && (existingAssignments?.length ?? 0) === targetWorkIds.length;
+
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
@@ -543,7 +561,7 @@ export async function linkExistingWorkForMember(params: {
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
-    return { success: true, pending: true, requestId, assignment: fresh };
+    return { success: true, pending: true, alreadyExists, requestId, assignment: fresh };
   }
 
   // Genbrug af eksisterende værk kræver ikke godkendelse. Men skrev brugeren en
@@ -565,7 +583,7 @@ export async function linkExistingWorkForMember(params: {
 
   const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
 
-  return { success: true, assignment: fresh };
+  return { success: true, alreadyExists, assignment: fresh };
 }
 
 export async function addWorkForMemberWithApproval(params: {
@@ -680,11 +698,16 @@ export async function addWorkForMemberWithApproval(params: {
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
-      const { data, error: parentError } = await db
+      let { data, error: parentError } = await db
         .from("works")
         .insert(parentPayload)
         .select("*")
         .single();
+      if (isMissingOptionalWorkColumn(parentError)) {
+        const retry = await db.from("works").insert(withoutOptionalWorkColumns(parentPayload)).select("*").single();
+        data = retry.data;
+        parentError = retry.error;
+      }
       if (parentError || !data) return { success: false, error: parentError?.message ?? "Kunne ikke oprette serieværk." };
       parentWork = data;
       parentWasCreated = true;
@@ -774,11 +797,16 @@ export async function addWorkForMemberWithApproval(params: {
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
-      const { data: work, error: workError } = await db
+      let { data: work, error: workError } = await db
         .from("works")
         .insert(insertPayload)
         .select("id")
         .single();
+      if (isMissingOptionalWorkColumn(workError)) {
+        const retry = await db.from("works").insert(withoutOptionalWorkColumns(insertPayload)).select("id").single();
+        work = retry.data;
+        workError = retry.error;
+      }
       if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
       workId = work.id;
     }
@@ -1036,11 +1064,21 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   let localWorks: any[] = [];
   try {
-    const { data } = await db.from("works")
+    let { data, error } = await db.from("works")
       .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
       .eq("org_id", orgId)
       .ilike("title", `%${q}%`)
       .limit(15);
+    if (isMissingOptionalWorkColumn(error)) {
+      const retry = await db.from("works")
+        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
+        .eq("org_id", orgId)
+        .ilike("title", `%${q}%`)
+        .limit(15);
+      data = (retry.data ?? []).map(work => ({ ...work, imdb_id: null, wikidata_id: null }));
+      error = retry.error;
+    }
+    if (error) throw error;
     if (data) localWorks = data;
   } catch (e) {
     console.error("Local search error in searchWorksUnified:", e);
@@ -1179,17 +1217,18 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
 export async function searchRightsHoldersForMember(query: string) {
   const q = query.trim();
-  if (q.length < 2) return { success: true, results: [] };
+  if (q.length === 1) return { success: true, results: [] };
   const db = createServiceClient();
   const user = await currentUser();
   const orgId = await currentOrgId(db, user.id);
-  const { data, error } = await db
+  let lookup = db
     .from("rettighedshavere")
     .select("id, full_name")
     .eq("org_id", orgId)
-    .ilike("full_name", `%${q}%`)
     .order("full_name")
     .limit(8);
+  if (q) lookup = lookup.ilike("full_name", `%${q}%`);
+  const { data, error } = await lookup;
   if (error) return { success: false, error: error.message, results: [] };
   return { success: true, results: data ?? [] };
 }

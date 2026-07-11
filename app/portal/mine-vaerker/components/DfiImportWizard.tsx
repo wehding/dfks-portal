@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, Search, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EpisodePicker } from "@/components/works/episode-picker";
 import { Modal } from "./Modal";
 import { importApprovedOnboardingWorks, searchNewCreditsForCurrentMember, type OnboardingCredit } from "@/app/actions/dfi";
 import { useI18n } from "@/lib/i18n";
@@ -66,16 +67,6 @@ export function DfiImportWizard({
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
     const count = episodeCountForCredit(credit);
     return seriesEpisodes[credit.id] ?? Array.from({ length: count }, (_, index) => index + 1);
-  };
-
-  const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
-    setSeriesEpisodes(prev => {
-      const current = selectedEpisodesForCredit(credit);
-      const next = current.includes(episodeNumber)
-        ? current.filter(number => number !== episodeNumber)
-        : [...current, episodeNumber].sort((a, b) => a - b);
-      return { ...prev, [credit.id]: next };
-    });
   };
 
   const loadWizardCredits = useCallback(async (query: string) => {
@@ -315,23 +306,7 @@ export function DfiImportWizard({
                                   Fravælg alle
                                 </Button>
                               </div>
-                              <div className="grid max-h-52 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4">
-                                {Array.from({ length: episodeCount }, (_, index) => index + 1).map(episodeNumber => {
-                                  const checked = selectedEpisodes.includes(episodeNumber);
-                                  return (
-                                    <button
-                                      key={episodeNumber}
-                                      type="button"
-                                      className={`rounded-md border px-2 py-2 text-left text-xs ${
-                                        checked ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"
-                                      }`}
-                                      onClick={() => toggleEpisode(c, episodeNumber)}
-                                    >
-                                      Afsnit {episodeNumber}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              <EpisodePicker compact options={Array.from({ length: episodeCount }, (_, index) => ({ number: index + 1 }))} selected={selectedEpisodes} onChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))} />
                             </div>
                           )}
                         </div>

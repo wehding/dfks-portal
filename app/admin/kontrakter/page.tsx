@@ -38,10 +38,20 @@ import {
 } from "@/components/ui/table"
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
+import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
+import { EpisodePicker } from "@/components/works/episode-picker"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
 const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false })
+const WORK_TYPE_FILTERS = [
+    { value: "spillefilm", label: "Spillefilm" },
+    { value: "dokumentarfilm", label: "Dokumentarfilm" },
+    { value: "tv-serie", label: "Tv-serie" },
+    { value: "dokumentar-serie", label: "Dokumentar-serie" },
+    { value: "kortfilm", label: "Kortfilm" },
+    { value: "dokudrama", label: "Dokudrama" },
+]
 
 type ContractRow = {
     id: string
@@ -303,6 +313,7 @@ function AdminKontrakterContent() {
     const [editContract, setEditContract] = useState<ContractRow | null>(null)
     const [editForm, setEditForm] = useState<EditForm | null>(null)
     const [editWorkSearch, setEditWorkSearch] = useState("")
+    const [editWorkTypeFilter, setEditWorkTypeFilter] = useState("all")
     const [editSaving, setEditSaving] = useState(false)
 
     const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([])
@@ -407,6 +418,7 @@ function AdminKontrakterContent() {
     const closeEditDialog = () => {
         setEditContract(null)
         setEditForm(null)
+        setEditWorkTypeFilter("all")
         setPickedUnifiedResult(null)
         setAddSeason("")
         setSelectedEpisodes([])
@@ -2318,31 +2330,7 @@ function AdminKontrakterContent() {
                                                                     </button>
                                                                 </div>
                                                             </div>
-                                                            <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded bg-muted/40">
-                                                                {episodeOptions.map(opt => {
-                                                                    const checked = selectedEpisodes.includes(opt.number);
-                                                                    return (
-                                                                        <button
-                                                                            key={opt.number}
-                                                                            type="button"
-                                                                            onClick={() =>
-                                                                                setSelectedEpisodes(prev =>
-                                                                                    prev.includes(opt.number)
-                                                                                        ? prev.filter(n => n !== opt.number)
-                                                                                        : [...prev, opt.number].sort((a, b) => a - b)
-                                                                                )
-                                                                            }
-                                                                            className={`py-1 text-[10px] rounded border text-center font-medium ${
-                                                                                checked
-                                                                                    ? "border-primary bg-primary text-primary-foreground"
-                                                                                    : "border-border bg-background hover:bg-muted text-muted-foreground"
-                                                                            }`}
-                                                                        >
-                                                                            {opt.number}
-                                                                        </button>
-                                                                    );
-                                                                })}
-                                                            </div>
+                                                            <EpisodePicker compact options={episodeOptions} selected={selectedEpisodes} onChange={setSelectedEpisodes} />
                                                         </div>
                                                     ) : null}
                                                 </div>
@@ -2350,22 +2338,27 @@ function AdminKontrakterContent() {
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
-                                            <div className="relative">
-                                                {isSearching ? (
-                                                    <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                                                ) : (
-                                                    <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                                                )}
-                                                <Input
-                                                    className="h-8 pl-8 text-xs"
-                                                    placeholder="Søg i alle databaser (onboarding)..."
-                                                    value={editWorkSearch}
-                                                    onChange={e => setEditWorkSearch(e.target.value)}
-                                                />
+                                            <div className="flex flex-col gap-2 sm:flex-row">
+                                                <div className="relative flex-1">
+                                                    {isSearching ? (
+                                                        <Loader2 className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                                    ) : (
+                                                        <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                                                    )}
+                                                    <Input className="h-8 pl-8 text-xs" placeholder="Søg i alle databaser..." value={editWorkSearch} onChange={e => setEditWorkSearch(e.target.value)} />
+                                                </div>
+                                                <Select value={editWorkTypeFilter} onValueChange={setEditWorkTypeFilter}>
+                                                    <SelectTrigger className="h-8 text-xs sm:w-44"><SelectValue placeholder="Alle typer" /></SelectTrigger>
+                                                    <SelectContent>
+                                                        <SelectItem value="all">Alle typer</SelectItem>
+                                                        {WORK_TYPE_FILTERS.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+                                                    </SelectContent>
+                                                </Select>
                                             </div>
                                             {unifiedResults.length > 0 && (
                                                 <div className="max-h-40 space-y-1 overflow-y-auto border rounded-md p-1.5 bg-muted/40">
-                                                    {unifiedResults.map(item => (
+                                                    <p className="px-1 text-[10px] text-muted-foreground">{unifiedResults.filter(item => editWorkTypeFilter === "all" || item.type === editWorkTypeFilter).length} resultater</p>
+                                                    {unifiedResults.filter(item => editWorkTypeFilter === "all" || item.type === editWorkTypeFilter).map(item => (
                                                         <button
                                                             key={item.id}
                                                             type="button"
@@ -2375,7 +2368,7 @@ function AdminKontrakterContent() {
                                                             <div className="flex items-center justify-between gap-1 w-full font-medium">
                                                                 <span className="truncate">{item.title}</span>
                                                                 <span className="text-[9px] uppercase font-bold text-muted-foreground shrink-0">
-                                                                    {item.sources.join("·")}
+                                                                    {item.sources.map(source => source === "local" ? "Findes allerede" : source).join(" · ")}
                                                                 </span>
                                                             </div>
                                                             <span className="text-[10px] text-muted-foreground mt-0.5">
@@ -2418,6 +2411,18 @@ function AdminKontrakterContent() {
                                 composerLoading={replySaving}
                                 composerPlaceholder="Svar medlemmet..."
                                 sendLabel="Send besked"
+                                onDeleteMessage={async messageId => {
+                                    if (!editContract) return
+                                    await deleteAdminMessage({ kind: "contract", threadId: editContract.id, messageId })
+                                    setEditContract(prev => prev ? { ...prev, contract_comments: prev.contract_comments.filter(comment => comment.id !== messageId) } : prev)
+                                    setContracts(prev => prev.map(contract => contract.id === editContract.id ? { ...contract, contract_comments: contract.contract_comments.filter(comment => comment.id !== messageId) } : contract))
+                                }}
+                                onClearThread={async () => {
+                                    if (!editContract) return
+                                    await clearAdminMessageThread({ kind: "contract", threadId: editContract.id })
+                                    setEditContract(prev => prev ? { ...prev, contract_comments: [] } : prev)
+                                    setContracts(prev => prev.map(contract => contract.id === editContract.id ? { ...contract, contract_comments: [] } : contract))
+                                }}
                                 footer={(
                                     <Button type="button" variant="outline" onClick={() => handleSaveEdit()} disabled={editSaving} className="w-full sm:w-auto">
                                         {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
