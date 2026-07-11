@@ -2,7 +2,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Lock, Heart, User, Save, Info, Loader2, Plus, X } from "lucide-react"
+import { Lock, Heart, User, Save, Info, Loader2, Plus, X, RefreshCw, Film } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
@@ -11,6 +12,10 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { createClient } from "@/lib/supabase/client"
+import { DfiImportWizard } from "@/app/portal/mine-vaerker/components/DfiImportWizard"
+import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery"
+import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 interface ProfileData {
     id: string
@@ -27,9 +32,16 @@ interface ProfileData {
 }
 
 export default function MinProfilPage() {
+    const router = useRouter()
     const [profile, setProfile] = useState<ProfileData | null>(null)
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
+    const [creditSearchOpen, setCreditSearchOpen] = useState(false)
+    const [personMatchOpen, setPersonMatchOpen] = useState(false)
+    const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([])
+    const [selectedPeople, setSelectedPeople] = useState<Record<string, string>>({})
+    const [personSearching, setPersonSearching] = useState(false)
+    const [personError, setPersonError] = useState<string | null>(null)
 
     // Editable fields
     const [name, setName]         = useState("")
@@ -137,6 +149,26 @@ export default function MinProfilPage() {
         }
     }
 
+    const openPersonSearch = async () => {
+        setPersonMatchOpen(true)
+        setPersonSearching(true)
+        setPersonError(null)
+        setSelectedPeople({})
+        const result = await discoverPersonCandidates(name || profile?.full_name || "", altNavne)
+        setPersonCandidates(result.success ? result.candidates : [])
+        if (!result.success) setPersonError(result.error ?? "Kunne ikke søge efter navneprofiler.")
+        setPersonSearching(false)
+    }
+
+    const confirmPersonMatch = async () => {
+        const selected = Object.values(selectedPeople).map(key => personCandidates.find(candidate => candidate.key === key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate))
+        if (personCandidates.length > 0 && selected.length === 0) { setPersonError("Vælg mindst én navneprofil."); return }
+        const result = await confirmExternalPersonIdentity(selected, name || profile?.full_name || "")
+        if (!result.success) { setPersonError(result.error ?? "Personmatch kunne ikke gemmes."); return }
+        setPersonMatchOpen(false)
+        setCreditSearchOpen(true)
+    }
+
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
@@ -151,6 +183,20 @@ export default function MinProfilPage() {
                 title="Min profil"
                 subtitle="Ret dine personlige oplysninger og kontaktdata"
             />
+
+            <section className="rounded-lg border">
+                <div className="flex items-center gap-2 border-b px-5 py-4">
+                    <Film className="h-4 w-4 text-muted-foreground" />
+                    <h2 className="font-medium">Find manglende værker</h2>
+                </div>
+                <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-sm text-muted-foreground">Søg efter produktioner, hvor du er krediteret, men som endnu ikke findes under Mine værker.</p>
+                    <Button type="button" variant="outline" onClick={openPersonSearch} className="shrink-0 gap-2">
+                        <RefreshCw className="h-4 w-4" /> Søg nye titler på dit navn
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={openPersonSearch} className="shrink-0">Ret personmatch</Button>
+                </div>
+            </section>
 
             {/* Personoplysninger */}
             <section className="rounded-lg border">
@@ -321,6 +367,27 @@ export default function MinProfilPage() {
                     Gem ændringer
                 </Button>
             </div>
+
+            <DfiImportWizard
+                isOpen={creditSearchOpen}
+                onClose={() => setCreditSearchOpen(false)}
+                userName={profile?.full_name ?? name}
+                dfiPersonId={null}
+                onImportComplete={(message, success) => {
+                    if (success) toast.success(message)
+                    else toast.error(message)
+                    if (success) setCreditSearchOpen(false)
+                }}
+                reloadAssignments={async () => { router.refresh() }}
+            />
+            <Dialog open={personMatchOpen} onOpenChange={setPersonMatchOpen}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+                    <DialogHeader><DialogTitle>Vælg de navneprofiler, der er dig</DialogTitle></DialogHeader>
+                    <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. De tekniske ID&apos;er gemmes skjult.</p>
+                    <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.source]: candidate.key })); setPersonError(null) }} />
+                    <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>Annuller</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>Bekræft og find værker</Button></DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     )
 }

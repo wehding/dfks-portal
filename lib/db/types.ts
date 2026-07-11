@@ -39,6 +39,9 @@ export interface DbRettighedshaver {
     bank_account: string | null
     onboarding_completed: boolean
     dfi_person_id: number | null
+    tmdb_person_id: number | null
+    wikidata_qid: string | null
+    imdb_nm: string | null
     opt_out_statistics: boolean
     gender: "female" | "male" | "non_binary" | "other" | "prefer_not_to_say" | null
     created_at: string

@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
-import { extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
+import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
@@ -44,6 +44,15 @@ type ProposedCoEditor = {
 function cleanText(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function isMissingOptionalWorkColumn(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42703" || (/schema cache/i.test(message) && /(imdb_id|wikidata_id|dfi_metadata)/i.test(message));
+}
+
+function withoutOptionalWorkColumns<T extends Record<string, unknown>>(payload: T) {
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => !["imdb_id", "wikidata_id", "dfi_metadata"].includes(key)));
 }
 
 function normalizeTitle(title: string) {
@@ -383,7 +392,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -520,6 +529,15 @@ export async function linkExistingWorkForMember(params: {
     role: params.role,
   }));
 
+  const { data: existingAssignments, error: existingError } = await db
+    .from("work_assignments")
+    .select("work_id")
+    .eq("rights_holder_id", params.rightsHolderId)
+    .eq("role", params.role)
+    .in("work_id", targetWorkIds);
+  if (existingError) return { success: false, error: existingError.message };
+  const alreadyExists = targetWorkIds.length > 0 && (existingAssignments?.length ?? 0) === targetWorkIds.length;
+
   const { error: assignErr } = await db
     .from("work_assignments")
     .upsert(
@@ -543,7 +561,7 @@ export async function linkExistingWorkForMember(params: {
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
-    return { success: true, pending: true, requestId, assignment: fresh };
+    return { success: true, pending: true, alreadyExists, requestId, assignment: fresh };
   }
 
   // Genbrug af eksisterende værk kræver ikke godkendelse. Men skrev brugeren en
@@ -565,7 +583,7 @@ export async function linkExistingWorkForMember(params: {
 
   const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
 
-  return { success: true, assignment: fresh };
+  return { success: true, alreadyExists, assignment: fresh };
 }
 
 export async function addWorkForMemberWithApproval(params: {
@@ -680,11 +698,16 @@ export async function addWorkForMemberWithApproval(params: {
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
-      const { data, error: parentError } = await db
+      let { data, error: parentError } = await db
         .from("works")
         .insert(parentPayload)
         .select("*")
         .single();
+      if (isMissingOptionalWorkColumn(parentError)) {
+        const retry = await db.from("works").insert(withoutOptionalWorkColumns(parentPayload)).select("*").single();
+        data = retry.data;
+        parentError = retry.error;
+      }
       if (parentError || !data) return { success: false, error: parentError?.message ?? "Kunne ikke oprette serieværk." };
       parentWork = data;
       parentWasCreated = true;
@@ -774,11 +797,16 @@ export async function addWorkForMemberWithApproval(params: {
         dfi_metadata: enrichedWorkData.dfi_metadata ?? null,
       };
 
-      const { data: work, error: workError } = await db
+      let { data: work, error: workError } = await db
         .from("works")
         .insert(insertPayload)
         .select("id")
         .single();
+      if (isMissingOptionalWorkColumn(workError)) {
+        const retry = await db.from("works").insert(withoutOptionalWorkColumns(insertPayload)).select("id").single();
+        work = retry.data;
+        workError = retry.error;
+      }
       if (workError || !work) return { success: false, error: workError?.message ?? "Kunne ikke oprette værk." };
       workId = work.id;
     }
@@ -1036,11 +1064,21 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   let localWorks: any[] = [];
   try {
-    const { data } = await db.from("works")
+    let { data, error } = await db.from("works")
       .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
       .eq("org_id", orgId)
       .ilike("title", `%${q}%`)
       .limit(15);
+    if (isMissingOptionalWorkColumn(error)) {
+      const retry = await db.from("works")
+        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
+        .eq("org_id", orgId)
+        .ilike("title", `%${q}%`)
+        .limit(15);
+      data = (retry.data ?? []).map(work => ({ ...work, imdb_id: null, wikidata_id: null }));
+      error = retry.error;
+    }
+    if (error) throw error;
     if (data) localWorks = data;
   } catch (e) {
     console.error("Local search error in searchWorksUnified:", e);
@@ -1048,6 +1086,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   const results: UnifiedSearchWorkResult[] = [];
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const querySeasonHint = parseSeasonNumberFromTitle(q);
 
   // 1. Add Local works (parents only)
   localWorks.forEach(w => {
@@ -1067,7 +1106,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       tmdb_id: w.tmdb_id ? Number(w.tmdb_id) : null,
       imdb_id: w.imdb_id ?? null,
       wikidata_id: w.wikidata_id ?? null,
-      season_hint: w.season_number ?? parseSeasonNumberFromTitle(w.title),
+      season_hint: w.season_number ?? parseSeasonNumberFromTitle(w.title) ?? querySeasonHint,
       sources: ["local"],
       raw_local: w,
     });
@@ -1084,7 +1123,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     searchTMDB(q).catch(() => []),
   ]);
 
-  const dfiFilms = (dfiRes.success ? dfiRes.results ?? [] : []) as any[];
+  const dfiFilms = await normalizeDfiSeriesResults((dfiRes.success ? dfiRes.results ?? [] : []) as any[]);
   const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
 
   // 2. Merge DFI results
@@ -1092,12 +1131,12 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     const isChild = film.Parent && film.Parent.Id;
     if (isChild) return; // Skip child episodes, we always select parent series!
 
-    const title = film.Title || film.DanishTitle || "Ukendt";
+    const title = cleanDfiTitle(film.Title || film.DanishTitle || "Ukendt");
     const year = extractDfiPremiereYear(film);
     const dfiId = String(film.Id);
     const mappedType = mapDfiWorkType(film.Category, film.Type);
     const director = extractDfiDirectors(film).join(", ") || null;
-    const seasonHint = parseSeasonNumberFromTitle(title);
+    const seasonHint = parseSeasonNumberFromTitle(title) ?? querySeasonHint;
 
     const existingIndex = results.findIndex(r => {
       if (r.dfi_id && r.dfi_id === dfiId) return true;
@@ -1152,6 +1191,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       if (!match.tmdb_id) match.tmdb_id = tmdbId;
       if (!match.raw_tmdb) match.raw_tmdb = item;
       if (!match.poster_url && item.poster_path) match.poster_url = `https://image.tmdb.org/t/p/w185${item.poster_path}`;
+      if (!match.season_hint) match.season_hint = parseSeasonNumberFromTitle(title) ?? querySeasonHint;
     } else {
       results.push({
         id: `tmdb-${tmdbId}`,
@@ -1164,7 +1204,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
         genre: null,
         duration_minutes: null,
         tmdb_id: tmdbId,
-        season_hint: parseSeasonNumberFromTitle(title),
+        season_hint: parseSeasonNumberFromTitle(title) ?? querySeasonHint,
         sources: ["tmdb"],
         raw_tmdb: item,
       });
@@ -1173,6 +1213,24 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   results.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
   return { success: true, results };
+}
+
+export async function searchRightsHoldersForMember(query: string) {
+  const q = query.trim();
+  if (q.length === 1) return { success: true, results: [] };
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+  let lookup = db
+    .from("rettighedshavere")
+    .select("id, full_name")
+    .eq("org_id", orgId)
+    .order("full_name")
+    .limit(8);
+  if (q) lookup = lookup.ilike("full_name", `%${q}%`);
+  const { data, error } = await lookup;
+  if (error) return { success: false, error: error.message, results: [] };
+  return { success: true, results: data ?? [] };
 }
 
 export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult) {
@@ -1212,12 +1270,17 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
           episodeCount = parseInt(epMatch[1]);
         }
 
+        const precomputedOptions = Array.isArray((result.raw_dfi as any)?.__episode_options)
+          ? (result.raw_dfi as any).__episode_options
+          : Array.isArray((dfiMetadata as any).__episode_options) ? (dfiMetadata as any).__episode_options : [];
         const children = Array.isArray((dfiMetadata as any).Children) ? (dfiMetadata as any).Children : [];
-        if (children.length > 0) {
-          const isEp = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
-          if (isEp) {
-            episodeCount = children.length;
-            episodeOptions = children.map((c: any, idx: number) => {
+        const episodeChildren = children.filter((child: any) => Boolean(parseDfiEpisodeTitleInfo(child.Title ?? "")));
+        if (precomputedOptions.length > 0) {
+          episodeOptions = precomputedOptions;
+          episodeCount = precomputedOptions.length;
+        } else if (episodeChildren.length > 0) {
+            episodeCount = episodeChildren.length;
+            episodeOptions = episodeChildren.map((c: any, idx: number) => {
               const parsed = parseDfiEpisodeTitleInfo(c.Title ?? "");
               const num = parsed?.episodeNumber ?? idx + 1;
               const subtitle = parsed?.subtitle || c.Title || `Afsnit ${num}`;
@@ -1228,7 +1291,6 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
               };
             }).filter((opt: any) => opt.number > 0);
             episodeOptions.sort((a, b) => a.number - b.number);
-          }
         }
       }
     } catch (e) {
@@ -1259,8 +1321,13 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
         if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
-          if (tDetails.number_of_episodes) {
-            episodeCount = episodeCount ?? tDetails.number_of_episodes;
+          const seasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
+          const season = Array.isArray(tDetails.seasons)
+            ? tDetails.seasons.find((item: any) => item.season_number === seasonNumber)
+            : null;
+          if (!episodeCount && season?.episode_count) {
+            episodeCount = season.episode_count;
+            episodeOptions = Array.from({ length: season.episode_count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
           }
         }
       }
@@ -1299,6 +1366,7 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       dfi_metadata: dfiMetadata,
       episode_count: episodeCount,
       episode_options: episodeOptions,
+      season_hint: result.season_hint ?? parseSeasonNumberFromTitle(result.title),
     }
   };
 }

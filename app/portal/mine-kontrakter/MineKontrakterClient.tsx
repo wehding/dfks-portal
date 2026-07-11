@@ -15,8 +15,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
+import { EpisodePicker } from "@/components/works/episode-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
+import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
+import { WORK_TYPES } from "@/lib/work-types";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -34,7 +37,7 @@ export type Contract = {
   pdf_url: string | null;
   working_title: string | null;
   created_at: string | null;
-  works: { id: string; title: string; year: number | null } | null;
+  works: { id: string; title: string; year: number | null; type: string | null } | null;
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
   contract_attachments: Attachment[];
@@ -112,6 +115,10 @@ function normalizeContract(contract: Contract): Contract {
     contract_attachments: contract.contract_attachments ?? [],
     contract_comments: contract.contract_comments ?? [],
   };
+}
+
+function hasWorkLink(contract: Contract) {
+  return Boolean(contract.works) || contract.status === "valideret";
 }
 
 function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
@@ -237,6 +244,7 @@ export default function MineKontrakterClient({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
+    setAddSeason(result.season_hint ? String(result.season_hint) : "");
     setDetailsLoading(true);
 
     try {
@@ -247,6 +255,8 @@ export default function MineKontrakterClient({
           const d = detRes.details;
           const options = d.episode_options || [];
           const count = d.episode_count || options.length;
+          const hintedSeason = d.season_hint ?? result.season_hint ?? null;
+          if (hintedSeason) setAddSeason(String(hintedSeason));
 
           if (count) {
             setDetectedEpisodeCount(count);
@@ -266,6 +276,7 @@ export default function MineKontrakterClient({
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(20);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -288,9 +299,16 @@ export default function MineKontrakterClient({
       (c.overenskomst ?? "").toLowerCase().includes(t)
     );
   }).filter(c => {
+    if (typeFilter !== "all" && c.works?.type !== typeFilter) return false;
     if (statusFilter === "all") return true;
-    if (statusFilter === "linked") return Boolean(c.works);
-    if (statusFilter === "missingWork") return !c.works;
+    if (statusFilter === "linked") return hasWorkLink(c);
+    if (statusFilter === "missingWork") return !hasWorkLink(c);
+    if (statusFilter === "messages") return c.contract_comments.some(comment => comment.author_role === "admin" && !comment.member_read_at);
+    if (statusFilter === "missingDocument") return !c.pdf_url;
+    if (statusFilter === "actionRequired") {
+      const latest = c.contract_comments.at(-1);
+      return !hasWorkLink(c) || !c.pdf_url || c.status === "kladde" || Boolean(latest?.author_role === "admin" && !latest.member_read_at);
+    }
     return c.status === statusFilter;
   }).sort((a, b) => {
     const direction = sortDir === "asc" ? 1 : -1;
@@ -298,7 +316,7 @@ export default function MineKontrakterClient({
       const val = getValidation(contract);
       return Number(Boolean(val?.has_overenskomst_incorporation)) + Number(Boolean(val?.has_credit_clause));
     };
-    const statusValue = (contract: Contract) => !contract.works ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
+    const statusValue = (contract: Contract) => !hasWorkLink(contract) ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
     const values: Record<SortKey, [SortValue, SortValue]> = {
       title: [contractDisplayTitle(a), contractDisplayTitle(b)],
       employer: [a.employers?.name ?? "", b.employers?.name ?? ""],
@@ -310,7 +328,7 @@ export default function MineKontrakterClient({
     const [left, right] = values[sortKey];
     if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
     return String(left).localeCompare(String(right), "da-DK", { numeric: true, sensitivity: "base" }) * direction;
-  }), [contracts, search, sortDir, sortKey, statusFilter]);
+  }), [contracts, search, sortDir, sortKey, statusFilter, typeFilter]);
   const visibleContracts = filtered.slice(0, pageSize);
   const allFilteredSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id));
 
@@ -573,7 +591,18 @@ export default function MineKontrakterClient({
                   <option value="kladde">Afventer validering</option>
                   <option value="valideret">Valideret</option>
                   <option value="arkiveret">Arkiveret</option>
+                  <option value="messages">Nye beskeder fra DFKS</option>
+                  <option value="missingDocument">Mangler dokument</option>
+                  <option value="actionRequired">Kræver handling</option>
                 </select>
+                <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
+                  <option value="all">Type</option>
+                  {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+                </select>
+                <ResetFiltersButton
+                  active={Boolean(search || statusFilter !== "all" || typeFilter !== "all")}
+                  onReset={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); setSelectedIds([]); setPageSize(20); }}
+                />
               </>
             )}
           </div>
@@ -637,7 +666,7 @@ export default function MineKontrakterClient({
                 ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
               </div>
               <div className="space-y-1">
-                <WorkLinkBadge linked={Boolean(c.works)} />
+                <WorkLinkBadge linked={hasWorkLink(c)} />
                 {c.works && <StatusBadge status={c.status} />}
               </div>
               <div
@@ -674,9 +703,9 @@ export default function MineKontrakterClient({
                 created_at: saved.created_at,
                 working_title: saved.working_title ?? null,
                 works: linkedWork
-                  ? { id: linkedWork.id, title: linkedWork.title, year: linkedWork.year }
+                  ? { id: linkedWork.id, title: linkedWork.title, year: linkedWork.year, type: linkedWork.type }
                   : linkedWorkId
-                    ? { id: linkedWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null }
+                    ? { id: linkedWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null, type: null }
                     : null,
                 employers: null,
                 contract_validations: null,
@@ -734,7 +763,7 @@ export default function MineKontrakterClient({
               )}
 
               <StatusBadge status={selectedContract.status} />
-              <WorkLinkBadge linked={Boolean(selectedContract.works)} />
+              <WorkLinkBadge linked={hasWorkLink(selectedContract)} />
 
               {/* Metadata-rækker */}
               <div className="flex flex-col gap-2">
@@ -869,31 +898,7 @@ export default function MineKontrakterClient({
                                     </button>
                                   </div>
                                 </div>
-                                <div className="grid grid-cols-4 gap-1 max-h-32 overflow-y-auto p-1 border rounded bg-muted/40">
-                                  {episodeOptions.map(opt => {
-                                    const checked = selectedEpisodes.includes(opt.number);
-                                    return (
-                                      <button
-                                        key={opt.number}
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedEpisodes(prev =>
-                                            prev.includes(opt.number)
-                                              ? prev.filter(n => n !== opt.number)
-                                              : [...prev, opt.number].sort((a, b) => a - b)
-                                          )
-                                        }
-                                        className={`py-1 text-[10px] rounded border text-center font-medium ${
-                                          checked
-                                            ? "border-primary bg-primary text-primary-foreground"
-                                            : "border-border bg-background hover:bg-muted text-muted-foreground"
-                                        }`}
-                                      >
-                                        {opt.number}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
+                                <EpisodePicker compact options={episodeOptions} selected={selectedEpisodes} onChange={setSelectedEpisodes} />
                               </div>
                             ) : null}
                           </div>

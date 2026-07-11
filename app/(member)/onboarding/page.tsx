@@ -13,7 +13,7 @@ export default async function OnboardingPage() {
 
   const { data: rh } = await supabase
     .from("rettighedshavere")
-    .select("*")
+    .select("full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed")
     .eq("user_id", user.id)
     .single();
 

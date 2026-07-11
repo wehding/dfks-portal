@@ -20,8 +20,21 @@ type SparqlResponse = {
 };
 
 type WikidataSearchResponse = {
-  search?: Array<{ id?: string }>;
+  search?: Array<{ id?: string; label?: string; description?: string; aliases?: string[] }>;
 };
+
+export async function searchWikidataPeople(name: string) {
+  try {
+    const res = await wikidataFetch(`https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=da&uselang=da&type=item&limit=12&search=${encodeURIComponent(name)}`);
+    if (!res.ok) return [];
+    const data = await res.json() as WikidataSearchResponse;
+    return (data.search ?? [])
+      .filter(item => item.id && /^Q\d+$/.test(item.id) && item.label)
+      .map(item => ({ qid: item.id!, name: item.label!, description: item.description ?? null, aliases: item.aliases ?? [] }));
+  } catch {
+    return [];
+  }
+}
 
 async function wikidataFetch(url: string) {
   return fetch(url, {

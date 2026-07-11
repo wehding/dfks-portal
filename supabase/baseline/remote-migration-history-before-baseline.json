@@ -1,0 +1,22 @@
+[
+  {"version":"20260529","name":"00_modul0_fundament","statement_count":7,"statements_md5":"58f9feff569161ee2e80b66b6270bb1f"},
+  {"version":"20260605","name":"06_producentlister","statement_count":4,"statements_md5":"0217a2fc180bb8c1ece75e366b23b228"},
+  {"version":"20260609","name":"08_knowledge_chunks","statement_count":13,"statements_md5":"0c757dd45a064ffbee241428ea131fa6"},
+  {"version":"20260611","name":"contracts_member","statement_count":4,"statements_md5":"eefe109b4003230c0e65c4baf4fd237e"},
+  {"version":"20260612","name":"contract_reviews_inbox","statement_count":12,"statements_md5":"fc03c1d0a7d924252b9a66c72f99c6ef"},
+  {"version":"20260613","name":"contract_reviews_ai_status","statement_count":2,"statements_md5":"0acea29aa74f5eeac33d93f23c1ef056"},
+  {"version":"20260616","name":"compliance_extract","statement_count":2,"statements_md5":"c1e252048e9f14030168246cafe7eae6"},
+  {"version":"20260627203946","name":"work_change_requests","statement_count":16,"statements_md5":"ab99ba4f51c20f6b39c8fef1fe07f78b"},
+  {"version":"20260628155430","name":"add_work_assignment_share_percent","statement_count":1,"statements_md5":"b06ca53f3e75f903d2670323dfd285f3"},
+  {"version":"20260705170000","name":"add_work_season_count","statement_count":1,"statements_md5":"a27bc05149350cc7d13fa016c33016fe"},
+  {"version":"20260707120000","name":"contract_ai_jobs","statement_count":10,"statements_md5":"55d4d7af86fd2958651b060f50ae1409"},
+  {"version":"20260707210000","name":"contract_ai_jobs_reaper","statement_count":3,"statements_md5":"5f86696246eae7bfa48bfe271594aa55"},
+  {"version":"20260710213755","name":"add_work_field_sources","statement_count":4,"statements_md5":"dd764e52f2b3e9f20b033cd027e378a4"},
+  {"version":"20260710224753","name":"work_distributions_and_assignment_idempotency","statement_count":13,"statements_md5":"da65ea0ddbc734903c61a9555f235ffb"},
+  {"version":"20260710225058","name":"reconcile_works_external_ids","statement_count":4,"statements_md5":"12273c8a17dc6a350872833278578d26"},
+  {"version":"20260710231500","name":"screening_claim_comments","statement_count":15,"statements_md5":"d054cc2bc561032e052183fa0fe15f21"},
+  {"version":"20260711062721","name":"add_external_person_identity","statement_count":7,"statements_md5":"b3a25a5840bd61d438ff5a1f89b3fa90"},
+  {"version":"20260711065304","name":"harden_legacy_rls_advisors","statement_count":118,"statements_md5":"e3b49348f56c5478958bc97820df6c2d"},
+  {"version":"20260711070159","name":"finalize_security_advisor_hardening","statement_count":42,"statements_md5":"c40f53128243d95c170942099fc140a1"},
+  {"version":"20260711070531","name":"move_vector_to_extensions_schema","statement_count":6,"statements_md5":"dbb6ddf6ba3b1ad581a9dd1434896970"}
+]

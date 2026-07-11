@@ -52,6 +52,17 @@ function textOrNull(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function isMissingWorkMetadataColumnError(error: { message?: string; code?: string } | null | undefined) {
+  const message = error?.message ?? "";
+  return error?.code === "42703"
+    || (/schema cache/i.test(message) && /(imdb_id|wikidata_id|dfi_metadata)/i.test(message));
+}
+
+function stripOptionalWorkMetadata(episode: EpisodeInsert): EpisodeInsert {
+  const { imdb_id: _imdbId, wikidata_id: _wikidataId, dfi_metadata: _dfiMetadata, ...rest } = episode;
+  return rest;
+}
+
 export async function generateEpisodesForSeries(params: {
   parentWork: DbWork;
   seasonNumber: number;
@@ -218,7 +229,10 @@ export async function generateEpisodesForSeries(params: {
   }
 
   // 5. Gem afsnit i databasen
-  const { error: insertErr } = await db.from("works").insert(episodesToInsert);
+  let { error: insertErr } = await db.from("works").insert(episodesToInsert);
+  if (isMissingWorkMetadataColumnError(insertErr)) {
+    ({ error: insertErr } = await db.from("works").insert(episodesToInsert.map(stripOptionalWorkMetadata)));
+  }
   if (insertErr) {
     console.error("Fejl ved indsættelse af afsnit:", insertErr);
     return { success: false, error: insertErr.message };

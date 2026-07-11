@@ -4,9 +4,11 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, Search, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EpisodePicker } from "@/components/works/episode-picker";
 import { Modal } from "./Modal";
 import { importApprovedOnboardingWorks, searchNewCreditsForCurrentMember, type OnboardingCredit } from "@/app/actions/dfi";
 import { useI18n } from "@/lib/i18n";
+import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -48,27 +50,29 @@ export function DfiImportWizard({
     return text.includes("serie") || text.includes("tv");
   };
 
+  const seasonForCredit = (credit: OnboardingCredit) => {
+    const raw = credit.raw ?? {};
+    const rawTitle = raw.title ?? raw.name ?? raw.Title ?? raw.DanishTitle ?? raw.OriginalTitle;
+    return credit.season_number ?? parseSeasonNumberFromTitle(credit.title) ?? parseSeasonNumberFromTitle(rawTitle) ?? 1;
+  };
+
   const episodeCountForCredit = (credit: OnboardingCredit) => {
+    if (credit.episode_options?.length) return credit.episode_options.length;
     const raw = credit.raw ?? {};
     const rawCount = raw.number_of_episodes ?? raw.episode_count ?? raw.EpisodeCount;
     const parsed = Number(rawCount);
     if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 80);
-    return 10;
+    return 0;
+  };
+
+  const episodeOptionsForCredit = (credit: OnboardingCredit) => {
+    if (credit.episode_options?.length) return credit.episode_options;
+    const count = episodeCountForCredit(credit);
+    return Array.from({ length: count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
-    const count = episodeCountForCredit(credit);
-    return seriesEpisodes[credit.id] ?? Array.from({ length: count }, (_, index) => index + 1);
-  };
-
-  const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
-    setSeriesEpisodes(prev => {
-      const current = selectedEpisodesForCredit(credit);
-      const next = current.includes(episodeNumber)
-        ? current.filter(number => number !== episodeNumber)
-        : [...current, episodeNumber].sort((a, b) => a - b);
-      return { ...prev, [credit.id]: next };
-    });
+    return seriesEpisodes[credit.id] ?? episodeOptionsForCredit(credit).map(option => option.number);
   };
 
   const loadWizardCredits = useCallback(async (query: string) => {
@@ -83,10 +87,13 @@ export function DfiImportWizard({
       setWizardTmdbPersonId(res.tmdbPersonId ?? null);
       setWizardSkippedExistingCount(res.skippedAlreadyAssignedCount ?? 0);
       const sel: Record<string, boolean> = {};
+      const seasons: Record<string, number> = {};
       newCredits.forEach((c: OnboardingCredit) => {
         if (c.id) sel[c.id] = true;
+        if (c.id && isSeriesCredit(c)) seasons[c.id] = seasonForCredit(c);
       });
       setWizardSelected(sel);
+      setSeriesSeasons(seasons);
     } else {
       setWizardError(res.error ?? "Kunne ikke finde nye titler.");
     }
@@ -134,7 +141,7 @@ export function DfiImportWizard({
     const approved = wizardCredits
       .filter(c => wizardSelected[c.id])
       .map(c => isSeriesCredit(c)
-        ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
+        ? { ...c, season_number: seriesSeasons[c.id] ?? seasonForCredit(c), selected_episodes: selectedEpisodesForCredit(c) }
         : c
       );
     if (!approved.length) {
@@ -280,7 +287,7 @@ export function DfiImportWizard({
                                 <Input
                                   type="number"
                                   min="1"
-                                  value={seriesSeasons[c.id] ?? 1}
+                                  value={seriesSeasons[c.id] ?? seasonForCredit(c)}
                                   onChange={event => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
                                   className="h-8 w-20"
                                 />
@@ -291,7 +298,7 @@ export function DfiImportWizard({
                                   size="sm"
                                   variant="outline"
                                   className="h-8 text-xs"
-                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: Array.from({ length: episodeCount }, (_, index) => index + 1) }))}
+                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodeOptionsForCredit(c).map(option => option.number) }))}
                                 >
                                   Vælg alle
                                 </Button>
@@ -305,23 +312,11 @@ export function DfiImportWizard({
                                   Fravælg alle
                                 </Button>
                               </div>
-                              <div className="grid max-h-52 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-4">
-                                {Array.from({ length: episodeCount }, (_, index) => index + 1).map(episodeNumber => {
-                                  const checked = selectedEpisodes.includes(episodeNumber);
-                                  return (
-                                    <button
-                                      key={episodeNumber}
-                                      type="button"
-                                      className={`rounded-md border px-2 py-2 text-left text-xs ${
-                                        checked ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-muted"
-                                      }`}
-                                      onClick={() => toggleEpisode(c, episodeNumber)}
-                                    >
-                                      Afsnit {episodeNumber}
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                              {episodeCount > 0 ? (
+                                <EpisodePicker compact options={episodeOptionsForCredit(c)} selected={selectedEpisodes} onChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))} />
+                              ) : (
+                                <p className="text-xs text-amber-700">DFI/TMDB indeholder ikke en sikker afsnitsliste for denne titel.</p>
+                              )}
                             </div>
                           )}
                         </div>

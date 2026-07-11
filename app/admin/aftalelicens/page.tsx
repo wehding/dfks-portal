@@ -33,6 +33,10 @@ import {
 import Link from "next/link"
 import { toast } from "sonner"
 import type { AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk, FilterRule, SortStatus } from "@/lib/streaming-types"
+import { addScreeningClaimComment, fetchAdminScreeningClaims, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
+import { MessageThread } from "@/components/messages/message-thread"
+import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
+import { WORK_TYPES } from "@/lib/work-types"
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -534,11 +538,22 @@ function ImportDialog({ open, onOpenChange, onImport }: {
 export default function AftalelicensPage() {
     const [batches, setBatches] = useState<AftalelicensBatch[]>(MOCK_BATCHES)
     const [importOpen, setImportOpen] = useState(false)
+    const [claims, setClaims] = useState<Record<string, any>[]>([])
+    const [activeClaim, setActiveClaim] = useState<Record<string, any> | null>(null)
+    const [reply, setReply] = useState("")
+    const [typeFilter, setTypeFilter] = useState("all")
+    const filteredClaims = claims.filter(claim => typeFilter === "all" || claim.works?.type === typeFilter)
+
+    const loadClaims = async () => {
+        const result = await fetchAdminScreeningClaims()
+        if (result.success) setClaims(result.claims ?? [])
+    }
 
     // Load from localStorage on mount
     useEffect(() => {
         const stored = loadBatches()
         if (stored && stored.length > 0) setBatches(stored)
+        void loadClaims()
     }, [])
 
     const pending = batches.filter(b => b.status === "sorting" || b.status === "imported").length
@@ -559,7 +574,7 @@ export default function AftalelicensPage() {
     return (
         <div className="space-y-6">
             <PageHeader
-                title="Aftalelicens"
+                title="Visningsadmin"
                 subtitle="Behandling og beregning af pulje-vederlag fra Copydan og TV2 Play"
                 actions={
                     <Button onClick={() => setImportOpen(true)} className="gap-2">
@@ -568,6 +583,11 @@ export default function AftalelicensPage() {
                     </Button>
                 }
             />
+
+            <div className="rounded-lg border p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Manuelle indberetninger</h2><p className="text-xs text-muted-foreground">Visninger indberettet af medlemmer</p></div><div className="flex items-center gap-2"><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm"><option value="all">Type</option>{WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select><Badge variant="secondary">{filteredClaims.filter(claim => claim.status === "pending").length} afventer</Badge></div></div>
+                {filteredClaims.length === 0 ? <p className="text-sm text-muted-foreground">Ingen manuelle indberetninger.</p> : <div className="space-y-2">{filteredClaims.slice(0, 20).map(claim => <button key={claim.id} type="button" onClick={async () => { setActiveClaim(claim); await markScreeningClaimCommentsRead(claim.id, "admin") }} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted"><span><span className="font-medium">{claim.title}</span><span className="ml-2 text-xs text-muted-foreground">{claim.channel} · {new Date(claim.screening_date).toLocaleDateString("da-DK")}</span></span><Badge variant={claim.status === "rejected" ? "destructive" : claim.status === "approved" ? "default" : "secondary"}>{claim.status}</Badge></button>)}</div>}
+            </div>
 
             {/* Stats */}
             <div className="hidden gap-4 sm:grid sm:grid-cols-4">
@@ -662,6 +682,7 @@ export default function AftalelicensPage() {
             </div>
 
             <ImportDialog open={importOpen} onOpenChange={setImportOpen} onImport={handleImport} />
+            <Dialog open={!!activeClaim} onOpenChange={open => { if (!open) setActiveClaim(null) }}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{activeClaim?.title}</DialogTitle></DialogHeader>{activeClaim && <MessageThread title="Beskeder med medlem" messages={(activeClaim.screening_claim_comments ?? []).map((comment: Record<string, any>) => ({ id: comment.id, authorRole: comment.author_role, message: comment.message, createdAt: comment.created_at, memberReadAt: comment.member_read_at, adminReadAt: comment.admin_read_at }))} viewerRole="admin" memberLabel="Medlem" adminLabel="DFKS" composerValue={reply} onComposerChange={setReply} onSend={async () => { if (!reply.trim()) return; await addScreeningClaimComment({ claimId: activeClaim.id, message: reply, authorRole: "admin" }); setReply(""); await loadClaims() }} onDeleteMessage={async messageId => { await deleteAdminMessage({ kind: "screening", threadId: activeClaim.id, messageId }); await loadClaims() }} onClearThread={async () => { await clearAdminMessageThread({ kind: "screening", threadId: activeClaim.id }); await loadClaims() }} footer={activeClaim.status === "pending" ? <div className="flex justify-end gap-2"><Button variant="outline" onClick={async () => { await updateScreeningClaimStatus(activeClaim.id, "rejected"); setActiveClaim(null); await loadClaims() }}>Afvis</Button><Button onClick={async () => { await updateScreeningClaimStatus(activeClaim.id, "approved"); setActiveClaim(null); await loadClaims() }}>Godkend</Button></div> : null} />}</DialogContent></Dialog>
         </div>
     )
 }

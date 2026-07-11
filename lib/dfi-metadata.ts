@@ -1,5 +1,5 @@
 export type DfiMetadata = Record<string, unknown>;
-export type DfiWorkType = "kortfilm" | "spillefilm" | "tv-serie" | "dokumentar-serie" | "dokumentarfilm";
+export type DfiWorkType = "kortfilm" | "spillefilm" | "tv-serie" | "dokumentar-serie" | "dokumentarfilm" | "dokudrama";
 
 const DFI_CATEGORY_TO_WORK_TYPE: Record<string, DfiWorkType> = {
   "dk/spillefilm": "spillefilm",
@@ -204,11 +204,17 @@ function romanToNumber(value: string) {
 }
 
 export function parseSeasonNumberFromTitle(title: string | null | undefined): number | null {
-  const cleaned = cleanDfiTitle(title).trim();
+  const cleaned = cleanDfiTitle(title)
+    .replace(/\([^)]*\)\s*$/g, "")
+    .replace(/\[[^\]]*\]\s*$/g, "")
+    .trim();
   if (!cleaned) return null;
 
-  const explicit = cleaned.match(/\b(?:sæson|season)\s*(\d{1,2}|[ivx]{1,5})\s*$/i);
-  const suffix = explicit ?? cleaned.match(/(?:\s|[-–—:])(\d{1,2}|[ivx]{1,5})\s*$/i);
+  const token = String.raw`(\d{1,2}|[ivx]{1,5})`;
+  const explicit = cleaned.match(new RegExp(String.raw`\b(?:sæson|season)\s*${token}\s*$`, "i"));
+  const suffix = explicit
+    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}\s*$`, "i"))
+    ?? cleaned.match(new RegExp(String.raw`(?:\s|[-–—:/])${token}(?=\s*[-–—:/])`, "i"));
   if (!suffix) return null;
 
   const raw = suffix[1];
@@ -226,6 +232,7 @@ export function cleanDfiTitle(title: string | null | undefined): string {
   return (title ?? "")
     .replace(/\s*[-–—:]\s*oversigt\s*$/i, "")
     .replace(/\boversigt\b/gi, "")
+    .replace(/\(\s*\)/g, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s*[-–—:]\s*$/, "")
     .trim();

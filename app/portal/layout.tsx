@@ -45,17 +45,18 @@ import {
     SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
+import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 
 const ALL_ADMIN_NAV_ITEMS = [
-    { key: "kontrakter",           href: "/admin/kontrakter",           icon: FileText,    labelKey: "nav.contracts"          },
-    { key: "vaerker",            href: "/admin/vaerker",            icon: Library,     labelKey: "nav.works"            },
+    { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
+    { key: "vaerker",            href: "/admin/vaerker",            icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
+    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
     { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",          href: "/admin/streaming",          icon: Play,        labelKey: "nav.streaming"        },
-    { key: "aftalelicens",       href: "/admin/aftalelicens",       icon: Layers,      labelKey: "nav.aftalelicens"     },
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "stamdata",           href: "/admin/stamdata",           icon: Database,    labelKey: "nav.masterData"       },
     { key: "gennemsigtighed",    href: "/admin/gennemsigtighed",    icon: ScrollText,  labelKey: "nav.transparency"     },
@@ -154,12 +155,12 @@ export default function PortalLayout({
         {
             label: t("nav.myWorks"),
             href: "/portal/mine-vaerker",
-            icon: Film,
+            icon: SHARED_NAV_ICONS.works,
         },
         {
             label: t("nav.myContracts"),
             href: "/portal/mine-kontrakter",
-            icon: FileText,
+            icon: SHARED_NAV_ICONS.contracts,
         },
         {
             label: t("nav.economy"),
@@ -167,9 +168,9 @@ export default function PortalLayout({
             icon: Wallet,
         },
         {
-            label: "Aftalelicens",
-            href: "/portal/aftalelicens",
-            icon: Layers,
+            label: t("nav.mineVisninger"),
+            href: "/portal/mine-visninger",
+            icon: SHARED_NAV_ICONS.screenings,
         },
         {
             label: "Kontraktgennemgang",

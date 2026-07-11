@@ -5,13 +5,16 @@ import { completeOnboarding } from "@/app/actions/member-profile";
 import { searchOnboardingCredits, importApprovedOnboardingWorks, type OnboardingCredit } from "@/app/actions/dfi";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Search } from "lucide-react";
+import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery";
+import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
 
 const STEPS = [
   { id: 1, title: "Velkommen", icon: "👋" },
   { id: 2, title: "Dine oplysninger", icon: "👤" },
-  { id: 3, title: "Film & Serier", icon: "🎬" },
-  { id: 4, title: "Privatliv & Data", icon: "🔒" },
-  { id: 5, title: "Bekræft & Start", icon: "✅" },
+  { id: 3, title: "Dit navn", icon: "🔎" },
+  { id: 4, title: "Film & Serier", icon: "🎬" },
+  { id: 5, title: "Privatliv & Data", icon: "🔒" },
+  { id: 6, title: "Bekræft & Start", icon: "✅" },
 ];
 
 type OnboardingProfile = {
@@ -61,6 +64,9 @@ export default function OnboardingClient({
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [dfiError, setDfiError] = useState<string | null>(null);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
+  const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
+  const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, string>>({});
+  const [personSearchError, setPersonSearchError] = useState<string | null>(null);
 
   // Import timer
   const [importSeconds, setImportSeconds] = useState(0);
@@ -90,15 +96,16 @@ export default function OnboardingClient({
   };
 
   const episodeCountForCredit = (credit: OnboardingCredit) => {
+    if (credit.episode_options?.length) return credit.episode_options.length;
     const rawCount = credit.raw?.number_of_episodes ?? credit.raw?.episode_count ?? credit.raw?.EpisodeCount;
     const parsed = Number(rawCount);
     if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 60);
-    return 10;
+    return 0;
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
     const count = episodeCountForCredit(credit);
-    return seriesEpisodes[credit.id] ?? Array.from({ length: count }, (_, index) => index + 1);
+    return seriesEpisodes[credit.id] ?? (credit.episode_options?.map(option => option.number) ?? Array.from({ length: count }, (_, index) => index + 1));
   };
 
   const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
@@ -170,30 +177,50 @@ export default function OnboardingClient({
         return;
       }
 
-      setIsSearchingDfi(true);
-      setDfiError(null);
-
-      // Krav 1: Sæt det indtastede navn i søgefeltet som default
       const fullName = `${formData.first_name} ${formData.last_name}`.trim();
       setDfiSearchQuery(fullName);
-
+      setIsSearchingDfi(true);
+      setPersonSearchError(null);
       try {
-        const searchResult = await searchOnboardingCredits(formData.first_name, formData.last_name);
-        if (searchResult.success && searchResult.credits?.length > 0) {
-          setDfiPersonId(searchResult.dfiPersonId);
-          setTmdbPersonId(searchResult.tmdbPersonId);
-          const sel: Record<string, boolean> = {};
-          searchResult.credits.forEach((c) => { sel[c.id] = true; });
-          setSelectedDfiCredits(sel);
-          await revealCreditsProgressively(searchResult.credits);
-        }
+        const result = await discoverPersonCandidates(fullName);
+        setPersonCandidates(result.success ? result.candidates : []);
+        if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
       } catch {
-        setDfiError("Kunne ikke kontakte DFI Filmdatabasen.");
+        setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
       } finally {
         setIsSearchingDfi(false);
         setStep(3);
       }
     } else if (step === 3) {
+      const selected = Object.values(selectedPersonCandidates)
+        .map(key => personCandidates.find(candidate => candidate.key === key))
+        .filter((candidate): candidate is PersonCandidate => Boolean(candidate));
+      if (personCandidates.length > 0 && selected.length === 0) {
+        setPersonSearchError("Vælg mindst én navneprofil, der er dig.");
+        return;
+      }
+      setIsSearchingDfi(true);
+      setPersonSearchError(null);
+      try {
+        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery);
+        if (!confirmation.success) {
+          setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
+          return;
+        }
+        const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
+        if (searchResult.success && searchResult.credits?.length > 0) {
+          setDfiPersonId(searchResult.dfiPersonId);
+          setTmdbPersonId(searchResult.tmdbPersonId);
+          const selectedCredits: Record<string, boolean> = {};
+          searchResult.credits.forEach(credit => { selectedCredits[credit.id] = true; });
+          setSelectedDfiCredits(selectedCredits);
+          await revealCreditsProgressively(searchResult.credits);
+        }
+        setStep(4);
+      } finally {
+        setIsSearchingDfi(false);
+      }
+    } else if (step === 4) {
       const approved = dfiCredits
         .filter((c) => selectedDfiCredits[c.id])
         .map((c) => isSeriesCredit(c)
@@ -216,10 +243,10 @@ export default function OnboardingClient({
         } catch { /* ignorer importfejl */ } finally {
           clearInterval(timerInterval);
           setIsImportingDfi(false);
-          setStep(4);
+          setStep(5);
         }
       } else {
-        setStep(4);
+        setStep(5);
       }
     } else {
       setStep((s) => s + 1);
@@ -442,6 +469,18 @@ export default function OnboardingClient({
 
           {/* Trin 3: DFI & TMDB Værker */}
           {step === 3 && (
+            <div style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
+              <div>
+                <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Vælg de navneprofiler, der er dig</h2>
+                <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "8px 0 0", lineHeight: 1.6 }}>
+                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Vælg højst én profil fra hver database. De tekniske ID&apos;er gemmes skjult på din profil.
+                </p>
+              </div>
+              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.source]: candidate.key })); setPersonSearchError(null); }} />
+            </div>
+          )}
+
+          {step === 4 && (
             <div style={{ padding: "40px" }}>
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>
                 🎬 Dine film og serier i DFI & TMDb
@@ -610,7 +649,7 @@ export default function OnboardingClient({
           )}
 
           {/* Trin 4: Privatliv */}
-          {step === 4 && (
+          {step === 5 && (
             <div style={{ padding: "40px" }}>
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>Privatliv & Data</h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
@@ -691,7 +730,7 @@ export default function OnboardingClient({
           )}
 
           {/* Trin 5: Bekræft */}
-          {step === 5 && (
+          {step === 6 && (
             <div style={{ padding: "40px" }}>
               <div style={{ textAlign: "center", marginBottom: "28px" }}>
                 <div style={{ fontSize: "48px", marginBottom: "12px" }}>🎉</div>
