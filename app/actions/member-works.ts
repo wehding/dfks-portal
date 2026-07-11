@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
-import { extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
+import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
@@ -1123,7 +1123,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     searchTMDB(q).catch(() => []),
   ]);
 
-  const dfiFilms = (dfiRes.success ? dfiRes.results ?? [] : []) as any[];
+  const dfiFilms = await normalizeDfiSeriesResults((dfiRes.success ? dfiRes.results ?? [] : []) as any[]);
   const tmdbItems = (Array.isArray(tmdbRes) ? tmdbRes : []) as any[];
 
   // 2. Merge DFI results
@@ -1131,7 +1131,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     const isChild = film.Parent && film.Parent.Id;
     if (isChild) return; // Skip child episodes, we always select parent series!
 
-    const title = film.Title || film.DanishTitle || "Ukendt";
+    const title = cleanDfiTitle(film.Title || film.DanishTitle || "Ukendt");
     const year = extractDfiPremiereYear(film);
     const dfiId = String(film.Id);
     const mappedType = mapDfiWorkType(film.Category, film.Type);
@@ -1270,12 +1270,17 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
           episodeCount = parseInt(epMatch[1]);
         }
 
+        const precomputedOptions = Array.isArray((result.raw_dfi as any)?.__episode_options)
+          ? (result.raw_dfi as any).__episode_options
+          : Array.isArray((dfiMetadata as any).__episode_options) ? (dfiMetadata as any).__episode_options : [];
         const children = Array.isArray((dfiMetadata as any).Children) ? (dfiMetadata as any).Children : [];
-        if (children.length > 0) {
-          const isEp = children.some((c: any) => parseDfiEpisodeTitleInfo(c.Title));
-          if (isEp) {
-            episodeCount = children.length;
-            episodeOptions = children.map((c: any, idx: number) => {
+        const episodeChildren = children.filter((child: any) => Boolean(parseDfiEpisodeTitleInfo(child.Title ?? "")));
+        if (precomputedOptions.length > 0) {
+          episodeOptions = precomputedOptions;
+          episodeCount = precomputedOptions.length;
+        } else if (episodeChildren.length > 0) {
+            episodeCount = episodeChildren.length;
+            episodeOptions = episodeChildren.map((c: any, idx: number) => {
               const parsed = parseDfiEpisodeTitleInfo(c.Title ?? "");
               const num = parsed?.episodeNumber ?? idx + 1;
               const subtitle = parsed?.subtitle || c.Title || `Afsnit ${num}`;
@@ -1286,7 +1291,6 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
               };
             }).filter((opt: any) => opt.number > 0);
             episodeOptions.sort((a, b) => a.number - b.number);
-          }
         }
       }
     } catch (e) {
@@ -1317,8 +1321,13 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
         if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
-          if (tDetails.number_of_episodes) {
-            episodeCount = episodeCount ?? tDetails.number_of_episodes;
+          const seasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
+          const season = Array.isArray(tDetails.seasons)
+            ? tDetails.seasons.find((item: any) => item.season_number === seasonNumber)
+            : null;
+          if (!episodeCount && season?.episode_count) {
+            episodeCount = season.episode_count;
+            episodeOptions = Array.from({ length: season.episode_count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
           }
         }
       }

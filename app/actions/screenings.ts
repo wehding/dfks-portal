@@ -53,6 +53,7 @@ export async function fetchMemberScreeningClaims() {
     .from("screening_claims")
     .select(`
       *,
+      works(type),
       screening_claim_comments(*)
     `)
     .eq("profile_id", user.id)
@@ -229,6 +230,7 @@ export async function fetchAdminScreeningClaims() {
     .from("screening_claims")
     .select(`
       *,
+      works(type),
       screening_claim_comments(*)
     `)
     .eq("org_id", orgId)

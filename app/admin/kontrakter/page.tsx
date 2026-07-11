@@ -40,18 +40,12 @@ import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { EpisodePicker } from "@/components/works/episode-picker"
+import { WORK_TYPES } from "@/lib/work-types"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
 const PdfViewer = dynamic(() => import("@/components/pdf-viewer").then(mod => mod.PdfViewer), { ssr: false })
-const WORK_TYPE_FILTERS = [
-    { value: "spillefilm", label: "Spillefilm" },
-    { value: "dokumentarfilm", label: "Dokumentarfilm" },
-    { value: "tv-serie", label: "Tv-serie" },
-    { value: "dokumentar-serie", label: "Dokumentar-serie" },
-    { value: "kortfilm", label: "Kortfilm" },
-    { value: "dokudrama", label: "Dokudrama" },
-]
+const WORK_TYPE_FILTERS = WORK_TYPES
 
 type ContractRow = {
     id: string
@@ -1586,7 +1580,7 @@ function AdminKontrakterContent() {
                 <Select value={filterType} onValueChange={setFilterType}>
                     <SelectTrigger className="w-full lg:w-[160px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">Alle typer</SelectItem>
+                        <SelectItem value="all">Type</SelectItem>
                         <SelectItem value="a-løn">A-løn</SelectItem>
                         <SelectItem value="leverandør">Leverandør</SelectItem>
                     </SelectContent>
@@ -2348,9 +2342,9 @@ function AdminKontrakterContent() {
                                                     <Input className="h-8 pl-8 text-xs" placeholder="Søg i alle databaser..." value={editWorkSearch} onChange={e => setEditWorkSearch(e.target.value)} />
                                                 </div>
                                                 <Select value={editWorkTypeFilter} onValueChange={setEditWorkTypeFilter}>
-                                                    <SelectTrigger className="h-8 text-xs sm:w-44"><SelectValue placeholder="Alle typer" /></SelectTrigger>
+                                                    <SelectTrigger className="h-8 text-xs sm:w-44"><SelectValue placeholder="Type" /></SelectTrigger>
                                                     <SelectContent>
-                                                        <SelectItem value="all">Alle typer</SelectItem>
+                                                        <SelectItem value="all">Type</SelectItem>
                                                         {WORK_TYPE_FILTERS.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
                                                     </SelectContent>
                                                 </Select>

@@ -93,6 +93,22 @@ export async function getTMDBPersonCombinedCredits(personId: number) {
   }
 }
 
+export async function getTMDBPersonExternalIds(personId: number) {
+  try {
+    const res = await tmdbFetch(`/person/${personId}/external_ids`);
+    if (!res.ok) throw new Error(`TMDB person external IDs status ${res.status}`);
+    const data = await res.json();
+    return {
+      success: true,
+      imdb_nm: typeof data.imdb_id === "string" && /^nm\d+$/.test(data.imdb_id) ? data.imdb_id : null,
+      wikidata_qid: typeof data.wikidata_id === "string" && /^Q\d+$/.test(data.wikidata_id) ? data.wikidata_id : null,
+    };
+  } catch (err) {
+    console.error("TMDB person external IDs error:", err);
+    return { success: false, imdb_nm: null, wikidata_qid: null };
+  }
+}
+
 export async function getTMDBWorkDetails(tmdbId: number, mediaType: string) {
   const type = mediaType === "tv" ? "tv" : "movie";
   try {

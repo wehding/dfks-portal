@@ -51,19 +51,10 @@ import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
 import { EpisodePicker } from "@/components/works/episode-picker";
+import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
-const WORK_TYPES = [
-  { value: "kortfilm", label: "Kortfilm" },
-  { value: "spillefilm", label: "Spillefilm" },
-  { value: "tv-serie", label: "Tv-serie" },
-  { value: "dokumentar-serie", label: "Dokumentar-serie" },
-  { value: "dokumentarfilm", label: "Dokumentarfilm" },
-  { value: "dokudrama", label: "Dokudrama" },
-];
-
-const WORK_TYPE_VALUES = WORK_TYPES.map(type => type.value) as DfiWorkType[];
 
 const CREDIT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 const BROADCASTERS = [
@@ -690,9 +681,6 @@ function notifyWorksUpdated() {
   window.dispatchEvent(new Event("works-updated"));
 }
 
-function workTypeLabel(value: string | null | undefined) {
-  return WORK_TYPES.find(type => type.value === value)?.label ?? value ?? "-";
-}
 
 function defaultAddForm(): AddWorkForm {
   return {
@@ -755,6 +743,7 @@ export default function VaerksadministrationPage() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [filterType, setFilterType] = useState("all");
   const [pageSize, setPageSize] = useState(20);
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -887,6 +876,7 @@ export default function VaerksadministrationPage() {
     );
     if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
     else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
+    if (filterType !== "all") list = list.filter(work => work.type === filterType);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(work =>
@@ -919,7 +909,7 @@ export default function VaerksadministrationPage() {
       return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction;
     });
     return list;
-  }, [works, activeRh, filterStatus, search, sortKey, sortDir]);
+  }, [works, activeRh, filterStatus, filterType, search, sortKey, sortDir]);
   const visibleWorks = filtered.slice(0, pageSize);
 
   const stats = useMemo(() => {
@@ -1767,10 +1757,17 @@ export default function VaerksadministrationPage() {
             <SelectItem value="beskeder">Beskeder</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-full lg:w-[180px]"><SelectValue placeholder="Type" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Type</SelectItem>
+            {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
         <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
         <ResetFiltersButton
-          active={Boolean(search || filterStatus !== "all" || activeRh)}
-          onReset={() => { setSearch(""); setFilterStatus("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
+          active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
+          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
         />
         <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
@@ -2553,9 +2550,9 @@ export default function VaerksadministrationPage() {
                     onKeyDown={e => { if (e.key === "Enter") handleAddSearch(); }}
                   />
                   <Select value={addTypeFilter} onValueChange={setAddTypeFilter}>
-                    <SelectTrigger className="sm:w-48"><SelectValue placeholder="Alle typer" /></SelectTrigger>
+                    <SelectTrigger className="sm:w-48"><SelectValue placeholder="Type" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">Alle typer</SelectItem>
+                      <SelectItem value="all">Type</SelectItem>
                       {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
                     </SelectContent>
                   </Select>

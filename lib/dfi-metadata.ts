@@ -232,6 +232,7 @@ export function cleanDfiTitle(title: string | null | undefined): string {
   return (title ?? "")
     .replace(/\s*[-–—:]\s*oversigt\s*$/i, "")
     .replace(/\boversigt\b/gi, "")
+    .replace(/\(\s*\)/g, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s*[-–—:]\s*$/, "")
     .trim();

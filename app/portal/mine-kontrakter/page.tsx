@@ -17,7 +17,7 @@ type RawContract = Omit<Contract, "works" | "employers"> & {
   contract_comments?: Contract["contract_comments"] | null;
 };
 
-const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
+const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
 
 function getWorkRelation(row: WorkAssignmentRow) {
   return Array.isArray(row.works) ? row.works[0] ?? null : row.works;

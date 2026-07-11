@@ -7,7 +7,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
@@ -25,6 +25,9 @@ type DfiCredit = {
   Description?: string | null;
   Type?: string | null;
   Category?: string | null;
+  Parent?: { Id?: number | string | null } | null;
+  Children?: DfiCredit[] | null;
+  __episode_options?: Array<{ number: number; title: string }>;
   __selected_episodes?: number[] | null;
   __season_number?: number | null;
 };
@@ -635,6 +638,7 @@ export type OnboardingCredit = {
   director?: string | null;
   season_number?: number | null;
   selected_episodes?: number[] | null;
+  episode_options?: Array<{ number: number; title: string }>;
   raw: any;
 };
 
@@ -678,6 +682,61 @@ function isDfiSeriesParent(c: any): boolean {
   return !hasParent && !hasEpisodeInfo;
 }
 
+export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
+  const parents = new Map<string, DfiCredit>();
+  const parentRequests = new Map<string, Promise<DfiCredit | null>>();
+  const seriesKey = (title: string | null | undefined) => cleanDfiTitle(title)
+    .replace(/\s+\d+\s*:\s*\d+.*$/i, "")
+    .replace(/\(\s*\)/g, "")
+    .toLocaleLowerCase("da-DK")
+    .replace(/[^a-z0-9æøå]/g, "");
+  const explicitParents = new Map(
+    credits
+      .filter(credit => !credit.Parent?.Id && !parseDfiEpisodeTitleInfo(credit.Title ?? ""))
+      .map(credit => [seriesKey(credit.Title || credit.DanishTitle), credit] as const)
+      .filter(([key]) => Boolean(key))
+  );
+
+  const fetchParent = (id: string) => {
+    const existing = parentRequests.get(id);
+    if (existing) return existing;
+    const request = fetchDFI(`/v1/film/${id}`).then(result => result.success && result.data ? result.data as DfiCredit : null);
+    parentRequests.set(id, request);
+    return request;
+  };
+
+  for (const credit of credits) {
+    const parentId = credit.Parent?.Id ? String(credit.Parent.Id) : null;
+    const parsedChild = parseDfiEpisodeTitleInfo(credit.Title ?? "");
+    const inferredParent = parsedChild ? explicitParents.get(seriesKey(credit.Title)) ?? null : null;
+    const canonical = parentId ? await fetchParent(parentId) : inferredParent ?? credit;
+    const canonicalId = String(canonical?.Id ?? parentId ?? credit.Id ?? "");
+    if (!canonicalId) continue;
+
+    const current = parents.get(canonicalId) ?? { ...(canonical ?? credit), Id: canonical?.Id ?? parentId ?? credit.Id };
+    const children = Array.isArray(current.Children) ? current.Children : [];
+    const episodeOptions = children
+      .map((child, index) => {
+        const parsed = parseDfiEpisodeTitleInfo(child.Title ?? "");
+        if (!parsed) return null;
+        return { number: parsed.episodeNumber ?? index + 1, title: parsed.subtitle || child.Title || `Afsnit ${index + 1}` };
+      })
+      .filter((option): option is { number: number; title: string } => Boolean(option?.number));
+
+    if (parsedChild?.episodeNumber && !episodeOptions.some(option => option.number === parsedChild.episodeNumber)) {
+      episodeOptions.push({ number: parsedChild.episodeNumber, title: parsedChild.subtitle || credit.Title || `Afsnit ${parsedChild.episodeNumber}` });
+    }
+
+    current.__episode_options = Array.from(
+      new Map([...(current.__episode_options ?? []), ...episodeOptions].map(option => [option.number, option])).values()
+    ).sort((a, b) => a.number - b.number);
+    current.Description = credit.Description || current.Description;
+    parents.set(canonicalId, current);
+  }
+
+  return Array.from(parents.values());
+}
+
 export async function searchOnboardingCredits(
   firstName?: string,
   lastName?: string,
@@ -688,9 +747,12 @@ export async function searchOnboardingCredits(
 
   const db = createServiceClient();
   let rightsHolderId: string | null = null;
+  let savedIdentity: { dfi_person_id?: number | null; tmdb_person_id?: number | null } | null = null;
   try {
     const context = await currentRightsHolderAndOrg();
     rightsHolderId = context.rightsHolderId;
+    const { data } = await db.from("rettighedshavere").select("dfi_person_id, tmdb_person_id").eq("id", rightsHolderId).maybeSingle();
+    savedIdentity = data;
   } catch {
     // Fortsæt uden rightsHolderId i tilfælde af test-kørsler
   }
@@ -698,16 +760,17 @@ export async function searchOnboardingCredits(
   let dfiPersonId: number | null = null;
   let tmdbPersonId: number | null = null;
   
-  const rawDfiCredits: any[] = [];
+  let rawDfiCredits: DfiCredit[] = [];
   const rawTmdbCredits: any[] = [];
 
   // 1. Hent rådata fra DFI
   try {
-    const dfiPersonRes = await searchDFIPerson(firstName, lastName, fullName);
-    if (dfiPersonRes.success && dfiPersonRes.results?.length > 0) {
-      const p = dfiPersonRes.results[0];
-      dfiPersonId = p.Id;
-      const dfiCreditsRes = await getDFIPersonCredits(p.Id);
+    const savedDfiPersonId = savedIdentity?.dfi_person_id ?? null;
+    const dfiPersonRes = savedDfiPersonId ? null : await searchDFIPerson(firstName, lastName, fullName);
+    const resolvedDfiPersonId = savedDfiPersonId ?? (dfiPersonRes?.success && dfiPersonRes.results?.length > 0 ? dfiPersonRes.results[0].Id : null);
+    if (resolvedDfiPersonId) {
+      dfiPersonId = Number(resolvedDfiPersonId);
+      const dfiCreditsRes = await getDFIPersonCredits(dfiPersonId);
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
@@ -719,13 +782,16 @@ export async function searchOnboardingCredits(
     logWarn("Onboarding search", "DFI-søgning fejlede", { error: errorMessage(err) });
   }
 
+  rawDfiCredits = await normalizeDfiSeriesResults(rawDfiCredits);
+
   // 2. Hent rådata fra TMDB
   try {
-    const tmdbPersonRes = await searchTMDBPerson(nameToSearch);
-    if (tmdbPersonRes.success && tmdbPersonRes.results?.length > 0) {
-      const p = tmdbPersonRes.results[0];
-      tmdbPersonId = p.id;
-      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(p.id);
+    const savedTmdbPersonId = savedIdentity?.tmdb_person_id ?? null;
+    const tmdbPersonRes = savedTmdbPersonId ? null : await searchTMDBPerson(nameToSearch);
+    const resolvedTmdbPersonId = savedTmdbPersonId ?? (tmdbPersonRes?.success && tmdbPersonRes.results?.length > 0 ? tmdbPersonRes.results[0].id : null);
+    if (resolvedTmdbPersonId) {
+      tmdbPersonId = Number(resolvedTmdbPersonId);
+      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(tmdbPersonId);
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
         const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
@@ -847,7 +913,7 @@ export async function searchOnboardingCredits(
 
   // B. Fyld DFI listen med udestående DFI titler
   rawDfiCredits.forEach((c: any) => {
-    const title = c.Title || c.DanishTitle || "Ukendt";
+    const title = cleanDfiTitle(c.Title || c.DanishTitle || "Ukendt");
     const year = extractDfiPremiereYear(c) || null;
     const dfiId = String(c.Id);
 
@@ -863,6 +929,7 @@ export async function searchOnboardingCredits(
         poster_url: extractDfiPosterUrl(c as DfiMetadata),
         director: extractDfiDirectors(c as DfiMetadata).join(", ") || null,
         season_number: parseSeasonNumberFromTitle(title),
+        episode_options: c.__episode_options ?? [],
         raw: c
       });
     }

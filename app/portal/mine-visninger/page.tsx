@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { addScreeningClaimComment, createScreeningClaim, fetchMemberScreeningClaims, fetchMemberScreeningOptions, markScreeningClaimCommentsRead } from "@/app/actions/screenings";
+import { WORK_TYPES } from "@/lib/work-types";
 
 type Claim = Record<string, any>;
 type Option = { id: string; title?: string; name?: string };
@@ -25,6 +26,7 @@ export default function MineVisningerPage() {
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState({ workId: "", broadcasterId: "", date: "", season: "", episode: "", comment: "" });
   const [reply, setReply] = useState("");
+  const [typeFilter, setTypeFilter] = useState("all");
 
   const load = async () => {
     setLoading(true);
@@ -37,6 +39,10 @@ export default function MineVisningerPage() {
 
   const selectedWork = useMemo(() => works.find(work => work.id === draft.workId), [draft.workId, works]);
   const selectedBroadcaster = useMemo(() => broadcasters.find(item => item.id === draft.broadcasterId), [draft.broadcasterId, broadcasters]);
+  const filteredClaims = useMemo(
+    () => claims.filter(claim => typeFilter === "all" || claim.works?.type === typeFilter),
+    [claims, typeFilter]
+  );
 
   const submit = async () => {
     if (!selectedWork || !selectedBroadcaster || !draft.date) return;
@@ -63,8 +69,9 @@ export default function MineVisningerPage() {
 
   return <div className="space-y-6">
     <PageHeader title="Mine visninger" subtitle="Indberet manuelle visninger og følg dialogen med DFKS" actions={<Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Indberet visning</Button>} />
-    {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : claims.length === 0 ? <p className="rounded-lg border p-6 text-sm text-muted-foreground">Ingen manuelle indberetninger endnu.</p> : <div className="grid gap-3">
-      {claims.map(claim => <button key={claim.id} onClick={() => openClaim(claim)} className="flex items-center justify-between rounded-lg border p-4 text-left hover:bg-muted">
+    <div><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"><option value="all">Type</option>{WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></div>
+    {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : filteredClaims.length === 0 ? <p className="rounded-lg border p-6 text-sm text-muted-foreground">Ingen manuelle indberetninger endnu.</p> : <div className="grid gap-3">
+      {filteredClaims.map(claim => <button key={claim.id} onClick={() => openClaim(claim)} className="flex items-center justify-between rounded-lg border p-4 text-left hover:bg-muted">
         <span><span className="font-medium">{claim.title}</span><span className="mt-1 block text-xs text-muted-foreground">{claim.channel} · {new Date(claim.screening_date).toLocaleDateString("da-DK")}</span></span>
         <Badge variant={claim.status === "rejected" ? "destructive" : claim.status === "approved" ? "default" : "secondary"}>{claim.status === "pending" ? "Afventer" : claim.status === "approved" ? "Godkendt" : "Afvist"}</Badge>
       </button>)}

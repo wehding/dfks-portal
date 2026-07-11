@@ -13,16 +13,9 @@ import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { EpisodePicker } from "@/components/works/episode-picker";
+import { WORK_TYPES } from "@/lib/work-types";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
-const WORK_TYPES = [
-  { value: "kortfilm", label: "Kortfilm" },
-  { value: "spillefilm", label: "Spillefilm" },
-  { value: "tv-serie", label: "Tv-serie" },
-  { value: "dokumentarfilm", label: "Dokumentarfilm" },
-  { value: "dokumentar-serie", label: "Dokumentar-serie" },
-  { value: "dokudrama", label: "Dokudrama" },
-];
 
 const selectCls =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";

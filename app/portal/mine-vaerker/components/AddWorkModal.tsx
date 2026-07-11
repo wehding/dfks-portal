@@ -13,17 +13,10 @@ import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWor
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 import { EpisodePicker } from "@/components/works/episode-picker";
+import { WORK_TYPES } from "@/lib/work-types";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
-const WORK_TYPES = [
-  { value: "kortfilm", label: "Kortfilm" },
-  { value: "spillefilm", label: "Spillefilm" },
-  { value: "tv-serie", label: "Tv-serie" },
-  { value: "dokumentarfilm", label: "Dokumentarfilm" },
-  { value: "dokumentar-serie", label: "Dokumentar-serie" },
-  { value: "dokudrama", label: "Dokudrama" },
-];
 
 const selectCls =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
@@ -719,7 +712,7 @@ export function AddWorkModal({
           }}
         />
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={`${selectCls} sm:w-48`}>
-          <option value="all">Alle typer</option>
+          <option value="all">Type</option>
           {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
         </select>
         <Button variant="outline" onClick={() => handleSearch()} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">

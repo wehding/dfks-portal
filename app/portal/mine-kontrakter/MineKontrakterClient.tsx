@@ -19,6 +19,7 @@ import { EpisodePicker } from "@/components/works/episode-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
+import { WORK_TYPES } from "@/lib/work-types";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -36,7 +37,7 @@ export type Contract = {
   pdf_url: string | null;
   working_title: string | null;
   created_at: string | null;
-  works: { id: string; title: string; year: number | null } | null;
+  works: { id: string; title: string; year: number | null; type: string | null } | null;
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
   contract_attachments: Attachment[];
@@ -275,6 +276,7 @@ export default function MineKontrakterClient({
   const [openingAttachmentId, setOpeningAttachmentId] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(20);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -297,6 +299,7 @@ export default function MineKontrakterClient({
       (c.overenskomst ?? "").toLowerCase().includes(t)
     );
   }).filter(c => {
+    if (typeFilter !== "all" && c.works?.type !== typeFilter) return false;
     if (statusFilter === "all") return true;
     if (statusFilter === "linked") return hasWorkLink(c);
     if (statusFilter === "missingWork") return !hasWorkLink(c);
@@ -325,7 +328,7 @@ export default function MineKontrakterClient({
     const [left, right] = values[sortKey];
     if (typeof left === "number" && typeof right === "number") return (left - right) * direction;
     return String(left).localeCompare(String(right), "da-DK", { numeric: true, sensitivity: "base" }) * direction;
-  }), [contracts, search, sortDir, sortKey, statusFilter]);
+  }), [contracts, search, sortDir, sortKey, statusFilter, typeFilter]);
   const visibleContracts = filtered.slice(0, pageSize);
   const allFilteredSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id));
 
@@ -592,9 +595,13 @@ export default function MineKontrakterClient({
                   <option value="missingDocument">Mangler dokument</option>
                   <option value="actionRequired">Kræver handling</option>
                 </select>
+                <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
+                  <option value="all">Type</option>
+                  {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+                </select>
                 <ResetFiltersButton
-                  active={Boolean(search || statusFilter !== "all")}
-                  onReset={() => { setSearch(""); setStatusFilter("all"); setSelectedIds([]); setPageSize(20); }}
+                  active={Boolean(search || statusFilter !== "all" || typeFilter !== "all")}
+                  onReset={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); setSelectedIds([]); setPageSize(20); }}
                 />
               </>
             )}
@@ -696,9 +703,9 @@ export default function MineKontrakterClient({
                 created_at: saved.created_at,
                 working_title: saved.working_title ?? null,
                 works: linkedWork
-                  ? { id: linkedWork.id, title: linkedWork.title, year: linkedWork.year }
+                  ? { id: linkedWork.id, title: linkedWork.title, year: linkedWork.year, type: linkedWork.type }
                   : linkedWorkId
-                    ? { id: linkedWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null }
+                    ? { id: linkedWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null, type: null }
                     : null,
                 employers: null,
                 contract_validations: null,
