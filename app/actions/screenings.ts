@@ -6,6 +6,30 @@ import { revalidatePath } from "next/cache";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
+function normalizeScreeningTitle(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+async function findScreeningSourceMatch(db: ReturnType<typeof createServiceClient>, params: {
+  orgId: string; title: string; channel: string; screeningDate: string; season?: number | null; episode?: number | null;
+}) {
+  const normalizedTitle = normalizeScreeningTitle(params.title);
+  const { data } = await db.from("screening_source_rows")
+    .select("id,title,channel,screening_date,season,episode")
+    .eq("org_id", params.orgId)
+    .eq("normalized_title", normalizedTitle)
+    .limit(50);
+  const candidates = (data ?? []).map(row => {
+    let score = 60;
+    if (row.screening_date === params.screeningDate) score += 20;
+    if (row.channel && normalizeScreeningTitle(row.channel) === normalizeScreeningTitle(params.channel)) score += 10;
+    if (params.season != null && row.season === params.season) score += 5;
+    if (params.episode != null && row.episode === params.episode) score += 5;
+    return { row, score };
+  }).sort((a, b) => b.score - a.score);
+  return candidates[0]?.score >= 80 ? candidates[0] : null;
+}
+
 async function currentUser() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -40,7 +64,8 @@ export async function fetchMemberScreeningOptions() {
     holder ? db.from("work_assignments").select("works(id,title,type,year)").eq("rights_holder_id", holder.id).eq("org_id", orgId) : Promise.resolve({ data: [] }),
     db.from("broadcasters").select("id,name,logo_path").or(`org_id.is.null,org_id.eq.${orgId}`).order("name"),
   ]);
-  const works = (assignments ?? []).flatMap(row => row.works ? [row.works] : []);
+  const assignmentWorks = (assignments ?? []).flatMap(row => Array.isArray(row.works) ? row.works : row.works ? [row.works] : []);
+  const works = Array.from(new Map(assignmentWorks.map(work => [work.id, work])).values());
   return { success: true, works, broadcasters: broadcasters ?? [] };
 }
 
@@ -96,6 +121,11 @@ export async function createScreeningClaim(params: {
   const { data: assignment } = holder ? await db.from("work_assignments").select("id").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("work_id", params.workId).maybeSingle() : { data: null };
   if (!assignment) return { success: false, error: "Du kan kun indberette visninger på dine egne værker" };
   
+  const sourceMatch = await findScreeningSourceMatch(db, {
+    orgId, title: params.title, channel: params.channel, screeningDate: params.screeningDate,
+    season: params.season, episode: params.episode,
+  });
+
   // Opret krav
   const { data: claim, error } = await db
     .from("screening_claims")
@@ -111,6 +141,10 @@ export async function createScreeningClaim(params: {
       episode: params.episode ?? null,
       status: "pending",
       note: params.note?.trim() || null,
+      source_match_status: sourceMatch ? "found" : "not_found",
+      source_row_id: sourceMatch?.row.id ?? null,
+      source_match_score: sourceMatch?.score ?? null,
+      source_checked_at: new Date().toISOString(),
     })
     .select()
     .single();
@@ -140,6 +174,39 @@ export async function createScreeningClaim(params: {
 
   revalidatePath("/portal/mine-visninger");
   return { success: true, claim };
+}
+
+export async function importScreeningSourceRows(params: {
+  source: string;
+  batchKey: string;
+  rows: Array<{ title: string; channel?: string; screeningDate?: string; season?: number; episode?: number; productionYear?: number; duration?: number; viewCount?: number }>;
+}) {
+  const user = await currentUser();
+  if (!user || !(await isUserAdmin(user.id))) return { success: false, error: "Ikke autoriseret" };
+  const db = createServiceClient();
+  const orgId = await userOrgId(user.id);
+  if (!orgId) return { success: false, error: "Ingen organisation" };
+  const rows = params.rows.filter(row => row.title.trim()).map(row => ({
+    org_id: orgId,
+    source: params.source,
+    batch_key: params.batchKey,
+    title: row.title.trim(),
+    normalized_title: normalizeScreeningTitle(row.title),
+    channel: row.channel?.trim() || null,
+    screening_date: row.screeningDate || null,
+    season: row.season ?? null,
+    episode: row.episode ?? null,
+    production_year: row.productionYear ?? null,
+    duration_minutes: row.duration ?? null,
+    view_count: row.viewCount ?? null,
+  }));
+  const chunkSize = 1000;
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const { error } = await db.from("screening_source_rows").insert(rows.slice(index, index + chunkSize));
+    if (error) return { success: false, error: error.message };
+  }
+  revalidatePath("/admin/aftalelicens");
+  return { success: true, count: rows.length };
 }
 
 export async function addScreeningClaimComment(params: {

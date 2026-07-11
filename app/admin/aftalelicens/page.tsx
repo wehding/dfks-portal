@@ -33,7 +33,7 @@ import {
 import Link from "next/link"
 import { toast } from "sonner"
 import type { AftalelicensBatch, AftalelicensKilde, AftalelicensVaerk, FilterRule, SortStatus } from "@/lib/streaming-types"
-import { addScreeningClaimComment, fetchAdminScreeningClaims, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
+import { addScreeningClaimComment, fetchAdminScreeningClaims, importScreeningSourceRows, markScreeningClaimCommentsRead, updateScreeningClaimStatus } from "@/app/actions/screenings"
 import { MessageThread } from "@/components/messages/message-thread"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { WORK_TYPES } from "@/lib/work-types"
@@ -188,7 +188,7 @@ interface FilterResult {
 function ImportDialog({ open, onOpenChange, onImport }: {
     open: boolean
     onOpenChange: (o: boolean) => void
-    onImport: (batch: AftalelicensBatch) => void
+    onImport: (batch: AftalelicensBatch, rows: ParsedRow[]) => Promise<boolean>
 }) {
     const [step, setStep] = useState<ImportStep>("setup")
     const [kilde, setKilde] = useState<AftalelicensKilde>("copydan_verdenstv")
@@ -296,7 +296,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         }
     }
 
-    const handleConfirm = () => {
+    const handleConfirm = async () => {
         const batchId = `batch_${Date.now()}`
         const toStore = allRows.slice(0, MAX_STORE_ROWS).map((r, i): AftalelicensVaerk => ({
             id: `${batchId}_${i}`,
@@ -336,7 +336,7 @@ function ImportDialog({ open, onOpenChange, onImport }: {
             notes: file?.name || undefined,
         }
 
-        onImport(batch)
+        if (!(await onImport(batch, allRows))) return
         onOpenChange(false)
         reset()
     }
@@ -562,13 +562,23 @@ export default function AftalelicensPage() {
         .filter(b => b.status === "completed")
         .reduce((s, b) => s + (PENDING_CLAIMS[b.id] ?? 0), 0)
 
-    const handleImport = (batch: AftalelicensBatch) => {
+    const handleImport = async (batch: AftalelicensBatch, rows: ParsedRow[]) => {
+        const result = await importScreeningSourceRows({
+            source: batch.kilde,
+            batchKey: batch.id,
+            rows: rows.map(row => ({ title: row.rawTitle, channel: row.channel, screeningDate: row.broadcastDate, season: row.season, episode: row.episode, productionYear: row.productionYear, duration: row.duration, viewCount: row.viewCount })),
+        })
+        if (!result.success) {
+            toast.error(result.error ?? "Kunne ikke gemme visningskilden")
+            return false
+        }
         setBatches(prev => {
             const next = [batch, ...prev]
             saveBatches(next)
             return next
         })
         toast.success(`Import fuldført — ${batch.filteredRows.toLocaleString("da-DK")} rækker klar til sortering`)
+        return true
     }
 
     return (
@@ -586,7 +596,7 @@ export default function AftalelicensPage() {
 
             <div className="rounded-lg border p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Manuelle indberetninger</h2><p className="text-xs text-muted-foreground">Visninger indberettet af medlemmer</p></div><div className="flex items-center gap-2"><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm"><option value="all">Type</option>{WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select><Badge variant="secondary">{filteredClaims.filter(claim => claim.status === "pending").length} afventer</Badge></div></div>
-                {filteredClaims.length === 0 ? <p className="text-sm text-muted-foreground">Ingen manuelle indberetninger.</p> : <div className="space-y-2">{filteredClaims.slice(0, 20).map(claim => <button key={claim.id} type="button" onClick={async () => { setActiveClaim(claim); await markScreeningClaimCommentsRead(claim.id, "admin") }} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted"><span><span className="font-medium">{claim.title}</span><span className="ml-2 text-xs text-muted-foreground">{claim.channel} · {new Date(claim.screening_date).toLocaleDateString("da-DK")}</span></span><Badge variant={claim.status === "rejected" ? "destructive" : claim.status === "approved" ? "default" : "secondary"}>{claim.status}</Badge></button>)}</div>}
+                {filteredClaims.length === 0 ? <p className="text-sm text-muted-foreground">Ingen manuelle indberetninger.</p> : <div className="space-y-2">{filteredClaims.slice(0, 20).map(claim => <button key={claim.id} type="button" onClick={async () => { setActiveClaim(claim); await markScreeningClaimCommentsRead(claim.id, "admin") }} className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left hover:bg-muted"><span><span className="font-medium">{claim.title}</span><span className="ml-2 text-xs text-muted-foreground">{claim.channel} · {new Date(claim.screening_date).toLocaleDateString("da-DK")}</span></span><span className="flex items-center gap-2"><Badge variant={claim.source_match_status === "found" ? "default" : "outline"}>{claim.source_match_status === "found" ? "Fundet i visningsliste" : "Ikke fundet i visningsliste"}</Badge><Badge variant={claim.status === "rejected" ? "destructive" : claim.status === "approved" ? "default" : "secondary"}>{claim.status === "pending" ? "Afventer" : claim.status}</Badge></span></button>)}</div>}
             </div>
 
             {/* Stats */}

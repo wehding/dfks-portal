@@ -2196,53 +2196,6 @@ export default function VaerksadministrationPage() {
                     </Field>
                     <div className="md:col-span-2"><DistributionEditor value={editDistributions} onChange={setEditDistributions} options={broadcasterOptions} /></div>
 
-                    {editForm.dfi_id && !editForm.dfi_metadata && (
-                      <div className="col-span-full mt-2 rounded border border-dashed p-3 flex items-center justify-between text-sm bg-muted/40">
-                        <span className="text-muted-foreground">Der er ikke hentet udvidet DFI metadata for dette værk.</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            setSaving(true);
-                            try {
-                              const res = await getDFIFilmDetails(Number(editForm.dfi_id));
-                              if (res.success && res.film) {
-                                const film = res.film as SearchResult;
-                                const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || editForm.title;
-                                const year = extractDfiPremiereYear(film);
-                                const dfiPoster = (res.success ? res.posterDataUrl : null) ?? extractDfiPosterUrl(film);
-                                const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
-                                setEditForm({
-                                  ...editForm,
-                                  title,
-                                  year: year ? String(year) : editForm.year,
-                                  duration_minutes: firstNumber(film.LengthInMin) ? String(firstNumber(film.LengthInMin)) : editForm.duration_minutes,
-                                  genre: textValue(film.Genre) || editForm.genre,
-                                  director: dfiDirector(film) || editForm.director,
-                                  alternative_titles: mergeLists(splitList(editForm.alternative_titles), dfiAlternativeTitles(film)).join(", "),
-                                  production_countries: mergeLists(splitList(editForm.production_countries), dfiProductionCountries(film)).join(", "),
-                                  production_companies: mergeLists(splitList(editForm.production_companies), dfiProductionCompanies(film)).join(", "),
-                                  ...dfiFieldValues(film),
-                                  poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : editForm.poster_url),
-                                  dfi_metadata: film as DfiMetadata,
-                                });
-                                setNotice("DFI metadata hentet.");
-                              } else {
-                                setNotice("Kunne ikke hente DFI metadata.");
-                              }
-                            } catch {
-                              setNotice("Fejl ved hentning af DFI data.");
-                            } finally {
-                              setSaving(false);
-                            }
-                          }}
-                          disabled={saving}
-                        >
-                          Hent DFI data
-                        </Button>
-                      </div>
-                    )}
                   </div>
 
                   {editForm.dfi_metadata && (
@@ -2354,7 +2307,7 @@ export default function VaerksadministrationPage() {
                   </div>
                 ))}
               </InfoPanel>
-              <InfoPanel title="Hent og kombiner værksdata">
+              <InfoPanel title="Hent værksdata">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     placeholder="Søg titel i DFI og TMDB..."
@@ -2377,13 +2330,7 @@ export default function VaerksadministrationPage() {
                     ))}
                   </div>
                 )}
-                {importPreview && (
-                  <DiffPanel
-                    title={`${importPreview.source}-import ændrer ${importPreview.rows.length} felt${importPreview.rows.length === 1 ? "" : "er"}`}
-                    rows={importPreview.rows}
-                    emptyText="Importen ændrer ingen eksisterende felter."
-                  />
-                )}
+                {importPreview && <p className="text-sm text-muted-foreground">Værksdata er hentet og udfyldt i felterne ovenfor.</p>}
               </InfoPanel>
             </div>
               );
@@ -2865,9 +2812,8 @@ function DistributionEditor({ value, onChange, options }: { value: DistributionD
     <div className="space-y-3 rounded-md border p-3">
       <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "" }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
       {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
-        <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_130px_100px_100px_auto]">
+        <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_100px_100px_auto]">
           <Select value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>
-          <Select value={item.distributionType} onValueChange={distributionType => update(index, { distributionType: distributionType as DistributionDraft["distributionType"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="both">TV + streaming</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="streaming">Streaming</SelectItem></SelectContent></Select>
           <Input inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
           <Input inputMode="numeric" placeholder="Til år" value={item.validToYear} onChange={event => update(index, { validToYear: event.target.value })} />
           <Button type="button" size="icon" variant="ghost" aria-label="Fjern broadcaster" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="h-4 w-4" /></Button>
