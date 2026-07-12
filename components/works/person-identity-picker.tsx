@@ -10,8 +10,9 @@ export function PersonIdentityPicker({ candidates, selected, loading, error, onS
   error?: string | null;
   onSelect: (candidate: PersonCandidate) => void;
 }) {
-  if (loading) return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Søger efter navnevarianter…</div>;
+  if (loading && candidates.length === 0) return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Søger efter navnevarianter…</div>;
   return <div className="space-y-5">
+    {loading && <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Tilføjer resultater fra navnevarianten…</div>}
     {(["dfi", "tmdb", "wikidata"] as const).map(source => {
       const sourceCandidates = candidates.filter(candidate => candidate.source === source);
       return <section key={source} className="space-y-2">

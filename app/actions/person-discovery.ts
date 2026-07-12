@@ -88,7 +88,7 @@ export async function enrichPersonCandidate(candidate: PersonCandidate) {
   return candidate;
 }
 
-export async function confirmExternalPersonIdentity(selected: PersonCandidate[], searchedName?: string) {
+export async function confirmExternalPersonIdentity(selected: PersonCandidate[], searchedName?: string, submittedAlternativeNames: string[] = []) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
@@ -97,7 +97,8 @@ export async function confirmExternalPersonIdentity(selected: PersonCandidate[],
   if (!holder) return { success: false, error: "Rettighedshaveren blev ikke fundet." };
   const verifiedSearchName = searchedName?.trim() || holder.full_name;
   if (holder.full_name && scorePersonName(holder.full_name, verifiedSearchName).score < 0.62) return { success: false, error: "Søgenavnet afviger for meget fra din profil." };
-  const discovery = await discoverPersonCandidates(verifiedSearchName, holder.alternative_names ?? []);
+  const verifiedAlternativeNames = Array.from(new Set([...(holder.alternative_names ?? []), ...submittedAlternativeNames.map(name => name.trim()).filter(Boolean)]));
+  const discovery = await discoverPersonCandidates(verifiedSearchName, verifiedAlternativeNames);
   const allowed = new Map((discovery.success ? discovery.candidates : []).map(candidate => [candidate.key, candidate]));
   const trustedSelected = selected.map(candidate => allowed.get(candidate.key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate));
   if (trustedSelected.length !== selected.length) return { success: false, error: "Et personmatch kunne ikke verificeres. Søg igen." };
@@ -105,7 +106,7 @@ export async function confirmExternalPersonIdentity(selected: PersonCandidate[],
   const tmdb = trustedSelected.filter(candidate => candidate.source === "tmdb");
   const wikidata = trustedSelected.filter(candidate => candidate.source === "wikidata");
   const tmdbExternal = await Promise.all(tmdb.map(candidate => getTMDBPersonExternalIds(Number(candidate.sourceId))));
-  const variants = Array.from(new Set([...(holder.alternative_names ?? []), ...trustedSelected.map(candidate => candidate.name)])).filter(Boolean);
+  const variants = Array.from(new Set([...verifiedAlternativeNames, ...trustedSelected.map(candidate => candidate.name)])).filter(Boolean);
   const identity = {
     dfi_person_id: dfi[0] ? Number(dfi[0].sourceId) : null,
     tmdb_person_id: tmdb[0] ? Number(tmdb[0].sourceId) : null,

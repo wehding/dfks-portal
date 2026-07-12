@@ -166,6 +166,9 @@ type WorkRow = {
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
   genre: string | null;
   director: string | null;
   alternative_titles?: string[] | null;
@@ -198,6 +201,8 @@ type WorkForm = {
   duration_minutes: string;
   season_count: string;
   episode_count: string;
+  season_number: string;
+  episode_number: string;
   genre: string;
   director: string;
   alternative_titles: string;
@@ -552,6 +557,8 @@ function toForm(work: WorkRow): WorkForm {
     duration_minutes: work.duration_minutes?.toString() ?? "",
     season_count: work.season_count?.toString() ?? "",
     episode_count: work.episode_count?.toString() ?? "",
+    season_number: work.season_number?.toString() ?? "",
+    episode_number: work.episode_number?.toString() ?? "",
     genre: work.genre ?? "",
     director: work.director ?? "",
     alternative_titles: joinList(work.alternative_titles),
@@ -1079,6 +1086,8 @@ export default function VaerksadministrationPage() {
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
+          season_number: nullableNumber(editForm.season_number),
+          episode_number: nullableNumber(editForm.episode_number),
           genre: editForm.genre || null,
           director: editForm.director || null,
           alternative_titles: splitList(editForm.alternative_titles),
@@ -1418,6 +1427,11 @@ export default function VaerksadministrationPage() {
         year: details.year != null ? String(details.year) : editForm.year,
         duration_minutes: details.duration_minutes != null ? String(details.duration_minutes) : editForm.duration_minutes,
         episode_count: details.episode_count != null ? String(details.episode_count) : editForm.episode_count,
+        season_count: details.season_count != null ? String(details.season_count) : editForm.season_count,
+        season_number: details.season_hint != null ? String(details.season_hint) : editForm.season_number,
+        alternative_titles: details.alternative_titles?.length ? details.alternative_titles.join(", ") : editForm.alternative_titles,
+        production_countries: details.production_countries?.length ? details.production_countries.join(", ") : editForm.production_countries,
+        production_companies: details.production_companies?.length ? details.production_companies.join(", ") : editForm.production_companies,
         genre: details.genre || editForm.genre,
         director: details.director || editForm.director,
         description: details.description || editForm.description,
@@ -2157,16 +2171,18 @@ export default function VaerksadministrationPage() {
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
                     </DiffField>
-                    {isSeriesType(editForm.type) && (
+                    {isSeriesType(editForm.type) && !editing?.parent_work_id && (
                       <DiffField diff={activeDiffMap.season_count}>
-                        <Field label="Sæson"><Input value={editForm.season_count} onChange={e => setEditForm({ ...editForm, season_count: e.target.value })} /></Field>
+                        <Field label="Antal sæsoner"><Input value={editForm.season_count} onChange={e => setEditForm({ ...editForm, season_count: e.target.value })} /></Field>
                       </DiffField>
                     )}
-                    {isSeriesType(editForm.type) && (
+                    {isSeriesType(editForm.type) && !editing?.parent_work_id && (
                       <DiffField diff={activeDiffMap.episode_count}>
-                        <Field label="Afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
+                        <Field label="Antal afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
                       </DiffField>
                     )}
+                    {isSeriesType(editForm.type) && Boolean(editing?.parent_work_id) && <Field label="Sæsonnummer"><Input value={editForm.season_number} onChange={e => setEditForm({ ...editForm, season_number: e.target.value })} /></Field>}
+                    {isSeriesType(editForm.type) && Boolean(editing?.parent_work_id) && <Field label="Afsnitsnummer"><Input value={editForm.episode_number} onChange={e => setEditForm({ ...editForm, episode_number: e.target.value })} /></Field>}
                     <DiffField diff={activeDiffMap.genre}>
                       <Field label="Genre"><Input value={editForm.genre} onChange={e => setEditForm({ ...editForm, genre: e.target.value })} /></Field>
                     </DiffField>

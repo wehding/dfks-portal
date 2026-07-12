@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -9,7 +8,6 @@ import {
     FileText,
     Wallet,
     LogOut,
-    Info,
     UserCircle,
     Layers,
     ScanSearch,
@@ -46,6 +44,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
+import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -206,9 +205,10 @@ export default function PortalLayout({
 
     return (
         <SidebarProvider>
+            <SidebarCloseOnNavigation />
             <Sidebar variant="inset">
                 <SidebarHeader className="p-4">
-                    <Link href="/portal/mine-vaerker" className="block">
+                    <SidebarNavigationLink href="/portal/mine-vaerker" className="block">
                         <Image
                             src="/logo.png"
                             alt="DFKS"
@@ -216,7 +216,7 @@ export default function PortalLayout({
                             height={68}
                             className="dark:invert"
                         />
-                    </Link>
+                    </SidebarNavigationLink>
                 </SidebarHeader>
 
                 <SidebarContent>
@@ -237,7 +237,7 @@ export default function PortalLayout({
                                                         (pathname?.startsWith(`${item.href}/`) ?? false)
                                                     }
                                                 >
-                                                    <Link href={item.href}>
+                                                    <SidebarNavigationLink href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
                                                         {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
@@ -250,7 +250,7 @@ export default function PortalLayout({
                                                                 {contractMessageCount}
                                                             </span>
                                                         )}
-                                                    </Link>
+                                                    </SidebarNavigationLink>
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
                                         ))}
@@ -275,7 +275,7 @@ export default function PortalLayout({
                                                         (pathname?.startsWith(`${item.href}/`) ?? false)
                                                     }
                                                 >
-                                                    <Link href={item.href}>
+                                                    <SidebarNavigationLink href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
                                                         {item.key === "kontrakter" && (pendingCount + pendingContractMessagesCount) > 0 && (
@@ -288,7 +288,7 @@ export default function PortalLayout({
                                                                 {pendingWorksCount}
                                                             </span>
                                                         )}
-                                                    </Link>
+                                                    </SidebarNavigationLink>
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
                                         ))}
@@ -306,7 +306,7 @@ export default function PortalLayout({
                                                 asChild
                                                 isActive={pathname === item.href}
                                             >
-                                                <Link href={item.href}>
+                                                <SidebarNavigationLink href={item.href}>
                                                     <item.icon className="h-4 w-4" />
                                                     <span>{item.label}</span>
                                                     {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
@@ -319,7 +319,7 @@ export default function PortalLayout({
                                                             {contractMessageCount}
                                                         </span>
                                                     )}
-                                                </Link>
+                                                </SidebarNavigationLink>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>
                                     ))}
@@ -330,25 +330,14 @@ export default function PortalLayout({
                 </SidebarContent>
 
                 <SidebarFooter>
-                    {!hasAdminMenu && (
-                        <div className="mx-2 mb-2 rounded-lg border bg-card px-3 py-2.5 text-card-foreground space-y-1">
-                            <div className="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">
-                                <Info className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                                AI-assisteret system
-                            </div>
-                            <p className="text-[10px] text-gray-500 dark:text-gray-400 leading-relaxed">
-                                DFKS bruger AI til at screene kontrakter og behandle rettighedsbetalinger. Personfølsomme data anonymiseres inden behandling, og AI-tjenesten træner ikke på dine data.
-                            </p>
-                        </div>
-                    )}
                     <SidebarMenu>
                         {isSuperadmin && (
                             <SidebarMenuItem>
                                 <SidebarMenuButton asChild>
-                                    <Link href="/superadmin/organisationer">
+                                    <SidebarNavigationLink href="/superadmin/organisationer">
                                         <ShieldCheck className="h-4 w-4" />
                                         <span>Superadmin</span>
-                                    </Link>
+                                    </SidebarNavigationLink>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         )}

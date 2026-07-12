@@ -1322,6 +1322,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let posterUrl = result.poster_url ?? null;
   let type = result.type;
   let episodeCount: number | null = null;
+  let seasonCount: number | null = null;
+  let alternativeTitles: string[] = [];
+  let productionCountries: string[] = [];
+  let productionCompanies: string[] = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
 
   // 1. Fetch DFI details if DFI ID is present
@@ -1339,6 +1343,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         duration = typeof meta.Duration === "number" ? meta.Duration : duration;
         posterUrl = det.posterDataUrl ?? extractDfiPosterUrl(meta) ?? posterUrl;
         type = mapDfiWorkType(meta.Category, meta.Type);
+        const toTextList = (value: unknown) => (Array.isArray(value) ? value : value == null ? [] : [value]).flatMap(item => typeof item === "string" ? [item.trim()] : item && typeof item === "object" ? [String((item as Record<string, unknown>).Name ?? (item as Record<string, unknown>).Title ?? "").trim()] : []).filter(Boolean);
+        alternativeTitles = Array.from(new Set([...toTextList(meta.AltTitle), ...toTextList(meta.ForeignTitles)]));
+        productionCountries = toTextList(meta.ProductionCountries);
+        productionCompanies = toTextList(meta.ProductionCompanies);
 
         // Fetch DFI episodes count
         const comment = (dfiMetadata as any).Comment || (dfiMetadata as any).Synopsis || "";
@@ -1390,11 +1398,12 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
 
   if (tmdbId) {
     try {
-      const externalIds = await getTMDBExternalIds(tmdbId, type === "tv-serie" ? "tv" : "movie");
+      const isSeries = type === "tv-serie" || type === "dokumentar-serie";
+      const externalIds = await getTMDBExternalIds(tmdbId, isSeries ? "tv" : "movie");
       imdbId = imdbId ?? externalIds.imdb_id;
       wikidataId = wikidataId ?? externalIds.wikidata_id;
 
-      if (type === "tv-serie") {
+      if (isSeries) {
         const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
         if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
@@ -1402,6 +1411,9 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
           const season = Array.isArray(tDetails.seasons)
             ? tDetails.seasons.find((item: any) => item.season_number === seasonNumber)
             : null;
+          seasonCount = Number(tDetails.number_of_seasons ?? 0) || seasonCount;
+          productionCountries = productionCountries.length ? productionCountries : (tDetails.production_countries ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
+          productionCompanies = productionCompanies.length ? productionCompanies : (tDetails.production_companies ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
           if (!episodeCount && season?.episode_count) {
             episodeCount = season.episode_count;
             episodeOptions = Array.from({ length: season.episode_count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
@@ -1442,6 +1454,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       wikidata_id: wikidataId,
       dfi_metadata: dfiMetadata,
       episode_count: episodeCount,
+      season_count: seasonCount,
+      alternative_titles: alternativeTitles,
+      production_countries: productionCountries,
+      production_companies: productionCompanies,
       episode_options: episodeOptions,
       season_hint: result.season_hint ?? parseSeasonNumberFromTitle(result.title),
     }

@@ -1,6 +1,6 @@
 "use client"
 
-import Link from "next/link"
+import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { usePathname } from "next/navigation"
 import { Building2, LogOut } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
@@ -28,6 +28,7 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
 
     return (
         <SidebarProvider>
+            <SidebarCloseOnNavigation />
             <Sidebar>
                 <SidebarHeader className="p-4">
                     <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Superadmin</div>
@@ -39,10 +40,10 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
                                 {NAV.map(item => (
                                     <SidebarMenuItem key={item.href}>
                                         <SidebarMenuButton asChild isActive={pathname?.startsWith(item.href) ?? false}>
-                                            <Link href={item.href}>
+                                            <SidebarNavigationLink href={item.href}>
                                                 <item.icon className="h-4 w-4" />
                                                 {item.label}
-                                            </Link>
+                                            </SidebarNavigationLink>
                                         </SidebarMenuButton>
                                     </SidebarMenuItem>
                                 ))}
@@ -52,9 +53,9 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
                 </SidebarContent>
                 <SidebarFooter className="p-4 space-y-2">
                     <Separator />
-                    <Link href="/admin" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                    <SidebarNavigationLink href="/admin" className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
                         ← Admin
-                    </Link>
+                    </SidebarNavigationLink>
                     <button onClick={signOut} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
                         <LogOut className="h-4 w-4" />
                         Log ud

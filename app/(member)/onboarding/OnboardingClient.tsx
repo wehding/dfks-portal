@@ -26,6 +26,7 @@ type OnboardingProfile = {
   cpr_no?: string | null;
   bank_account?: string | null;
   gender?: string | null;
+  alternative_names?: string[] | null;
 };
 
 type OnboardingUser = {
@@ -67,9 +68,12 @@ export default function OnboardingClient({
   const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
   const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, boolean>>({});
   const [personSearchError, setPersonSearchError] = useState<string | null>(null);
+  const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
+  const [newAlternativeName, setNewAlternativeName] = useState("");
 
   // Import timer
   const [importSeconds, setImportSeconds] = useState(0);
@@ -148,21 +152,29 @@ export default function OnboardingClient({
     }
   };
 
-  const handlePersonSearch = async (query = dfiSearchQuery) => {
+  const handlePersonSearch = async (query = dfiSearchQuery, merge = false) => {
     if (!query.trim()) return;
     setIsSearchingDfi(true);
     setPersonSearchError(null);
     try {
       const result = await discoverPersonCandidates(query.trim());
       const candidates = result.success ? result.candidates : [];
-      setPersonCandidates(candidates);
-      setSelectedPersonCandidates(Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])));
+      setPersonCandidates(current => merge ? Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score) : candidates);
+      setSelectedPersonCandidates(current => ({ ...(merge ? current : {}), ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }));
       if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
     } catch {
       setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
     } finally {
       setIsSearchingDfi(false);
     }
+  };
+
+  const addAlternativeName = async () => {
+    const value = newAlternativeName.trim();
+    if (!value || alternativeNames.some(name => name.localeCompare(value, "da-DK", { sensitivity: "base" }) === 0)) return;
+    setAlternativeNames(current => [...current, value]);
+    setNewAlternativeName("");
+    await handlePersonSearch(value, true);
   };
 
   const handleNextStep = async () => {
@@ -189,7 +201,7 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery);
+        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames);
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
@@ -221,16 +233,24 @@ export default function OnboardingClient({
       }
       if (approved.length > 0) {
         setIsImportingDfi(true);
+        setImportError(null);
         setImportSeconds(0);
         const timerInterval = setInterval(() => {
           setImportSeconds((s) => s + 1);
         }, 1000);
         try {
-          await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
-        } catch { /* ignorer importfejl */ } finally {
+          const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
+          if (!result.success) {
+            setImportError(result.error ?? result.errors?.join("\n") ?? "Værkerne kunne ikke importeres. Prøv igen.");
+            return;
+          }
+          if (result.errors?.length) setImportError(`Nogle værker mangler data: ${result.errors.join(" ")}`);
+          setStep(5);
+        } catch (error: unknown) {
+          setImportError(error instanceof Error ? error.message : "Værkerne kunne ikke importeres. Prøv igen.");
+        } finally {
           clearInterval(timerInterval);
           setIsImportingDfi(false);
-          setStep(5);
         }
       } else {
         setStep(5);
@@ -460,12 +480,17 @@ export default function OnboardingClient({
               <div>
                 <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Vælg de navneprofiler, der er dig</h2>
                 <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "8px 0 0", lineHeight: 1.6 }}>
-                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Du kan vælge flere navneprofiler fra samme database. De tekniske ID&apos;er gemmes skjult på din profil.
+                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Du kan vælge flere navneprofiler fra samme database.
                 </p>
               </div>
               <div style={{ display: "flex", gap: "10px" }}>
                 <input type="text" aria-label="Dit navn" value={dfiSearchQuery} onChange={event => setDfiSearchQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void handlePersonSearch(); }} style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }} />
                 <button type="button" onClick={() => void handlePersonSearch()} disabled={isSearchingDfi} style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>{isSearchingDfi ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}Søg</button>
+              </div>
+              <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div><div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Alternative navne</div><p style={{ margin: "4px 0 0", fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>Tilføj andre stavemåder, mellemnavne eller navne, du tidligere er blevet krediteret under. Vi søger på alle navnevarianterne og samler resultaterne.</p></div>
+                {alternativeNames.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>{alternativeNames.map(name => <button key={name} type="button" onClick={() => setAlternativeNames(current => current.filter(item => item !== name))} title="Fjern navnevariant" style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer" }}>{name} ×</button>)}</div>}
+                <div style={{ display: "flex", gap: "8px" }}><input value={newAlternativeName} onChange={event => setNewAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }} placeholder="Tilføj en navnevariant" style={{ flex: 1, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB" }} /><button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer" }}>Tilføj og søg</button></div>
               </div>
               <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
             </div>
@@ -479,6 +504,8 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1E3A8A", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de afsnit, du har klippet. Åbn “Vælg afsnit” under serien, og markér de relevante afsnit.</div>
+              {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>

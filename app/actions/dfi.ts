@@ -5,9 +5,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
+import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds, getTMDBSeasonEpisodes, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
@@ -39,6 +39,8 @@ type EpisodeParentWork = {
   type: string;
   year: number | null;
   duration_minutes: number | null;
+  season_count?: number | null;
+  episode_count?: number | null;
   genre?: string | null;
   director?: string | null;
   description?: string | null;
@@ -64,6 +66,19 @@ function normalizeTitle(title: string) {
     .replace(/[^a-z0-9æøå\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function metadataTextList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  return Array.from(new Set(values.flatMap(item => {
+    if (typeof item === "string") return item.split(/[;,]/).map(text => text.trim()).filter(Boolean);
+    if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
+      const text = row.Name ?? row.Title ?? row.CompanyName ?? row.CountryName;
+      return typeof text === "string" && text.trim() ? [text.trim()] : [];
+    }
+    return [];
+  })));
 }
 
 function creditTitle(credit: DfiCredit) {
@@ -113,7 +128,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
   if (filmId) {
     const { data } = await db
       .from("works")
-      .select("id, title, year, poster_url, tmdb_id, imdb_id, wikidata_id, dfi_metadata")
+      .select("id, title, year, duration_minutes, season_count, episode_count, genre, director, description, alternative_titles, production_countries, production_companies, poster_url, tmdb_id, imdb_id, wikidata_id, dfi_metadata")
       .eq("org_id", orgId)
       .eq("dfi_id", filmId)
       .maybeSingle();
@@ -126,7 +141,7 @@ async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceC
 
   const { data } = await db
     .from("works")
-    .select("id, title, year, poster_url, tmdb_id, imdb_id, wikidata_id, dfi_metadata")
+    .select("id, title, year, duration_minutes, season_count, episode_count, genre, director, description, alternative_titles, production_countries, production_companies, poster_url, tmdb_id, imdb_id, wikidata_id, dfi_metadata")
     .eq("org_id", orgId)
     .eq("year", year)
     .limit(50);
@@ -194,6 +209,11 @@ export async function ensureOnboardingEpisodes(params: {
     const { error } = await db.from("works").insert(toInsert);
     if (error) throw new Error(error.message);
   }
+
+  const parentUpdates: Record<string, number> = {};
+  if (!parent.season_count || parent.season_count < seasonNumber) parentUpdates.season_count = seasonNumber;
+  if (!parent.episode_count || parent.episode_count < maxEpisode) parentUpdates.episode_count = maxEpisode;
+  if (Object.keys(parentUpdates).length) await db.from("works").update(parentUpdates).eq("id", parent.id);
 
   const { data: episodeRows, error } = await db
     .from("works")
@@ -478,7 +498,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     const prodYear = extractDfiPremiereYear(film);
     const filmTitle = String(film.Title || film.DanishTitle || "Ukendt titel");
 
-    let posterUrl = await downloadDfiPosterDataUrl(film) ?? extractDfiPosterUrl(film);
+    const dfiPosterUrl = await downloadDfiPosterDataUrl(film) ?? extractDfiPosterUrl(film);
+    let posterUrl = dfiPosterUrl;
 
     // Slå plakat og tmdb_id op i TMDB (stille fejl)
     let tmdbId: number | null = null;
@@ -486,6 +507,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     let wikidataId: string | null = null;
     let wikidataDirector: string | null = null;
     let wikidataGenre: string | null = null;
+    let tmdbDetails: Record<string, any> | null = null;
     try {
       const match = await findTMDBMatch(filmTitle, prodYear);
       tmdbId = match.tmdb_id;
@@ -494,6 +516,8 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         const externalIds = await getTMDBExternalIds(tmdbId, match.media_type ?? "movie");
         imdbId = externalIds.imdb_id;
         wikidataId = externalIds.wikidata_id;
+        const detailsResult = await getTMDBWorkDetails(tmdbId, match.media_type ?? "movie");
+        tmdbDetails = detailsResult.success && detailsResult.details ? detailsResult.details as Record<string, any> : null;
       }
     } catch { /* tmdbId/posterUrl forbliver som de er */ }
 
@@ -509,6 +533,23 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       const existing = await findExistingWorkForDfiCredit(db, { ...credit, Title: filmTitle, ProductionYear: prodYear }, orgId);
       let workId = existing?.id ?? null;
 
+      const parsedChildren = (Array.isArray(film.Children) ? film.Children : []).map(child => parseDfiEpisodeTitleInfo(String((child as Record<string, unknown>).Title ?? ""))).filter(Boolean);
+      const selectedEpisodeCount = (credit.__selected_episodes ?? []).length;
+      const detectedEpisodeCount = Math.max(
+        credit.__episode_options?.length ?? 0,
+        parsedChildren.length,
+        ...parsedChildren.map(item => item?.totalEpisodes ?? 0),
+        parseDfiEpisodeCount(String(film.Comment ?? film.Synopsis ?? "")) ?? 0,
+        Number(tmdbDetails?.number_of_episodes ?? 0),
+        selectedEpisodeCount
+      ) || null;
+      const seasonNumber = credit.__season_number ?? parseSeasonNumberFromTitle(filmTitle) ?? 1;
+      const detectedSeasonCount = workType === "tv-serie" || workType === "dokumentar-serie" ? Math.max(seasonNumber, Number(tmdbDetails?.number_of_seasons ?? 0), 1) : null;
+      const durationMinutes = typeof film.Duration === "number" ? film.Duration : typeof film.LengthInMin === "number" ? film.LengthInMin : Number(tmdbDetails?.runtime ?? tmdbDetails?.episode_run_time?.[0] ?? 0) || null;
+      const alternativeTitles = metadataTextList(film.AltTitle).concat(metadataTextList(film.ForeignTitles));
+      const productionCountries = metadataTextList(film.ProductionCountries).concat(metadataTextList(tmdbDetails?.production_countries));
+      const productionCompanies = metadataTextList(film.ProductionCompanies).concat(metadataTextList(tmdbDetails?.production_companies));
+
       const workData = {
         dfi_id: String(filmId),
         title: filmTitle,
@@ -516,8 +557,14 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         year: prodYear,
         org_id: orgId,
         description: film.Synopsis || film.ShortSynopsis || null,
+        duration_minutes: durationMinutes,
+        season_count: detectedSeasonCount,
+        episode_count: detectedEpisodeCount,
         director: extractDfiDirectors(film).join(", ") || wikidataDirector || null,
         genre: typeof film.Genre === "string" ? film.Genre : wikidataGenre,
+        alternative_titles: Array.from(new Set(alternativeTitles)),
+        production_countries: Array.from(new Set(productionCountries)),
+        production_companies: Array.from(new Set(productionCompanies)),
         poster_url: posterUrl,
         tmdb_id: tmdbId,
         imdb_id: imdbId,
@@ -528,6 +575,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         dfi_original_title: typeof film.OriginalTitle === "string" ? film.OriginalTitle : null,
         dfi_category: typeof film.Category === "string" ? film.Category : null,
         dfi_type: typeof film.Type === "string" ? film.Type : null,
+        field_sources: { title: "dfi", type: "dfi", year: "dfi", description: "dfi", poster_url: dfiPosterUrl ? "dfi" : posterUrl ? "tmdb" : null, tmdb_id: tmdbId ? "tmdb" : null, imdb_id: imdbId ? "tmdb/wikidata" : null, wikidata_id: wikidataId ? "tmdb/wikidata" : null, season_count: detectedSeasonCount ? "dfi/tmdb" : null, episode_count: detectedEpisodeCount ? "dfi/tmdb" : null },
       };
 
       const wasExisting = Boolean(workId);
@@ -545,12 +593,17 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
         }
         workId = newWork.id;
       } else if (existing) {
-        // Opdater hvis der mangler plakat eller TMDB id
+        // Udfyld manglende felter uden at overskrive manuelt vedligeholdte værdier.
         const updates: Record<string, unknown> = {};
         if (!existing.poster_url && posterUrl) updates.poster_url = posterUrl;
         if (!existing.tmdb_id && tmdbId) updates.tmdb_id = tmdbId;
         if (!existing.imdb_id && imdbId) updates.imdb_id = imdbId;
         if (!existing.wikidata_id && wikidataId) updates.wikidata_id = wikidataId;
+        for (const key of ["duration_minutes", "season_count", "episode_count", "genre", "director", "description", "alternative_titles", "production_countries", "production_companies"] as const) {
+          const value = workData[key];
+          if ((existing[key] == null || (Array.isArray(existing[key]) && existing[key].length === 0)) && value != null) updates[key] = value;
+        }
+        updates.field_sources = workData.field_sources;
         updates.dfi_metadata = film;
         if (Object.keys(updates).length > 0) {
           await db.from("works").update(updates).eq("id", workId);
@@ -558,7 +611,6 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
       }
 
       const selectedEpisodes = (credit.__selected_episodes ?? []).filter(Number.isFinite);
-      const seasonNumber = credit.__season_number ?? 1;
       let assignmentWorkIds = [workId];
       const isSeriesParent = (workType === "tv-serie" || workType === "dokumentar-serie") && selectedEpisodes.length > 0;
 
@@ -571,7 +623,9 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
             title: filmTitle,
             type: workType,
             year: prodYear,
-            duration_minutes: typeof film.Duration === "number" ? film.Duration : null,
+            duration_minutes: durationMinutes,
+            season_count: detectedSeasonCount,
+            episode_count: detectedEpisodeCount,
             genre: typeof film.Genre === "string" ? film.Genre : wikidataGenre,
             director: extractDfiDirectors(film).join(", ") || wikidataDirector || null,
             description: typeof film.Synopsis === "string" ? film.Synopsis : typeof film.ShortSynopsis === "string" ? film.ShortSynopsis : null,
@@ -1165,6 +1219,10 @@ export async function importApprovedOnboardingWorks(
     let director = credit.director ?? null;
     let genre: string | null = null;
     let durationMinutes: number | null = null;
+    let seasonCount: number | null = null;
+    let episodeCount: number | null = null;
+    let productionCountries: string[] = [];
+    let productionCompanies: string[] = [];
 
     try {
       const externalIds = await getTMDBExternalIds(tmdbId, mediaType);
@@ -1176,10 +1234,22 @@ export async function importApprovedOnboardingWorks(
       director = director ?? wiki.director;
       genre = wiki.genre;
       durationMinutes = wiki.duration_minutes;
+      const detailsResult = await getTMDBWorkDetails(tmdbId, mediaType);
+      if (detailsResult.success && detailsResult.details) {
+        const details = detailsResult.details as Record<string, any>;
+        seasonCount = mediaType === "tv" ? Number(details.number_of_seasons ?? 0) || null : null;
+        const selectedSeason = credit.season_number ?? 1;
+        const season = Array.isArray(details.seasons) ? details.seasons.find((item: Record<string, any>) => Number(item.season_number) === selectedSeason) : null;
+        episodeCount = mediaType === "tv" ? Number(season?.episode_count ?? details.number_of_episodes ?? 0) || null : null;
+        durationMinutes = durationMinutes ?? (Number(details.runtime ?? details.episode_run_time?.[0] ?? 0) || null);
+        productionCountries = metadataTextList(details.production_countries);
+        productionCompanies = metadataTextList(details.production_companies);
+        genre = genre ?? (metadataTextList(details.genres).join(", ") || null);
+      }
 
       const { data: existing } = await db
         .from("works")
-        .select("id, imdb_id, wikidata_id")
+        .select("id, imdb_id, wikidata_id, duration_minutes, season_count, episode_count, genre, director, description, production_countries, production_companies")
         .eq("org_id", orgId)
         .eq("tmdb_id", tmdbId)
         .maybeSingle();
@@ -1202,6 +1272,11 @@ export async function importApprovedOnboardingWorks(
             director,
             genre,
             duration_minutes: durationMinutes,
+            season_count: seasonCount,
+            episode_count: episodeCount,
+            production_countries: productionCountries,
+            production_companies: productionCompanies,
+            field_sources: { title: "tmdb", type: "tmdb", year: "tmdb", description: "tmdb", poster_url: "tmdb", imdb_id: imdbId ? "tmdb/wikidata" : null, season_count: seasonCount ? "tmdb" : null, episode_count: episodeCount ? "tmdb" : null },
             status: "godkendt",
           })
           .select("id")
@@ -1217,6 +1292,11 @@ export async function importApprovedOnboardingWorks(
         const updates: Record<string, unknown> = {};
         if (!existing?.imdb_id && imdbId) updates.imdb_id = imdbId;
         if (!existing?.wikidata_id && wikidataId) updates.wikidata_id = wikidataId;
+        const enrichment = { duration_minutes: durationMinutes, season_count: seasonCount, episode_count: episodeCount, genre, director, description: credit.raw.overview || null, production_countries: productionCountries, production_companies: productionCompanies };
+        for (const [key, value] of Object.entries(enrichment)) {
+          const oldValue = existing?.[key as keyof typeof existing];
+          if ((oldValue == null || (Array.isArray(oldValue) && oldValue.length === 0)) && value != null) updates[key] = value;
+        }
         if (Object.keys(updates).length > 0) await db.from("works").update(updates).eq("id", workId);
         linkedExistingCount++;
       }
@@ -1234,6 +1314,8 @@ export async function importApprovedOnboardingWorks(
             type,
             year,
             duration_minutes: durationMinutes,
+            season_count: seasonCount,
+            episode_count: episodeCount,
             genre,
             director,
             description: credit.raw.overview || null,
