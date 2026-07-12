@@ -11,7 +11,7 @@ import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
-import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { EpisodePicker } from "@/components/works/episode-picker";
 import { WORK_TYPES } from "@/lib/work-types";
 
@@ -81,6 +81,9 @@ type Work = {
   duration_minutes: number | null;
   season_count?: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
   genre: string | null;
   director: string | null;
   status: string | null;
@@ -207,7 +210,12 @@ export function EditWorkModal({
       setWorkCorrection(assignment.works ? workToCorrectionForm(assignment.works) : null);
       setWorkCorrectionComment("");
       setCommentError(false);
-      setSelectedEpisodes({});
+      const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
+      const season = assignment.works?.season_number ?? 1;
+      setSelectedEpisodes(Object.fromEntries((allAssignments ?? []).filter(other => {
+        const work = other.works;
+        return work && (work.parent_work_id ?? work.id) === seriesKey && (work.season_number ?? 1) === season && work.episode_number;
+      }).map(other => [other.works!.episode_number!, true])));
       setCoEditorSuggestions({});
       setEditCoEditors(
         (allAssignments ?? [])
@@ -339,9 +347,9 @@ export function EditWorkModal({
       .map(([num]) => parseInt(num, 10))
       .filter(Number.isFinite)
       .sort((a, b) => a - b);
-    const wantsEpisodeUpdate = selectedEpisodeNumbers.length > 0 && !!workCorrection && isSeriesType(workCorrection.type);
-    const wantsCorrection = (showWorkCorrection || wantsEpisodeUpdate) && !!workCorrection;
-    const willSubmit = coEditorChanges.length > 0 || wantsCorrection;
+    const wantsEpisodeUpdate = !!workCorrection && isSeriesType(workCorrection.type) && directSeriesEpisodeCount > 0;
+    const wantsCorrection = showWorkCorrection && !!workCorrection;
+    const willSubmit = wantsCorrection;
 
     if (willSubmit && !workCorrectionComment.trim()) {
       setCommentError(true);
@@ -360,6 +368,16 @@ export function EditWorkModal({
       }
 
       if (ownRoleError) throw new Error(ownRoleError.message);
+
+      if (coEditorChanges.length && assignment.works) {
+        const coEditorResult = await updateMemberCoEditors({ workId: assignment.works.id, changes: coEditorChanges });
+        if (!coEditorResult.success) throw new Error(coEditorResult.error);
+      }
+
+      if (wantsEpisodeUpdate && assignment.rights_holder_id) {
+        const episodeResult = await syncMemberEpisodeAssignments({ rightsHolderId: assignment.rights_holder_id, workId: assignment.works!.id, role: editRole, selectedEpisodes: selectedEpisodeNumbers });
+        if (!episodeResult.success) throw new Error(episodeResult.error);
+      }
 
       if (willSubmit) {
         if (!assignment.works) throw new Error("Værket mangler.");
@@ -399,8 +417,8 @@ export function EditWorkModal({
           workId: assignment.works.id,
           data,
           comment: workCorrectionComment,
-          coEditors: coEditorChanges,
-          myEpisodes: selectedEpisodeNumbers,
+          coEditors: [],
+          myEpisodes: [],
         });
       }
 
@@ -473,8 +491,8 @@ export function EditWorkModal({
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {locale === "da"
-                  ? "Vælg de afsnit, du har klippet. Valget sendes til admin, når du gemmer."
-                  : "Choose the episodes you edited. The selection is sent to admin when you save."}
+                  ? "Vælg de afsnit, du har klippet. Tilknytningerne gemmes direkte."
+                  : "Choose the episodes you edited. Assignments are saved directly."}
               </p>
             </div>
             {directSelectedEpisodeNumbers.length > 0 && (
@@ -637,24 +655,6 @@ export function EditWorkModal({
         <p className="mt-2 text-xs text-gray-500">{t("works.editCoEditorsHint")}</p>
       </div>
 
-      {/* BEMÆRKNING VED MEDKLIPPER-ÆNDRINGER ELLER MANUEL RETTELSE */}
-      {(coEditorChanges.length > 0 || showWorkCorrection || directSelectedEpisodeNumbers.length > 0) && (
-        <div className="space-y-1.5 mb-6">
-          <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
-          <Textarea
-            value={workCorrectionComment}
-            onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }}
-            placeholder={locale === "da" ? "Forklar kort hvorfor dataene/medklipperne bør ændres." : "Briefly explain why data/co-editors should be changed."}
-            className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined}
-          />
-          {commentError && (
-            <p className="text-xs text-red-600">
-              {locale === "da" ? "Skriv en bemærkning til admin, før du gemmer." : "Add a note to admin before saving."}
-            </p>
-          )}
-        </div>
-      )}
-
       {/* FORESLÅ MANUEL RETTELSE SEKTION */}
       <div className="mb-6 rounded-lg border p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -797,6 +797,11 @@ export function EditWorkModal({
               <div className="space-y-1.5"><Label>DFI-id</Label><Input value={workCorrection.dfi_id} onChange={e => setWorkCorrection({ ...workCorrection, dfi_id: e.target.value, field_sources: { ...workCorrection.field_sources, dfi_id: "manual" } })} /></div>
               <div className="space-y-1.5"><Label>TMDB-id</Label><Input value={workCorrection.tmdb_id} onChange={e => setWorkCorrection({ ...workCorrection, tmdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, tmdb_id: "manual" } })} /></div>
               <div className="space-y-1.5"><Label>IMDb-id</Label><Input value={workCorrection.imdb_id} onChange={e => setWorkCorrection({ ...workCorrection, imdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, imdb_id: "manual" } })} /></div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
+              <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort hvorfor værksdataene bør ændres." : "Briefly explain why the work data should change."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
+              {commentError && <p className="text-xs text-red-600">{locale === "da" ? "Skriv en bemærkning til admin, før du sender rettelsen." : "Add a note to admin before sending the correction."}</p>}
             </div>
             <div className="flex justify-end mt-2">
               <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">

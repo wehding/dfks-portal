@@ -2,11 +2,12 @@
 
 import React, { useState } from "react";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchOnboardingCredits, importApprovedOnboardingWorks, type OnboardingCredit } from "@/app/actions/dfi";
+import { searchOnboardingCredits, importApprovedOnboardingWorks, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Search } from "lucide-react";
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery";
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
+import { EpisodePicker } from "@/components/works/episode-picker";
 
 const STEPS = [
   { id: 1, title: "Velkommen", icon: "👋" },
@@ -25,6 +26,7 @@ type OnboardingProfile = {
   cpr_no?: string | null;
   bank_account?: string | null;
   gender?: string | null;
+  alternative_names?: string[] | null;
 };
 
 type OnboardingUser = {
@@ -60,13 +62,18 @@ export default function OnboardingClient({
   const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
   const [seriesSeasons, setSeriesSeasons] = useState<Record<string, number>>({});
   const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, number[]>>({});
+  const [episodeOptions, setEpisodeOptions] = useState<Record<string, Array<{ number: number; title?: string | null }>>>({});
+  const [episodeLoading, setEpisodeLoading] = useState<Record<string, boolean>>({});
+  const [episodeErrors, setEpisodeErrors] = useState<Record<string, string | null>>({});
   const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
-  const [dfiError, setDfiError] = useState<string | null>(null);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
-  const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, string>>({});
+  const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, boolean>>({});
   const [personSearchError, setPersonSearchError] = useState<string | null>(null);
+  const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
+  const [newAlternativeName, setNewAlternativeName] = useState("");
 
   // Import timer
   const [importSeconds, setImportSeconds] = useState(0);
@@ -96,6 +103,7 @@ export default function OnboardingClient({
   };
 
   const episodeCountForCredit = (credit: OnboardingCredit) => {
+    if (episodeOptions[credit.id]?.length) return episodeOptions[credit.id].length;
     if (credit.episode_options?.length) return credit.episode_options.length;
     const rawCount = credit.raw?.number_of_episodes ?? credit.raw?.episode_count ?? credit.raw?.EpisodeCount;
     const parsed = Number(rawCount);
@@ -105,17 +113,18 @@ export default function OnboardingClient({
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
     const count = episodeCountForCredit(credit);
-    return seriesEpisodes[credit.id] ?? (credit.episode_options?.map(option => option.number) ?? Array.from({ length: count }, (_, index) => index + 1));
+    return seriesEpisodes[credit.id] ?? (episodeOptions[credit.id]?.map(option => option.number) ?? credit.episode_options?.map(option => option.number) ?? Array.from({ length: count }, (_, index) => index + 1));
   };
 
-  const toggleEpisode = (credit: OnboardingCredit, episodeNumber: number) => {
-    setSeriesEpisodes(prev => {
-      const current = selectedEpisodesForCredit(credit);
-      const next = current.includes(episodeNumber)
-        ? current.filter(n => n !== episodeNumber)
-        : [...current, episodeNumber].sort((a, b) => a - b);
-      return { ...prev, [credit.id]: next };
-    });
+  const loadEpisodes = async (credit: OnboardingCredit, season = seriesSeasons[credit.id] ?? 1) => {
+    setEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
+    setEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
+    const result = await resolveOnboardingEpisodeOptions(credit, season);
+    if (result.success) {
+      setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
+      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
+    } else setEpisodeErrors(prev => ({ ...prev, [credit.id]: result.error }));
+    setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
   };
 
   const revealCreditsProgressively = async (credits: OnboardingCredit[]) => {
@@ -143,30 +152,29 @@ export default function OnboardingClient({
     }
   };
 
-  const handleManualDfiSearch = async () => {
-    if (!dfiSearchQuery.trim()) return;
+  const handlePersonSearch = async (query = dfiSearchQuery, merge = false) => {
+    if (!query.trim()) return;
     setIsSearchingDfi(true);
-    setDfiError(null);
-    setDfiCredits([]);
-    setDfiPersonId(null);
-    setTmdbPersonId(null);
+    setPersonSearchError(null);
     try {
-      const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
-      if (searchResult.success && searchResult.credits?.length > 0) {
-        setDfiPersonId(searchResult.dfiPersonId);
-        setTmdbPersonId(searchResult.tmdbPersonId);
-        const sel: Record<string, boolean> = {};
-        searchResult.credits.forEach((c) => { sel[c.id] = true; });
-        setSelectedDfiCredits(sel);
-        await revealCreditsProgressively(searchResult.credits);
-      } else {
-        setDfiError(`Ingen film fundet for "${dfiSearchQuery}" i DFI eller TMDb.`);
-      }
+      const result = await discoverPersonCandidates(query.trim());
+      const candidates = result.success ? result.candidates : [];
+      setPersonCandidates(current => merge ? Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score) : candidates);
+      setSelectedPersonCandidates(current => ({ ...(merge ? current : {}), ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }));
+      if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
     } catch {
-      setDfiError("Der opstod en fejl under søgningen.");
+      setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
     } finally {
       setIsSearchingDfi(false);
     }
+  };
+
+  const addAlternativeName = async () => {
+    const value = newAlternativeName.trim();
+    if (!value || alternativeNames.some(name => name.localeCompare(value, "da-DK", { sensitivity: "base" }) === 0)) return;
+    setAlternativeNames(current => [...current, value]);
+    setNewAlternativeName("");
+    await handlePersonSearch(value, true);
   };
 
   const handleNextStep = async () => {
@@ -179,21 +187,12 @@ export default function OnboardingClient({
 
       const fullName = `${formData.first_name} ${formData.last_name}`.trim();
       setDfiSearchQuery(fullName);
-      setIsSearchingDfi(true);
-      setPersonSearchError(null);
-      try {
-        const result = await discoverPersonCandidates(fullName);
-        setPersonCandidates(result.success ? result.candidates : []);
-        if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
-      } catch {
-        setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
-      } finally {
-        setIsSearchingDfi(false);
-        setStep(3);
-      }
+      await handlePersonSearch(fullName);
+      setStep(3);
     } else if (step === 3) {
-      const selected = Object.values(selectedPersonCandidates)
-        .map(key => personCandidates.find(candidate => candidate.key === key))
+      const selected = Object.entries(selectedPersonCandidates)
+        .filter(([, active]) => active)
+        .map(([key]) => personCandidates.find(candidate => candidate.key === key))
         .filter((candidate): candidate is PersonCandidate => Boolean(candidate));
       if (personCandidates.length > 0 && selected.length === 0) {
         setPersonSearchError("Vælg mindst én navneprofil, der er dig.");
@@ -202,7 +201,7 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery);
+        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames);
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
@@ -234,16 +233,24 @@ export default function OnboardingClient({
       }
       if (approved.length > 0) {
         setIsImportingDfi(true);
+        setImportError(null);
         setImportSeconds(0);
         const timerInterval = setInterval(() => {
           setImportSeconds((s) => s + 1);
         }, 1000);
         try {
-          await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
-        } catch { /* ignorer importfejl */ } finally {
+          const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
+          if (!result.success) {
+            setImportError(result.error ?? result.errors?.join("\n") ?? "Værkerne kunne ikke importeres. Prøv igen.");
+            return;
+          }
+          if (result.errors?.length) setImportError(`Nogle værker mangler data: ${result.errors.join(" ")}`);
+          setStep(5);
+        } catch (error: unknown) {
+          setImportError(error instanceof Error ? error.message : "Værkerne kunne ikke importeres. Prøv igen.");
+        } finally {
           clearInterval(timerInterval);
           setIsImportingDfi(false);
-          setStep(5);
         }
       } else {
         setStep(5);
@@ -382,7 +389,7 @@ export default function OnboardingClient({
                 ))}
               </div>
               <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", textAlign: "center" }}>
-                Det tager ca. 2 minutter.
+                Det tager ca. 2-5 minutter.
               </p>
             </div>
           )}
@@ -473,10 +480,19 @@ export default function OnboardingClient({
               <div>
                 <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Vælg de navneprofiler, der er dig</h2>
                 <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "8px 0 0", lineHeight: 1.6 }}>
-                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Vælg højst én profil fra hver database. De tekniske ID&apos;er gemmes skjult på din profil.
+                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Du kan vælge flere navneprofiler fra samme database.
                 </p>
               </div>
-              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.source]: candidate.key })); setPersonSearchError(null); }} />
+              <div style={{ display: "flex", gap: "10px" }}>
+                <input type="text" aria-label="Dit navn" value={dfiSearchQuery} onChange={event => setDfiSearchQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void handlePersonSearch(); }} style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }} />
+                <button type="button" onClick={() => void handlePersonSearch()} disabled={isSearchingDfi} style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>{isSearchingDfi ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}Søg</button>
+              </div>
+              <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div><div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Alternative navne</div><p style={{ margin: "4px 0 0", fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>Tilføj andre stavemåder, mellemnavne eller navne, du tidligere er blevet krediteret under. Vi søger på alle navnevarianterne og samler resultaterne.</p></div>
+                {alternativeNames.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>{alternativeNames.map(name => <button key={name} type="button" onClick={() => setAlternativeNames(current => current.filter(item => item !== name))} title="Fjern navnevariant" style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer" }}>{name} ×</button>)}</div>}
+                <div style={{ display: "flex", gap: "8px" }}><input value={newAlternativeName} onChange={event => setNewAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }} placeholder="Tilføj en navnevariant" style={{ flex: 1, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB" }} /><button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer" }}>Tilføj og søg</button></div>
+              </div>
+              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
             </div>
           )}
 
@@ -488,31 +504,8 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
-
-              <div style={{ display: "flex", gap: "10px", marginBottom: "20px" }}>
-                <input
-                  type="text"
-                  placeholder="Søg under et andet navn..."
-                  value={dfiSearchQuery}
-                  onChange={(e) => setDfiSearchQuery(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") handleManualDfiSearch(); }}
-                  style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
-                />
-                <button
-                  onClick={handleManualDfiSearch}
-                  disabled={isSearchingDfi}
-                  style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
-                >
-                  {isSearchingDfi ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}
-                  Søg
-                </button>
-              </div>
-
-              {dfiError && (
-                <div style={{ padding: "12px 16px", backgroundColor: "var(--error-container)", color: "var(--on-error-container)", borderRadius: "var(--radius-default)", border: "1px solid var(--error)", marginBottom: "20px", fontSize: "14px" }}>
-                  {dfiError}
-                </div>
-              )}
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1E3A8A", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de afsnit, du har klippet. Åbn “Vælg afsnit” under serien, og markér de relevante afsnit.</div>
+              {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>
@@ -584,7 +577,7 @@ export default function OnboardingClient({
                             <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid #D1D5DB", borderRadius: "6px", backgroundColor: "#FFFFFF" }}>
                               <button
                                 type="button"
-                                onClick={() => setExpandedSeries(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                                onClick={() => { const opening = !expandedSeries[c.id]; setExpandedSeries(prev => ({ ...prev, [c.id]: opening })); if (opening && !(episodeOptions[c.id]?.length)) void loadEpisodes(c); }}
                                 style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "#111827" }}
                               >
                                 {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
@@ -597,29 +590,11 @@ export default function OnboardingClient({
                                       type="number"
                                       min={1}
                                       value={seriesSeasons[c.id] ?? 1}
-                                      onChange={(event) => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
+                                      onChange={(event) => { const season = Math.max(1, Number(event.target.value) || 1); setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodes(c, season); }}
                                       style={{ width: "72px", padding: "6px 8px", border: "1px solid #D1D5DB", borderRadius: "6px" }}
                                     />
                                   </label>
-                                  <div style={{ display: "flex", gap: "8px" }}>
-                                    <button type="button" onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: Array.from({ length: episodeCount }, (_, index) => index + 1) }))} style={{ padding: "4px 8px", fontSize: "12px", border: "1px solid #D1D5DB", borderRadius: "4px", background: "transparent" }}>Vælg alle</button>
-                                    <button type="button" onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }))} style={{ padding: "4px 8px", fontSize: "12px", border: "1px solid #D1D5DB", borderRadius: "4px", background: "transparent" }}>Fravælg alle</button>
-                                  </div>
-                                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(44px, 1fr))", gap: "6px" }}>
-                                    {Array.from({ length: episodeCount }, (_, index) => index + 1).map(episodeNumber => {
-                                      const checked = selectedEpisodes.includes(episodeNumber);
-                                      return (
-                                        <button
-                                          key={episodeNumber}
-                                          type="button"
-                                          onClick={() => toggleEpisode(c, episodeNumber)}
-                                          style={{ padding: "6px 0", borderRadius: "5px", border: checked ? "1px solid #111827" : "1px solid #D1D5DB", background: checked ? "#111827" : "#FFFFFF", color: checked ? "#FFFFFF" : "#111827", fontSize: "12px", cursor: "pointer" }}
-                                        >
-                                          {episodeNumber}
-                                        </button>
-                                      );
-                                    })}
-                                  </div>
+                                  {episodeLoading[c.id] ? <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Henter afsnit…</div> : episodeErrors[c.id] ? <div style={{ fontSize: "12px", color: "#B91C1C" }}>{episodeErrors[c.id]} <button type="button" onClick={() => void loadEpisodes(c)} style={{ textDecoration: "underline", border: 0, background: "transparent", cursor: "pointer" }}>Prøv igen</button></div> : <EpisodePicker compact options={episodeOptions[c.id]?.length ? episodeOptions[c.id] : Array.from({ length: episodeCount }, (_, index) => ({ number: index + 1 }))} selected={selectedEpisodes} onChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))} />}
                                 </div>
                               )}
                             </div>

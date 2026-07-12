@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import Link from "next/link"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -44,6 +43,7 @@ import {
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
+import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 
 const ADMIN_NAV_ITEMS = [
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
@@ -203,7 +203,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 asChild
                 isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
             >
-                <Link href={item.href}>
+                <SidebarNavigationLink href={item.href}>
                     <item.icon className="h-4 w-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
                     {item.key === "kontrakter" && (pendingCount > 0 || pendingContractMessagesCount > 0) && (
@@ -226,18 +226,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                             )}
                         </span>
                     )}
-                </Link>
+                </SidebarNavigationLink>
             </SidebarMenuButton>
         </SidebarMenuItem>
     )
 
     return (
         <SidebarProvider>
+            <SidebarCloseOnNavigation />
             <Sidebar variant="inset">
                 <SidebarHeader className="p-4">
-                    <Link href="/admin" className="block">
+                    <SidebarNavigationLink href="/admin" className="block">
                         <Image src="/logo.png" alt="DFKS" width={160} height={68} className="dark:invert" />
-                    </Link>
+                    </SidebarNavigationLink>
                 </SidebarHeader>
 
                 <SidebarContent>
@@ -250,10 +251,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         {userNavItems.map(item => (
                             <SidebarMenuItem key={item.href}>
                                 <SidebarMenuButton asChild isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}>
-                                    <Link href={item.href}>
+                                    <SidebarNavigationLink href={item.href}>
                                         <item.icon className="h-4 w-4" />
                                         <span>{item.label}</span>
-                                    </Link>
+                                    </SidebarNavigationLink>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         ))}
@@ -289,10 +290,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         {isSuperadmin && (
                             <SidebarMenuItem>
                                 <SidebarMenuButton asChild>
-                                    <Link href="/superadmin/organisationer">
+                                    <SidebarNavigationLink href="/superadmin/organisationer">
                                         <ShieldCheck className="h-4 w-4" />
                                         <span>Superadmin</span>
-                                    </Link>
+                                    </SidebarNavigationLink>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
                         )}

@@ -392,7 +392,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -1233,6 +1233,83 @@ export async function searchRightsHoldersForMember(query: string) {
   return { success: true, results: data ?? [] };
 }
 
+export async function syncMemberEpisodeAssignments(params: {
+  rightsHolderId: string;
+  workId: string;
+  role: string;
+  selectedEpisodes: number[];
+}) {
+  const db = createServiceClient();
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
+  const { data: current } = await db.from("works")
+    .select("id,parent_work_id,season_number,episode_number,type")
+    .eq("id", params.workId).eq("org_id", orgId).single();
+  if (!current) return { success: false, error: "Værket findes ikke." };
+  const parentId = current.parent_work_id ?? current.id;
+  const seasonNumber = current.season_number ?? 1;
+  const { data: episodes, error } = await db.from("works")
+    .select("id,episode_number")
+    .eq("org_id", orgId).eq("parent_work_id", parentId).eq("season_number", seasonNumber)
+    .not("episode_number", "is", null);
+  if (error) return { success: false, error: error.message };
+  const selected = new Set(params.selectedEpisodes.filter(Number.isFinite));
+  const episodeIds = (episodes ?? []).map(episode => episode.id);
+  const { data: existing } = episodeIds.length ? await db.from("work_assignments")
+    .select("id,work_id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).in("work_id", episodeIds) : { data: [] };
+  const existingByWork = new Map((existing ?? []).map(item => [item.work_id, item.id]));
+  const toAdd = (episodes ?? []).filter(episode => selected.has(episode.episode_number) && !existingByWork.has(episode.id));
+  const toRemove = (episodes ?? []).filter(episode => !selected.has(episode.episode_number) && existingByWork.has(episode.id));
+  const blocked: number[] = [];
+  for (const episode of toRemove) {
+    const [{ count: contractCount }, { count: claimCount }] = await Promise.all([
+      db.from("contracts").select("id", { count: "exact", head: true }).eq("work_id", episode.id),
+      db.from("screening_claims").select("id", { count: "exact", head: true }).eq("work_id", episode.id).eq("profile_id", user.id).eq("status", "approved"),
+    ]);
+    if ((contractCount ?? 0) > 0 || (claimCount ?? 0) > 0) blocked.push(episode.episode_number);
+  }
+  if (blocked.length) return { success: false, error: `Afsnit ${blocked.join(", ")} kan ikke fjernes, fordi det er knyttet til en kontrakt eller godkendt visning.`, blocked };
+  if (toAdd.length) {
+    const { error: addError } = await db.from("work_assignments").upsert(toAdd.map(episode => ({ org_id: orgId, work_id: episode.id, rights_holder_id: params.rightsHolderId, role: params.role })), { onConflict: "work_id,rights_holder_id,role" });
+    if (addError) return { success: false, error: addError.message };
+  }
+  const removeIds = toRemove.map(episode => existingByWork.get(episode.id)).filter(Boolean) as string[];
+  if (removeIds.length) {
+    const { error: removeError } = await db.from("work_assignments").delete().in("id", removeIds);
+    if (removeError) return { success: false, error: removeError.message };
+  }
+  revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/admin/vaerker");
+  return { success: true, added: toAdd.map(item => item.episode_number), removed: toRemove.map(item => item.episode_number), unchanged: params.selectedEpisodes.length - toAdd.length };
+}
+
+export async function updateMemberCoEditors(params: {
+  workId: string;
+  changes: Array<{ assignmentId?: string | null; rightsHolderId?: string | null; role: string; action?: "add" | "remove" | "change" }>;
+}) {
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+  const { data: ownHolder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).eq("org_id", orgId).maybeSingle();
+  if (!ownHolder) return { success: false, error: "Rettighedshaveren findes ikke." };
+  const { data: ownAssignment } = await db.from("work_assignments").select("id").eq("work_id", params.workId).eq("rights_holder_id", ownHolder.id).maybeSingle();
+  if (!ownAssignment) return { success: false, error: "Du kan kun redigere medklippere på dine egne værker." };
+  for (const change of params.changes) {
+    if (change.action === "remove" && change.assignmentId) {
+      const { error } = await db.from("work_assignments").delete().eq("id", change.assignmentId).eq("work_id", params.workId).eq("org_id", orgId);
+      if (error) return { success: false, error: error.message };
+    } else if (change.action === "change" && change.assignmentId && change.rightsHolderId) {
+      const { error } = await db.from("work_assignments").update({ rights_holder_id: change.rightsHolderId, role: change.role }).eq("id", change.assignmentId).eq("work_id", params.workId).eq("org_id", orgId);
+      if (error) return { success: false, error: error.message };
+    } else if (change.action === "add" && change.rightsHolderId) {
+      const { error } = await db.from("work_assignments").upsert({ org_id: orgId, work_id: params.workId, rights_holder_id: change.rightsHolderId, role: change.role }, { onConflict: "work_id,rights_holder_id,role" });
+      if (error) return { success: false, error: error.message };
+    }
+  }
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true };
+}
+
 export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult) {
   let dfiMetadata: DfiMetadata | null = null;
   let tmdbId = result.tmdb_id ?? null;
@@ -1245,6 +1322,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let posterUrl = result.poster_url ?? null;
   let type = result.type;
   let episodeCount: number | null = null;
+  let seasonCount: number | null = null;
+  let alternativeTitles: string[] = [];
+  let productionCountries: string[] = [];
+  let productionCompanies: string[] = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
 
   // 1. Fetch DFI details if DFI ID is present
@@ -1262,6 +1343,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         duration = typeof meta.Duration === "number" ? meta.Duration : duration;
         posterUrl = det.posterDataUrl ?? extractDfiPosterUrl(meta) ?? posterUrl;
         type = mapDfiWorkType(meta.Category, meta.Type);
+        const toTextList = (value: unknown) => (Array.isArray(value) ? value : value == null ? [] : [value]).flatMap(item => typeof item === "string" ? [item.trim()] : item && typeof item === "object" ? [String((item as Record<string, unknown>).Name ?? (item as Record<string, unknown>).Title ?? "").trim()] : []).filter(Boolean);
+        alternativeTitles = Array.from(new Set([...toTextList(meta.AltTitle), ...toTextList(meta.ForeignTitles)]));
+        productionCountries = toTextList(meta.ProductionCountries);
+        productionCompanies = toTextList(meta.ProductionCompanies);
 
         // Fetch DFI episodes count
         const comment = (dfiMetadata as any).Comment || (dfiMetadata as any).Synopsis || "";
@@ -1313,11 +1398,12 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
 
   if (tmdbId) {
     try {
-      const externalIds = await getTMDBExternalIds(tmdbId, type === "tv-serie" ? "tv" : "movie");
+      const isSeries = type === "tv-serie" || type === "dokumentar-serie";
+      const externalIds = await getTMDBExternalIds(tmdbId, isSeries ? "tv" : "movie");
       imdbId = imdbId ?? externalIds.imdb_id;
       wikidataId = wikidataId ?? externalIds.wikidata_id;
 
-      if (type === "tv-serie") {
+      if (isSeries) {
         const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
         if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
@@ -1325,6 +1411,9 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
           const season = Array.isArray(tDetails.seasons)
             ? tDetails.seasons.find((item: any) => item.season_number === seasonNumber)
             : null;
+          seasonCount = Number(tDetails.number_of_seasons ?? 0) || seasonCount;
+          productionCountries = productionCountries.length ? productionCountries : (tDetails.production_countries ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
+          productionCompanies = productionCompanies.length ? productionCompanies : (tDetails.production_companies ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
           if (!episodeCount && season?.episode_count) {
             episodeCount = season.episode_count;
             episodeOptions = Array.from({ length: season.episode_count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
@@ -1365,6 +1454,10 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       wikidata_id: wikidataId,
       dfi_metadata: dfiMetadata,
       episode_count: episodeCount,
+      season_count: seasonCount,
+      alternative_titles: alternativeTitles,
+      production_countries: productionCountries,
+      production_companies: productionCompanies,
       episode_options: episodeOptions,
       season_hint: result.season_hint ?? parseSeasonNumberFromTitle(result.title),
     }

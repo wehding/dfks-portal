@@ -70,7 +70,15 @@ export function scorePersonName(query: string, candidate: string): PersonNameMat
 export function personSearchVariants(fullName: string, alternativeNames: string[] = []) {
   const values = [fullName, ...alternativeNames].flatMap(value => {
     const tokens = value.trim().split(/\s+/).filter(Boolean);
-    return tokens.length > 2 ? [value, `${tokens[0]} ${tokens.at(-1)}`] : [value];
+    const base = tokens.length > 2 ? [value, `${tokens[0]} ${tokens.at(-1)}`] : [value];
+    const lastName = tokens.at(-1) ?? "";
+    const prefix = tokens.slice(0, -1).join(" ");
+    const spellingVariants = ["s", "n", "l", "m", "r"].flatMap(letter => {
+      const doubled = lastName.replace(new RegExp(`(?<!${letter})${letter}(?!${letter})`, "i"), match => match + match);
+      const collapsed = lastName.replace(new RegExp(`${letter}{2}`, "i"), letter);
+      return [doubled, collapsed].filter(variant => variant !== lastName).map(variant => `${prefix} ${variant}`.trim());
+    });
+    return [...base, ...spellingVariants];
   });
-  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean))).slice(0, 8);
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean))).slice(0, 12);
 }

@@ -166,6 +166,9 @@ type WorkRow = {
   duration_minutes: number | null;
   season_count: number | null;
   episode_count: number | null;
+  parent_work_id?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
   genre: string | null;
   director: string | null;
   alternative_titles?: string[] | null;
@@ -198,6 +201,8 @@ type WorkForm = {
   duration_minutes: string;
   season_count: string;
   episode_count: string;
+  season_number: string;
+  episode_number: string;
   genre: string;
   director: string;
   alternative_titles: string;
@@ -552,6 +557,8 @@ function toForm(work: WorkRow): WorkForm {
     duration_minutes: work.duration_minutes?.toString() ?? "",
     season_count: work.season_count?.toString() ?? "",
     episode_count: work.episode_count?.toString() ?? "",
+    season_number: work.season_number?.toString() ?? "",
+    episode_number: work.episode_number?.toString() ?? "",
     genre: work.genre ?? "",
     director: work.director ?? "",
     alternative_titles: joinList(work.alternative_titles),
@@ -1079,6 +1086,8 @@ export default function VaerksadministrationPage() {
           duration_minutes: nullableNumber(editForm.duration_minutes),
           season_count: nullableNumber(editForm.season_count),
           episode_count: nullableNumber(editForm.episode_count),
+          season_number: nullableNumber(editForm.season_number),
+          episode_number: nullableNumber(editForm.episode_number),
           genre: editForm.genre || null,
           director: editForm.director || null,
           alternative_titles: splitList(editForm.alternative_titles),
@@ -1418,6 +1427,11 @@ export default function VaerksadministrationPage() {
         year: details.year != null ? String(details.year) : editForm.year,
         duration_minutes: details.duration_minutes != null ? String(details.duration_minutes) : editForm.duration_minutes,
         episode_count: details.episode_count != null ? String(details.episode_count) : editForm.episode_count,
+        season_count: details.season_count != null ? String(details.season_count) : editForm.season_count,
+        season_number: details.season_hint != null ? String(details.season_hint) : editForm.season_number,
+        alternative_titles: details.alternative_titles?.length ? details.alternative_titles.join(", ") : editForm.alternative_titles,
+        production_countries: details.production_countries?.length ? details.production_countries.join(", ") : editForm.production_countries,
+        production_companies: details.production_companies?.length ? details.production_companies.join(", ") : editForm.production_companies,
         genre: details.genre || editForm.genre,
         director: details.director || editForm.director,
         description: details.description || editForm.description,
@@ -2157,16 +2171,18 @@ export default function VaerksadministrationPage() {
                     <DiffField diff={activeDiffMap.duration_minutes}>
                       <Field label="Varighed"><Input value={editForm.duration_minutes} onChange={e => setEditForm({ ...editForm, duration_minutes: e.target.value })} /></Field>
                     </DiffField>
-                    {isSeriesType(editForm.type) && (
+                    {isSeriesType(editForm.type) && !editing?.parent_work_id && (
                       <DiffField diff={activeDiffMap.season_count}>
-                        <Field label="Sæson"><Input value={editForm.season_count} onChange={e => setEditForm({ ...editForm, season_count: e.target.value })} /></Field>
+                        <Field label="Antal sæsoner"><Input value={editForm.season_count} onChange={e => setEditForm({ ...editForm, season_count: e.target.value })} /></Field>
                       </DiffField>
                     )}
-                    {isSeriesType(editForm.type) && (
+                    {isSeriesType(editForm.type) && !editing?.parent_work_id && (
                       <DiffField diff={activeDiffMap.episode_count}>
-                        <Field label="Afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
+                        <Field label="Antal afsnit"><Input value={editForm.episode_count} onChange={e => setEditForm({ ...editForm, episode_count: e.target.value })} /></Field>
                       </DiffField>
                     )}
+                    {isSeriesType(editForm.type) && Boolean(editing?.parent_work_id) && <Field label="Sæsonnummer"><Input value={editForm.season_number} onChange={e => setEditForm({ ...editForm, season_number: e.target.value })} /></Field>}
+                    {isSeriesType(editForm.type) && Boolean(editing?.parent_work_id) && <Field label="Afsnitsnummer"><Input value={editForm.episode_number} onChange={e => setEditForm({ ...editForm, episode_number: e.target.value })} /></Field>}
                     <DiffField diff={activeDiffMap.genre}>
                       <Field label="Genre"><Input value={editForm.genre} onChange={e => setEditForm({ ...editForm, genre: e.target.value })} /></Field>
                     </DiffField>
@@ -2196,53 +2212,6 @@ export default function VaerksadministrationPage() {
                     </Field>
                     <div className="md:col-span-2"><DistributionEditor value={editDistributions} onChange={setEditDistributions} options={broadcasterOptions} /></div>
 
-                    {editForm.dfi_id && !editForm.dfi_metadata && (
-                      <div className="col-span-full mt-2 rounded border border-dashed p-3 flex items-center justify-between text-sm bg-muted/40">
-                        <span className="text-muted-foreground">Der er ikke hentet udvidet DFI metadata for dette værk.</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            setSaving(true);
-                            try {
-                              const res = await getDFIFilmDetails(Number(editForm.dfi_id));
-                              if (res.success && res.film) {
-                                const film = res.film as SearchResult;
-                                const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || editForm.title;
-                                const year = extractDfiPremiereYear(film);
-                                const dfiPoster = (res.success ? res.posterDataUrl : null) ?? extractDfiPosterUrl(film);
-                                const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
-                                setEditForm({
-                                  ...editForm,
-                                  title,
-                                  year: year ? String(year) : editForm.year,
-                                  duration_minutes: firstNumber(film.LengthInMin) ? String(firstNumber(film.LengthInMin)) : editForm.duration_minutes,
-                                  genre: textValue(film.Genre) || editForm.genre,
-                                  director: dfiDirector(film) || editForm.director,
-                                  alternative_titles: mergeLists(splitList(editForm.alternative_titles), dfiAlternativeTitles(film)).join(", "),
-                                  production_countries: mergeLists(splitList(editForm.production_countries), dfiProductionCountries(film)).join(", "),
-                                  production_companies: mergeLists(splitList(editForm.production_companies), dfiProductionCompanies(film)).join(", "),
-                                  ...dfiFieldValues(film),
-                                  poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : editForm.poster_url),
-                                  dfi_metadata: film as DfiMetadata,
-                                });
-                                setNotice("DFI metadata hentet.");
-                              } else {
-                                setNotice("Kunne ikke hente DFI metadata.");
-                              }
-                            } catch {
-                              setNotice("Fejl ved hentning af DFI data.");
-                            } finally {
-                              setSaving(false);
-                            }
-                          }}
-                          disabled={saving}
-                        >
-                          Hent DFI data
-                        </Button>
-                      </div>
-                    )}
                   </div>
 
                   {editForm.dfi_metadata && (
@@ -2354,7 +2323,7 @@ export default function VaerksadministrationPage() {
                   </div>
                 ))}
               </InfoPanel>
-              <InfoPanel title="Hent og kombiner værksdata">
+              <InfoPanel title="Hent værksdata">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     placeholder="Søg titel i DFI og TMDB..."
@@ -2377,13 +2346,7 @@ export default function VaerksadministrationPage() {
                     ))}
                   </div>
                 )}
-                {importPreview && (
-                  <DiffPanel
-                    title={`${importPreview.source}-import ændrer ${importPreview.rows.length} felt${importPreview.rows.length === 1 ? "" : "er"}`}
-                    rows={importPreview.rows}
-                    emptyText="Importen ændrer ingen eksisterende felter."
-                  />
-                )}
+                {importPreview && <p className="text-sm text-muted-foreground">Værksdata er hentet og udfyldt i felterne ovenfor.</p>}
               </InfoPanel>
             </div>
               );
@@ -2865,9 +2828,8 @@ function DistributionEditor({ value, onChange, options }: { value: DistributionD
     <div className="space-y-3 rounded-md border p-3">
       <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "" }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
       {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
-        <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_130px_100px_100px_auto]">
+        <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_100px_100px_auto]">
           <Select value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>
-          <Select value={item.distributionType} onValueChange={distributionType => update(index, { distributionType: distributionType as DistributionDraft["distributionType"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="both">TV + streaming</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="streaming">Streaming</SelectItem></SelectContent></Select>
           <Input inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
           <Input inputMode="numeric" placeholder="Til år" value={item.validToYear} onChange={event => update(index, { validToYear: event.target.value })} />
           <Button type="button" size="icon" variant="ghost" aria-label="Fjern broadcaster" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="h-4 w-4" /></Button>

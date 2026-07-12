@@ -88,33 +88,58 @@ export async function enrichPersonCandidate(candidate: PersonCandidate) {
   return candidate;
 }
 
-export async function confirmExternalPersonIdentity(selected: PersonCandidate[], searchedName?: string) {
+export async function confirmExternalPersonIdentity(selected: PersonCandidate[], searchedName?: string, submittedAlternativeNames: string[] = []) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
   const { data: holder } = await db.from("rettighedshavere").select("id, full_name, alternative_names").eq("user_id", user.id).maybeSingle();
   if (!holder) return { success: false, error: "Rettighedshaveren blev ikke fundet." };
-  if (new Set(selected.map(candidate => candidate.source)).size !== selected.length) return { success: false, error: "Vælg højst én person pr. kilde." };
   const verifiedSearchName = searchedName?.trim() || holder.full_name;
   if (holder.full_name && scorePersonName(holder.full_name, verifiedSearchName).score < 0.62) return { success: false, error: "Søgenavnet afviger for meget fra din profil." };
-  const discovery = await discoverPersonCandidates(verifiedSearchName, holder.alternative_names ?? []);
+  const verifiedAlternativeNames = Array.from(new Set([...(holder.alternative_names ?? []), ...submittedAlternativeNames.map(name => name.trim()).filter(Boolean)]));
+  const discovery = await discoverPersonCandidates(verifiedSearchName, verifiedAlternativeNames);
   const allowed = new Map((discovery.success ? discovery.candidates : []).map(candidate => [candidate.key, candidate]));
   const trustedSelected = selected.map(candidate => allowed.get(candidate.key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate));
   if (trustedSelected.length !== selected.length) return { success: false, error: "Et personmatch kunne ikke verificeres. Søg igen." };
-  const dfi = trustedSelected.find(candidate => candidate.source === "dfi");
-  const tmdb = trustedSelected.find(candidate => candidate.source === "tmdb");
-  const wikidata = trustedSelected.find(candidate => candidate.source === "wikidata");
-  const external = tmdb ? await getTMDBPersonExternalIds(Number(tmdb.sourceId)) : null;
-  const variants = Array.from(new Set([...(holder.alternative_names ?? []), ...trustedSelected.map(candidate => candidate.name)])).filter(Boolean);
+  const dfi = trustedSelected.filter(candidate => candidate.source === "dfi");
+  const tmdb = trustedSelected.filter(candidate => candidate.source === "tmdb");
+  const wikidata = trustedSelected.filter(candidate => candidate.source === "wikidata");
+  const tmdbExternal = await Promise.all(tmdb.map(candidate => getTMDBPersonExternalIds(Number(candidate.sourceId))));
+  const variants = Array.from(new Set([...verifiedAlternativeNames, ...trustedSelected.map(candidate => candidate.name)])).filter(Boolean);
   const identity = {
-    dfi_person_id: dfi ? Number(dfi.sourceId) : null,
-    tmdb_person_id: tmdb ? Number(tmdb.sourceId) : null,
-    wikidata_qid: wikidata?.sourceId ?? external?.wikidata_qid ?? null,
-    imdb_nm: external?.imdb_nm ?? null,
+    dfi_person_id: dfi[0] ? Number(dfi[0].sourceId) : null,
+    tmdb_person_id: tmdb[0] ? Number(tmdb[0].sourceId) : null,
+    wikidata_qid: wikidata[0]?.sourceId ?? tmdbExternal.find(item => item.wikidata_qid)?.wikidata_qid ?? null,
+    imdb_nm: tmdbExternal.find(item => item.imdb_nm)?.imdb_nm ?? null,
     alternative_names: variants,
   };
   const { error } = await db.from("rettighedshavere").update(identity).eq("id", holder.id);
   if (error) return { success: false, error: error.message };
+  const rows: Array<{ rights_holder_id: string; source: "dfi" | "tmdb" | "wikidata" | "imdb"; external_id: string; display_name: string | null; match_score: number; match_reason: string; selected_automatically: boolean }> = trustedSelected.map(candidate => ({
+    rights_holder_id: holder.id,
+    source: candidate.source,
+    external_id: candidate.sourceId,
+    display_name: candidate.name,
+    match_score: candidate.score,
+    match_reason: candidate.reason,
+    selected_automatically: candidate.score >= 0.78,
+  }));
+  tmdbExternal.forEach((external, index) => {
+    if (external.wikidata_qid && !rows.some(row => row.source === "wikidata" && row.external_id === external.wikidata_qid)) rows.push({ rights_holder_id: holder.id, source: "wikidata", external_id: external.wikidata_qid, display_name: tmdb[index]?.name ?? null, match_score: tmdb[index]?.score ?? 0, match_reason: "tmdb-external-id", selected_automatically: true });
+    if (external.imdb_nm && !rows.some(row => row.source === "imdb" && row.external_id === external.imdb_nm)) rows.push({ rights_holder_id: holder.id, source: "imdb", external_id: external.imdb_nm, display_name: tmdb[index]?.name ?? null, match_score: tmdb[index]?.score ?? 0, match_reason: "tmdb-external-id", selected_automatically: true });
+  });
+  const externalIds = rows.map(row => row.external_id);
+  if (externalIds.length) {
+    const { data: conflicts } = await db.from("rights_holder_external_identities").select("source,external_id,rights_holder_id").in("external_id", externalIds).neq("rights_holder_id", holder.id);
+    const conflict = (conflicts ?? []).find(item => rows.some(row => row.source === item.source && row.external_id === item.external_id));
+    if (conflict) return { success: false, error: "En valgt navneprofil er allerede knyttet til en anden bruger. Kontakt admin." };
+  }
+  const { error: deleteError } = await db.from("rights_holder_external_identities").delete().eq("rights_holder_id", holder.id);
+  if (deleteError) return { success: false, error: deleteError.message };
+  if (rows.length) {
+    const { error: insertError } = await db.from("rights_holder_external_identities").insert(rows);
+    if (insertError) return { success: false, error: insertError.message };
+  }
   return { success: true };
 }
