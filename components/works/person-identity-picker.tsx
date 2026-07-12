@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 
 export function PersonIdentityPicker({ candidates, selected, loading, error, onSelect }: {
   candidates: PersonCandidate[];
-  selected: Record<string, string>;
+  selected: Record<string, boolean>;
   loading: boolean;
   error?: string | null;
   onSelect: (candidate: PersonCandidate) => void;
@@ -17,13 +17,13 @@ export function PersonIdentityPicker({ candidates, selected, loading, error, onS
       return <section key={source} className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{source}</h3>
         {sourceCandidates.length === 0 ? <p className="text-sm text-muted-foreground">Ingen sandsynlige profiler fundet.</p> : sourceCandidates.map(candidate => {
-          const checked = selected[source] === candidate.key;
+          const checked = Boolean(selected[candidate.key]);
           const reason = candidate.reason === "exact" ? "Matcher dit fulde navn" : candidate.reason === "without-middle-name" ? "Matcher uden mellemnavn" : candidate.reason === "initial-variant" ? "Matcher med initial" : "Tæt stavematch";
-          return <label key={candidate.key} className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${checked ? "border-foreground ring-1 ring-foreground" : "hover:bg-muted/50"}`}>
-            <input type="radio" name={`person-${source}`} checked={checked} onChange={() => onSelect(candidate)} />
+          return <button type="button" aria-pressed={checked} onClick={() => onSelect(candidate)} key={candidate.key} className={`flex w-full cursor-pointer gap-3 rounded-lg border p-3 text-left ${checked ? "border-foreground bg-muted ring-1 ring-foreground" : "hover:bg-muted/50"}`}>
+            <span aria-hidden className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${checked ? "bg-foreground text-background" : "bg-background"}`}>{checked ? "✓" : ""}</span>
             {candidate.imageUrl && <img src={candidate.imageUrl} alt="" className="h-14 w-11 rounded object-cover" />}
             <span className="min-w-0"><strong className="block text-sm">{candidate.name}</strong><span className="block text-xs text-muted-foreground">{reason}</span>{candidate.description && <span className="mt-1 block text-xs text-muted-foreground">{candidate.description}</span>}{candidate.knownFor.length > 0 && <span className="mt-1 block text-xs text-muted-foreground">Kendt for: {candidate.knownFor.join(", ")}</span>}</span>
-          </label>;
+          </button>;
         })}
       </section>;
     })}

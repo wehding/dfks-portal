@@ -5,7 +5,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
-import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds } from "@/app/actions/tmdb";
+import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
@@ -748,11 +748,16 @@ export async function searchOnboardingCredits(
   const db = createServiceClient();
   let rightsHolderId: string | null = null;
   let savedIdentity: { dfi_person_id?: number | null; tmdb_person_id?: number | null } | null = null;
+  let savedDfiPersonIds: number[] = [];
+  let savedTmdbPersonIds: number[] = [];
   try {
     const context = await currentRightsHolderAndOrg();
     rightsHolderId = context.rightsHolderId;
     const { data } = await db.from("rettighedshavere").select("dfi_person_id, tmdb_person_id").eq("id", rightsHolderId).maybeSingle();
     savedIdentity = data;
+    const { data: identities } = await db.from("rights_holder_external_identities").select("source,external_id").eq("rights_holder_id", rightsHolderId).in("source", ["dfi", "tmdb"]);
+    savedDfiPersonIds = (identities ?? []).filter(item => item.source === "dfi").map(item => Number(item.external_id)).filter(Number.isFinite);
+    savedTmdbPersonIds = (identities ?? []).filter(item => item.source === "tmdb").map(item => Number(item.external_id)).filter(Number.isFinite);
   } catch {
     // Fortsæt uden rightsHolderId i tilfælde af test-kørsler
   }
@@ -765,12 +770,12 @@ export async function searchOnboardingCredits(
 
   // 1. Hent rådata fra DFI
   try {
-    const savedDfiPersonId = savedIdentity?.dfi_person_id ?? null;
-    const dfiPersonRes = savedDfiPersonId ? null : await searchDFIPerson(firstName, lastName, fullName);
-    const resolvedDfiPersonId = savedDfiPersonId ?? (dfiPersonRes?.success && dfiPersonRes.results?.length > 0 ? dfiPersonRes.results[0].Id : null);
-    if (resolvedDfiPersonId) {
-      dfiPersonId = Number(resolvedDfiPersonId);
-      const dfiCreditsRes = await getDFIPersonCredits(dfiPersonId);
+    const legacyDfiPersonId = savedIdentity?.dfi_person_id ?? null;
+    const dfiPersonRes = savedDfiPersonIds.length || legacyDfiPersonId ? null : await searchDFIPerson(firstName, lastName, fullName);
+    const resolvedDfiPersonIds = savedDfiPersonIds.length ? savedDfiPersonIds : legacyDfiPersonId ? [Number(legacyDfiPersonId)] : (dfiPersonRes?.success ? (dfiPersonRes.results ?? []).slice(0, 1).map((item: { Id?: number | string }) => Number(item.Id)) : []);
+    dfiPersonId = resolvedDfiPersonIds[0] ?? null;
+    for (const resolvedDfiPersonId of resolvedDfiPersonIds) {
+      const dfiCreditsRes = await getDFIPersonCredits(resolvedDfiPersonId);
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
@@ -786,12 +791,12 @@ export async function searchOnboardingCredits(
 
   // 2. Hent rådata fra TMDB
   try {
-    const savedTmdbPersonId = savedIdentity?.tmdb_person_id ?? null;
-    const tmdbPersonRes = savedTmdbPersonId ? null : await searchTMDBPerson(nameToSearch);
-    const resolvedTmdbPersonId = savedTmdbPersonId ?? (tmdbPersonRes?.success && tmdbPersonRes.results?.length > 0 ? tmdbPersonRes.results[0].id : null);
-    if (resolvedTmdbPersonId) {
-      tmdbPersonId = Number(resolvedTmdbPersonId);
-      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(tmdbPersonId);
+    const legacyTmdbPersonId = savedIdentity?.tmdb_person_id ?? null;
+    const tmdbPersonRes = savedTmdbPersonIds.length || legacyTmdbPersonId ? null : await searchTMDBPerson(nameToSearch);
+    const resolvedTmdbPersonIds = savedTmdbPersonIds.length ? savedTmdbPersonIds : legacyTmdbPersonId ? [Number(legacyTmdbPersonId)] : (tmdbPersonRes?.success ? (tmdbPersonRes.results ?? []).slice(0, 1).map((item: { id?: number | string }) => Number(item.id)) : []);
+    tmdbPersonId = resolvedTmdbPersonIds[0] ?? null;
+    for (const resolvedTmdbPersonId of resolvedTmdbPersonIds) {
+      const tmdbCreditsRes = await getTMDBPersonCombinedCredits(resolvedTmdbPersonId);
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
         const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
@@ -972,6 +977,30 @@ export async function searchOnboardingCredits(
     dfiPersonId,
     tmdbPersonId
   };
+}
+
+export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, seasonNumber = 1) {
+  let options = credit.episode_options ?? [];
+  if (credit.source === "dfi") {
+    const dfiId = String(credit.id).replace(/^dfi-/, "");
+    const details = await getDFIFilmDetails(Number(dfiId));
+    const film = details.success && details.film ? details.film as DfiCredit : null;
+    const children: DfiCredit[] = Array.isArray(film?.Children) ? film.Children : [];
+    const dfiOptions = children.map((child: DfiCredit, index: number) => {
+      const parsed = parseDfiEpisodeTitleInfo(String(child.Title ?? ""));
+      return parsed ? { number: parsed.episodeNumber ?? index + 1, title: parsed.subtitle || String(child.Title ?? "") } : null;
+    }).filter((item): item is { number: number; title: string } => Boolean(item));
+    if (dfiOptions.length) options = dfiOptions;
+  }
+  if (!options.length) {
+    let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
+    if (!tmdbId) tmdbId = Number((await findTMDBMatch(credit.title, credit.year)).tmdb_id ?? 0);
+    if (tmdbId) {
+      const season = await getTMDBSeasonEpisodes(tmdbId, seasonNumber);
+      if (season.success) options = (season.episodes ?? []).map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` })).filter(option => Number.isFinite(option.number) && option.number > 0);
+    }
+  }
+  return { success: options.length > 0, options, error: options.length ? null : "Der blev ikke fundet afsnit for denne sæson." };
 }
 
 export async function searchNewCreditsForCurrentMember(fullName: string) {

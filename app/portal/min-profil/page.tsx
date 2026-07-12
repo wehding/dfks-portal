@@ -39,7 +39,7 @@ export default function MinProfilPage() {
     const [creditSearchOpen, setCreditSearchOpen] = useState(false)
     const [personMatchOpen, setPersonMatchOpen] = useState(false)
     const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([])
-    const [selectedPeople, setSelectedPeople] = useState<Record<string, string>>({})
+    const [selectedPeople, setSelectedPeople] = useState<Record<string, boolean>>({})
     const [personSearching, setPersonSearching] = useState(false)
     const [personError, setPersonError] = useState<string | null>(null)
 
@@ -155,13 +155,15 @@ export default function MinProfilPage() {
         setPersonError(null)
         setSelectedPeople({})
         const result = await discoverPersonCandidates(name || profile?.full_name || "", altNavne)
-        setPersonCandidates(result.success ? result.candidates : [])
+        const candidates = result.success ? result.candidates : []
+        setPersonCandidates(candidates)
+        setSelectedPeople(Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])))
         if (!result.success) setPersonError(result.error ?? "Kunne ikke søge efter navneprofiler.")
         setPersonSearching(false)
     }
 
     const confirmPersonMatch = async () => {
-        const selected = Object.values(selectedPeople).map(key => personCandidates.find(candidate => candidate.key === key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate))
+        const selected = Object.entries(selectedPeople).filter(([, active]) => active).map(([key]) => personCandidates.find(candidate => candidate.key === key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate))
         if (personCandidates.length > 0 && selected.length === 0) { setPersonError("Vælg mindst én navneprofil."); return }
         const result = await confirmExternalPersonIdentity(selected, name || profile?.full_name || "")
         if (!result.success) { setPersonError(result.error ?? "Personmatch kunne ikke gemmes."); return }
@@ -383,8 +385,8 @@ export default function MinProfilPage() {
             <Dialog open={personMatchOpen} onOpenChange={setPersonMatchOpen}>
                 <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader><DialogTitle>Vælg de navneprofiler, der er dig</DialogTitle></DialogHeader>
-                    <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. De tekniske ID&apos;er gemmes skjult.</p>
-                    <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.source]: candidate.key })); setPersonError(null) }} />
+                    <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. Du kan vælge flere profiler fra samme database. De tekniske ID&apos;er gemmes skjult.</p>
+                    <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonError(null) }} />
                     <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>Annuller</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>Bekræft og find værker</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
