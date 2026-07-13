@@ -11,9 +11,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const BUCKET = "kontrakter";
-import { DEFAULT_ORG_ID } from "@/lib/org";
-
-const DFKS_ORG_ID = DEFAULT_ORG_ID;
 const MAX_FILES = 15;
 
 const ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
@@ -187,7 +184,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       if (!user) { toast.error("Ikke logget ind"); return null; }
 
       const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-      const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
+      const orgId = orgRole?.org_id;
+      if (!orgId) { toast.error("Din bruger er ikke knyttet til en organisation"); return null; }
 
       const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
       if (!rhRow) { toast.error("Ingen rettighedshaver-profil"); return null; }

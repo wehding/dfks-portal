@@ -22,20 +22,20 @@ const SUPERADMIN_ROLES = ["superadmin", "admin"] as const
 export async function assertAdminRole(
     supabase: SupabaseClient,
     roles: readonly string[] = ADMIN_ROLES
-): Promise<{ userId: string; role: string } | null> {
+): Promise<{ userId: string; role: string; orgId: string } | null> {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return null
 
     const { data } = await supabase
         .from("user_org_roles")
-        .select("role")
+        .select("role, org_id")
         .eq("user_id", user.id)
         .in("role", roles)
         .limit(1)
         .single()
 
     if (!data) return null
-    return { userId: user.id, role: data.role }
+    return { userId: user.id, role: data.role, orgId: data.org_id }
 }
 
 export { ADMIN_ROLES, SUPERADMIN_ROLES }

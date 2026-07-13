@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { useRouter } from "next/navigation"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -113,8 +112,19 @@ export default function RettighedshavereAdminPage() {
 
     useEffect(() => {
         const supabase = createClient()
-        supabase.auth.getUser().then(({ data: { user } }) => {
-            const oid = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+        supabase.auth.getUser().then(async ({ data: { user } }) => {
+            if (!user) return
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const oid = roleRow?.org_id
+            if (!oid) {
+                toast.error("Din bruger er ikke knyttet til en organisation.")
+                return
+            }
             setOrgId(oid)
             load(oid)
             loadDfksMembers(oid)
@@ -215,7 +225,7 @@ export default function RettighedshavereAdminPage() {
         if (filter === "medlemmer" && !aff?.is_member) return false
         if (filter === "ikke-medlemmer" && aff?.is_member) return false
         // Invitationsstatus
-        const invStatus = rh.onboarding_completed ? "registreret" : (rh.invite_sent_at || rh.user_id) ? "afventer" : "ikke-inviteret"
+        const invStatus = rh.onboarding_completed ? "registreret" : rh.invite_sent_at ? "afventer" : "ikke-inviteret"
         if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
         if (search) {
             const q = search.toLowerCase()
@@ -336,9 +346,8 @@ export default function RettighedshavereAdminPage() {
             const link = type === "invite" ? json.invite_url : json.reset_url
             setPortalLink(link ?? null)
             if (type === "invite") {
-                // Opdater lokal state med ny user_id + invite-tidsstempel, og vis mail-resultat
-                const now = new Date().toISOString()
-                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: now } : r))
+                const inviteSentAt = json.email_sent ? new Date().toISOString() : rh.invite_sent_at ?? null
+                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: inviteSentAt } : r))
                 if (json.email_sent) toast.success(`Invitation sendt til ${rh.email}`)
                 else toast.warning(`Bruger oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt"}). Kopiér linket manuelt.`)
             }
@@ -539,7 +548,7 @@ export default function RettighedshavereAdminPage() {
                                     <TableCell>
                                         {rh.onboarding_completed
                                             ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
-                                            : (rh.invite_sent_at || hasLogin)
+                                            : rh.invite_sent_at
                                                 ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
                                                 : <span className="text-xs text-muted-foreground">Ikke inviteret</span>}
                                     </TableCell>
@@ -575,7 +584,7 @@ export default function RettighedshavereAdminPage() {
                                                 <DropdownMenuSeparator />
                                                 {!rh.onboarding_completed && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at || hasLogin ? "Gensend invitation" : "Send invitation"}
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend invitation" : "Send invitation"}
                                                     </DropdownMenuItem>
                                                 )}
                                                 {hasLogin && rh.email && (

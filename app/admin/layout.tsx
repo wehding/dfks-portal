@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
@@ -57,6 +56,7 @@ const ADMIN_NAV_ITEMS = [
     { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "statistik",           href: "/admin/statistik",           icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "indbetalinger",       href: "/admin/indbetalinger",       icon: Receipt,     labelKey: "nav.producerPayments" },
+    { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
 ]
 
@@ -147,7 +147,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const fetchCount = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
-            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const orgId = roleRow?.org_id
+            if (!orgId) return
 
             supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {
                 if (!org) return

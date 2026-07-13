@@ -58,6 +58,20 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
 
 // ── Skabeloner ─────────────────────────────────────────────────
 
+function escapeHtml(value: string): string {
+    return value
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;")
+}
+
+function safeColor(value: string | undefined): string {
+    const color = value?.trim() || "#111827"
+    return /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(color) ? color : "#111827"
+}
+
 // Invitationsmail med login-link. orgName + primaryColor styres af foreningens branding.
 export function inviteEmailHtml(params: {
     recipientName: string
@@ -66,18 +80,20 @@ export function inviteEmailHtml(params: {
     primaryColor?: string
 }): string {
     const { recipientName, inviteUrl, orgName } = params
-    const color = params.primaryColor ?? "#111827"
-    const safeName = recipientName?.trim() || "der"
+    const color = safeColor(params.primaryColor)
+    const safeName = escapeHtml(recipientName?.trim() || "der")
+    const safeOrgName = escapeHtml(orgName)
+    const safeInviteUrl = escapeHtml(inviteUrl)
     return `
 <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 480px; margin: 0 auto; color: #111827;">
-  <h2 style="color: ${color}; font-size: 20px;">Velkommen til ${orgName}</h2>
+  <h2 style="color: ${color}; font-size: 20px;">Velkommen til ${safeOrgName}</h2>
   <p>Hej ${safeName},</p>
-  <p>Du er blevet inviteret til ${orgName}s portal. Klik på knappen for at oprette din adgang:</p>
+  <p>Du er blevet inviteret til ${safeOrgName}s portal. Klik på knappen for at oprette din adgang:</p>
   <p style="margin: 24px 0;">
-    <a href="${inviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Opret min adgang</a>
+    <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Opret min adgang</a>
   </p>
   <p style="font-size: 13px; color: #6b7280;">Linket er gyldigt i 24 timer. Virker knappen ikke, kan du kopiere denne adresse ind i din browser:<br>
-    <span style="word-break: break-all;">${inviteUrl}</span>
+    <span style="word-break: break-all;">${safeInviteUrl}</span>
   </p>
 </div>`.trim()
 }

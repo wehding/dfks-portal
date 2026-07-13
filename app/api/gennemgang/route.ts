@@ -6,7 +6,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
@@ -25,7 +24,7 @@ export async function POST(req: NextRequest) {
 
         // Hent brugerens navn fra Auth — fallback til formData-navn → "Ukendt"
         // Brug try/catch: kaldet kan mangle cookie-kontekst ved interne server-kald
-        let sessionUser: { user_metadata?: Record<string, string>; email?: string } | null = null
+        let sessionUser: { id?: string; user_metadata?: Record<string, string>; email?: string } | null = null
         try {
             const supabaseSession = await createClient()
             const { data: { user } } = await supabaseSession.auth.getUser()
@@ -63,8 +62,24 @@ export async function POST(req: NextRequest) {
 
         logInfo("gennemgang", "Læser filbuffer", { fileType: file.type || "ukendt" })
         const fileBuffer = Buffer.from(await file.arrayBuffer())
-        const saveOrgId  = portalOrgId ?? DEFAULT_ORG_ID
-        const resolvedOrgId = portalOrgId ?? sessionUser?.user_metadata?.org_id ?? saveOrgId
+        let resolvedOrgId = portalOrgId
+        if (!resolvedOrgId && sessionUser?.id) {
+            const admin = createAdminClient(
+                process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                process.env.SUPABASE_SERVICE_ROLE_KEY!,
+                { auth: { autoRefreshToken: false, persistSession: false } }
+            )
+            const { data: orgRole } = await admin
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", sessionUser.id)
+                .limit(1)
+                .maybeSingle()
+            resolvedOrgId = orgRole?.org_id ?? null
+        }
+        if (!resolvedOrgId) {
+            return NextResponse.json({ error: "Organisationen kunne ikke bestemmes" }, { status: 400 })
+        }
 
         logInfo("gennemgang", "Starter kontraktanalyse", { provider, model })
         let analysisResult
@@ -108,7 +123,7 @@ export async function POST(req: NextRequest) {
         try {
             const ts = Date.now()
             const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-            storagePath = `${saveOrgId}/${ts}_${safeName}`
+            storagePath = `${resolvedOrgId}/${ts}_${safeName}`
             const { error: storageErr } = await admin.storage
                 .from("contract-reviews")
                 .upload(storagePath, fileBuffer, {
@@ -146,7 +161,7 @@ export async function POST(req: NextRequest) {
                 }
             } else {
                 const insertPayload: Record<string, unknown> = {
-                    org_id:          saveOrgId,
+                    org_id:          resolvedOrgId,
                     member_name:     memberName ?? null,
                     member_email:    portalEmail ?? null,
                     member_id:       portalUserId ?? null,

@@ -370,7 +370,13 @@ export function AddWorkModal({
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const orgId = user.user_metadata?.org_id;
+      const { data: roleRow } = await supabase
+        .from("user_org_roles")
+        .select("org_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      const orgId = roleRow?.org_id;
       if (!orgId) return;
       const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single();
       const labels = (org?.terminology as { role_labels?: string[] } | null)?.role_labels;

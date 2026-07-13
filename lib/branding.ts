@@ -16,6 +16,10 @@ export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
 
 export const DEFAULT_FROM_EMAIL = "DFKS <noreply@dfks.dk>";
 
+function isEmail(value: string): boolean {
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value);
+}
+
 export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> | null): Required<OrgBranding> {
   const b = org?.branding ?? {};
   return {
@@ -39,6 +43,8 @@ export function resolveTerminology(org: Pick<DbOrganisation, "terminology"> | nu
 export function resolveFromEmail(org: Pick<DbOrganisation, "name" | "from_email" | "branding"> | null): string {
   const email = org?.from_email?.trim();
   if (!email) return DEFAULT_FROM_EMAIL;
+  if (email.includes("<") && email.includes(">")) return email;
+  if (!isEmail(email)) return DEFAULT_FROM_EMAIL;
   const name = resolveBranding(org as DbOrganisation).short_name;
-  return email.includes("<") ? email : `${name} <${email}>`;
+  return `${name} <${email}>`;
 }

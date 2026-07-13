@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check, Clock, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow, format } from "date-fns"
@@ -339,7 +338,7 @@ export default function PortalKontraktgennemgangPage() {
     const [memberName, setMemberName] = useState<string | null>(null)
     const [memberEmail, setMemberEmail] = useState<string | null>(null)
     const [memberId, setMemberId] = useState<string | null>(null)
-    const [orgId, setOrgId] = useState<string>(DEFAULT_ORG_ID)
+    const [orgId, setOrgId] = useState<string | null>(null)
 
     // Sagslister
     const [activeReviews, setActiveReviews] = useState<ActiveReview[]>([])
@@ -347,12 +346,19 @@ export default function PortalKontraktgennemgangPage() {
     const [reviewsLoading, setReviewsLoading] = useState(true)
 
     useEffect(() => {
-        createClient().auth.getUser().then(({ data: { user } }) => {
+        createClient().auth.getUser().then(async ({ data: { user } }) => {
             if (user) {
                 setMemberName(user.user_metadata?.full_name ?? null)
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
-                setOrgId(user.user_metadata?.org_id ?? DEFAULT_ORG_ID)
+                const supabase = createClient()
+                const { data: roleRow } = await supabase
+                    .from("user_org_roles")
+                    .select("org_id")
+                    .eq("user_id", user.id)
+                    .limit(1)
+                    .maybeSingle()
+                setOrgId(roleRow?.org_id ?? null)
                 loadReviews(user.id)
             }
         })
@@ -438,6 +444,10 @@ export default function PortalKontraktgennemgangPage() {
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
         if (!isValid) return
+        if (!orgId) {
+            toast.error("Din bruger er ikke knyttet til en organisation.")
+            return
+        }
         setSubmitting(true)
 
         const fd = new FormData()

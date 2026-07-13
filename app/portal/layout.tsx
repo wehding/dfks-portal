@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
@@ -106,7 +105,14 @@ export default function PortalLayout({
         const fetchCount = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
-            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const orgId = roleRow?.org_id
+            if (!orgId) return
 
             // Hent foreningens branding (logo/navn) til white-label
             supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {

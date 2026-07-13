@@ -25,6 +25,7 @@ const translations = {
         "nav.holidayFund": "Helligdagsfond",
         "nav.maternityFund": "Barselspulje",
         "nav.users": "Brugere",
+        "nav.organisation": "Organisation",
         "nav.logout": "Log ud",
         "nav.settings": "Indstillinger",
 
@@ -492,6 +493,7 @@ const translations = {
         "nav.holidayFund": "Holiday Fund",
         "nav.maternityFund": "Maternity Fund",
         "nav.users": "Users",
+        "nav.organisation": "Organisation",
         "nav.logout": "Log out",
         "nav.settings": "Settings",
 
@@ -978,7 +980,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
             const { createClient } = await import("@/lib/supabase/client")
             const supabase = createClient()
             const { data: { user } } = await supabase.auth.getUser()
-            const orgId = user?.user_metadata?.org_id
+            if (!user) return
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const orgId = roleRow?.org_id
             if (!orgId) return
             const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single()
             const word = (org?.terminology as { coeditor_word?: string } | null)?.coeditor_word

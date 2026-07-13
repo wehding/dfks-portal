@@ -14,7 +14,6 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { sendEmail, inviteEmailHtml } from "@/lib/email"
 import { resolveFromEmail, resolveBranding } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
@@ -51,11 +50,13 @@ export async function POST(req: NextRequest) {
                 ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
                 : `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`
 
-            // Tjek max_users-grænse for org
-            const DFKS_ORG_ID = DEFAULT_ORG_ID
+            const orgId = caller.orgId
+            if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
+
+            // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
-                admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", DFKS_ORG_ID),
-                admin.from("organisations").select("max_users, name, from_email, branding").eq("id", DFKS_ORG_ID).single(),
+                admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
+                admin.from("organisations").select("max_users, name, from_email, branding").eq("id", orgId).single(),
             ])
             if (org && org.max_users !== -1 && (userCount ?? 0) >= org.max_users) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
@@ -84,15 +85,15 @@ export async function POST(req: NextRequest) {
             // Tildel staff-roller i user_org_roles
             if (rolesToAssign.length > 0 && rhId === "__staff__") {
                 await admin.from("user_org_roles").insert(
-                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: DFKS_ORG_ID, role: r }))
+                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: orgId, role: r }))
                 )
             }
 
-            // Link user_id på rettighedshaver + markér at invitation er sendt
+            // Link user_id på rettighedshaver. invite_sent_at sættes kun hvis mailen faktisk sendes.
             if (rhId && rhId !== "__staff__") {
                 const { error: rhErr } = await admin
                     .from("rettighedshavere")
-                    .update({ user_id: newUserId, invite_sent_at: new Date().toISOString() })
+                    .update({ user_id: newUserId })
                     .eq("id", rhId)
                 if (rhErr) throw new Error(`Kunne ikke linke bruger: ${rhErr.message}`)
             }
@@ -112,6 +113,13 @@ export async function POST(req: NextRequest) {
                     primaryColor: brand.primary_color,
                 }),
             })
+
+            if (mail.ok && rhId && rhId !== "__staff__") {
+                await admin
+                    .from("rettighedshavere")
+                    .update({ invite_sent_at: new Date().toISOString() })
+                    .eq("id", rhId)
+            }
 
             return NextResponse.json({
                 ok: true,

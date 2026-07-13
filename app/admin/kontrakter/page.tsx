@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState, useMemo, Suspense, useRef } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
@@ -485,15 +484,17 @@ function AdminKontrakterContent() {
                 const { data: { user } } = await supabase.auth.getUser()
                 if (!user) { setLoading(false); return }
 
-                const metaOrgId: string | undefined = user.user_metadata?.org_id
-                let resolvedOrgId = metaOrgId ?? DEFAULT_ORG_ID
-
-                // Forsøg at slå op i user_org_roles (men blokér ikke hvis tom)
+                let resolvedOrgId: string | null = null
                 const { data: roleRows } = await supabase
                     .from("user_org_roles")
                     .select("org_id, role")
                     .eq("user_id", user.id)
                 if (roleRows?.[0]?.org_id) resolvedOrgId = roleRows[0].org_id
+                if (!resolvedOrgId) {
+                    toast.error("Din bruger er ikke knyttet til en organisation.")
+                    setLoading(false)
+                    return
+                }
                 setOrgId(resolvedOrgId)
                 setIsSuperadmin((roleRows ?? []).some(r => r.role === "superadmin"))
 

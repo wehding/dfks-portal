@@ -15,10 +15,6 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 
-import { DEFAULT_ORG_ID } from "@/lib/org"
-
-const DFKS_ORG_ID = DEFAULT_ORG_ID
-
 function getAdmin() {
     return createAdminClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -34,6 +30,15 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
 
     const admin = getAdmin()
+    const { data: orgRole } = await admin
+        .from("user_org_roles")
+        .select("org_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle()
+    const orgId = orgRole?.org_id as string | undefined
+    if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
+    const resolvedOrgId = orgId
 
     // ── Parse form-data ───────────────────────────────────────
     let formData: FormData
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
     try {
         const ts = Date.now()
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-        storagePath = `${DFKS_ORG_ID}/${ts}_${safeName}`
+        storagePath = `${resolvedOrgId}/${ts}_${safeName}`
         const fileBuffer = Buffer.from(await file.arrayBuffer())
         const { error: storageErr } = await admin.storage
             .from("contract-reviews")
@@ -90,7 +95,7 @@ export async function POST(req: NextRequest) {
     const { data: review, error: insertErr } = await admin
         .from("contract_reviews")
         .insert({
-            org_id:          DFKS_ORG_ID,
+            org_id:          resolvedOrgId,
             member_id:       user.id,
             member_name:     memberName ?? user.user_metadata?.full_name ?? null,
             member_email:    memberEmail ?? user.email ?? null,
@@ -144,7 +149,7 @@ export async function POST(req: NextRequest) {
 
             const fd = new FormData()
             fd.append("file",          analysisFile)
-            fd.append("orgId",         DFKS_ORG_ID)
+            fd.append("orgId",         resolvedOrgId)
             fd.append("memberId",      capturedUser.id)
             if (memberEmail)   fd.append("memberEmail",   memberEmail)
             if (memberName)    fd.append("memberName",    memberName)

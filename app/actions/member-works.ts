@@ -10,9 +10,7 @@ import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPrem
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
-import { DEFAULT_ORG_ID } from "@/lib/org";
-
-const DFKS_ORG_ID = DEFAULT_ORG_ID;
+import { requireOrgId } from "@/lib/org";
 
 type MemberWorkData = {
   dfi_id?: string | null;
@@ -85,13 +83,7 @@ async function currentUser() {
 }
 
 async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: string): Promise<string> {
-  const { data } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  return data?.org_id ?? DFKS_ORG_ID;
+  return requireOrgId(db, userId);
 }
 
 async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>, rightsHolderId: string) {

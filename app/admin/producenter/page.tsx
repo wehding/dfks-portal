@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
@@ -74,7 +73,15 @@ export default function ProducenterPage() {
         const load = async () => {
             const supabase = createClient()
             const { data: { user } } = await supabase.auth.getUser()
-            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+            if (!user) { setLoading(false); return }
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const orgId = roleRow?.org_id
+            if (!orgId) { setLoading(false); return }
 
             // Hent alle producenter med kontrakter
             const { data: emps } = await supabase

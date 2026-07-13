@@ -7,7 +7,6 @@
  */
 
 import mammoth from "mammoth"
-import { DEFAULT_ORG_ID } from "@/lib/org"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
@@ -716,7 +715,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     const ragText = contractText.slice(0, 8000)
     if (ragText.trim()) {
         try {
-            const resolvedOrgId = orgId ?? DEFAULT_ORG_ID
+            if (!orgId) throw new Error("Kontraktanalyse kræver en organisation.")
+            const resolvedOrgId = orgId
             const kontekst = await hentKontekst(ragText, resolvedOrgId)
 
             if (kontekst.kategorier.length > 0) {
