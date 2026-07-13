@@ -12,7 +12,8 @@ import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
-import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -501,27 +502,17 @@ export function EditWorkModal({
               </span>
             )}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200"
-              onClick={() => {
-                const all: Record<number, boolean> = {};
-                for (let i = 1; i <= directSeriesEpisodeCount; i++) all[i] = true;
-                setSelectedEpisodes(all);
-              }}
-            >
-              Vælg alle
-            </button>
-            <button
-              type="button"
-              className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-muted-foreground dark:hover:text-foreground"
-              onClick={() => setSelectedEpisodes({})}
-            >
-              Fravælg alle
-            </button>
+          <div className="mt-3">
+            <SeriesEpisodeSelector
+              season={1}
+              onSeasonChange={() => undefined}
+              options={buildCompleteEpisodeOptions({ episodeCount: directSeriesEpisodeCount })}
+              selected={directSelectedEpisodeNumbers}
+              onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
+              showSeason={false}
+              compact
+            />
           </div>
-          <div className="mt-3"><EpisodePicker compact options={Array.from({ length: directSeriesEpisodeCount }, (_, index) => ({ number: index + 1 }))} selected={directSelectedEpisodeNumbers} onChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))} /></div>
         </div>
       )}
 
@@ -756,31 +747,16 @@ export function EditWorkModal({
                   if (epCount <= 0) return null;
                   return (
                     <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border bg-muted/30 p-4">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-semibold text-foreground">Vælg afsnit du har klippet</Label>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            className="text-xs text-blue-600 hover:text-blue-800 font-medium bg-transparent border-0 cursor-pointer"
-                            onClick={() => {
-                              const all: Record<number, boolean> = {};
-                              for (let i = 1; i <= epCount; i++) all[i] = true;
-                              setSelectedEpisodes(all);
-                            }}
-                          >
-                            Vælg alle
-                          </button>
-                          <span className="text-muted-foreground text-xs">|</span>
-                          <button
-                            type="button"
-                            className="text-xs text-muted-foreground hover:text-foreground font-medium bg-transparent border-0 cursor-pointer"
-                            onClick={() => setSelectedEpisodes({})}
-                          >
-                            Fravælg alle
-                          </button>
-                        </div>
-                      </div>
-                      <EpisodePicker compact options={Array.from({ length: epCount }, (_, index) => ({ number: index + 1 }))} selected={directSelectedEpisodeNumbers} onChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))} />
+                      <SeriesEpisodeSelector
+                        season={1}
+                        onSeasonChange={() => undefined}
+                        options={buildCompleteEpisodeOptions({ episodeCount: epCount })}
+                        selected={directSelectedEpisodeNumbers}
+                        onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
+                        label="Vælg afsnit du har klippet"
+                        showSeason={false}
+                        compact
+                      />
                     </div>
                   );
                 })()

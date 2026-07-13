@@ -25,7 +25,8 @@ const translations = {
         "nav.holidayFund": "Helligdagsfond",
         "nav.maternityFund": "Barselspulje",
         "nav.users": "Brugere",
-        "nav.organisation": "Organisation",
+        "nav.organisation": "Opsætning",
+        "nav.organisations": "Organisationer",
         "nav.logout": "Log ud",
         "nav.settings": "Indstillinger",
 
@@ -493,7 +494,8 @@ const translations = {
         "nav.holidayFund": "Holiday Fund",
         "nav.maternityFund": "Maternity Fund",
         "nav.users": "Users",
-        "nav.organisation": "Organisation",
+        "nav.organisation": "Settings",
+        "nav.organisations": "Organisations",
         "nav.logout": "Log out",
         "nav.settings": "Settings",
 

@@ -39,8 +39,9 @@ import {
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
-import { EpisodePicker } from "@/components/works/episode-picker"
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector"
 import { WORK_TYPES } from "@/lib/work-types"
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -360,7 +361,10 @@ function AdminKontrakterContent() {
                             const count = season ? season.episode_count : null
                             if (count) {
                                 setDetectedEpisodeCount(count)
-                                setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })))
+                                setEpisodeOptions(buildCompleteEpisodeOptions({
+                                    episodeCount: count,
+                                    seasonNumber: sNum,
+                                }))
                                 setSelectedEpisodes(prev => prev.filter(x => x <= count))
                             }
                         }
@@ -389,11 +393,17 @@ function AdminKontrakterContent() {
                 if (detRes.success && detRes.details) {
                     const d = detRes.details
                     const options = d.episode_options || []
-                    const count = d.episode_count || options.length
+                    const count = Math.max(d.episode_count || 0, options.length)
+                    const hintedSeason = d.season_hint ?? result.season_hint ?? null
+                    if (hintedSeason) setAddSeason(String(hintedSeason))
 
                     if (count) {
                         setDetectedEpisodeCount(count)
-                        setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })))
+                        setEpisodeOptions(buildCompleteEpisodeOptions({
+                            episodeCount: count,
+                            externalOptions: options,
+                            seasonNumber: Number(hintedSeason ?? result.season_hint ?? 1),
+                        }))
                         setSelectedEpisodes([])
                     }
                 }
@@ -2305,29 +2315,18 @@ function AdminKontrakterContent() {
                                                             <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
                                                         </div>
                                                     ) : detectedEpisodeCount !== null ? (
-                                                        <div className="space-y-1.5">
-                                                            <div className="flex justify-between items-center text-[11px] text-muted-foreground">
-                                                                <span>Vælg afsnit:</span>
-                                                                <div className="flex gap-1.5">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setSelectedEpisodes(episodeOptions.map(o => o.number))}
-                                                                        className="hover:underline"
-                                                                    >
-                                                                        Vælg alle
-                                                                    </button>
-                                                                    <span>·</span>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setSelectedEpisodes([])}
-                                                                        className="hover:underline"
-                                                                    >
-                                                                        Fravælg alle
-                                                                    </button>
-                                                                </div>
-                                                            </div>
-                                                            <EpisodePicker compact options={episodeOptions} selected={selectedEpisodes} onChange={setSelectedEpisodes} />
-                                                        </div>
+                                                        <SeriesEpisodeSelector
+                                                            season={Number(addSeason) || 1}
+                                                            onSeasonChange={season => setAddSeason(String(season))}
+                                                            options={buildCompleteEpisodeOptions({
+                                                                episodeCount: detectedEpisodeCount,
+                                                                externalOptions: episodeOptions,
+                                                                seasonNumber: Number(addSeason) || 1,
+                                                            })}
+                                                            selected={selectedEpisodes}
+                                                            onSelectedChange={setSelectedEpisodes}
+                                                            compact
+                                                        />
                                                     ) : null}
                                                 </div>
                                             )}

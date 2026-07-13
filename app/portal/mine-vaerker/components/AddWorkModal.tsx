@@ -12,7 +12,8 @@ import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
-import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -420,7 +421,10 @@ export function AddWorkModal({
               const count = season ? season.episode_count : null;
               if (count) {
                 setDetectedEpisodeCount(count);
-                setEpisodeOptions(Array.from({ length: count }, (_, idx) => ({ number: idx + 1, title: `Afsnit ${idx + 1}` })));
+                setEpisodeOptions(buildCompleteEpisodeOptions({
+                  episodeCount: count,
+                  seasonNumber: sNum,
+                }));
                 setSelectedEpisodes(prev => prev.filter(x => x <= count));
               }
             }
@@ -441,7 +445,10 @@ export function AddWorkModal({
       const count = parseInt(manualWork.episode_count) || null;
       setDetectedEpisodeCount(count);
       if (count) {
-        setEpisodeOptions(Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
+        setEpisodeOptions(buildCompleteEpisodeOptions({
+          episodeCount: count,
+          seasonNumber: Number(addSeason) || 1,
+        }));
         setSelectedEpisodes(prev => {
           const filtered = prev.filter(x => x <= count);
           if (filtered.length === 0) {
@@ -454,7 +461,7 @@ export function AddWorkModal({
         setSelectedEpisodes([]);
       }
     }
-  }, [manualMode, manualWork.episode_count, manualWork.type]);
+  }, [addSeason, manualMode, manualWork.episode_count, manualWork.type]);
 
   const resetAddState = React.useCallback(() => {
     autoSearchKeyRef.current = "";
@@ -535,13 +542,17 @@ export function AddWorkModal({
         if (detRes.success && detRes.details) {
           const d = detRes.details;
           const options = d.episode_options || [];
-          const count = d.episode_count || options.length;
+          const count = Math.max(d.episode_count || 0, options.length);
           const hintedSeason = d.season_hint ?? result.season_hint ?? null;
           if (hintedSeason) setAddSeason(String(hintedSeason));
 
           if (count) {
             setDetectedEpisodeCount(count);
-            setEpisodeOptions(options.length ? options : Array.from({ length: count }, (_, i) => ({ number: i + 1, title: `Afsnit ${i + 1}` })));
+            setEpisodeOptions(buildCompleteEpisodeOptions({
+              episodeCount: count,
+              externalOptions: options,
+              seasonNumber: Number(hintedSeason ?? result.season_hint ?? 1),
+            }));
             setSelectedEpisodes([]);
           }
         }
@@ -707,7 +718,19 @@ export function AddWorkModal({
 
       {!episodesLoading && detectedEpisodeCount !== null && (
         <div className="rounded-lg border bg-muted/30 p-4">
-          <EpisodePicker options={episodeOptions.length ? episodeOptions : Array.from({ length: detectedEpisodeCount }, (_, index) => ({ number: index + 1 }))} selected={selectedEpisodes} onChange={setSelectedEpisodes} label={locale === "da" ? "Vælg de afsnit, du har arbejdet på" : "Select the episodes you worked on"} />
+          <SeriesEpisodeSelector
+            season={Number(addSeason) || 1}
+            onSeasonChange={season => setAddSeason(String(season))}
+            options={buildCompleteEpisodeOptions({
+              episodeCount: detectedEpisodeCount,
+              externalOptions: episodeOptions,
+              seasonNumber: Number(addSeason) || 1,
+            })}
+            selected={selectedEpisodes}
+            onSelectedChange={setSelectedEpisodes}
+            label={locale === "da" ? "Vælg de afsnit, du har arbejdet på" : "Select the episodes you worked on"}
+            compact={false}
+          />
         </div>
       )}
     </div>

@@ -1,0 +1,83 @@
+import { parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
+
+export type SeriesEpisodeOption = {
+  number: number;
+  title: string;
+};
+
+export type SeriesChildLike = {
+  title?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
+};
+
+export function isSeriesType(type: string | null | undefined) {
+  const normalized = String(type ?? "").toLowerCase();
+  return normalized.includes("serie") || normalized.includes("tv");
+}
+
+export function parseLocalEpisodeCode(title: string | null | undefined) {
+  if (!title) return null;
+  const match = title.match(/\bS(\d{1,2})E(\d{1,3})\b/i);
+  if (!match) return null;
+  return {
+    seasonNumber: Number.parseInt(match[1], 10),
+    episodeNumber: Number.parseInt(match[2], 10),
+    baseTitle: title.replace(/\s*[-–—:]?\s*S\d{1,2}E\d{1,3}.*$/i, "").trim(),
+  };
+}
+
+type EpisodeOptionInput = {
+  number: number;
+  title?: string | null;
+};
+
+function cleanOption(option: EpisodeOptionInput | null | undefined): SeriesEpisodeOption | null {
+  const number = Number(option?.number);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  const title = typeof option?.title === "string" && option.title.trim() ? option.title.trim() : `Afsnit ${number}`;
+  return { number, title };
+}
+
+export function episodeOptionsFromLocalChildren(children: SeriesChildLike[] | null | undefined, seasonNumber = 1): SeriesEpisodeOption[] {
+  return (children ?? [])
+    .filter(child => Number(child.season_number ?? seasonNumber) === Number(seasonNumber))
+    .map((child, index) => {
+      const parsed = parseLocalEpisodeCode(child.title) ?? parseDfiEpisodeTitleInfo(child.title ?? "");
+      return cleanOption({
+        number: Number(child.episode_number ?? parsed?.episodeNumber ?? index + 1),
+        title: child.title ?? `Afsnit ${index + 1}`,
+      });
+    })
+    .filter((option): option is SeriesEpisodeOption => Boolean(option));
+}
+
+export function buildCompleteEpisodeOptions({
+  episodeCount,
+  externalOptions,
+  localChildren,
+  seasonNumber = 1,
+}: {
+  episodeCount?: number | null;
+  externalOptions?: EpisodeOptionInput[] | null;
+  localChildren?: SeriesChildLike[] | null;
+  seasonNumber?: number | null;
+}): SeriesEpisodeOption[] {
+  const sourceOptions = (externalOptions ?? []).map(cleanOption).filter((option): option is SeriesEpisodeOption => Boolean(option));
+  const localOptions = episodeOptionsFromLocalChildren(localChildren, seasonNumber ?? 1);
+  const maxFromOptions = [...sourceOptions, ...localOptions].reduce((max, option) => Math.max(max, option.number), 0);
+  const count = Math.max(Number(episodeCount ?? 0) || 0, maxFromOptions);
+  if (count <= 0) return sourceOptions.length ? sourceOptions : localOptions;
+
+  const byNumber = new Map<number, SeriesEpisodeOption>();
+  for (const option of sourceOptions) byNumber.set(option.number, option);
+  for (const option of localOptions) {
+    const current = byNumber.get(option.number);
+    if (!current || current.title === `Afsnit ${option.number}`) byNumber.set(option.number, option);
+  }
+
+  return Array.from({ length: count }, (_, index) => {
+    const number = index + 1;
+    return byNumber.get(number) ?? { number, title: `Afsnit ${number}` };
+  });
+}

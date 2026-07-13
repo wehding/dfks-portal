@@ -4,11 +4,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Loader2, Search, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { Modal } from "./Modal";
 import { importApprovedOnboardingWorks, searchNewCreditsForCurrentMember, type OnboardingCredit } from "@/app/actions/dfi";
 import { useI18n } from "@/lib/i18n";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -57,18 +58,19 @@ export function DfiImportWizard({
   };
 
   const episodeCountForCredit = (credit: OnboardingCredit) => {
-    if (credit.episode_options?.length) return credit.episode_options.length;
     const raw = credit.raw ?? {};
     const rawCount = raw.number_of_episodes ?? raw.episode_count ?? raw.EpisodeCount;
     const parsed = Number(rawCount);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 80);
-    return 0;
+    return Math.min(Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 0, credit.episode_options?.length ?? 0), 80);
   };
 
   const episodeOptionsForCredit = (credit: OnboardingCredit) => {
-    if (credit.episode_options?.length) return credit.episode_options;
-    const count = episodeCountForCredit(credit);
-    return Array.from({ length: count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
+    return buildCompleteEpisodeOptions({
+      episodeCount: episodeCountForCredit(credit),
+      externalOptions: credit.episode_options ?? [],
+      localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
+      seasonNumber: seriesSeasons[credit.id] ?? seasonForCredit(credit),
+    });
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
@@ -242,7 +244,6 @@ export function DfiImportWizard({
               <div className="max-h-72 overflow-y-auto rounded-lg border divide-y">
                 {wizardCredits.map((c, i) => {
                   const isSeries = isSeriesCredit(c);
-                  const episodeCount = episodeCountForCredit(c);
                   const selectedEpisodes = selectedEpisodesForCredit(c);
                   return (
                     <div
@@ -282,41 +283,14 @@ export function DfiImportWizard({
                           </button>
                           {expandedSeries[c.id] && (
                             <div className="mt-3 space-y-3">
-                              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                                Sæson
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  value={seriesSeasons[c.id] ?? seasonForCredit(c)}
-                                  onChange={event => setSeriesSeasons(prev => ({ ...prev, [c.id]: Math.max(1, Number(event.target.value) || 1) }))}
-                                  className="h-8 w-20"
-                                />
-                              </label>
-                              <div className="sticky top-0 z-10 grid grid-cols-2 gap-2 bg-background py-1 sm:flex">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 text-xs"
-                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodeOptionsForCredit(c).map(option => option.number) }))}
-                                >
-                                  Vælg alle
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 text-xs"
-                                  onClick={() => setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }))}
-                                >
-                                  Fravælg alle
-                                </Button>
-                              </div>
-                              {episodeCount > 0 ? (
-                                <EpisodePicker compact options={episodeOptionsForCredit(c)} selected={selectedEpisodes} onChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))} />
-                              ) : (
-                                <p className="text-xs text-amber-700">DFI/TMDB indeholder ikke en sikker afsnitsliste for denne titel.</p>
-                              )}
+                              <SeriesEpisodeSelector
+                                season={seriesSeasons[c.id] ?? seasonForCredit(c)}
+                                onSeasonChange={season => setSeriesSeasons(prev => ({ ...prev, [c.id]: season }))}
+                                options={episodeOptionsForCredit(c)}
+                                selected={selectedEpisodes}
+                                onSelectedChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))}
+                                label="Vælg afsnit"
+                              />
                             </div>
                           )}
                         </div>

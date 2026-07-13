@@ -15,7 +15,17 @@ export async function resolveOrgId(
     .eq("user_id", userId)
     .limit(1)
     .maybeSingle();
-  return (data?.org_id as string | undefined) ?? null;
+  if (data?.org_id) return data.org_id as string;
+
+  const { data: holder } = await db
+    .from("rettighedshavere")
+    .select("org_affiliations(org_id)")
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  const affiliations = holder?.org_affiliations as Array<{ org_id?: string | null }> | null | undefined;
+  return affiliations?.find(affiliation => affiliation.org_id)?.org_id ?? null;
 }
 
 export async function requireOrgId(db: SupabaseClient, userId: string): Promise<string> {

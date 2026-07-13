@@ -7,8 +7,9 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBExternalIds, getTMDBSeasonEpisodes, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
-import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractDfiDirectors, extractDfiPersonPortraitUrl, extractDfiPersonPortraitUrls, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
+import { buildCompleteEpisodeOptions, parseLocalEpisodeCode } from "@/lib/series-episodes";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireOrgId } from "@/lib/org";
@@ -116,6 +117,43 @@ async function currentRightsHolderAndOrg() {
   const orgId = await requireOrgId(db, authData.user.id);
 
   return { db, userId: authData.user.id, rightsHolderId: rh.id as string, orgId };
+}
+
+async function rememberRightsHolderExternalIdentity(
+  db: ReturnType<typeof createServiceClient>,
+  rightsHolderId: string,
+  source: "dfi" | "tmdb" | "wikidata" | "imdb",
+  externalId: string | number | null | undefined,
+  displayName?: string | null
+) {
+  if (externalId === null || externalId === undefined || externalId === "") return;
+  const external_id = String(externalId);
+  const { data: conflict, error: conflictError } = await db
+    .from("rights_holder_external_identities")
+    .select("rights_holder_id")
+    .eq("source", source)
+    .eq("external_id", external_id)
+    .neq("rights_holder_id", rightsHolderId)
+    .maybeSingle();
+  if (conflictError) {
+    logWarn("Personidentitet", "Kunne ikke tjekke ekstern identitet", { source, externalId: external_id, error: conflictError.message });
+    return;
+  }
+  if (conflict) {
+    logWarn("Personidentitet", "Ekstern identitet er allerede knyttet til en anden rettighedshaver", { source, externalId: external_id });
+    return;
+  }
+  const { error } = await db.from("rights_holder_external_identities").upsert(
+    {
+      rights_holder_id: rightsHolderId,
+      source,
+      external_id,
+      display_name: displayName ?? null,
+      selected_automatically: true,
+    },
+    { onConflict: "rights_holder_id,source,external_id" }
+  );
+  if (error) logWarn("Personidentitet", "Ekstern identitet kunne ikke gemmes", { source, externalId: external_id, error: error.message });
 }
 
 async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceClient>, credit: DfiCredit, orgId: string) {
@@ -326,7 +364,21 @@ export async function getDFIPersonCredits(personId: number) {
   if (!result.success || !result.data) {
     return { success: false, error: result.error || "Kunne ikke hente person-detaljer." };
   }
-  return { success: true, credits: result.data.FilmCredits || [] };
+  const portraitPath = extractDfiPersonPortraitUrl(result.data);
+  const portraitPaths = extractDfiPersonPortraitUrls(result.data);
+  const normalizePortraitPath = (path: string) => /^https?:\/\//i.test(path)
+    ? path
+    : `https://www.dfi.dk${path.startsWith("/") ? "" : "/"}${path}`;
+  const portraitUrl = portraitPath
+    ? normalizePortraitPath(portraitPath)
+    : null;
+  return {
+    success: true,
+    person: result.data,
+    credits: result.data.FilmCredits || [],
+    portraitUrl,
+    portraitUrls: Array.from(new Set(portraitPaths.map(normalizePortraitPath))),
+  };
 }
 
 export async function searchDFIFilms(title: string) {
@@ -400,10 +452,7 @@ export async function prepareDFIImportCredits(personId: number, credits: DfiCred
   try {
     const { db, rightsHolderId, orgId } = await currentRightsHolderAndOrg();
 
-    await db
-      .from("rettighedshavere")
-      .update({ dfi_person_id: personId })
-      .eq("id", rightsHolderId);
+    await rememberRightsHolderExternalIdentity(db, rightsHolderId, "dfi", personId);
 
     const newCredits: DfiCredit[] = [];
     let linkedExistingCount = 0;
@@ -461,11 +510,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
   const { db, rightsHolderId, orgId } = context;
   logInfo("DFI import", "Starter import", { credits: selectedCredits.length });
 
-  // Gem dfi_person_id på rettighedshaveren
-  await db
-    .from("rettighedshavere")
-    .update({ dfi_person_id: personId })
-    .eq("id", rightsHolderId);
+  await rememberRightsHolderExternalIdentity(db, rightsHolderId, "dfi", personId);
 
   let importedCount = 0;
   let linkedExistingCount = 0;
@@ -946,6 +991,97 @@ export async function searchOnboardingCredits(
   const dfiCredits: OnboardingCredit[] = [];
   const tmdbCredits: OnboardingCredit[] = [];
 
+  const localEpisodeParentIds = Array.from(new Set(
+    Array.from(localWorksMap.values())
+      .map(val => val.work?.parent_work_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+  ));
+
+  if (localEpisodeParentIds.length > 0) {
+    try {
+      const [{ data: parentWorks }, { data: childWorks }] = await Promise.all([
+        db.from("works").select("*").in("id", localEpisodeParentIds),
+        db.from("works").select("*").in("parent_work_id", localEpisodeParentIds).order("season_number", { ascending: true }).order("episode_number", { ascending: true }),
+      ]);
+      const parentMap = new Map((parentWorks ?? []).map((work: any) => [work.id, work]));
+      const childrenByParent = new Map<string, any[]>();
+      for (const child of childWorks ?? []) {
+        if (!child.parent_work_id) continue;
+        const rows = childrenByParent.get(child.parent_work_id) ?? [];
+        rows.push(child);
+        childrenByParent.set(child.parent_work_id, rows);
+      }
+
+      for (const [workId, val] of Array.from(localWorksMap.entries())) {
+        const parentId = val.work?.parent_work_id;
+        if (!parentId) continue;
+        const parent = parentMap.get(parentId);
+        if (!parent) continue;
+        localWorksMap.delete(workId);
+        const existing = localWorksMap.get(parent.id);
+        const children = childrenByParent.get(parent.id) ?? [];
+        localWorksMap.set(parent.id, {
+          work: {
+            ...parent,
+            __local_children: children,
+            __episode_options: buildCompleteEpisodeOptions({
+              episodeCount: parent.episode_count,
+              localChildren: children,
+              seasonNumber: parseSeasonNumberFromTitle(parent.title) ?? children.find(child => child.season_number)?.season_number ?? 1,
+            }),
+          },
+          role: existing?.role ?? val.role,
+        });
+      }
+    } catch (err) {
+      logWarn("Onboarding search", "Lokale serieafsnit kunne ikke samles under parent", { error: errorMessage(err) });
+    }
+  }
+
+  const localParentsByTitle = new Map<string, { work: any; role: string }>();
+  for (const val of localWorksMap.values()) {
+    const work = val.work;
+    const type = String(work?.type ?? "").toLowerCase();
+    if (!work?.title || work?.parent_work_id || !(type.includes("serie") || type.includes("tv"))) continue;
+    localParentsByTitle.set(normalizeTitle(cleanDfiTitle(work.title)), val);
+  }
+
+  const titleBasedChildrenByParent = new Map<string, any[]>();
+  for (const [workId, val] of Array.from(localWorksMap.entries())) {
+    const parsed = parseLocalEpisodeCode(val.work?.title);
+    if (!parsed?.baseTitle) continue;
+    const parent = localParentsByTitle.get(normalizeTitle(parsed.baseTitle));
+    if (!parent) continue;
+    localWorksMap.delete(workId);
+    const rows = titleBasedChildrenByParent.get(parent.work.id) ?? [];
+    rows.push({
+      ...val.work,
+      season_number: val.work?.season_number ?? parsed.seasonNumber,
+      episode_number: val.work?.episode_number ?? parsed.episodeNumber,
+    });
+    titleBasedChildrenByParent.set(parent.work.id, rows);
+  }
+
+  for (const [parentId, children] of titleBasedChildrenByParent.entries()) {
+    const parentEntry = localWorksMap.get(parentId);
+    if (!parentEntry) continue;
+    const existingChildren = Array.isArray(parentEntry.work.__local_children) ? parentEntry.work.__local_children : [];
+    const mergedChildren = Array.from(new Map([...existingChildren, ...children].map(child => [child.id ?? `${child.season_number}-${child.episode_number}`, child])).values());
+    const parentSeason = parseSeasonNumberFromTitle(parentEntry.work.title) ?? mergedChildren.find(child => child.season_number)?.season_number ?? 1;
+    localWorksMap.set(parentId, {
+      ...parentEntry,
+      work: {
+        ...parentEntry.work,
+        __local_children: mergedChildren,
+        __episode_options: buildCompleteEpisodeOptions({
+          episodeCount: parentEntry.work.episode_count,
+          localChildren: mergedChildren,
+          seasonNumber: parentSeason,
+        }),
+      },
+    });
+  }
+
   // A. Fyld Local listen
   localWorksMap.forEach((val) => {
     const w = val.work;
@@ -961,6 +1097,7 @@ export async function searchOnboardingCredits(
       poster_url: w.poster_url ?? null,
       director: w.director ?? null,
       season_number: w.season_number ?? parseSeasonNumberFromTitle(w.title),
+      episode_options: w.__episode_options ?? [],
       raw: w
     });
   });
@@ -1030,6 +1167,14 @@ export async function searchOnboardingCredits(
 
 export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, seasonNumber = 1) {
   let options = credit.episode_options ?? [];
+  if (credit.source === "lokal" && Array.isArray(credit.raw?.__local_children)) {
+    options = buildCompleteEpisodeOptions({
+      episodeCount: Number(credit.raw?.episode_count ?? credit.raw?.number_of_episodes ?? 0) || null,
+      externalOptions: options,
+      localChildren: credit.raw.__local_children,
+      seasonNumber,
+    });
+  }
   if (credit.source === "dfi") {
     const dfiId = String(credit.id).replace(/^dfi-/, "");
     const details = await getDFIFilmDetails(Number(dfiId));
@@ -1041,12 +1186,15 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
     }).filter((item): item is { number: number; title: string } => Boolean(item));
     if (dfiOptions.length) options = dfiOptions;
   }
-  if (!options.length) {
+  if (!options.length || (credit.source === "lokal" && Number(credit.raw?.tmdb_id ?? 0) && options.length <= (credit.raw?.__local_children?.length ?? 0))) {
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
     if (!tmdbId) tmdbId = Number((await findTMDBMatch(credit.title, credit.year)).tmdb_id ?? 0);
     if (tmdbId) {
       const season = await getTMDBSeasonEpisodes(tmdbId, seasonNumber);
-      if (season.success) options = (season.episodes ?? []).map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` })).filter(option => Number.isFinite(option.number) && option.number > 0);
+      if (season.success) {
+        const tmdbOptions = (season.episodes ?? []).map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` })).filter(option => Number.isFinite(option.number) && option.number > 0);
+        if (tmdbOptions.length > options.length) options = tmdbOptions;
+      }
     }
   }
   return { success: options.length > 0, options, error: options.length ? null : "Der blev ikke fundet afsnit for denne sæson." };
@@ -1129,12 +1277,11 @@ export async function importApprovedOnboardingWorks(
   }
   const { db, rightsHolderId, orgId } = context;
 
-  // Gem dfi_person_id på rettighedshaveren
   if (dfiPersonId) {
-    await db
-      .from("rettighedshavere")
-      .update({ dfi_person_id: dfiPersonId })
-      .eq("id", rightsHolderId);
+    await rememberRightsHolderExternalIdentity(db, rightsHolderId, "dfi", dfiPersonId);
+  }
+  if (tmdbPersonId) {
+    await rememberRightsHolderExternalIdentity(db, rightsHolderId, "tmdb", tmdbPersonId);
   }
 
   const localCredits = approvedCredits.filter(c => c.source === "lokal");

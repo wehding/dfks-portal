@@ -16,6 +16,7 @@ export type PersonCandidate = {
   knownFor: string[];
   description?: string | null;
   imageUrl?: string | null;
+  portraitUrls?: string[];
   sourceId: string;
 };
 
@@ -27,6 +28,30 @@ function includeCandidate(query: string, name: string) {
   const match = scorePersonName(query, name);
   const threshold = query.trim().split(/\s+/).length === 1 ? 0.8 : 0.62;
   return { ...match, include: match.score >= threshold };
+}
+
+function extensionFromContentType(contentType: string | null) {
+  if (!contentType) return "jpg";
+  if (contentType.includes("png")) return "png";
+  if (contentType.includes("webp")) return "webp";
+  if (contentType.includes("svg")) return "svg";
+  return "jpg";
+}
+
+async function downloadPortraitToStorage(userId: string, sourceUrl: string) {
+  const response = await fetch(sourceUrl, { headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/svg+xml,image/*,*/*" } });
+  if (!response.ok) throw new Error("Portrættet kunne ikke hentes fra kilden.");
+  const contentType = response.headers.get("content-type") ?? "image/jpeg";
+  if (!contentType.startsWith("image/")) throw new Error("Portrætkilden returnerede ikke et billede.");
+  const buffer = await response.arrayBuffer();
+  const db = createServiceClient();
+  const path = `${userId}/external-${Date.now()}.${extensionFromContentType(contentType)}`;
+  const { error } = await db.storage.from("avatars").upload(path, buffer, {
+    contentType,
+    upsert: false,
+  });
+  if (error) throw new Error(error.message);
+  return db.storage.from("avatars").getPublicUrl(path).data.publicUrl;
 }
 
 export async function discoverPersonCandidates(fullName: string, alternativeNames: string[] = []) {
@@ -49,7 +74,24 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
       if (!sourceId || !name || !match.include) continue;
       const key = `dfi:${sourceId}`;
       const previous = candidates.get(key);
-      if (!previous || previous.score < match.score) candidates.set(key, { key, source: "dfi", sourceId, name, score: match.score, reason: match.reason, knownFor: [] });
+      if (!previous || previous.score < match.score) {
+        const details = await getDFIPersonCredits(Number(sourceId)).catch(() => null);
+        const knownFor = details?.success
+          ? (details.credits ?? []).map((credit: Record<string, unknown>) => String(credit.Title ?? credit.DanishTitle ?? "")).filter(Boolean).slice(0, 5)
+          : [];
+        const portraitUrls = details?.success ? details.portraitUrls ?? [] : [];
+        candidates.set(key, {
+          key,
+          source: "dfi",
+          sourceId,
+          name,
+          score: match.score,
+          reason: match.reason,
+          knownFor,
+          imageUrl: portraitUrls[0] ?? (details?.success ? details.portraitUrl ?? null : null),
+          portraitUrls,
+        });
+      }
     }
 
     for (const row of tmdb.success ? tmdb.results ?? [] : []) {
@@ -60,7 +102,8 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
       const knownFor = Array.isArray(row.known_for) ? row.known_for.map((item: Record<string, unknown>) => String(item.title ?? item.name ?? "")).filter(Boolean).slice(0, 4) : [];
       const key = `tmdb:${sourceId}`;
       const previous = candidates.get(key);
-      if (!previous || previous.score < match.score) candidates.set(key, { key, source: "tmdb", sourceId, name, score: match.score, reason: match.reason, knownFor, imageUrl: row.profile_path ? `https://image.tmdb.org/t/p/w185${row.profile_path}` : null });
+      const portraitUrl = row.profile_path ? `https://image.tmdb.org/t/p/original${row.profile_path}` : null;
+      if (!previous || previous.score < match.score) candidates.set(key, { key, source: "tmdb", sourceId, name, score: match.score, reason: match.reason, knownFor, imageUrl: portraitUrl, portraitUrls: portraitUrl ? [portraitUrl] : [] });
     }
 
     for (const row of wikidata) {
@@ -88,7 +131,12 @@ export async function enrichPersonCandidate(candidate: PersonCandidate) {
   return candidate;
 }
 
-export async function confirmExternalPersonIdentity(selected: PersonCandidate[], searchedName?: string, submittedAlternativeNames: string[] = []) {
+export async function confirmExternalPersonIdentity(
+  selected: PersonCandidate[],
+  searchedName?: string,
+  submittedAlternativeNames: string[] = [],
+  selectedPortraitUrl?: string | null
+) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
@@ -102,20 +150,9 @@ export async function confirmExternalPersonIdentity(selected: PersonCandidate[],
   const allowed = new Map((discovery.success ? discovery.candidates : []).map(candidate => [candidate.key, candidate]));
   const trustedSelected = selected.map(candidate => allowed.get(candidate.key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate));
   if (trustedSelected.length !== selected.length) return { success: false, error: "Et personmatch kunne ikke verificeres. Søg igen." };
-  const dfi = trustedSelected.filter(candidate => candidate.source === "dfi");
   const tmdb = trustedSelected.filter(candidate => candidate.source === "tmdb");
-  const wikidata = trustedSelected.filter(candidate => candidate.source === "wikidata");
   const tmdbExternal = await Promise.all(tmdb.map(candidate => getTMDBPersonExternalIds(Number(candidate.sourceId))));
   const variants = Array.from(new Set([...verifiedAlternativeNames, ...trustedSelected.map(candidate => candidate.name)])).filter(Boolean);
-  const identity = {
-    dfi_person_id: dfi[0] ? Number(dfi[0].sourceId) : null,
-    tmdb_person_id: tmdb[0] ? Number(tmdb[0].sourceId) : null,
-    wikidata_qid: wikidata[0]?.sourceId ?? tmdbExternal.find(item => item.wikidata_qid)?.wikidata_qid ?? null,
-    imdb_nm: tmdbExternal.find(item => item.imdb_nm)?.imdb_nm ?? null,
-    alternative_names: variants,
-  };
-  const { error } = await db.from("rettighedshavere").update(identity).eq("id", holder.id);
-  if (error) return { success: false, error: error.message };
   const rows: Array<{ rights_holder_id: string; source: "dfi" | "tmdb" | "wikidata" | "imdb"; external_id: string; display_name: string | null; match_score: number; match_reason: string; selected_automatically: boolean }> = trustedSelected.map(candidate => ({
     rights_holder_id: holder.id,
     source: candidate.source,
@@ -135,11 +172,30 @@ export async function confirmExternalPersonIdentity(selected: PersonCandidate[],
     const conflict = (conflicts ?? []).find(item => rows.some(row => row.source === item.source && row.external_id === item.external_id));
     if (conflict) return { success: false, error: "En valgt navneprofil er allerede knyttet til en anden bruger. Kontakt admin." };
   }
+  const portraitCandidates = trustedSelected.flatMap(candidate => candidate.portraitUrls?.length ? candidate.portraitUrls : candidate.imageUrl ? [candidate.imageUrl] : []);
+  const portraitUrl = selectedPortraitUrl && portraitCandidates.includes(selectedPortraitUrl)
+    ? selectedPortraitUrl
+    : portraitCandidates.length === 1
+      ? portraitCandidates[0]
+      : null;
+  let storedPortraitUrl: string | null = null;
+  if (portraitUrl) {
+    try {
+      storedPortraitUrl = await downloadPortraitToStorage(user.id, portraitUrl);
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "Portrættet kunne ikke gemmes." };
+    }
+  }
+  const { error } = await db
+    .from("rettighedshavere")
+    .update({ alternative_names: variants, ...(storedPortraitUrl ? { portrait_url: storedPortraitUrl } : {}) })
+    .eq("id", holder.id);
+  if (error) return { success: false, error: error.message };
   const { error: deleteError } = await db.from("rights_holder_external_identities").delete().eq("rights_holder_id", holder.id);
   if (deleteError) return { success: false, error: deleteError.message };
   if (rows.length) {
     const { error: insertError } = await db.from("rights_holder_external_identities").insert(rows);
     if (insertError) return { success: false, error: insertError.message };
   }
-  return { success: true };
+  return { success: true, portraitUrl: storedPortraitUrl };
 }

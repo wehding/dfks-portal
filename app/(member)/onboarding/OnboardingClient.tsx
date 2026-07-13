@@ -4,10 +4,11 @@ import React, { useState } from "react";
 import { completeOnboarding } from "@/app/actions/member-profile";
 import { searchOnboardingCredits, importApprovedOnboardingWorks, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
 import { useRouter } from "next/navigation";
-import { CheckCircle, ArrowRight, ArrowLeft, Loader2, Search } from "lucide-react";
+import { CheckCircle, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery";
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
-import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 
 const STEPS = [
   { id: 1, title: "Velkommen", icon: "👋" },
@@ -74,6 +75,7 @@ export default function OnboardingClient({
   const [personSearchError, setPersonSearchError] = useState<string | null>(null);
   const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
   const [newAlternativeName, setNewAlternativeName] = useState("");
+  const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
 
   // Import timer
   const [importSeconds, setImportSeconds] = useState(0);
@@ -113,17 +115,21 @@ export default function OnboardingClient({
   };
 
   const episodeCountForCredit = (credit: OnboardingCredit) => {
-    if (episodeOptions[credit.id]?.length) return episodeOptions[credit.id].length;
-    if (credit.episode_options?.length) return credit.episode_options.length;
     const rawCount = credit.raw?.number_of_episodes ?? credit.raw?.episode_count ?? credit.raw?.EpisodeCount;
     const parsed = Number(rawCount);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 60);
-    return 0;
+    const optionsCount = Math.max(episodeOptions[credit.id]?.length ?? 0, credit.episode_options?.length ?? 0);
+    const count = Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 0, optionsCount);
+    return count > 0 ? Math.min(count, 80) : 0;
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
-    const count = episodeCountForCredit(credit);
-    return seriesEpisodes[credit.id] ?? (episodeOptions[credit.id]?.map(option => option.number) ?? credit.episode_options?.map(option => option.number) ?? Array.from({ length: count }, (_, index) => index + 1));
+    const options = buildCompleteEpisodeOptions({
+      episodeCount: episodeCountForCredit(credit),
+      externalOptions: episodeOptions[credit.id] ?? credit.episode_options ?? [],
+      localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
+      seasonNumber: seriesSeasons[credit.id] ?? 1,
+    });
+    return seriesEpisodes[credit.id] ?? options.map(option => option.number);
   };
 
   const loadEpisodes = async (credit: OnboardingCredit, season = seriesSeasons[credit.id] ?? 1) => {
@@ -171,6 +177,8 @@ export default function OnboardingClient({
       const candidates = result.success ? result.candidates : [];
       setPersonCandidates(current => merge ? Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score) : candidates);
       setSelectedPersonCandidates(current => ({ ...(merge ? current : {}), ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }));
+      const portrait = candidates.find(candidate => candidate.imageUrl)?.imageUrl ?? null;
+      if (portrait && (!merge || !selectedPortraitUrl)) setSelectedPortraitUrl(portrait);
       if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
     } catch {
       setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
@@ -211,7 +219,7 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames);
+        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, selectedPortraitUrl);
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
@@ -269,6 +277,14 @@ export default function OnboardingClient({
       setStep((s) => s + 1);
     }
   };
+
+  const portraitOptions = Array.from(
+    new Map(
+      personCandidates
+        .filter(candidate => selectedPersonCandidates[candidate.key])
+        .flatMap(candidate => (candidate.portraitUrls?.length ? candidate.portraitUrls : candidate.imageUrl ? [candidate.imageUrl] : []).map(url => [url, candidate] as const))
+    ).entries()
+  );
 
   const progress = ((step - 1) / (STEPS.length - 1)) * 100;
 
@@ -500,15 +516,60 @@ export default function OnboardingClient({
                   Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Du kan vælge flere navneprofiler fra samme database.
                 </p>
               </div>
-              <div style={{ display: "flex", gap: "10px" }}>
-                <input type="text" aria-label="Dit navn" value={dfiSearchQuery} onChange={event => setDfiSearchQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void handlePersonSearch(); }} style={{ flex: 1, padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }} />
-                <button type="button" onClick={() => void handlePersonSearch()} disabled={isSearchingDfi} style={{ padding: "10px 16px", display: "flex", gap: "6px", alignItems: "center", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}>{isSearchingDfi ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={16} />}Søg</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB" }}>
+                <p style={{ margin: 0, fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>
+                  Søg på dit krediteringsnavn. Tilføj eventuelle stavevarianter eller tidligere navne nedenfor, så søger vi på dem samlet.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--on-surface-variant)" }}>Navn fra dine oplysninger</span>
+                  <div style={{ padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", color: "#111827", fontWeight: 600 }}>
+                    {dfiSearchQuery || fullNameValue || "Navn mangler"}
+                  </div>
+                </div>
+                {alternativeNames.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                    {alternativeNames.map(name => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => setAlternativeNames(current => current.filter(item => item !== name))}
+                        title="Fjern navnevariant"
+                        style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer", color: "#111827" }}
+                      >
+                        {name} ×
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <input
+                    value={newAlternativeName}
+                    onChange={event => setNewAlternativeName(event.target.value)}
+                    onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }}
+                    placeholder="Tilføj navnevariant"
+                    style={{ flex: "1 1 220px", minWidth: 0, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB", color: "#111827" }}
+                  />
+                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}>Tilføj variant</button>
+                </div>
               </div>
-              <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <div><div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Alternative navne</div><p style={{ margin: "4px 0 0", fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>Tilføj andre stavemåder, mellemnavne eller navne, du tidligere er blevet krediteret under. Vi søger på alle navnevarianterne og samler resultaterne.</p></div>
-                {alternativeNames.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>{alternativeNames.map(name => <button key={name} type="button" onClick={() => setAlternativeNames(current => current.filter(item => item !== name))} title="Fjern navnevariant" style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer" }}>{name} ×</button>)}</div>}
-                <div style={{ display: "flex", gap: "8px" }}><input value={newAlternativeName} onChange={event => setNewAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }} placeholder="Tilføj en navnevariant" style={{ flex: 1, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB" }} /><button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer" }}>Tilføj og søg</button></div>
-              </div>
+              {portraitOptions.length > 1 && (
+                <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#FFFFFF", display: "flex", flexDirection: "column", gap: "10px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Vælg portræt</div>
+                  <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                    {portraitOptions.map(([url, candidate]) => (
+                      <button
+                        key={url}
+                        type="button"
+                        onClick={() => setSelectedPortraitUrl(url)}
+                        style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid #111827" : "1px solid #D1D5DB", borderRadius: "8px", padding: "6px 8px", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}
+                      >
+                        <img src={url} alt="" style={{ width: "36px", height: "44px", borderRadius: "6px", objectFit: "cover" }} />
+                        <span style={{ fontSize: "12px", fontWeight: 600 }}>{candidate.source.toUpperCase()}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
             </div>
           )}
@@ -600,18 +661,22 @@ export default function OnboardingClient({
                                 {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
                               </button>
                               {expandedSeries[c.id] && (
-                                <div style={{ marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--on-surface-variant)" }}>
-                                    Sæson
-                                    <input
-                                      type="number"
-                                      min={1}
-                                      value={seriesSeasons[c.id] ?? 1}
-                                      onChange={(event) => { const season = Math.max(1, Number(event.target.value) || 1); setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodes(c, season); }}
-                                      style={{ width: "72px", padding: "6px 8px", border: "1px solid #D1D5DB", borderRadius: "6px" }}
-                                    />
-                                  </label>
-                                  {episodeLoading[c.id] ? <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} />Henter afsnit…</div> : episodeErrors[c.id] ? <div style={{ fontSize: "12px", color: "#B91C1C" }}>{episodeErrors[c.id]} <button type="button" onClick={() => void loadEpisodes(c)} style={{ textDecoration: "underline", border: 0, background: "transparent", cursor: "pointer" }}>Prøv igen</button></div> : <EpisodePicker compact options={episodeOptions[c.id]?.length ? episodeOptions[c.id] : Array.from({ length: episodeCount }, (_, index) => ({ number: index + 1 }))} selected={selectedEpisodes} onChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))} />}
+                                <div style={{ marginTop: "10px" }}>
+                                  <SeriesEpisodeSelector
+                                    season={seriesSeasons[c.id] ?? 1}
+                                    onSeasonChange={season => { setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodes(c, season); }}
+                                    options={buildCompleteEpisodeOptions({
+                                      episodeCount,
+                                      externalOptions: episodeOptions[c.id]?.length ? episodeOptions[c.id] : c.episode_options ?? [],
+                                      localChildren: Array.isArray(c.raw?.__local_children) ? c.raw.__local_children : [],
+                                      seasonNumber: seriesSeasons[c.id] ?? 1,
+                                    })}
+                                    selected={selectedEpisodes}
+                                    onSelectedChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))}
+                                    loading={Boolean(episodeLoading[c.id])}
+                                    error={episodeErrors[c.id]}
+                                    label="Vælg afsnit"
+                                  />
                                 </div>
                               )}
                             </div>

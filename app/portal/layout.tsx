@@ -357,7 +357,7 @@ export default function PortalLayout({
                         {isSuperadmin && (
                             <SidebarMenuItem>
                                 <SidebarMenuButton asChild>
-                                    <SidebarNavigationLink href="/superadmin/organisationer">
+                                    <SidebarNavigationLink href="/admin/organisationer">
                                         <ShieldCheck className="h-4 w-4" />
                                         <span>Superadmin</span>
                                     </SidebarNavigationLink>

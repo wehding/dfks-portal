@@ -57,6 +57,7 @@ const ADMIN_NAV_ITEMS = [
     { key: "statistik",           href: "/admin/statistik",           icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "indbetalinger",       href: "/admin/indbetalinger",       icon: Receipt,     labelKey: "nav.producerPayments" },
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
+    { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
 ]
 
@@ -85,8 +86,8 @@ const MENU_BADGE_GODKEND = `${MENU_BADGE_BASE} bg-amber-100 text-amber-800`
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
-    admin:       ALL_KEYS,
-    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere"),
+    admin:       ALL_KEYS.filter(k => k !== "organisationer"),
+    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer"),
     jurist:      ["kontrakter", "kontraktgennemgang"],
     viewer:      ["kontrakter", "statistik"],
 }
@@ -309,16 +310,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
                 <SidebarFooter>
                     <SidebarMenu>
-                        {isSuperadmin && (
-                            <SidebarMenuItem>
-                                <SidebarMenuButton asChild>
-                                    <SidebarNavigationLink href="/superadmin/organisationer">
-                                        <ShieldCheck className="h-4 w-4" />
-                                        <span>Superadmin</span>
-                                    </SidebarNavigationLink>
-                                </SidebarMenuButton>
-                            </SidebarMenuItem>
-                        )}
                         <SidebarMenuItem>
                             <SidebarMenuButton onClick={handleLogout}>
                                 <LogOut className="h-4 w-4" />
