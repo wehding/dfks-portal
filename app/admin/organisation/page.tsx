@@ -112,9 +112,9 @@ export default function OrganisationSettingsPage() {
         <div>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Building2 className="h-4 w-4" />
-            Organisation
+            Opsætning
           </div>
-          <h1 className="text-2xl font-semibold">Organisationsopsætning</h1>
+          <h1 className="text-2xl font-semibold">Opsætning</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
@@ -173,8 +173,8 @@ export default function OrganisationSettingsPage() {
         </p>
         <div className="mt-4 space-y-4">
           <div className="space-y-2">
-            <Label>Ord for “medklipper”</Label>
-            <Input value={form.coeditor_word} onChange={event => setForm(f => ({ ...f, coeditor_word: event.target.value }))} placeholder="medklipper" />
+            <Label>Ord for “medskaber”</Label>
+            <Input value={form.coeditor_word} onChange={event => setForm(f => ({ ...f, coeditor_word: event.target.value }))} placeholder="medskaber" />
           </div>
           <div className="space-y-2">
             <Label>Rollebetegnelser</Label>

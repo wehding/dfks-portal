@@ -61,9 +61,9 @@ export function mapDfiWorkType(
   return fallback;
 }
 
-function imagePath(image: Record<string, unknown>) {
+export function imagePath(image: Record<string, unknown>) {
   const cropped = Array.isArray(image.ScaledCropped) ? image.ScaledCropped : [];
-  const preferredNames = ["portrait34s", "portrait34m", "portrait34l"];
+  const preferredNames = ["portrait34l", "portrait34m", "portrait34s"];
   const portrait = preferredNames
     .map(preferredName => cropped.find(item => {
       if (!isRecord(item)) return false;
@@ -88,6 +88,27 @@ export function extractDfiPosterUrl(metadata: unknown) {
   }
 
   return null;
+}
+
+export function extractDfiPersonPortraitUrl(person: unknown) {
+  if (!isRecord(person)) return null;
+  const images = Array.isArray(person.Images) ? person.Images : [];
+  for (const image of images) {
+    if (!isRecord(image)) continue;
+    const path = imagePath(image);
+    if (path) return path;
+  }
+  return null;
+}
+
+export function extractDfiPersonPortraitUrls(person: unknown) {
+  if (!isRecord(person)) return [];
+  const images = Array.isArray(person.Images) ? person.Images : [];
+  return Array.from(new Set(images.flatMap(image => {
+    if (!isRecord(image)) return [];
+    const path = imagePath(image);
+    return path ? [path] : [];
+  })));
 }
 
 export function extractDfiPremiereYear(metadata: unknown) {

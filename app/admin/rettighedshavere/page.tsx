@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMembersSyncStatus, syncDfksMembers } from "@/app/actions/dfks-members"
+import { deleteRightsHolders } from "@/app/actions/rights-holder-admin"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret"
 type AdminUserResponse = {
@@ -109,6 +110,8 @@ export default function RettighedshavereAdminPage() {
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const [deletingSelected, setDeletingSelected] = useState(false)
 
     useEffect(() => {
         const supabase = createClient()
@@ -238,6 +241,29 @@ export default function RettighedshavereAdminPage() {
         }
         return true
     })
+    const visibleIds = visible.map(rh => rh.id)
+    const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
+    const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
+
+    function toggleSelected(id: string, checked: boolean) {
+        setSelectedIds(current => {
+            const next = new Set(current)
+            if (checked) next.add(id)
+            else next.delete(id)
+            return next
+        })
+    }
+
+    function toggleAllVisible(checked: boolean) {
+        setSelectedIds(current => {
+            const next = new Set(current)
+            for (const id of visibleIds) {
+                if (checked) next.add(id)
+                else next.delete(id)
+            }
+            return next
+        })
+    }
 
     // Send invitationsmail til én rettighedshaver. Returnerer true hvis mailen blev sendt.
     async function sendInviteFor(rhId: string, email: string, name: string): Promise<AdminUserResponse | null> {
@@ -282,7 +308,8 @@ export default function RettighedshavereAdminPage() {
     // Masseudsend: invitér alle synlige personer der har email og endnu ikke er registreret.
     async function handleBulkInvite() {
         if (!orgId) return
-        const targets = visible.filter(rh => rh.email && !rh.onboarding_completed)
+        const base = selectedIds.size > 0 ? visible.filter(rh => selectedIds.has(rh.id)) : visible
+        const targets = base.filter(rh => rh.email && !rh.onboarding_completed)
         if (targets.length === 0) { toast.info("Ingen at invitere — alle synlige er enten registreret eller mangler email."); return }
         if (!confirm(`Send invitation til ${targets.length} person(er) der endnu ikke er oprettet?`)) return
         setBulkInviting(true)
@@ -294,6 +321,26 @@ export default function RettighedshavereAdminPage() {
         setBulkInviting(false)
         toast.success(`${sent} af ${targets.length} invitationer sendt`)
         load(orgId)
+    }
+
+    async function handleDeleteSelected() {
+        if (!orgId || selectedIds.size === 0) return
+        const names = visible.filter(rh => selectedIds.has(rh.id)).map(rh => rh.full_name)
+        if (!confirm(`Slet ${selectedIds.size} rettighedshaver(e)? Personer med kontrakter eller værker bliver ikke slettet.\n\n${names.slice(0, 8).join("\n")}${names.length > 8 ? "\n..." : ""}`)) return
+        setDeletingSelected(true)
+        const result = await deleteRightsHolders(Array.from(selectedIds))
+        setDeletingSelected(false)
+        if (!result.success) {
+            toast.error(result.error ?? "Rettighedshavere kunne ikke slettes")
+            return
+        }
+        if (result.deletedCount > 0) toast.success(`${result.deletedCount} rettighedshaver(e) slettet`)
+        if (result.blocked.length > 0) {
+            toast.warning(`${result.blocked.length} kunne ikke slettes: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
+        }
+        setSelectedIds(new Set())
+        await load(orgId)
+        await loadOverviewCounts(orgId)
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
@@ -395,7 +442,7 @@ export default function RettighedshavereAdminPage() {
                             Opdater DFKS medlemsliste
                         </Button>
                         <Button size="sm" variant="outline" onClick={handleBulkInvite} disabled={bulkInviting}>
-                            {bulkInviting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}Send invitation til alle ikke-oprettede
+                            {bulkInviting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}{selectedIds.size > 0 ? "Invitér valgte" : "Send invitation til alle ikke-oprettede"}
                         </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Opret ny
@@ -440,6 +487,19 @@ export default function RettighedshavereAdminPage() {
                 </Select>
             </div>
 
+            {selectedIds.size > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                    <div className="text-sm font-medium">{selectedIds.size} valgt</div>
+                    <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        <Button size="sm" variant="destructive" onClick={handleDeleteSelected} disabled={deletingSelected}>
+                            {deletingSelected ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                            Slet valgte
+                        </Button>
+                    </div>
+                </div>
+            )}
+
             <MobileCardList>
                 {loading ? (
                     <MobileDataCard>
@@ -458,10 +518,19 @@ export default function RettighedshavereAdminPage() {
                     return (
                         <MobileDataCard key={rh.id}>
                             <div className="flex items-start justify-between gap-3">
-                                <button className="min-w-0 text-left" onClick={() => openEdit(rh)}>
-                                    <p className="truncate font-medium">{rh.full_name}</p>
-                                    <p className="mt-1 truncate text-sm text-muted-foreground">{rh.email ?? "Ingen email"}</p>
-                                </button>
+                                <div className="flex min-w-0 gap-3">
+                                    <input
+                                        type="checkbox"
+                                        className="mt-1 h-4 w-4 shrink-0"
+                                        checked={selectedIds.has(rh.id)}
+                                        onChange={event => toggleSelected(rh.id, event.target.checked)}
+                                        aria-label={`Vælg ${rh.full_name}`}
+                                    />
+                                    <button className="min-w-0 text-left" onClick={() => openEdit(rh)}>
+                                        <p className="truncate font-medium">{rh.full_name}</p>
+                                        <p className="mt-1 truncate text-sm text-muted-foreground">{rh.email ?? "Ingen email"}</p>
+                                    </button>
+                                </div>
                                 <DropdownMenu>
                                     <DropdownMenuTrigger asChild>
                                         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
@@ -496,7 +565,7 @@ export default function RettighedshavereAdminPage() {
                                         ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
                                         : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
                                 </MobileMetaRow>
-                                <MobileMetaRow label="Portal">
+                                <MobileMetaRow label="Portaladgang">
                                     {hasLogin
                                         ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
                                         : <span className="text-muted-foreground">Ingen adgang</span>}
@@ -511,6 +580,14 @@ export default function RettighedshavereAdminPage() {
                 <Table>
                     <TableHeader>
                         <TableRow>
+                            <TableHead className="w-10">
+                                <input
+                                    type="checkbox"
+                                    checked={allVisibleSelected}
+                                    onChange={event => toggleAllVisible(event.target.checked)}
+                                    aria-label="Vælg alle synlige"
+                                />
+                            </TableHead>
                             <TableHead>Navn</TableHead>
                             <TableHead>Email</TableHead>
                             <TableHead>Telefon</TableHead>
@@ -518,22 +595,30 @@ export default function RettighedshavereAdminPage() {
                             <TableHead>Kontrakter</TableHead>
                             <TableHead>Værker</TableHead>
                             <TableHead>Status</TableHead>
-                            <TableHead>Portal</TableHead>
+                            <TableHead>Portaladgang</TableHead>
                             <TableHead>Onboarding</TableHead>
                             <TableHead className="w-12"></TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={10} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
                         ) : visible.length === 0 ? (
-                            <TableRow><TableCell colSpan={10} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
                         ) : visible.map(rh => {
                             const aff = orgId ? getAffiliation(rh, orgId) : null
                             const hasLogin = !!rh.user_id
                             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0 }
                             return (
                                 <TableRow key={rh.id}>
+                                    <TableCell>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedIds.has(rh.id)}
+                                            onChange={event => toggleSelected(rh.id, event.target.checked)}
+                                            aria-label={`Vælg ${rh.full_name}`}
+                                        />
+                                    </TableCell>
                                     <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>

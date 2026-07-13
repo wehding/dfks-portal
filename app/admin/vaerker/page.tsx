@@ -50,8 +50,9 @@ import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDf
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
-import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
+import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -1547,15 +1548,17 @@ export default function VaerksadministrationPage() {
     const details = await resolveUnifiedSearchResultDetails(result);
     const d = details.success ? details.details : null;
     const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
-    const episodeCount = d?.episode_count ?? episodeOptions.length;
+    const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
     const hintedSeason = d?.season_hint ?? result.season_hint ?? null;
     setAddSeasonNumber(hintedSeason ? String(hintedSeason) : "1");
     setAddEpisodeOptions(
-      episodeOptions.length
-        ? episodeOptions
-        : episodeCount
-          ? Array.from({ length: episodeCount }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }))
-          : []
+      episodeCount
+        ? buildCompleteEpisodeOptions({
+          episodeCount,
+          externalOptions: episodeOptions,
+          seasonNumber: Number(hintedSeason ?? result.season_hint ?? 1),
+        })
+        : []
     );
     setAddSelectedEpisodes([]);
     setAddForm(form => ({
@@ -2074,7 +2077,16 @@ export default function VaerksadministrationPage() {
                             {Number(reviewEpisodeCount) > 0 && (
                               <div>
                                 <p className="mb-1 text-xs text-muted-foreground">Afsnit medlemmet er krediteret på (klik for at vælge til/fra):</p>
-                                <EpisodePicker compact options={Array.from({ length: Number(reviewEpisodeCount) }, (_, index) => ({ number: index + 1 }))} selected={reviewEpisodes} onChange={setReviewEpisodes} label="Afsnit medlemmet er krediteret på" />
+                                <SeriesEpisodeSelector
+                                  season={1}
+                                  onSeasonChange={() => undefined}
+                                  options={buildCompleteEpisodeOptions({ episodeCount: Number(reviewEpisodeCount), seasonNumber: 1 })}
+                                  selected={reviewEpisodes}
+                                  onSelectedChange={setReviewEpisodes}
+                                  label="Afsnit medlemmet er krediteret på"
+                                  compact
+                                  showSeason={false}
+                                />
                               </div>
                             )}
                           </div>
@@ -2655,7 +2667,18 @@ export default function VaerksadministrationPage() {
                           </Button>
                         </div>
                       </div>
-                      <EpisodePicker compact options={addEpisodeOptions} selected={addSelectedEpisodes} onChange={setAddSelectedEpisodes} />
+                      <SeriesEpisodeSelector
+                        season={Number(addSeasonNumber) || 1}
+                        onSeasonChange={season => setAddSeasonNumber(String(season))}
+                        options={buildCompleteEpisodeOptions({
+                          episodeCount: Math.max(Number(addForm.episode_count) || 0, addEpisodeOptions.length),
+                          externalOptions: addEpisodeOptions,
+                          seasonNumber: Number(addSeasonNumber) || 1,
+                        })}
+                        selected={addSelectedEpisodes}
+                        onSelectedChange={setAddSelectedEpisodes}
+                        compact
+                      />
                       <p className="mt-2 text-xs text-muted-foreground">
                         Hvis du vælger en rettighedshaver, tilknyttes personen de valgte afsnit.
                       </p>

@@ -59,6 +59,7 @@ export interface DbRettighedshaver {
     tmdb_person_id: number | null
     wikidata_qid: string | null
     imdb_nm: string | null
+    portrait_url: string | null
     opt_out_statistics: boolean
     gender: "female" | "male" | "non_binary" | "other" | "prefer_not_to_say" | null
     created_at: string

@@ -9,6 +9,7 @@ import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/
 import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
+import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode } from "@/lib/series-episodes";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -1078,6 +1079,53 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     console.error("Local search error in searchWorksUnified:", e);
   }
 
+  try {
+    const localById = new Map(localWorks.map(work => [work.id, work]));
+    const parentIds = Array.from(new Set(localWorks.map(work => work.parent_work_id).filter(Boolean)));
+    if (parentIds.length > 0) {
+      const [{ data: parents }, { data: children }] = await Promise.all([
+        db.from("works")
+          .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
+          .in("id", parentIds),
+        db.from("works")
+          .select("id, title, type, year, season_number, episode_number, parent_work_id")
+          .in("parent_work_id", parentIds)
+          .order("season_number", { ascending: true })
+          .order("episode_number", { ascending: true }),
+      ]);
+      const childrenByParent = new Map<string, any[]>();
+      for (const child of children ?? []) {
+        const rows = childrenByParent.get(child.parent_work_id) ?? [];
+        rows.push(child);
+        childrenByParent.set(child.parent_work_id, rows);
+      }
+      for (const parent of parents ?? []) {
+        localById.set(parent.id, { ...parent, __local_children: childrenByParent.get(parent.id) ?? [] });
+      }
+      for (const work of localWorks) {
+        if (work.parent_work_id) localById.delete(work.id);
+      }
+    }
+
+    const parentsByTitle = new Map<string, any>();
+    for (const work of localById.values()) {
+      if (!work.parent_work_id && isSeriesType(work.type)) parentsByTitle.set(normalizeTitle(cleanDfiTitle(work.title)), work);
+    }
+    for (const work of Array.from(localById.values())) {
+      const parsed = parseLocalEpisodeCode(work.title);
+      if (!parsed?.baseTitle) continue;
+      const parent = parentsByTitle.get(normalizeTitle(cleanDfiTitle(parsed.baseTitle)));
+      if (!parent) continue;
+      localById.delete(work.id);
+      const children = Array.isArray(parent.__local_children) ? parent.__local_children : [];
+      parent.__local_children = [...children, { ...work, season_number: work.season_number ?? parsed.seasonNumber, episode_number: work.episode_number ?? parsed.episodeNumber }];
+      localById.set(parent.id, parent);
+    }
+    localWorks = Array.from(localById.values());
+  } catch (e) {
+    console.error("Local series grouping error in searchWorksUnified:", e);
+  }
+
   const results: UnifiedSearchWorkResult[] = [];
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const querySeasonHint = parseSeasonNumberFromTitle(q);
@@ -1321,6 +1369,24 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let productionCountries: string[] = [];
   let productionCompanies: string[] = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
+  let localChildren: any[] = Array.isArray(result.raw_local?.__local_children) ? result.raw_local.__local_children : [];
+  const detailSeasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
+
+  if (result.local_id && isSeriesType(result.type)) {
+    try {
+      const { data: children } = await createServiceClient()
+        .from("works")
+        .select("id, title, season_number, episode_number, parent_work_id")
+        .eq("parent_work_id", result.local_id)
+        .order("season_number", { ascending: true })
+        .order("episode_number", { ascending: true });
+      if (children?.length) localChildren = children;
+      episodeCount = Number(result.raw_local?.episode_count ?? 0) || episodeCount;
+      seasonCount = Number(result.raw_local?.season_count ?? 0) || seasonCount;
+    } catch (e) {
+      console.error("Local episode lookup error in resolveUnifiedSearchResultDetails:", e);
+    }
+  }
 
   // 1. Fetch DFI details if DFI ID is present
   if (result.dfi_id) {
@@ -1356,12 +1422,12 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         const episodeChildren = children.filter((child: any) => Boolean(parseDfiEpisodeTitleInfo(child.Title ?? "")));
         if (precomputedOptions.length > 0) {
           episodeOptions = precomputedOptions;
-          episodeCount = precomputedOptions.length;
+          episodeCount = Math.max(episodeCount ?? 0, ...precomputedOptions.map((option: { number?: number }) => Number(option.number ?? 0)));
         } else if (episodeChildren.length > 0) {
-            episodeCount = episodeChildren.length;
             episodeOptions = episodeChildren.map((c: any, idx: number) => {
               const parsed = parseDfiEpisodeTitleInfo(c.Title ?? "");
               const num = parsed?.episodeNumber ?? idx + 1;
+              episodeCount = Math.max(episodeCount ?? 0, parsed?.totalEpisodes ?? num);
               const subtitle = parsed?.subtitle || c.Title || `Afsnit ${num}`;
               return {
                 number: num,
@@ -1401,16 +1467,14 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
         if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
-          const seasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
           const season = Array.isArray(tDetails.seasons)
-            ? tDetails.seasons.find((item: any) => item.season_number === seasonNumber)
+            ? tDetails.seasons.find((item: any) => item.season_number === detailSeasonNumber)
             : null;
           seasonCount = Number(tDetails.number_of_seasons ?? 0) || seasonCount;
           productionCountries = productionCountries.length ? productionCountries : (tDetails.production_countries ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
           productionCompanies = productionCompanies.length ? productionCompanies : (tDetails.production_companies ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
-          if (!episodeCount && season?.episode_count) {
+          if (season?.episode_count && (!episodeCount || season.episode_count > episodeCount)) {
             episodeCount = season.episode_count;
-            episodeOptions = Array.from({ length: season.episode_count }, (_, index) => ({ number: index + 1, title: `Afsnit ${index + 1}` }));
           }
         }
       }
@@ -1430,6 +1494,13 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   } catch (e) {
     console.error("Wikidata enrichment error in resolveUnifiedSearchResultDetails:", e);
   }
+
+  episodeOptions = buildCompleteEpisodeOptions({
+    episodeCount,
+    externalOptions: episodeOptions,
+    localChildren,
+    seasonNumber: detailSeasonNumber,
+  }) as { number: number; title: string; dfiId?: string | null }[];
 
   return {
     success: true,

@@ -1,8 +1,8 @@
 
 "use client"
 
-import { useState, useEffect } from "react"
-import { Lock, Heart, User, Save, Info, Loader2, Plus, X, RefreshCw, Film } from "lucide-react"
+import { useState, useEffect, type ChangeEvent } from "react"
+import { Lock, Heart, User, Save, Info, Loader2, Plus, X, RefreshCw, Film, Upload } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -29,6 +29,7 @@ interface ProfileData {
     member_no: string | null
     valid_from: string | null
     alternative_names: string[]
+    portrait_url: string | null
 }
 
 export default function MinProfilPage() {
@@ -43,6 +44,8 @@ export default function MinProfilPage() {
     const [personSearching, setPersonSearching] = useState(false)
     const [personError, setPersonError] = useState<string | null>(null)
     const [matchAlternativeName, setMatchAlternativeName] = useState("")
+    const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null)
+    const [uploadingPortrait, setUploadingPortrait] = useState(false)
 
     // Editable fields
     const [name, setName]         = useState("")
@@ -68,7 +71,7 @@ export default function MinProfilPage() {
             // Slå op via user_id
             let { data: rh } = await supabase
                 .from("rettighedshavere")
-                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names")
+                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url")
                 .eq("user_id", user.id)
                 .single()
 
@@ -76,7 +79,7 @@ export default function MinProfilPage() {
             if (!rh && user.email) {
                 const res = await supabase
                     .from("rettighedshavere")
-                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names")
+                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url")
                     .eq("email", user.email)
                     .single()
                 rh = res.data
@@ -98,6 +101,7 @@ export default function MinProfilPage() {
                     member_no: aff?.member_no ?? null,
                     valid_from: aff?.valid_from ?? null,
                     alternative_names: rh.alternative_names ?? [],
+                    portrait_url: rh.portrait_url ?? null,
                 }
                 setProfile(profileData)
                 setName(rh.full_name)
@@ -143,8 +147,8 @@ export default function MinProfilPage() {
             })
 
             toast.success("Dine oplysninger er gemt")
-        } catch (e: any) {
-            toast.error(e.message ?? "Fejl ved gem")
+        } catch (e: unknown) {
+            toast.error(e instanceof Error ? e.message : "Fejl ved gem")
         } finally {
             setSaving(false)
         }
@@ -159,6 +163,7 @@ export default function MinProfilPage() {
         const candidates = result.success ? result.candidates : []
         setPersonCandidates(candidates)
         setSelectedPeople(Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])))
+        setSelectedPortraitUrl(candidates.find(candidate => candidate.imageUrl)?.imageUrl ?? profile?.portrait_url ?? null)
         if (!result.success) setPersonError(result.error ?? "Kunne ikke søge efter navneprofiler.")
         setPersonSearching(false)
     }
@@ -166,8 +171,9 @@ export default function MinProfilPage() {
     const confirmPersonMatch = async () => {
         const selected = Object.entries(selectedPeople).filter(([, active]) => active).map(([key]) => personCandidates.find(candidate => candidate.key === key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate))
         if (personCandidates.length > 0 && selected.length === 0) { setPersonError("Vælg mindst én navneprofil."); return }
-        const result = await confirmExternalPersonIdentity(selected, name || profile?.full_name || "", altNavne)
+        const result = await confirmExternalPersonIdentity(selected, name || profile?.full_name || "", altNavne, selectedPortraitUrl)
         if (!result.success) { setPersonError(result.error ?? "Personmatch kunne ikke gemmes."); return }
+        if (result.portraitUrl || selectedPortraitUrl) setProfile(current => current ? { ...current, portrait_url: result.portraitUrl ?? selectedPortraitUrl } : current)
         setPersonMatchOpen(false)
         setCreditSearchOpen(true)
     }
@@ -183,9 +189,44 @@ export default function MinProfilPage() {
         const candidates = result.success ? result.candidates : []
         setPersonCandidates(current => Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score))
         setSelectedPeople(current => ({ ...current, ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }))
+        if (!selectedPortraitUrl) setSelectedPortraitUrl(candidates.find(candidate => candidate.imageUrl)?.imageUrl ?? null)
         if (!result.success) setPersonError(result.error ?? "Kunne ikke søge efter navneprofiler.")
         setPersonSearching(false)
     }
+
+    const handlePortraitUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0]
+        event.target.value = ""
+        if (!file || !profile) return
+        setUploadingPortrait(true)
+        const supabase = createClient()
+        try {
+            const { data: { user } } = await supabase.auth.getUser()
+            if (!user) throw new Error("Du skal være logget ind for at uploade billede.")
+            const extension = file.name.split(".").pop()?.toLowerCase() || "jpg"
+            const path = `${user.id}/${Date.now()}.${extension}`
+            const { error: uploadError } = await supabase.storage.from("avatars").upload(path, file, { upsert: false })
+            if (uploadError) throw new Error(uploadError.message)
+            const { data } = supabase.storage.from("avatars").getPublicUrl(path)
+            const publicUrl = data.publicUrl
+            const { error } = await supabase.from("rettighedshavere").update({ portrait_url: publicUrl }).eq("id", profile.id)
+            if (error) throw new Error(error.message)
+            setProfile(current => current ? { ...current, portrait_url: publicUrl } : current)
+            toast.success("Profilbillede opdateret")
+        } catch (error: unknown) {
+            toast.error(error instanceof Error ? error.message : "Profilbilledet kunne ikke uploades")
+        } finally {
+            setUploadingPortrait(false)
+        }
+    }
+
+    const portraitOptions = Array.from(
+        new Map(
+            personCandidates
+                .filter(candidate => selectedPeople[candidate.key])
+                .flatMap(candidate => (candidate.portraitUrls?.length ? candidate.portraitUrls : candidate.imageUrl ? [candidate.imageUrl] : []).map(url => [url, candidate] as const))
+        ).entries()
+    )
 
     if (loading) {
         return (
@@ -223,6 +264,24 @@ export default function MinProfilPage() {
                     <h2 className="font-medium">Personoplysninger</h2>
                 </div>
                 <div className="p-5 space-y-4">
+                    <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-center">
+                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-background">
+                            {profile?.portrait_url ? (
+                                <img src={profile.portrait_url} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                                <User className="h-8 w-8 text-muted-foreground" />
+                            )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="font-medium">Profilbillede</div>
+                            <p className="text-sm text-muted-foreground">Bruges til at genkende dig i profil- og rettighedshaverflows.</p>
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
+                            {uploadingPortrait ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                            Skift billede
+                            <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={handlePortraitUpload} disabled={uploadingPortrait} />
+                        </label>
+                    </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
                             <Label>Navn</Label>
@@ -404,6 +463,24 @@ export default function MinProfilPage() {
                     <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. Du kan vælge flere profiler fra samme database.</p>
                     <div className="space-y-2 rounded-md border bg-muted/30 p-3"><div><Label>Alternative navne</Label><p className="text-xs text-muted-foreground">Tilføj andre stavemåder, mellemnavne eller tidligere krediteringsnavne. Resultaterne flettes sammen med de eksisterende.</p></div><div className="flex gap-2"><Input value={matchAlternativeName} onChange={event => setMatchAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addMatchAlternativeName() } }} placeholder="Tilføj en navnevariant" /><Button type="button" variant="outline" onClick={() => void addMatchAlternativeName()} disabled={!matchAlternativeName.trim() || personSearching}>Tilføj og søg</Button></div></div>
                     <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonError(null) }} />
+                    {portraitOptions.length > 1 && (
+                        <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                            <Label>Vælg portræt</Label>
+                            <div className="flex flex-wrap gap-2">
+                                {portraitOptions.map(([url, candidate]) => (
+                                    <button
+                                        key={url}
+                                        type="button"
+                                        onClick={() => setSelectedPortraitUrl(url)}
+                                        className={`flex items-center gap-2 rounded-md border bg-background p-2 text-left text-xs ${selectedPortraitUrl === url ? "border-foreground ring-1 ring-foreground" : ""}`}
+                                    >
+                                        <img src={url} alt="" className="h-12 w-10 rounded object-cover" />
+                                        <span className="font-medium">{candidate.source.toUpperCase()}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>Annuller</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>Bekræft og find værker</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
