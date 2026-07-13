@@ -93,13 +93,20 @@ function StatCard({ icon: Icon, label, value, href, highlight }: {
 export default function AdminDashboardPage() {
     const [stats, setStats] = useState<Stats | null>(null)
     const [loading, setLoading] = useState(true)
-    const [orgId] = useState("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
 
     useEffect(() => {
         const load = async () => {
             const supabase = createClient()
             const { data: { user } } = await supabase.auth.getUser()
-            const resolvedOrgId = user?.user_metadata?.org_id ?? orgId
+            if (!user) { setLoading(false); return }
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const resolvedOrgId = roleRow?.org_id
+            if (!resolvedOrgId) { setLoading(false); return }
 
             const [pendingRes, validatedRes, membersRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true })

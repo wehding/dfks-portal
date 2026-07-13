@@ -9,8 +9,6 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
 const ROLE_RANK: Record<string, number> = {
     superadmin: 4,
@@ -36,6 +34,7 @@ export async function GET() {
     const supabase = await createServerClient()
     const caller = await assertAdminRole(supabase)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
+    const orgId = caller.orgId
 
     const admin = getAdmin()
 
@@ -49,7 +48,7 @@ export async function GET() {
     const { data: orgRoles } = await admin
         .from("user_org_roles")
         .select("user_id, role")
-        .eq("org_id", DFKS_ORG_ID)
+        .eq("org_id", orgId)
 
     // Gruppér roller per bruger
     const rolesMap = new Map<string, string[]>()
@@ -121,6 +120,7 @@ export async function PATCH(req: NextRequest) {
     const supabase = await createServerClient()
     const patchCaller = await assertAdminRole(supabase, SUPERADMIN_ROLES)
     if (!patchCaller) return NextResponse.json({ error: "Mangler superadmin/admin rettigheder" }, { status: 403 })
+    const orgId = patchCaller.orgId
 
     const body = await req.json()
     const admin = getAdmin()
@@ -133,11 +133,11 @@ export async function PATCH(req: NextRequest) {
         }
 
         // Slet eksisterende roller for denne bruger i org
-        await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", DFKS_ORG_ID)
+        await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId)
 
         // Indsæt nye roller
         const { error: insertErr } = await admin.from("user_org_roles").insert(
-            roles.map(role => ({ user_id: userId, org_id: DFKS_ORG_ID, role }))
+            roles.map(role => ({ user_id: userId, org_id: orgId, role }))
         )
         if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
 

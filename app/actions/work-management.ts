@@ -9,7 +9,7 @@ import { ensureOnboardingEpisodes } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import type { DfiMetadata } from "@/lib/dfi-metadata";
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { requireOrgId } from "@/lib/org";
 
 type WorkCorrectionData = {
   title: string;
@@ -378,13 +378,7 @@ async function currentUser() {
 }
 
 async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: string): Promise<string> {
-  const { data } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  return data?.org_id ?? DFKS_ORG_ID;
+  return requireOrgId(db, userId);
 }
 
 export async function submitWorkDataCorrection(params: {
@@ -1443,6 +1437,13 @@ export async function createAndLinkWorkForContract(params: {
 }) {
   const db = createServiceClient();
   const { contractId, result, seasonNumber, selectedEpisodes, rightsHolderId, role } = params;
+  const { data: contract } = await db
+    .from("contracts")
+    .select("org_id")
+    .eq("id", contractId)
+    .single();
+  if (!contract?.org_id) return { success: false, error: "Kontrakten mangler organisation." };
+  const orgId = contract.org_id as string;
 
   let activeRightsHolderId = rightsHolderId;
   if (!activeRightsHolderId) {
@@ -1475,7 +1476,7 @@ export async function createAndLinkWorkForContract(params: {
       title: d.title,
       type: d.type,
       year: d.year,
-      org_id: DFKS_ORG_ID,
+      org_id: orgId,
       description: d.description,
       director: d.director,
       genre: d.genre,
@@ -1548,9 +1549,10 @@ export async function createAndLinkWorkForContract(params: {
     }
   } else if (activeRightsHolderId && role) {
     const { data: parentWork } = await db.from("works").select("org_id").eq("id", parentId).single();
+    if (!parentWork?.org_id) return { success: false, error: "Værket mangler organisation." };
     await db.from("work_assignments").upsert({
       work_id: parentId,
-      org_id: parentWork?.org_id ?? DFKS_ORG_ID,
+      org_id: parentWork.org_id,
       rights_holder_id: activeRightsHolderId,
       role: role,
     }, { onConflict: "work_id,rights_holder_id,role" });

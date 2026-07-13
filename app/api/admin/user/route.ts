@@ -14,6 +14,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
+import { sendEmail, inviteEmailHtml } from "@/lib/email"
+import { resolveFromEmail, resolveBranding } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
@@ -48,11 +50,13 @@ export async function POST(req: NextRequest) {
                 ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
                 : `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`
 
-            // Tjek max_users-grænse for org
-            const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const orgId = caller.orgId
+            if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
+
+            // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
-                admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", DFKS_ORG_ID),
-                admin.from("organisations").select("max_users").eq("id", DFKS_ORG_ID).single(),
+                admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
+                admin.from("organisations").select("max_users, name, from_email, branding").eq("id", orgId).single(),
             ])
             if (org && org.max_users !== -1 && (userCount ?? 0) >= org.max_users) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
@@ -81,11 +85,11 @@ export async function POST(req: NextRequest) {
             // Tildel staff-roller i user_org_roles
             if (rolesToAssign.length > 0 && rhId === "__staff__") {
                 await admin.from("user_org_roles").insert(
-                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: DFKS_ORG_ID, role: r }))
+                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: orgId, role: r }))
                 )
             }
 
-            // Link user_id på rettighedshaver (kun hvis det er en reel rettighedshaver, ikke staff)
+            // Link user_id på rettighedshaver. invite_sent_at sættes kun hvis mailen faktisk sendes.
             if (rhId && rhId !== "__staff__") {
                 const { error: rhErr } = await admin
                     .from("rettighedshavere")
@@ -94,10 +98,35 @@ export async function POST(req: NextRequest) {
                 if (rhErr) throw new Error(`Kunne ikke linke bruger: ${rhErr.message}`)
             }
 
+            // Send invitationsmail fra foreningens arbejdsmail (branding-styret afsender)
+            const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
+            const brand = resolveBranding(orgForMail as never)
+            const inviteUrl = linkData.properties.action_link
+            const mail = await sendEmail({
+                to: email,
+                from: resolveFromEmail(orgForMail as never),
+                subject: `Invitation til ${brand.long_name}s portal`,
+                html: inviteEmailHtml({
+                    recipientName: name || "",
+                    inviteUrl,
+                    orgName: brand.long_name,
+                    primaryColor: brand.primary_color,
+                }),
+            })
+
+            if (mail.ok && rhId && rhId !== "__staff__") {
+                await admin
+                    .from("rettighedshavere")
+                    .update({ invite_sent_at: new Date().toISOString() })
+                    .eq("id", rhId)
+            }
+
             return NextResponse.json({
                 ok: true,
                 user_id: newUserId,
-                invite_url: linkData.properties.action_link,
+                invite_url: inviteUrl,
+                email_sent: mail.ok,
+                email_error: mail.ok ? undefined : mail.error,
             })
         }
 

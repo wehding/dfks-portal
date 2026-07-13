@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { requireOrgId } from "@/lib/org";
 const FORENINGLET_BASE = "https://foreninglet.dk/api/members";
 
 type ForeningLetMember = {
@@ -34,7 +34,8 @@ async function currentAdminOrgId(userId: string) {
     .in("role", ["superadmin", "admin", "org-admin"])
     .limit(1)
     .maybeSingle();
-  return data?.org_id ?? DFKS_ORG_ID;
+  if (data?.org_id) return data.org_id;
+  return requireOrgId(admin, userId);
 }
 
 async function fetchMembers(path: string, status: "active" | "resigned") {

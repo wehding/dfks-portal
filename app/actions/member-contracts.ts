@@ -5,7 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
 
 type ContractExtractData = {
@@ -48,13 +48,7 @@ export async function uploadMemberContract(formData: FormData) {
     .single();
   if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
 
-  const { data: orgRole } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", user.id)
-    .limit(1)
-    .maybeSingle();
-  const orgId = orgRole?.org_id ?? DFKS_ORG_ID;
+  const orgId = await requireOrgId(db, user.id);
 
   const file = formData.get("file") as File | null;
   if (!file) return { success: false, error: "Ingen fil modtaget" };
@@ -535,7 +529,8 @@ export async function createAdminEmployer(params: { name: string; cvr?: string |
   if (!user) return { success: false, error: "Ikke logget ind" };
 
   const db = createServiceClient();
-  if (!(await assertAdminForOrg(db, user.id, DFKS_ORG_ID))) {
+  const orgId = await requireOrgId(db, user.id);
+  if (!(await assertAdminForOrg(db, user.id, orgId))) {
     return { success: false, error: "Ikke autoriseret" };
   }
 

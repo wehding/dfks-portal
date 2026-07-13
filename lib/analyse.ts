@@ -715,7 +715,8 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     const ragText = contractText.slice(0, 8000)
     if (ragText.trim()) {
         try {
-            const resolvedOrgId = orgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            if (!orgId) throw new Error("Kontraktanalyse kræver en organisation.")
+            const resolvedOrgId = orgId
             const kontekst = await hentKontekst(ragText, resolvedOrgId)
 
             if (kontekst.kategorier.length > 0) {

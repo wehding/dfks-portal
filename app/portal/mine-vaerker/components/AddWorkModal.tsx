@@ -16,7 +16,7 @@ import { EpisodePicker } from "@/components/works/episode-picker";
 import { WORK_TYPES } from "@/lib/work-types";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
-const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
+const DEFAULT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 
 const selectCls =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
@@ -361,6 +361,29 @@ export function AddWorkModal({
   initialQuery = "",
 }: AddWorkModalProps) {
   const { t } = useI18n();
+  // Fagord/roller styret af foreningens terminologi (fallback: klipper-roller)
+  const [roleOptions, setRoleOptions] = useState<string[]>(DEFAULT_ROLES);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: roleRow } = await supabase
+        .from("user_org_roles")
+        .select("org_id")
+        .eq("user_id", user.id)
+        .limit(1)
+        .maybeSingle();
+      const orgId = roleRow?.org_id;
+      if (!orgId) return;
+      const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single();
+      const labels = (org?.terminology as { role_labels?: string[] } | null)?.role_labels;
+      if (active && labels && labels.length) setRoleOptions(labels);
+    })();
+    return () => { active = false; };
+  }, []);
   const [addQuery, setAddQuery]               = useState("");
   const [typeFilter, setTypeFilter]           = useState("all");
   const [addRole, setAddRole]                 = useState("Klipper");
@@ -740,7 +763,7 @@ export function AddWorkModal({
       <div className="mb-4 space-y-1.5">
         <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
         <select value={addRole} onChange={e => setAddRole(e.target.value)} className={selectCls}>
-          {ROLES.map(r => (
+          {roleOptions.map(r => (
             <option key={r} value={r}>
               {r}
             </option>
@@ -915,7 +938,7 @@ export function AddWorkModal({
                     }
                     className={selectCls}
                   >
-                    {ROLES.map(role => (
+                    {roleOptions.map(role => (
                       <option key={role} value={role}>
                         {role}
                       </option>

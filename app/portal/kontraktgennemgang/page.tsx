@@ -338,7 +338,7 @@ export default function PortalKontraktgennemgangPage() {
     const [memberName, setMemberName] = useState<string | null>(null)
     const [memberEmail, setMemberEmail] = useState<string | null>(null)
     const [memberId, setMemberId] = useState<string | null>(null)
-    const [orgId, setOrgId] = useState<string>("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+    const [orgId, setOrgId] = useState<string | null>(null)
 
     // Sagslister
     const [activeReviews, setActiveReviews] = useState<ActiveReview[]>([])
@@ -346,12 +346,19 @@ export default function PortalKontraktgennemgangPage() {
     const [reviewsLoading, setReviewsLoading] = useState(true)
 
     useEffect(() => {
-        createClient().auth.getUser().then(({ data: { user } }) => {
+        createClient().auth.getUser().then(async ({ data: { user } }) => {
             if (user) {
                 setMemberName(user.user_metadata?.full_name ?? null)
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
-                setOrgId(user.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+                const supabase = createClient()
+                const { data: roleRow } = await supabase
+                    .from("user_org_roles")
+                    .select("org_id")
+                    .eq("user_id", user.id)
+                    .limit(1)
+                    .maybeSingle()
+                setOrgId(roleRow?.org_id ?? null)
                 loadReviews(user.id)
             }
         })
@@ -437,6 +444,10 @@ export default function PortalKontraktgennemgangPage() {
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault()
         if (!isValid) return
+        if (!orgId) {
+            toast.error("Din bruger er ikke knyttet til en organisation.")
+            return
+        }
         setSubmitting(true)
 
         const fd = new FormData()

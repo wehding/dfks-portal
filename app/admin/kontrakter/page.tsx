@@ -484,15 +484,17 @@ function AdminKontrakterContent() {
                 const { data: { user } } = await supabase.auth.getUser()
                 if (!user) { setLoading(false); return }
 
-                const metaOrgId: string | undefined = user.user_metadata?.org_id
-                let resolvedOrgId = metaOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
-
-                // Forsøg at slå op i user_org_roles (men blokér ikke hvis tom)
+                let resolvedOrgId: string | null = null
                 const { data: roleRows } = await supabase
                     .from("user_org_roles")
                     .select("org_id, role")
                     .eq("user_id", user.id)
                 if (roleRows?.[0]?.org_id) resolvedOrgId = roleRows[0].org_id
+                if (!resolvedOrgId) {
+                    toast.error("Din bruger er ikke knyttet til en organisation.")
+                    setLoading(false)
+                    return
+                }
                 setOrgId(resolvedOrgId)
                 setIsSuperadmin((roleRows ?? []).some(r => r.role === "superadmin"))
 

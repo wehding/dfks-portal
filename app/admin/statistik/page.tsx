@@ -130,7 +130,15 @@ export default function AdminStatistikPage() {
         const load = async () => {
             const supabase = createClient()
             const { data: { user } } = await supabase.auth.getUser()
-            const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            if (!user) { setLoading(false); return }
+            const { data: roleRow } = await supabase
+                .from("user_org_roles")
+                .select("org_id")
+                .eq("user_id", user.id)
+                .limit(1)
+                .maybeSingle()
+            const orgId = roleRow?.org_id
+            if (!orgId) { setLoading(false); return }
 
             const { data: contractsData } = await supabase
                 .from("contracts")

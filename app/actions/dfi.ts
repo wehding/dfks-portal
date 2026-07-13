@@ -11,7 +11,7 @@ import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPrem
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { requireOrgId } from "@/lib/org";
 const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {
@@ -113,14 +113,9 @@ async function currentRightsHolderAndOrg() {
     .single();
   if (!rh) throw new Error("Kunne ikke finde din rettighedshaver-profil.");
 
-  const { data: orgRole } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", authData.user.id)
-    .limit(1)
-    .single();
+  const orgId = await requireOrgId(db, authData.user.id);
 
-  return { db, userId: authData.user.id, rightsHolderId: rh.id as string, orgId: orgRole?.org_id ?? DFKS_ORG_ID };
+  return { db, userId: authData.user.id, rightsHolderId: rh.id as string, orgId };
 }
 
 async function findExistingWorkForDfiCredit(db: ReturnType<typeof createServiceClient>, credit: DfiCredit, orgId: string) {
