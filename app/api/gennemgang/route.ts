@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
 
         logInfo("gennemgang", "Læser filbuffer", { fileType: file.type || "ukendt" })
         const fileBuffer = Buffer.from(await file.arrayBuffer())
-        const saveOrgId  = portalOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+        const saveOrgId  = portalOrgId ?? DEFAULT_ORG_ID
         const resolvedOrgId = portalOrgId ?? sessionUser?.user_metadata?.org_id ?? saveOrgId
 
         logInfo("gennemgang", "Starter kontraktanalyse", { provider, model })

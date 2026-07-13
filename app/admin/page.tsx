@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
@@ -93,7 +94,7 @@ function StatCard({ icon: Icon, label, value, href, highlight }: {
 export default function AdminDashboardPage() {
     const [stats, setStats] = useState<Stats | null>(null)
     const [loading, setLoading] = useState(true)
-    const [orgId] = useState("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+    const [orgId] = useState(DEFAULT_ORG_ID)
 
     useEffect(() => {
         const load = async () => {

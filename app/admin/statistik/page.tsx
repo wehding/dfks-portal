@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import { CalendarDays, Loader2 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { createClient } from "@/lib/supabase/client"
@@ -130,7 +131,7 @@ export default function AdminStatistikPage() {
         const load = async () => {
             const supabase = createClient()
             const { data: { user } } = await supabase.auth.getUser()
-            const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
 
             const { data: contractsData } = await supabase
                 .from("contracts")

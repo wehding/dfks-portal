@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
+import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
@@ -96,6 +98,7 @@ export default function PortalLayout({
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [workMessageCount, setWorkMessageCount] = useState<number>(0)
     const [contractMessageCount, setContractMessageCount] = useState<number>(0)
+    const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string; long_name: string }>({ logo_url: null, short_name: "DFKS", long_name: "DFKS" })
 
     useEffect(() => {
         const supabase = createClient()
@@ -103,7 +106,15 @@ export default function PortalLayout({
         const fetchCount = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
-            const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+
+            // Hent foreningens branding (logo/navn) til white-label
+            supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {
+                if (!org) return
+                const b = resolveBranding(org as never)
+                setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name, long_name: b.long_name })
+            })
+
             const [contractsRes, worksRes, contractMessagesRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
@@ -209,13 +220,19 @@ export default function PortalLayout({
             <Sidebar variant="inset">
                 <SidebarHeader className="p-4">
                     <SidebarNavigationLink href="/portal/mine-vaerker" className="block">
-                        <Image
-                            src="/logo.png"
-                            alt="DFKS"
-                            width={160}
-                            height={68}
-                            className="dark:invert"
-                        />
+                        {brand.logo_url ? (
+                            // Foreningens eget logo (kan være ekstern URL/data-URI) — plain img undgår next/image domæne-config
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={brand.logo_url} alt={brand.short_name} style={{ maxWidth: 160, maxHeight: 68, objectFit: "contain" }} />
+                        ) : (
+                            <Image
+                                src="/logo.png"
+                                alt={brand.short_name}
+                                width={160}
+                                height={68}
+                                className="dark:invert"
+                            />
+                        )}
                     </SidebarNavigationLink>
                 </SidebarHeader>
 

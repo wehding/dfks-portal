@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
+import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -137,6 +139,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [brugerOpen, setBrugerOpen] = useState(true)
     const [adminOpen, setAdminOpen] = useState(true)
     const [rettighedsOpen, setRettighedsOpen] = useState(true)
+    const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string }>({ logo_url: null, short_name: "DFKS" })
 
     useEffect(() => {
         const supabase = createClient()
@@ -144,7 +147,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const fetchCount = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             if (!user) return
-            const orgId = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const orgId = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
+
+            supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {
+                if (!org) return
+                const b = resolveBranding(org as never)
+                setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name })
+            })
+
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
@@ -237,7 +247,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Sidebar variant="inset">
                 <SidebarHeader className="p-4">
                     <SidebarNavigationLink href="/admin" className="block">
-                        <Image src="/logo.png" alt="DFKS" width={160} height={68} className="dark:invert" />
+                        {brand.logo_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={brand.logo_url} alt={brand.short_name} style={{ maxWidth: 160, maxHeight: 68, objectFit: "contain" }} />
+                        ) : (
+                            <Image src="/logo.png" alt={brand.short_name} width={160} height={68} className="dark:invert" />
+                        )}
                     </SidebarNavigationLink>
                 </SidebarHeader>
 

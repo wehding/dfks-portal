@@ -97,6 +97,16 @@ export default function OnboardingClient({
   const handleField = (field: string, value: string) =>
     setFormData((prev) => ({ ...prev, [field]: value }));
 
+  // Ét samlet "Dit navn"-felt: gem hele navnet, men bevar for-/efternavn i datamodellen
+  // ved at splitte ved sidste mellemrum (sidste ord = efternavn, resten = fornavn).
+  const fullNameValue = `${formData.first_name} ${formData.last_name}`.trim();
+  const handleFullName = (value: string) => {
+    const parts = value.trim().split(/\s+/);
+    const last = parts.length > 1 ? parts.pop()! : "";
+    const first = parts.join(" ");
+    setFormData((prev) => ({ ...prev, first_name: value.trim() ? first || value.trim() : "", last_name: last }));
+  };
+
   const isSeriesCredit = (credit: OnboardingCredit) => {
     const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
     return category.includes("serie") || category.includes("tv");
@@ -179,13 +189,13 @@ export default function OnboardingClient({
 
   const handleNextStep = async () => {
     if (step === 2) {
-      // Krav 1: Validering af fornavn, efternavn og e-mail
-      if (!formData.first_name.trim() || !formData.last_name.trim() || !formData.email.trim()) {
-        alert("Venligst udfyld fornavn, efternavn og e-mailadresse for at gå videre.");
+      // Krav 1: Validering af navn og e-mail (navnet er nu ét samlet felt)
+      const fullName = `${formData.first_name} ${formData.last_name}`.trim();
+      if (!fullName || !formData.email.trim()) {
+        alert("Venligst udfyld dit navn og e-mailadresse for at gå videre.");
         return;
       }
 
-      const fullName = `${formData.first_name} ${formData.last_name}`.trim();
       setDfiSearchQuery(fullName);
       await handlePersonSearch(fullName);
       setStep(3);
@@ -403,32 +413,39 @@ export default function OnboardingClient({
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                {/* Ét samlet navnefelt (fuld bredde) med fælles hjælpetekst */}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                    Dit navn
+                  </label>
+                  <input
+                    value={fullNameValue}
+                    onChange={(e) => handleFullName(e.target.value)}
+                    placeholder="Dit fulde navn"
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                  />
+                </div>
+                <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
+                  Det er vigtigt at du skriver dit navn sådan som du typisk bliver krediteret. Vi bruger
+                  navnet til at søge dine værker frem i DFI Filmdatabasen og TMDb.
+                </div>
                 {([
-                  { label: "Fornavn", key: "first_name", placeholder: "Dit fornavn" },
-                  { label: "Efternavn", key: "last_name", placeholder: "Dit efternavn" },
                   { label: "Telefon", key: "phone", placeholder: "+45 12 34 56 78" },
                   { label: "Adresse", key: "address", placeholder: "Gadenavn 1", full: true },
                   { label: "Postnr.", key: "zip", placeholder: "1234" },
                   { label: "By", key: "city", placeholder: "København" },
                 ] satisfies FormField[]).map((f) => (
-                  <React.Fragment key={f.key}>
-                    <div style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
-                      <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
-                        {f.label}
-                      </label>
-                      <input
-                        value={formData[f.key]}
-                        onChange={(e) => handleField(f.key, e.target.value)}
-                        placeholder={f.placeholder}
-                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
-                      />
-                    </div>
-                    {f.key === "last_name" && (
-                      <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
-                        Det er vigtigt at du skriver dit navn sådan som du typisk bliver krediteret.
-                      </div>
-                    )}
-                  </React.Fragment>
+                  <div key={f.key} style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
+                    <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
+                      {f.label}
+                    </label>
+                    <input
+                      value={formData[f.key]}
+                      onChange={(e) => handleField(f.key, e.target.value)}
+                      placeholder={f.placeholder}
+                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                    />
+                  </div>
                 ))}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>

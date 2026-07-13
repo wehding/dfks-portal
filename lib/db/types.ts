@@ -18,6 +18,22 @@ export interface DbOrganisation {
     module_streaming: boolean
     module_archive: boolean
     active: boolean
+    // White-label pr. forening (migration 20260712130000)
+    branding: OrgBranding | null
+    terminology: OrgTerminology | null
+    from_email: string | null
+}
+
+export interface OrgBranding {
+    primary_color?: string
+    short_name?: string
+    long_name?: string
+}
+
+export interface OrgTerminology {
+    member_word?: string
+    coeditor_word?: string
+    role_labels?: string[]
 }
 
 export interface DbUserOrgRole {
@@ -38,6 +54,7 @@ export interface DbRettighedshaver {
     cpr_no: string | null
     bank_account: string | null
     onboarding_completed: boolean
+    invite_sent_at: string | null
     dfi_person_id: number | null
     tmdb_person_id: number | null
     wikidata_qid: string | null

@@ -11,7 +11,9 @@ import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPrem
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
 // DFI org_id bruges ved import — DFKS default
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { DEFAULT_ORG_ID } from "@/lib/org";
+
+const DFKS_ORG_ID = DEFAULT_ORG_ID;
 const MAX_DFI_POSTER_BYTES = 2 * 1024 * 1024;
 
 type DfiCredit = {

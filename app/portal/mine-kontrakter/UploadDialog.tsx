@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const BUCKET = "kontrakter";
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { DEFAULT_ORG_ID } from "@/lib/org";
+
+const DFKS_ORG_ID = DEFAULT_ORG_ID;
 const MAX_FILES = 15;
 
 const ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];

@@ -9,7 +9,9 @@ import { ensureOnboardingEpisodes } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import type { DfiMetadata } from "@/lib/dfi-metadata";
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { DEFAULT_ORG_ID, resolveOrgId } from "@/lib/org";
+
+const DFKS_ORG_ID = DEFAULT_ORG_ID;
 
 type WorkCorrectionData = {
   title: string;
@@ -378,13 +380,7 @@ async function currentUser() {
 }
 
 async function currentOrgId(db: ReturnType<typeof createServiceClient>, userId: string): Promise<string> {
-  const { data } = await db
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-  return data?.org_id ?? DFKS_ORG_ID;
+  return resolveOrgId(db, userId);
 }
 
 export async function submitWorkDataCorrection(params: {

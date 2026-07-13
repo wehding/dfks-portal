@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useCallback, ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react"
 
 export type Locale = "da" | "en"
 
@@ -77,7 +77,7 @@ const translations = {
         "works.workTitle": "Værktitel",
         "works.type": "Type",
         "works.role": "Rolle",
-        "works.coEditors": "Medklippere",
+        "works.coEditors": "{Coeditors}",
         "works.credit": "Min kreditering",
         "works.sharedCredit": "Delt kreditering",
         "works.sharedWith": "Delt med",
@@ -142,8 +142,8 @@ const translations = {
         "works.descriptionField": "Beskrivelse",
         "works.posterHint": "Poster oprettes ikke manuelt. Poster hentes fra DFI eller TMDB.",
         "works.existingMatchWarning": "Værket eksisterer allerede i vores database. Hvis du vælger at importere data fra DFI eller TMDB skal det godkendes af administrator.",
-        "works.addCoEditor": "Tilføj medklipper",
-        "works.editCoEditorsHint": "Ændringer af eksisterende medklippere sendes til admin.",
+        "works.addCoEditor": "Tilføj {coeditor}",
+        "works.editCoEditorsHint": "Ændringer af eksisterende {coeditors} sendes til admin.",
         "works.commentToAdmin": "Bemærkning til admin",
         "works.commentPlaceholder": "Skriv evt. hvorfor værket/ændringen skal godkendes...",
         "works.suggestCorrection": "Foreslå rettelse af værksdata",
@@ -156,9 +156,9 @@ const translations = {
         "works.undo": "Fortryd",
         "works.lock": "Lås",
         "works.removeNotice": "Fjernelse kræver admin-godkendelse.",
-        "works.lockedCoEditorsHint": "Eksisterende medklippere fra databasen kan ikke ændres her.",
+        "works.lockedCoEditorsHint": "Eksisterende {coeditors} fra databasen kan ikke ændres her.",
         "works.manualWork": "Manuelt værk",
-        "works.addedPending": "Værket er tilføjet, og medklipperforslaget afventer admin.",
+        "works.addedPending": "Værket er tilføjet, og {coeditor}forslaget afventer admin.",
         "works.pendingApproval": "Værket er sendt til admin-godkendelse.",
 
         // Economy
@@ -951,14 +951,48 @@ interface I18nContextType {
 
 const I18nContext = createContext<I18nContextType | null>(null)
 
+function cap(s: string): string {
+    return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+// Erstat fagords-tokens med foreningens terminologi (fx {coeditor} → "medklipper"
+// eller "medfotograf"). Plural dannes ved at tilføje "e" (dansk -er → -ere).
+function applyTerminology(text: string, coeditor: string): string {
+    if (!text.includes("{")) return text
+    const plural = `${coeditor}e`
+    return text
+        .replaceAll("{Coeditors}", cap(plural))
+        .replaceAll("{coeditors}", plural)
+        .replaceAll("{Coeditor}", cap(coeditor))
+        .replaceAll("{coeditor}", coeditor)
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
     const [locale, setLocale] = useState<Locale>("da")
+    // Foreningens fagord (fallback: DFKS/klipper). Kun dansk tokeniseres.
+    const [coeditorWord, setCoeditorWord] = useState<string>("medklipper")
+
+    useEffect(() => {
+        let active = true
+        void (async () => {
+            const { createClient } = await import("@/lib/supabase/client")
+            const supabase = createClient()
+            const { data: { user } } = await supabase.auth.getUser()
+            const orgId = user?.user_metadata?.org_id
+            if (!orgId) return
+            const { data: org } = await supabase.from("organisations").select("terminology").eq("id", orgId).single()
+            const word = (org?.terminology as { coeditor_word?: string } | null)?.coeditor_word
+            if (active && word) setCoeditorWord(word)
+        })()
+        return () => { active = false }
+    }, [])
 
     const t = useCallback(
         (key: TranslationKey): string => {
-            return translations[locale][key] || key
+            const raw = translations[locale][key] || key
+            return locale === "da" ? applyTerminology(raw, coeditorWord) : raw
         },
-        [locale]
+        [locale, coeditorWord]
     )
 
     return (

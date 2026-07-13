@@ -15,7 +15,7 @@ import { createClient } from "@supabase/supabase-js"
 
 const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY!
-const ORG_ID        = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+const ORG_ID        = process.env.NEXT_PUBLIC_DEFAULT_ORG_ID ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
 const ELI_BASE      = "https://retsinformation.dk"
 
 // ── Love vi følger ────────────────────────────────────────────

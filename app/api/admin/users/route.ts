@@ -9,7 +9,9 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+import { DEFAULT_ORG_ID } from "@/lib/org"
+
+const DFKS_ORG_ID = DEFAULT_ORG_ID
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
 const ROLE_RANK: Record<string, number> = {

@@ -10,7 +10,9 @@ import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPrem
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 
-const DFKS_ORG_ID = "3dfcad23-03ce-4de0-82f2-6566dfcd88a5";
+import { DEFAULT_ORG_ID } from "@/lib/org";
+
+const DFKS_ORG_ID = DEFAULT_ORG_ID;
 
 type MemberWorkData = {
   dfi_id?: string | null;

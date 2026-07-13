@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check, Clock, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow, format } from "date-fns"
@@ -338,7 +339,7 @@ export default function PortalKontraktgennemgangPage() {
     const [memberName, setMemberName] = useState<string | null>(null)
     const [memberEmail, setMemberEmail] = useState<string | null>(null)
     const [memberId, setMemberId] = useState<string | null>(null)
-    const [orgId, setOrgId] = useState<string>("3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+    const [orgId, setOrgId] = useState<string>(DEFAULT_ORG_ID)
 
     // Sagslister
     const [activeReviews, setActiveReviews] = useState<ActiveReview[]>([])
@@ -351,7 +352,7 @@ export default function PortalKontraktgennemgangPage() {
                 setMemberName(user.user_metadata?.full_name ?? null)
                 setMemberEmail(user.email ?? null)
                 setMemberId(user.id)
-                setOrgId(user.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5")
+                setOrgId(user.user_metadata?.org_id ?? DEFAULT_ORG_ID)
                 loadReviews(user.id)
             }
         })

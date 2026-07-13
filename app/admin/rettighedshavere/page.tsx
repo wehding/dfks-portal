@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import { useRouter } from "next/navigation"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText } from "lucide-react"
 import { toast } from "sonner"
@@ -34,12 +35,14 @@ import {
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMembersSyncStatus, syncDfksMembers } from "@/app/actions/dfks-members"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret"
 type AdminUserResponse = {
     error?: string
     invite_url?: string
     reset_url?: string
     user_id?: string
+    email_sent?: boolean
+    email_error?: string
 }
 type DfksMemberOption = {
     display_id: string | null
@@ -76,7 +79,7 @@ function findDfksMemberNo(name: string, members: DfksMemberOption[]) {
 
 const EMPTY_FORM = {
     full_name: "", email: "", phone: "", address: "", cpr_no: "", bank_account: "", member_no: "", is_member: false,
-    gender: "", opt_out_statistics: false,
+    gender: "", opt_out_statistics: false, send_invite: false,
 }
 
 export default function RettighedshavereAdminPage() {
@@ -89,6 +92,7 @@ export default function RettighedshavereAdminPage() {
 
     const [createOpen, setCreateOpen] = useState(false)
     const [createSaving, setCreateSaving] = useState(false)
+    const [bulkInviting, setBulkInviting] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
     const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
 
@@ -110,7 +114,7 @@ export default function RettighedshavereAdminPage() {
     useEffect(() => {
         const supabase = createClient()
         supabase.auth.getUser().then(({ data: { user } }) => {
-            const oid = user?.user_metadata?.org_id ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+            const oid = user?.user_metadata?.org_id ?? DEFAULT_ORG_ID
             setOrgId(oid)
             load(oid)
             loadDfksMembers(oid)
@@ -210,6 +214,9 @@ export default function RettighedshavereAdminPage() {
         const aff = orgId ? getAffiliation(rh, orgId) : null
         if (filter === "medlemmer" && !aff?.is_member) return false
         if (filter === "ikke-medlemmer" && aff?.is_member) return false
+        // Invitationsstatus
+        const invStatus = rh.onboarding_completed ? "registreret" : (rh.invite_sent_at || rh.user_id) ? "afventer" : "ikke-inviteret"
+        if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
         if (search) {
             const q = search.toLowerCase()
             return (
@@ -222,6 +229,23 @@ export default function RettighedshavereAdminPage() {
         return true
     })
 
+    // Send invitationsmail til én rettighedshaver. Returnerer true hvis mailen blev sendt.
+    async function sendInviteFor(rhId: string, email: string, name: string): Promise<AdminUserResponse | null> {
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "invite", email, name, rhId }),
+            })
+            const json = await res.json() as AdminUserResponse
+            if (!res.ok) throw new Error(json.error)
+            return json
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
+            return null
+        }
+    }
+
     async function handleCreate() {
         if (!orgId || !createForm.full_name.trim()) return
         setCreateSaving(true)
@@ -229,15 +253,43 @@ export default function RettighedshavereAdminPage() {
             { full_name: createForm.full_name.trim(), email: createForm.email || null, phone: createForm.phone || null, address: createForm.address || null, cpr_no: createForm.cpr_no || null, bank_account: createForm.bank_account || null },
             orgId, createForm.is_member, createForm.member_no || undefined
         )
-        setCreateSaving(false)
-        if (result) { toast.success(`${createForm.full_name} er oprettet`); setCreateOpen(false); load(orgId); loadOverviewCounts(orgId) }
-        else toast.error("Kunne ikke oprette rettighedshaver")
+        if (result) {
+            toast.success(`${createForm.full_name} er oprettet`)
+            // Send invitationsmail med det samme, hvis valgt og email er angivet
+            if (createForm.send_invite && createForm.email.trim()) {
+                const json = await sendInviteFor(result.id, createForm.email.trim(), createForm.full_name.trim())
+                if (json?.email_sent) toast.success(`Invitation sendt til ${createForm.email.trim()}`)
+                else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
+            }
+            setCreateSaving(false)
+            setCreateOpen(false); load(orgId); loadOverviewCounts(orgId)
+        } else {
+            setCreateSaving(false)
+            toast.error("Kunne ikke oprette rettighedshaver")
+        }
+    }
+
+    // Masseudsend: invitér alle synlige personer der har email og endnu ikke er registreret.
+    async function handleBulkInvite() {
+        if (!orgId) return
+        const targets = visible.filter(rh => rh.email && !rh.onboarding_completed)
+        if (targets.length === 0) { toast.info("Ingen at invitere — alle synlige er enten registreret eller mangler email."); return }
+        if (!confirm(`Send invitation til ${targets.length} person(er) der endnu ikke er oprettet?`)) return
+        setBulkInviting(true)
+        let sent = 0
+        for (const rh of targets) {
+            const json = await sendInviteFor(rh.id, rh.email!, rh.full_name)
+            if (json?.email_sent) sent++
+        }
+        setBulkInviting(false)
+        toast.success(`${sent} af ${targets.length} invitationer sendt`)
+        load(orgId)
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getAffiliation(rh, orgId) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
-        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
+        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), send_invite: false })
         setEditMemberNoTouched(false)
         setEditTarget(rh)
     }
@@ -284,8 +336,11 @@ export default function RettighedshavereAdminPage() {
             const link = type === "invite" ? json.invite_url : json.reset_url
             setPortalLink(link ?? null)
             if (type === "invite") {
-                // Opdater lokal state med ny user_id
-                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null } : r))
+                // Opdater lokal state med ny user_id + invite-tidsstempel, og vis mail-resultat
+                const now = new Date().toISOString()
+                setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: now } : r))
+                if (json.email_sent) toast.success(`Invitation sendt til ${rh.email}`)
+                else toast.warning(`Bruger oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt"}). Kopiér linket manuelt.`)
             }
         } catch (e: unknown) {
             toast.error(errorMessage(e))
@@ -330,6 +385,9 @@ export default function RettighedshavereAdminPage() {
                             {syncingMembers ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
                             Opdater DFKS medlemsliste
                         </Button>
+                        <Button size="sm" variant="outline" onClick={handleBulkInvite} disabled={bulkInviting}>
+                            {bulkInviting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}Send invitation til alle ikke-oprettede
+                        </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Opret ny
                         </Button>
@@ -366,6 +424,9 @@ export default function RettighedshavereAdminPage() {
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
                         <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
+                        <SelectItem value="afventer">Afventer invitation</SelectItem>
+                        <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
+                        <SelectItem value="registreret">Registreret</SelectItem>
                     </SelectContent>
                 </Select>
             </div>
@@ -476,9 +537,11 @@ export default function RettighedshavereAdminPage() {
                                             : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
                                     </TableCell>
                                     <TableCell>
-                                        {hasLogin
-                                            ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Aktiv</Badge>
-                                            : <span className="text-xs text-muted-foreground">Ingen adgang</span>}
+                                        {rh.onboarding_completed
+                                            ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
+                                            : (rh.invite_sent_at || hasLogin)
+                                                ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
+                                                : <span className="text-xs text-muted-foreground">Ikke inviteret</span>}
                                     </TableCell>
                                     <TableCell>
                                         {!hasLogin
@@ -510,9 +573,9 @@ export default function RettighedshavereAdminPage() {
                                                         : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
-                                                {!hasLogin && rh.email && (
+                                                {!rh.onboarding_completed && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Inviter til portal
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at || hasLogin ? "Gensend invitation" : "Send invitation"}
                                                     </DropdownMenuItem>
                                                 )}
                                                 {hasLogin && rh.email && (
@@ -566,6 +629,10 @@ export default function RettighedshavereAdminPage() {
                         <div className="flex items-center gap-2 pt-1">
                             <input type="checkbox" id="create-is-member" checked={createForm.is_member} onChange={e => setCreateForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="create-is-member" className="cursor-pointer">Registrér som aktivt medlem</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input type="checkbox" id="create-send-invite" checked={createForm.send_invite} onChange={e => setCreateForm(f => ({ ...f, send_invite: e.target.checked }))} className="h-4 w-4" disabled={!createForm.email.trim()} />
+                            <Label htmlFor="create-send-invite" className="cursor-pointer">Send invitationsmail med link{!createForm.email.trim() && <span className="text-muted-foreground"> (kræver email)</span>}</Label>
                         </div>
                     </div>
                     <DialogFooter>

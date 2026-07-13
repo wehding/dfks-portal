@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo, Suspense, useRef } from "react"
+import { DEFAULT_ORG_ID } from "@/lib/org"
 import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
@@ -485,7 +486,7 @@ function AdminKontrakterContent() {
                 if (!user) { setLoading(false); return }
 
                 const metaOrgId: string | undefined = user.user_metadata?.org_id
-                let resolvedOrgId = metaOrgId ?? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5"
+                let resolvedOrgId = metaOrgId ?? DEFAULT_ORG_ID
 
                 // Forsøg at slå op i user_org_roles (men blokér ikke hvis tom)
                 const { data: roleRows } = await supabase
