@@ -339,6 +339,10 @@ export default function MineKontrakterClient({
   }), [contracts, search, sortDir, sortKey, statusFilter, typeFilter]);
   const visibleContracts = filtered.slice(0, pageSize);
   const allFilteredSelected = filtered.length > 0 && filtered.every(c => selectedIds.includes(c.id));
+  const selectedDeleteContracts = contracts.filter(c => selectedIds.includes(c.id));
+  const selectedDeleteAttachments = selectedDeleteContracts.reduce((sum, contract) => sum + (contract.contract_attachments?.length ?? 0), 0);
+  const selectedDeleteMessages = selectedDeleteContracts.reduce((sum, contract) => sum + (contract.contract_comments?.length ?? 0), 0);
+  const selectedDeleteValidations = selectedDeleteContracts.filter(contract => Boolean(getValidation(contract))).length;
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(dir => dir === "asc" ? "desc" : "asc");
@@ -364,7 +368,7 @@ export default function MineKontrakterClient({
     const failedIds = ids.filter((_, index) => !results[index].success);
     setContracts(prev => prev.filter(c => !ids.includes(c.id) || failedIds.includes(c.id)));
     setSelectedIds([]);
-    setMsg(failedIds.length ? { type: "error", text: `${failedIds.length} kontrakt(er) kunne ikke fjernes.` } : { type: "success", text: "Valgte kontrakter fjernet." });
+    setMsg(failedIds.length ? { type: "error", text: `${failedIds.length} kontrakt(er) kunne ikke slettes.` } : { type: "success", text: "Valgte kontrakter slettet permanent." });
   }
 
   async function handleAddComment() {
@@ -518,14 +522,14 @@ export default function MineKontrakterClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Mine Kontrakter</h1>
           <p className="text-sm text-muted-foreground mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
         </div>
-        <div className="flex gap-2">
-          <HelpButton onClick={() => setHelpOpen(true)} />
-          <Button onClick={() => setIsUploading(true)} className="gap-2">
+        <div className="grid w-full gap-2 sm:flex sm:w-auto">
+          <HelpButton onClick={() => setHelpOpen(true)} className="w-full sm:w-auto" />
+          <Button onClick={() => setIsUploading(true)} className="w-full gap-2 sm:w-auto">
             <Upload className="h-4 w-4" /> Upload kontrakt
           </Button>
         </div>
@@ -611,19 +615,42 @@ export default function MineKontrakterClient({
                   active={Boolean(search || statusFilter !== "all" || typeFilter !== "all")}
                   onReset={() => { setSearch(""); setStatusFilter("all"); setTypeFilter("all"); setSelectedIds([]); setPageSize(20); }}
                 />
+                <div className="grid w-full grid-cols-[1fr_auto] gap-2 md:hidden">
+                  <select
+                    value={sortKey}
+                    onChange={e => setSortKey(e.target.value as SortKey)}
+                    className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
+                  >
+                    <option value="date">Dato</option>
+                    <option value="title">Værk</option>
+                    <option value="employer">Producent</option>
+                    <option value="overenskomst">Overenskomst</option>
+                    <option value="rights">Rettigheder</option>
+                    <option value="status">Status</option>
+                  </select>
+                  <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-8 px-3 text-xs">
+                    {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortDir === "asc" ? "A-Z" : "Z-A"}
+                  </Button>
+                </div>
               </>
             )}
           </div>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            Vis
-            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
-        </div>
+	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+	            Vis
+	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
+	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+	            </select>
+	          </label>
+	          {filtered.length > 0 && (
+	            <Button type="button" variant="outline" className="w-full sm:w-auto md:hidden" onClick={toggleAllFiltered}>
+	              {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
+	              {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+	            </Button>
+	          )}
+	        </div>
 
-        {/* Kolonnehoveder */}
-        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
+	        {/* Kolonnehoveder */}
+	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">Værk{sortArrow("title")}</button>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">Producent{sortArrow("employer")}</button>
@@ -1042,9 +1069,19 @@ export default function MineKontrakterClient({
       <Dialog open={deleteSelectedOpen} onOpenChange={setDeleteSelectedOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Fjern valgte kontrakter?</DialogTitle>
-            <DialogDescription>
-              Du er ved at fjerne {selectedIds.length} valgte kontrakt{selectedIds.length === 1 ? "" : "er"} fra din liste.
+            <DialogTitle>Slet valgte kontrakter permanent?</DialogTitle>
+            <DialogDescription className="space-y-2">
+              <span className="block">
+                Du er ved at slette {selectedIds.length} valgte kontrakt{selectedIds.length === 1 ? "" : "er"} permanent.
+              </span>
+              <span className="block">
+                Det sletter også tilknyttede bilag/allonger, beskeder med DFKS og eventuel validering/AI-gennemgang.
+              </span>
+              {(selectedDeleteAttachments > 0 || selectedDeleteMessages > 0 || selectedDeleteValidations > 0) && (
+                <span className="block font-medium text-foreground">
+                  De viste data indeholder: {selectedDeleteAttachments} bilag/allonge{selectedDeleteAttachments === 1 ? "" : "r"}, {selectedDeleteMessages} besked{selectedDeleteMessages === 1 ? "" : "er"} og {selectedDeleteValidations} validering{selectedDeleteValidations === 1 ? "" : "er"}.
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1052,7 +1089,7 @@ export default function MineKontrakterClient({
               Annuller
             </Button>
             <Button variant="destructive" onClick={confirmDeleteSelected}>
-              Fjern {selectedIds.length}
+              Slet permanent ({selectedIds.length})
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1062,8 +1099,15 @@ export default function MineKontrakterClient({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Slet kontrakt?</DialogTitle>
-            <DialogDescription>
-              Kontrakten fjernes fra din liste. Handlingen kan ikke fortrydes herfra.
+            <DialogDescription className="space-y-2">
+              <span className="block">Kontrakten slettes permanent. Handlingen kan ikke fortrydes.</span>
+              {selectedContract && (
+                <span className="block">
+                  Det sletter også {selectedContract.contract_attachments?.length ?? 0} bilag/allonge{(selectedContract.contract_attachments?.length ?? 0) === 1 ? "" : "r"}
+                  , {selectedContract.contract_comments?.length ?? 0} besked{(selectedContract.contract_comments?.length ?? 0) === 1 ? "" : "er"}
+                  {getValidation(selectedContract) ? " og den tilknyttede validering/AI-gennemgang" : ""}.
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1071,7 +1115,7 @@ export default function MineKontrakterClient({
               Annuller
             </Button>
             <Button variant="destructive" onClick={confirmDeleteContract}>
-              Slet kontrakt
+              Slet permanent
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -582,7 +582,7 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
-              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1E3A8A", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de afsnit, du har klippet. Åbn “Vælg afsnit” under serien, og markér de relevante afsnit.</div>
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1E3A8A", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de serier, hvor du har en kontrakt med streaming- eller Copydan-forbehold indskrevet. Åbn “Vælg afsnit” under serien, og markér de afsnit, kontrakten gælder.</div>
               {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (

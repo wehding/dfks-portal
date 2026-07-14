@@ -11,9 +11,9 @@ import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
-import { resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
-import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -87,6 +87,7 @@ type Work = {
   episode_number?: number | null;
   genre: string | null;
   director: string | null;
+  production_companies?: string[] | null;
   status: string | null;
   dfi_id: string | null;
   tmdb_id: number | string | null;
@@ -181,6 +182,26 @@ function numberOrNull(val: string) {
   return isNaN(n) ? null : n;
 }
 
+function workTypeLabel(value: string | null | undefined) {
+  return WORK_TYPES.find(type => type.value === value)?.label ?? value ?? "—";
+}
+
+function readonlyValue(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
+}
+
+function ReadonlyWorkField({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <div className="min-h-9 rounded-md border bg-muted/30 px-3 py-2 text-sm text-foreground">
+        {readonlyValue(value)}
+      </div>
+    </div>
+  );
+}
+
 export function EditWorkModal({
   isOpen,
   onClose,
@@ -200,6 +221,9 @@ export function EditWorkModal({
   const [isSendingCorrection, setIsSendingCorrection]   = useState(false);
   const [commentError, setCommentError]                 = useState(false);
   const [selectedEpisodes, setSelectedEpisodes]         = useState<Record<number, boolean>>({});
+  const [directEpisodeOptions, setDirectEpisodeOptions] = useState<SeriesEpisodeOption[]>([]);
+  const [directEpisodeSeason, setDirectEpisodeSeason] = useState(1);
+  const [directEpisodesLoading, setDirectEpisodesLoading] = useState(false);
   const [externalQuery, setExternalQuery] = useState("");
   const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
@@ -218,6 +242,8 @@ export function EditWorkModal({
         return work && (work.parent_work_id ?? work.id) === seriesKey && (work.season_number ?? 1) === season && work.episode_number;
       }).map(other => [other.works!.episode_number!, true])));
       setCoEditorSuggestions({});
+      setDirectEpisodeOptions([]);
+      setDirectEpisodeSeason(assignment.works?.season_number ?? 1);
       setEditCoEditors(
         (allAssignments ?? [])
           .filter(other => other.work_id === assignment.works?.id)
@@ -232,6 +258,28 @@ export function EditWorkModal({
       );
     }
   }, [isOpen, assignment, allAssignments]);
+
+  useEffect(() => {
+    const loadSeriesEpisodes = async () => {
+      const work = assignment.works;
+      const rightsHolderId = assignment.rights_holder_id;
+      if (!isOpen || !work || !rightsHolderId || !isSeriesType(work.type ?? "")) return;
+      setDirectEpisodesLoading(true);
+      try {
+        const result = await fetchMemberSeriesEpisodeOptions({ rightsHolderId, workId: work.id });
+        if (result.success) {
+          setDirectEpisodeOptions(result.options ?? []);
+          setDirectEpisodeSeason(result.seasonNumber ?? 1);
+          if (result.episodeCount) {
+            setWorkCorrection(current => current ? { ...current, episode_count: String(result.episodeCount) } : current);
+          }
+        }
+      } finally {
+        setDirectEpisodesLoading(false);
+      }
+    };
+    void loadSeriesEpisodes();
+  }, [assignment.rights_holder_id, assignment.works, isOpen]);
 
   const searchCoEditors = async (editorId: string, query: string) => {
     const q = query.trim();
@@ -293,8 +341,8 @@ export function EditWorkModal({
     setIsSendingCorrection(true);
 
     const myEpisodes = Object.entries(selectedEpisodes)
-      .filter(([_, checked]) => checked)
-      .map(([num, _]) => parseInt(num, 10))
+      .filter(([, checked]) => checked)
+      .map(([num]) => parseInt(num, 10))
       .sort((a, b) => a - b);
 
     try {
@@ -433,12 +481,12 @@ export function EditWorkModal({
 
   if (!isOpen) return null;
 
-  const coEditorChanges = editCoEditors.filter(
-    editor => !editor.locked || editor.action === "remove" || editor.action === "change"
-  );
   const directSeriesEpisodeCount = workCorrection && isSeriesType(workCorrection.type)
     ? parseInt(workCorrection.episode_count || "0", 10) || 0
     : 0;
+  const directSeriesEpisodeOptions = directEpisodeOptions.length
+    ? directEpisodeOptions
+    : buildCompleteEpisodeOptions({ episodeCount: directSeriesEpisodeCount });
   const directSelectedEpisodeNumbers = Object.entries(selectedEpisodes)
     .filter(([, checked]) => checked)
     .map(([num]) => parseInt(num, 10))
@@ -470,6 +518,19 @@ export function EditWorkModal({
             nextActionLabel={workNextActionLabel(assignment.works)}
             nextActionTone={workNextActionTone(assignment.works)}
           />
+        </div>
+      )}
+      {assignment.works && (
+        <div className="mb-6 rounded-lg border p-4">
+          <p className="mb-3 text-sm font-semibold text-foreground">Grunddata</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <ReadonlyWorkField label="Titel" value={assignment.works.title} />
+            <ReadonlyWorkField label="Type" value={workTypeLabel(assignment.works.type)} />
+            <ReadonlyWorkField label="Premiereår" value={assignment.works.year} />
+            <ReadonlyWorkField label="Længde" value={assignment.works.duration_minutes != null ? `${assignment.works.duration_minutes} min.` : null} />
+            <ReadonlyWorkField label="Produktionsselskab" value={(assignment.works.production_companies ?? []).join(", ")} />
+            <ReadonlyWorkField label="Instruktør" value={assignment.works.director} />
+          </div>
         </div>
       )}
       <div className="space-y-1.5 mb-6">
@@ -504,11 +565,12 @@ export function EditWorkModal({
           </div>
           <div className="mt-3">
             <SeriesEpisodeSelector
-              season={1}
+              season={directEpisodeSeason}
               onSeasonChange={() => undefined}
-              options={buildCompleteEpisodeOptions({ episodeCount: directSeriesEpisodeCount })}
+              options={directSeriesEpisodeOptions}
               selected={directSelectedEpisodeNumbers}
               onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
+              loading={directEpisodesLoading}
               showSeason={false}
               compact
             />
@@ -748,12 +810,13 @@ export function EditWorkModal({
                   return (
                     <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border bg-muted/30 p-4">
                       <SeriesEpisodeSelector
-                        season={1}
+                        season={directEpisodeSeason}
                         onSeasonChange={() => undefined}
-                        options={buildCompleteEpisodeOptions({ episodeCount: epCount })}
+                        options={directEpisodeOptions.length ? directEpisodeOptions : buildCompleteEpisodeOptions({ episodeCount: epCount })}
                         selected={directSelectedEpisodeNumbers}
                         onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
                         label="Vælg afsnit du har klippet"
+                        loading={directEpisodesLoading}
                         showSeason={false}
                         compact
                       />

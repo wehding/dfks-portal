@@ -135,6 +135,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
     const [pendingWorkMessagesCount, setPendingWorkMessagesCount] = useState<number>(0)
+    const [isAssociationMember, setIsAssociationMember] = useState(false)
 
     // Kollaps-tilstand per sektion — åbne som default
     const [brugerOpen, setBrugerOpen] = useState(true)
@@ -162,6 +163,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 const b = resolveBranding(org as never)
                 setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name })
             })
+
+            const { data: memberRow } = await supabase
+                .from("rettighedshavere")
+                .select("id")
+                .eq("user_id", user.id)
+                .eq("org_id", orgId)
+                .maybeSingle()
+            setIsAssociationMember(Boolean(memberRow?.id))
 
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
@@ -210,10 +219,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         .filter(item => allowedKeys.includes(item.key))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
-    const userNavItems = USER_NAV_ITEMS.map(item => ({
-        ...item,
-        label: t(item.labelKey as Parameters<typeof t>[0]),
-    }))
+    const userNavItems = USER_NAV_ITEMS
+        .filter(item => item.key !== "portal-gennemgang" || isAssociationMember)
+        .map(item => ({
+            ...item,
+            label: t(item.labelKey as Parameters<typeof t>[0]),
+        }))
 
     const renderItem = (item: typeof adminItems[0]) => (
         <SidebarMenuItem key={item.href}>

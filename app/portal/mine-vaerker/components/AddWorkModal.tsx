@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
+import { linkContractToWork } from "@/app/actions/member-contracts";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -38,8 +39,9 @@ interface ManualWorkForm {
   year: string;
   duration_minutes: string;
   episode_count: string;
-  genre: string;
   director: string;
+  production_company: string;
+  contract_id: string;
 }
 
 interface LocalWorkResult {
@@ -146,6 +148,7 @@ interface AddWorkModalProps {
   reloadAssignments: () => Promise<void>;
   locale: string;
   initialQuery?: string;
+  initialManualWork?: Partial<ManualWorkForm> | null;
 }
 
 function emptyManualWorkForm(): ManualWorkForm {
@@ -155,8 +158,9 @@ function emptyManualWorkForm(): ManualWorkForm {
     year: "",
     duration_minutes: "",
     episode_count: "",
-    genre: "",
     director: "",
+    production_company: "",
+    contract_id: "",
   };
 }
 
@@ -360,6 +364,7 @@ export function AddWorkModal({
   reloadAssignments,
   locale,
   initialQuery = "",
+  initialManualWork = null,
 }: AddWorkModalProps) {
   const { t } = useI18n();
   // Fagord/roller styret af foreningens terminologi (fallback: klipper-roller)
@@ -464,11 +469,14 @@ export function AddWorkModal({
   }, [addSeason, manualMode, manualWork.episode_count, manualWork.type]);
 
   const resetAddState = React.useCallback(() => {
+    const nextManualWork = initialManualWork
+      ? { ...emptyManualWorkForm(), ...initialManualWork }
+      : emptyManualWorkForm();
     autoSearchKeyRef.current = "";
     setManualMode(false);
     setTypeFilter("all");
-    setManualWork(emptyManualWorkForm());
-    setAddQuery(initialQuery);
+    setManualWork(nextManualWork);
+    setAddQuery(initialManualWork?.title ?? initialQuery);
     setAddComment("");
     setAddCoEditors([]);
     setUnifiedResults([]);
@@ -478,7 +486,7 @@ export function AddWorkModal({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
-  }, [initialQuery]);
+  }, [initialManualWork, initialQuery]);
 
   useEffect(() => {
     if (isOpen) {
@@ -579,6 +587,15 @@ export function AddWorkModal({
         throw new Error(locale === "da" ? "Vælg mindst ét afsnit." : "Select at least one episode.");
       }
 
+      const linkUploadedContract = async (workId: string | null | undefined) => {
+        const contractId = manualWork.contract_id?.trim();
+        if (!contractId || !workId) return;
+        const linkRes = await linkContractToWork(contractId, workId);
+        if (!linkRes.success) {
+          throw new Error(linkRes.error ?? (locale === "da" ? "Værket blev oprettet, men kontrakten kunne ikke tilknyttes." : "The work was created, but the contract could not be linked."));
+        }
+      };
+
       if (manualMode) {
         const res = await addWorkForMemberWithApproval({
           rightsHolderId,
@@ -596,12 +613,13 @@ export function AddWorkModal({
             season_number: selectedSeasonNumber,
             episode_number: numberOrNull(addEpisode),
             selected_episodes: selectedEpisodes,
-            genre: manualWork.genre || null,
             director: manualWork.director || null,
+            production_companies: manualWork.production_company.trim() ? [manualWork.production_company.trim()] : undefined,
             description: null,
           },
         });
         if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+        await linkUploadedContract(res.workId);
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
         await closeAfterSuccess();
         return;
@@ -620,8 +638,9 @@ export function AddWorkModal({
             episodeNumber: numberOrNull(addEpisode),
             selectedEpisodes,
           });
-          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-          onWorkAdded(
+	          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+            await linkUploadedContract(res.workId ?? u.local_id);
+	          onWorkAdded(
             res.alreadyExists
               ? (locale === "da" ? "Værket findes allerede under Mine værker." : "The work is already listed under My works.")
               : res.pending ? t("works.addedPending") : t("works.added"),
@@ -655,6 +674,7 @@ export function AddWorkModal({
               year: d.year,
               director: d.director ?? undefined,
               genre: d.genre ?? undefined,
+              production_companies: d.production_companies ?? undefined,
               duration_minutes: d.duration_minutes ?? undefined,
               season_number: selectedSeasonNumber,
               episode_number: numberOrNull(addEpisode),
@@ -665,8 +685,9 @@ export function AddWorkModal({
               dfi_metadata: d.dfi_metadata ?? undefined,
             },
           });
-          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-          onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
+	          if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
+            await linkUploadedContract(res.workId);
+	          onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
           await closeAfterSuccess();
           return;
         }
@@ -770,15 +791,23 @@ export function AddWorkModal({
         <Button
             type="button"
             size="sm"
-            variant={manualMode ? "default" : "outline"}
-            onClick={() => {
-              setManualMode(v => !v);
-              if (!manualMode) {
-                setPickedUnifiedResult(null);
-                setAddCoEditors([]);
-              }
-            }}
-          >
+	            variant={manualMode ? "default" : "outline"}
+	            onClick={() => {
+	              if (!manualMode) {
+                  setManualMode(true);
+                  setManualWork(prev => ({
+                    ...emptyManualWorkForm(),
+                    ...prev,
+                    ...(initialManualWork ?? {}),
+                    title: prev.title || initialManualWork?.title || addQuery,
+                  }));
+	                setPickedUnifiedResult(null);
+	                setAddCoEditors([]);
+                } else {
+                  setManualMode(false);
+	              }
+	            }}
+	          >
             {manualMode ? (locale === "da" ? "Skift til søgning" : "Switch to search") : t("works.createManual")}
         </Button>
       </div>
@@ -836,18 +865,10 @@ export function AddWorkModal({
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
+              <Label className="text-sm font-medium text-muted-foreground">Produktionsselskab</Label>
               <Input
-                value={manualWork.episode_count}
-                onChange={e => setManualWork({ ...manualWork, episode_count: e.target.value })}
-                inputMode="numeric"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.genreField")}</Label>
-              <Input
-                value={manualWork.genre}
-                onChange={e => setManualWork({ ...manualWork, genre: e.target.value })}
+                value={manualWork.production_company}
+                onChange={e => setManualWork({ ...manualWork, production_company: e.target.value })}
               />
             </div>
             <div className="space-y-1.5">
@@ -858,6 +879,16 @@ export function AddWorkModal({
               />
             </div>
           </div>
+          {showSeriesFields && (
+            <div className="mt-3 space-y-1.5">
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
+              <Input
+                value={manualWork.episode_count}
+                onChange={e => setManualWork({ ...manualWork, episode_count: e.target.value })}
+                inputMode="numeric"
+              />
+            </div>
+          )}
           <p className="mt-3 text-xs text-muted-foreground">{t("works.posterHint")}</p>
           {showSeriesFields && seriesEpisodePicker}
           <div className="mt-4 space-y-1.5">

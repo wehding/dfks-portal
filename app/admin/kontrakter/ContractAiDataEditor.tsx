@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,8 +18,8 @@ type Field = { key: string; label: string; type: FieldType };
 const RIGHT_OVERVIEW_FIELDS: Field[] = [
     { key: "rightsOverview.overenskomst", label: "Overenskomst", type: "bool" },
     { key: "rightsOverview.kreditering", label: "Kreditering", type: "bool" },
-    { key: "rightsOverview.copydanforbehold", label: "Copydanforbehold", type: "bool" },
-    { key: "rightsOverview.streamingforbehold", label: "Streamingforbehold", type: "bool" },
+    { key: "rightsOverview.copydanforbehold", label: "Copydan-forbehold", type: "bool" },
+    { key: "rightsOverview.streamingforbehold", label: "Streaming-forbehold", type: "bool" },
 ];
 
 const SALARY_SOURCE_LABELS: Record<string, string> = {
@@ -96,8 +95,6 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     { title: "Rettigheder", fields: [
         { key: "royalty", label: "Royalty", type: "bool" },
         { key: "royaltyPercent", label: "Royalty %", type: "number" },
-        { key: "svod", label: "SVOD", type: "bool" },
-        { key: "copydan", label: "Copydan", type: "bool" },
         { key: "aiDataMiningClause", label: "AI-data mining-forbehold", type: "bool" },
         { key: "futureRightsReservation", label: "Fremtidige rettigheder-forbehold", type: "bool" },
         ...RIGHT_OVERVIEW_FIELDS,
@@ -167,6 +164,7 @@ export function ContractAiDataEditor({
     const [found, setFound] = useState(false);
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
     const [sources, setSources] = useState<Record<string, string | null> | null>(null);
+    const loadedRef = useRef(false);
 
     useEffect(() => {
         let active = true;
@@ -178,8 +176,9 @@ export function ContractAiDataEditor({
             setLockedFields(new Set((ed?._lockedFields ?? []) as string[]));
             setSources((ed?._sources ?? null) as Record<string, string | null>);
             setLoading(false);
+            loadedRef.current = true;
         });
-        return () => { active = false; };
+        return () => { active = false; loadedRef.current = false; };
     }, [contractId]);
 
     const set = (k: string, val: string | boolean) => {
@@ -200,19 +199,28 @@ export function ContractAiDataEditor({
         });
     };
 
-    const save = async () => {
-        if (!values) return;
+    const save = async (nextValues = values, nextLockedFields = lockedFields, showToast = true) => {
+        if (!nextValues) return;
         setSaving(true);
-        const ed = toExtractedData(values);
-        ed._lockedFields = Array.from(lockedFields);
+        const ed = toExtractedData(nextValues);
+        ed._lockedFields = Array.from(nextLockedFields);
         if (sources) {
             ed._sources = sources;
         }
         const res = await saveContractValidation({ contractId, extractedData: ed });
         setSaving(false);
-        if (res.success) { toast.success("AI-data gemt"); setFound(true); }
+        if (res.success) { if (showToast) toast.success("AI-data gemt"); setFound(true); }
         else toast.error(res.error ?? "Kunne ikke gemme AI-data");
     };
+
+    useEffect(() => {
+        if (!loadedRef.current || !values) return;
+        const timer = window.setTimeout(() => {
+            void save(values, lockedFields, false);
+        }, 700);
+        return () => window.clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [values, lockedFields]);
 
     if (loading || !values) {
         return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter AI-data…</div>;
@@ -232,12 +240,19 @@ export function ContractAiDataEditor({
 
                             return (
                                 <div key={f.key} className={f.type === "textarea" ? "col-span-2 space-y-1" : g.title === "Rettigheder" && f.type === "bool" ? "min-w-fit" : "space-y-1"}>
-                                    {f.type === "bool" ? (
-                                        <div className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0 min-h-[32px] gap-4">
-                                            <label className="flex items-center gap-2 text-xs cursor-pointer select-none">
-                                                <input type="checkbox" checked={!!values[f.key]} onChange={e => set(f.key, e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary" />
-                                                {f.label}
-                                            </label>
+	                                    {f.type === "bool" ? (
+	                                        <div className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0 min-h-[32px] gap-4">
+	                                            <button
+	                                                type="button"
+	                                                onClick={() => set(f.key, !values[f.key])}
+	                                                className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+	                                                    values[f.key]
+	                                                        ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+	                                                        : "border-input bg-background text-muted-foreground hover:bg-muted"
+	                                                }`}
+	                                            >
+	                                                {f.label}: {values[f.key] ? "Ja" : "Nej"}
+	                                            </button>
                                             <div className="flex items-center gap-1">
                                                 {quote && (
                                                     <SourceBtn
@@ -297,10 +312,7 @@ export function ContractAiDataEditor({
                     </div>
                 </div>
             ))}
-            <Button type="button" variant="outline" onClick={save} disabled={saving}>
-                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Gem AI-data
-            </Button>
-        </div>
+	            {saving && <p className="text-xs text-muted-foreground">Gemmer ændringer...</p>}
+	        </div>
     );
 }

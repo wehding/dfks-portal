@@ -34,6 +34,7 @@ type Work = {
   episode_number?: number | null;
   genre: string | null;
   director: string | null;
+  production_companies?: string[] | null;
   status: string | null;
   dfi_id: string | null;
   tmdb_id: number | string | null;
@@ -48,6 +49,15 @@ export type OtherAssignment = { id: string; work_id: string; role: string | null
 type WorkProductionNumber = { tv_station: string | null; number: string | null };
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
+type InitialManualWork = {
+  title?: string;
+  type?: string;
+  duration_minutes?: string;
+  director?: string;
+  production_company?: string;
+  contract_id?: string;
+};
+const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type RequestComment = {
   id: string;
@@ -218,6 +228,8 @@ export default function MineVaerkerClient({
   const [isAdding, setIsAdding]             = useState(false);
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
   const [initialAddQuery, setInitialAddQuery] = useState("");
+  const [initialManualWork, setInitialManualWork] = useState<InitialManualWork | null>(null);
+  const addParamHandledRef = React.useRef<string | null>(null);
 
   const supabase = createClient();
   const router   = useRouter();
@@ -225,6 +237,22 @@ export default function MineVaerkerClient({
 
   React.useEffect(() => {
     if (searchParams?.get("add") === "1") {
+      const key = searchParams.toString();
+      if (addParamHandledRef.current === key) return;
+      addParamHandledRef.current = key;
+      let prefill: InitialManualWork | null = null;
+      if (typeof window !== "undefined") {
+        const raw = window.sessionStorage.getItem(ADD_WORK_PREFILL_KEY);
+        if (raw) {
+          try {
+            prefill = JSON.parse(raw) as InitialManualWork;
+          } catch {
+            prefill = null;
+          }
+          window.sessionStorage.removeItem(ADD_WORK_PREFILL_KEY);
+        }
+      }
+      setInitialManualWork(prefill);
       setInitialAddQuery(searchParams?.get("q") ?? "");
       setIsAdding(true);
     }
@@ -370,7 +398,7 @@ export default function MineVaerkerClient({
     if (!rightsHolderId) return;
     const { data } = await supabase
       .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
+      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
       .eq("rights_holder_id", rightsHolderId)
       .order("created_at", { ascending: false });
     if (data) setAssignments(data as unknown as Assignment[]);
@@ -568,14 +596,25 @@ export default function MineVaerkerClient({
             active={Boolean(search || catFilter !== "all" || statusFilter !== "all")}
             onReset={() => { setSearch(""); setCatFilter("all"); setStatusFilter("all"); setSelected([]); setPageSize(20); }}
           />
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            Vis
-            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-            </select>
-          </label>
-          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
-            <Select value={sortKey} onValueChange={value => handleSort(value as typeof sortKey)}>
+	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+	            Vis
+	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground">
+	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
+	            </select>
+	          </label>
+	          {filtered.length > 0 && (
+	            <Button
+	              type="button"
+	              variant="outline"
+	              className="w-full sm:w-auto lg:hidden"
+	              onClick={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))}
+	            >
+	              {selected.length === filtered.length ? "Fravælg alle" : "Vælg alle"}
+	              {selected.length > 0 ? ` (${selected.length})` : ""}
+	            </Button>
+	          )}
+	          <div className="grid grid-cols-[1fr_auto] gap-2 lg:hidden">
+            <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="date">Tilføjet dato</SelectItem>
@@ -591,8 +630,8 @@ export default function MineVaerkerClient({
           </div>
         </div>
 
-        {/* Kolonnehoveder */}
-        <div
+		        {/* Kolonnehoveder */}
+	        <div
           className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground select-none lg:grid"
           style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
         >
@@ -837,12 +876,13 @@ export default function MineVaerkerClient({
       {/* ── Tilføj-panel ──────────────────────────────────────────── */}
       <AddWorkModal
         isOpen={isAdding}
-        onClose={() => setIsAdding(false)}
+        onClose={() => { setIsAdding(false); setInitialManualWork(null); }}
         rightsHolderId={rightsHolderId}
         onWorkAdded={(message, success) => setMsg({ type: success ? "success" : "error", text: message })}
         reloadAssignments={reloadAssignments}
         locale={locale}
         initialQuery={initialAddQuery}
+        initialManualWork={initialManualWork}
       />
 
       {/* ── Redigér-panel ──────────────────────────────────────────── */}

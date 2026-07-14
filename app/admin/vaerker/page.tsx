@@ -951,7 +951,11 @@ export default function VaerksadministrationPage() {
   );
 
   const duplicateGroups = useMemo(() => {
-    const candidates = works.filter(work => displayStatus(work) !== "arkiveret");
+    const candidates = works.filter(work =>
+      displayStatus(work) !== "arkiveret" &&
+      !work.parent_work_id &&
+      work.episode_number == null
+    );
     const groups: WorkRow[][] = [];
     const used = new Set<string>();
 
@@ -1790,12 +1794,34 @@ export default function VaerksadministrationPage() {
           <Search className="h-4 w-4" />
           Find dubletter
         </Button>
+        <div className="grid w-full grid-cols-[1fr_auto] gap-2 lg:hidden">
+          <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
+            <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="status">Status</SelectItem>
+              <SelectItem value="title">Værk</SelectItem>
+              <SelectItem value="type">Type</SelectItem>
+              <SelectItem value="year">Premiereår</SelectItem>
+              <SelectItem value="data">Data</SelectItem>
+              <SelectItem value="broadcaster">Broadcast/stream</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+            {sortDir === "asc" ? "A-Z" : "Z-A"}
+          </Button>
+        </div>
         <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
           Vis
           <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
             {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
           </select>
         </label>
+        {filtered.length > 0 && (
+          <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden" onClick={toggleAllFiltered}>
+            {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
+            {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+          </Button>
+        )}
       </div>
 
       {selectedIds.length > 0 && (
@@ -1824,7 +1850,7 @@ export default function VaerksadministrationPage() {
         </div>
       )}
 
-      <MobileCardList>
+		      <MobileCardList>
         {filtered.length === 0 ? (
           <MobileDataCard>
             <p className="py-6 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</p>

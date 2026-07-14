@@ -663,9 +663,15 @@ export default function PortalKontraktgennemgangPage() {
                             <p className="text-xs text-muted-foreground text-right">{notes.length}/1000</p>
                         </div>
 
-                        {/* GDPR-note */}
-                        <div className="rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-4 py-3 text-xs text-muted-foreground leading-relaxed">
-                            Kontrakten sendes ikke til eksterne parter. CPR-numre og kontonumre maskeres automatisk inden analyse. Filen gemmes ikke efter analysen er færdig.
+                        {/* AI- og GDPR-note */}
+                        <div className="space-y-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-4 py-3 text-xs text-muted-foreground leading-relaxed">
+                            <p>
+                                Kontrakten gennemgås først af AI. Den vurdering du får her, er derfor en foreløbig AI-baseret rådgivning.
+                                Hvis systemet finder usædvanlige vilkår eller noget, der kræver juridisk vurdering, sendes sagen automatisk videre til foreningens jurist.
+                            </p>
+                            <p>
+                                CPR-numre og kontonumre maskeres automatisk inden analyse. Filen gemmes ikke efter analysen er færdig.
+                            </p>
                         </div>
 
                         {/* Submit */}

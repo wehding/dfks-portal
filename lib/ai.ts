@@ -478,12 +478,16 @@ Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
   "creditedRole": "VÆLG præcis én af disse roller baseret på kontraktens funktionsbetegnelse: ${roleList} — eller null hvis rollen ikke fremgår",
   "duration": "samlet varighed i hele minutter som tal — 0 for serier eller hvis ukendt",
   "premiereDate": "YYYY-MM-DD eller null",
+  "productionCompany": "produktionsselskab/producer/opdragsgiver for produktionen som string eller null",
+  "director": "instruktør som string eller null",
   "episodes": [{"number": 1, "title": "Afsnit 1", "duration": 45}]
 }
 
 Regler:
 - creditedRole: returner ALTID præcis ét af de listede rollnavne — kopiér stavningen nøjagtigt. Vigtigt: "Editor", "Film Editor", "Supervising Editor", "Monteur", "Montage", "Cutter", "Picture Editor" er alle synonymer for "Klipper" — vælg altid "Klipper" for disse funktioner uanset om kontrakten er på dansk, engelsk eller fransk
 - category baseres på produktionstype: spillefilm/feature film → feature, tv-serie/dramaserie → tvSeries, dokumentarfilm → documentary, dokumentarserie → docSeries, kortfilm → short, tv-show/underholdning → tvEntertainment, reality → reality, sport → sport
+- productionCompany skal være selve produktionsselskabet/producerende selskab, ikke personens arbejdsgiver hvis det tydeligt er noget andet
+- director skal kun udfyldes hvis instruktøren fremgår tydeligt
 - episodes skal KUN udfyldes hvis det er en serie (tvSeries eller docSeries) og kontrakten nævner specifikke afsnit med titler og/eller varighed. Ellers returner tom liste []
 - duration for serier sættes til summen af episodes hvis de er kendte, ellers 0
 - Returner null for felter du ikke kan finde i kontrakten`
@@ -495,6 +499,8 @@ export interface PortalScreeningResult {
     creditedRole: string | null
     duration: number
     premiereDate: string | null
+    productionCompany: string | null
+    director: string | null
     episodes: { number: number; title: string; duration: number }[]
 }
 
