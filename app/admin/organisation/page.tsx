@@ -7,6 +7,8 @@ import { getOrganisationSettings, updateOrganisationSettings } from "@/app/actio
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 
 type FormState = {
   short_name: string;
@@ -14,8 +16,15 @@ type FormState = {
   logo_url: string;
   primary_color: string;
   from_email: string;
+  invite_email_text: string;
+  invite_reminder_text: string;
   coeditor_word: string;
   role_labels: string[];
+  foreninglet_base_url: string;
+  foreninglet_username: string;
+  foreninglet_password: string;
+  foreninglet_enabled: boolean;
+  foreninglet_has_credentials: boolean;
 };
 
 const emptyForm: FormState = {
@@ -24,8 +33,15 @@ const emptyForm: FormState = {
   logo_url: "",
   primary_color: "#111827",
   from_email: "",
-  coeditor_word: "medklipper",
-  role_labels: ["B-klipper", "Klipper", "Konceptuerende klipper"],
+  invite_email_text: "",
+  invite_reminder_text: "",
+  coeditor_word: "medskaber",
+  role_labels: ["Medskaber"],
+  foreninglet_base_url: "https://foreninglet.dk/api/members",
+  foreninglet_username: "",
+  foreninglet_password: "",
+  foreninglet_enabled: true,
+  foreninglet_has_credentials: false,
 };
 
 export default function OrganisationSettingsPage() {
@@ -44,8 +60,15 @@ export default function OrganisationSettingsPage() {
           logo_url: settings.logo_url ?? "",
           primary_color: settings.primary_color,
           from_email: settings.from_email ?? "",
+          invite_email_text: settings.invite_email_text ?? "",
+          invite_reminder_text: settings.invite_reminder_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
+          foreninglet_base_url: settings.foreninglet.base_url,
+          foreninglet_username: "",
+          foreninglet_password: "",
+          foreninglet_enabled: settings.foreninglet.enabled,
+          foreninglet_has_credentials: settings.foreninglet.has_credentials,
         });
       })
       .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente organisationen."))
@@ -87,8 +110,14 @@ export default function OrganisationSettingsPage() {
           logo_url: form.logo_url || null,
           primary_color: form.primary_color,
           from_email: form.from_email || null,
+          invite_email_text: form.invite_email_text || null,
+          invite_reminder_text: form.invite_reminder_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
+          foreninglet_base_url: form.foreninglet_base_url || null,
+          foreninglet_username: form.foreninglet_username || null,
+          foreninglet_password: form.foreninglet_password || null,
+          foreninglet_enabled: form.foreninglet_enabled,
         });
         toast.success("Organisationsindstillinger gemt");
       } catch (error) {
@@ -131,11 +160,11 @@ export default function OrganisationSettingsPage() {
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label>Kort navn</Label>
-            <Input value={form.short_name} onChange={event => setForm(f => ({ ...f, short_name: event.target.value }))} placeholder="DFKS" />
+            <Input value={form.short_name} onChange={event => setForm(f => ({ ...f, short_name: event.target.value }))} placeholder="Kort navn" />
           </div>
           <div className="space-y-2">
             <Label>Fuldt navn</Label>
-            <Input value={form.long_name} onChange={event => setForm(f => ({ ...f, long_name: event.target.value }))} placeholder="Dansk Filmklipperselskab" />
+            <Input value={form.long_name} onChange={event => setForm(f => ({ ...f, long_name: event.target.value }))} placeholder="Organisationens fulde navn" />
           </div>
           <div className="space-y-2 sm:col-span-2">
             <Label>Logo-url</Label>
@@ -159,10 +188,78 @@ export default function OrganisationSettingsPage() {
 
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Invitationer</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Afsender-mailen skal være verificeret i mailudbyderen.</p>
-        <div className="mt-4 space-y-2">
-          <Label>Afsender-mail</Label>
-          <Input value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
+        <p className="mt-1 text-sm text-muted-foreground">Afsender-mailen skal være verificeret i mailudbyderen. Teksterne bruges i invitationer og rykkere.</p>
+        <div className="mt-4 grid gap-4">
+          <div className="space-y-2">
+            <Label>Afsender-mail</Label>
+            <Input value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
+          </div>
+          <div className="space-y-2">
+            <Label>Invitationstekst</Label>
+            <Textarea
+              value={form.invite_email_text}
+              onChange={event => setForm(f => ({ ...f, invite_email_text: event.target.value }))}
+              placeholder="Skriv den tekst, der skal stå over knappen i invitationsmailen."
+              rows={4}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Rykkertekst</Label>
+            <Textarea
+              value={form.invite_reminder_text}
+              onChange={event => setForm(f => ({ ...f, invite_reminder_text: event.target.value }))}
+              placeholder="Skriv den tekst, der skal bruges, når en invitation gensendes som rykker."
+              rows={4}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
+        <h2 className="text-base font-semibold">Medlems-API</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Bruges til at hente medlemslisten fra organisationens medlemssystem. Login gemmes krypteret og vises ikke igen.
+        </p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2 sm:col-span-2">
+            <Label>ForeningLet API-adresse</Label>
+            <Input
+              value={form.foreninglet_base_url}
+              onChange={event => setForm(f => ({ ...f, foreninglet_base_url: event.target.value }))}
+              placeholder="https://foreninglet.dk/api/members"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Brugernavn</Label>
+            <Input
+              value={form.foreninglet_username}
+              onChange={event => setForm(f => ({ ...f, foreninglet_username: event.target.value }))}
+              placeholder={form.foreninglet_has_credentials ? "Gemmer eksisterende brugernavn" : "Brugernavn"}
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Kodeord</Label>
+            <Input
+              type="password"
+              value={form.foreninglet_password}
+              onChange={event => setForm(f => ({ ...f, foreninglet_password: event.target.value }))}
+              placeholder={form.foreninglet_has_credentials ? "Gemmer eksisterende kodeord" : "Kodeord"}
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 sm:col-span-2">
+            <div>
+              <Label>Aktivér ForeningLet-import</Label>
+              <p className="text-xs text-muted-foreground">
+                {form.foreninglet_has_credentials ? "Der er gemt loginoplysninger for organisationen." : "Der er ikke gemt loginoplysninger endnu."}
+              </p>
+            </div>
+            <Switch
+              checked={form.foreninglet_enabled}
+              onCheckedChange={checked => setForm(f => ({ ...f, foreninglet_enabled: checked }))}
+            />
+          </div>
         </div>
       </section>
 

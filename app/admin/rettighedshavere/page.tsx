@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import type { ReactNode } from "react"
 import { useRouter } from "next/navigation"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText, Trash2 } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -32,10 +33,11 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { MoreHorizontal } from "lucide-react"
-import { getDfksMembersSyncStatus, syncDfksMembers } from "@/app/actions/dfks-members"
-import { deleteRightsHolders } from "@/app/actions/rights-holder-admin"
+import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
+import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
+type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
 type AdminUserResponse = {
     error?: string
     invite_url?: string
@@ -51,6 +53,19 @@ type DfksMemberOption = {
 type RightsHolderCounts = {
     contracts: number
     works: number
+    allContractsValidated: boolean
+}
+type ImportCandidate = {
+    id: string
+    full_name: string
+    email: string | null
+    display_id: string | null
+    status: string
+    phone: string | null
+    address: string | null
+    match: "new" | "existing" | "ambiguous"
+    rights_holder_id: string | null
+    match_reason: string | null
 }
 
 function errorMessage(error: unknown) {
@@ -89,6 +104,8 @@ export default function RettighedshavereAdminPage() {
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
     const [filter, setFilter] = useState<Filter>("alle")
+    const [sortKey, setSortKey] = useState<SortKey>("name")
+    const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
 
     const [createOpen, setCreateOpen] = useState(false)
     const [createSaving, setCreateSaving] = useState(false)
@@ -102,7 +119,7 @@ export default function RettighedshavereAdminPage() {
     const [editMemberNoTouched, setEditMemberNoTouched] = useState(false)
 
     // Portal-adgang
-    const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reset" } | null>(null)
+    const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reminder" | "reset" } | null>(null)
     const [portalLoading, setPortalLoading] = useState(false)
     const [portalLink, setPortalLink] = useState<string | null>(null)
 
@@ -111,7 +128,19 @@ export default function RettighedshavereAdminPage() {
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-    const [deletingSelected, setDeletingSelected] = useState(false)
+    const [archivingSelected, setArchivingSelected] = useState(false)
+    const [restoringSelected, setRestoringSelected] = useState(false)
+    const [bulkReminding, setBulkReminding] = useState(false)
+    const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false)
+    const [permanentDeleting, setPermanentDeleting] = useState(false)
+    const [deleteContracts, setDeleteContracts] = useState(false)
+    const [deleteUnsharedWorks, setDeleteUnsharedWorks] = useState(true)
+    const [deleteConfirmation, setDeleteConfirmation] = useState("")
+    const [importOpen, setImportOpen] = useState(false)
+    const [importLoading, setImportLoading] = useState(false)
+    const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
+    const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set())
+    const [importingMembers, setImportingMembers] = useState(false)
 
     useEffect(() => {
         const supabase = createClient()
@@ -160,7 +189,7 @@ export default function RettighedshavereAdminPage() {
         const [{ data: contracts }, { data: assignments }] = await Promise.all([
             supabase
                 .from("contracts")
-                .select("rights_holder_id")
+                .select("rights_holder_id, status")
                 .eq("org_id", oid)
                 .not("rights_holder_id", "is", null),
             supabase
@@ -171,15 +200,21 @@ export default function RettighedshavereAdminPage() {
         ])
 
         const next: Record<string, RightsHolderCounts> = {}
-        for (const row of (contracts ?? []) as Array<{ rights_holder_id: string | null }>) {
+        const contractStatuses: Record<string, string[]> = {}
+        for (const row of (contracts ?? []) as Array<{ rights_holder_id: string | null; status?: string | null }>) {
             if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0 }
+            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
             next[row.rights_holder_id].contracts += 1
+            contractStatuses[row.rights_holder_id] ??= []
+            contractStatuses[row.rights_holder_id].push(row.status ?? "")
         }
         for (const row of (assignments ?? []) as Array<{ rights_holder_id: string | null }>) {
             if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0 }
+            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
             next[row.rights_holder_id].works += 1
+        }
+        for (const [rightsHolderId, statuses] of Object.entries(contractStatuses)) {
+            next[rightsHolderId].allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status))
         }
         setCountsByRightsHolder(next)
     }
@@ -199,9 +234,52 @@ export default function RettighedshavereAdminPage() {
             toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
             return
         }
-        toast.success(`${result.count ?? 0} medlemmer opdateret fra DFKS medlemslisten`)
+        toast.success(`${result.count ?? 0} medlemmer hentet. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret.`)
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
         if (orgId) loadDfksMembers(orgId)
+    }
+
+    async function refreshImportPreview() {
+        setImportLoading(true)
+        const preview = await getDfksMemberImportPreview()
+        setImportLoading(false)
+        if (!preview.success) {
+            toast.error(preview.error ?? "Kunne ikke hente importlisten")
+            return
+        }
+        setImportCandidates(preview.candidates)
+        setSelectedImportIds(new Set(preview.candidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").map(candidate => candidate.id)))
+    }
+
+    async function openImportDialog() {
+        setImportOpen(true)
+        setImportLoading(true)
+        const result = await syncDfksMembers()
+        if (!result.success) {
+            toast.error(result.error ?? "Kunne ikke hente medlemslisten")
+            setImportLoading(false)
+            await refreshImportPreview()
+            return
+        }
+        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+        if (orgId) await loadDfksMembers(orgId)
+        await refreshImportPreview()
+    }
+
+    async function handleImportSelectedMembers() {
+        if (!orgId || selectedImportIds.size === 0) return
+        setImportingMembers(true)
+        const result = await importDfksMembersToRightsHolders(Array.from(selectedImportIds))
+        setImportingMembers(false)
+        if (!result.success) {
+            toast.error(result.error ?? "Kunne ikke importere medlemmer")
+            return
+        }
+        toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
+        setImportOpen(false)
+        setSelectedImportIds(new Set())
+        await load(orgId)
+        await loadOverviewCounts(orgId)
     }
 
     const createMatchedMemberNo = useMemo(
@@ -223,24 +301,53 @@ export default function RettighedshavereAdminPage() {
         setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
     }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
 
-    const visible = rows.filter(rh => {
-        const aff = orgId ? getAffiliation(rh, orgId) : null
-        if (filter === "medlemmer" && !aff?.is_member) return false
-        if (filter === "ikke-medlemmer" && aff?.is_member) return false
-        // Invitationsstatus
-        const invStatus = rh.onboarding_completed ? "registreret" : rh.invite_sent_at ? "afventer" : "ikke-inviteret"
-        if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
-        if (search) {
-            const q = search.toLowerCase()
-            return (
-                rh.full_name.toLowerCase().includes(q) ||
-                rh.email?.toLowerCase().includes(q) ||
-                rh.phone?.toLowerCase().includes(q) ||
-                aff?.member_no?.toLowerCase().includes(q)
-            )
-        }
-        return true
-    })
+    const visible = useMemo(() => {
+        const q = search.toLowerCase().trim()
+        const list = rows.filter(rh => {
+            const aff = orgId ? getAffiliation(rh, orgId) : null
+            const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
+            const archived = Boolean(rh.archived_at)
+            if (filter === "arkiverede") {
+                if (!archived) return false
+            } else if (archived) {
+                return false
+            }
+            if (filter === "medlemmer" && !aff?.is_member) return false
+            if (filter === "ikke-medlemmer" && aff?.is_member) return false
+            if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
+            const invStatus = rh.onboarding_completed ? "registreret" : rh.invite_sent_at ? "afventer" : "ikke-inviteret"
+            if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
+            if (q) {
+                return (
+                    rh.full_name.toLowerCase().includes(q) ||
+                    rh.email?.toLowerCase().includes(q) ||
+                    rh.phone?.toLowerCase().includes(q) ||
+                    aff?.member_no?.toLowerCase().includes(q)
+                )
+            }
+            return true
+        })
+
+        return list.sort((a, b) => {
+            const affA = orgId ? getAffiliation(a, orgId) : null
+            const affB = orgId ? getAffiliation(b, orgId) : null
+            const countsA = countsByRightsHolder[a.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
+            const countsB = countsByRightsHolder[b.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
+            const direction = sortDirection === "asc" ? 1 : -1
+            const textCompare = (left: string | null | undefined, right: string | null | undefined) =>
+                (left ?? "").localeCompare(right ?? "", "da")
+            let result = 0
+            if (sortKey === "name") result = textCompare(a.full_name, b.full_name)
+            if (sortKey === "email") result = textCompare(a.email, b.email)
+            if (sortKey === "member_no") result = textCompare(affA?.member_no, affB?.member_no)
+            if (sortKey === "contracts") result = countsA.contracts - countsB.contracts
+            if (sortKey === "works") result = countsA.works - countsB.works
+            if (sortKey === "status") result = Number(Boolean(affA?.is_member)) - Number(Boolean(affB?.is_member))
+            if (sortKey === "portal") result = Number(Boolean(a.user_id)) - Number(Boolean(b.user_id))
+            if (sortKey === "validated") result = Number(countsA.allContractsValidated) - Number(countsB.allContractsValidated)
+            return result * direction
+        })
+    }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection])
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -272,6 +379,22 @@ export default function RettighedshavereAdminPage() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ action: "invite", email, name, rhId }),
+            })
+            const json = await res.json() as AdminUserResponse
+            if (!res.ok) throw new Error(json.error)
+            return json
+        } catch (e: unknown) {
+            toast.error(errorMessage(e))
+            return null
+        }
+    }
+
+    async function sendReminderFor(rhId: string, email: string, name: string): Promise<AdminUserResponse | null> {
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "reminder", email, name, rhId }),
             })
             const json = await res.json() as AdminUserResponse
             if (!res.ok) throw new Error(json.error)
@@ -323,21 +446,69 @@ export default function RettighedshavereAdminPage() {
         load(orgId)
     }
 
-    async function handleDeleteSelected() {
+    async function handleBulkReminder() {
+        if (!orgId) return
+        const base = selectedIds.size > 0 ? visible.filter(rh => selectedIds.has(rh.id)) : visible
+        const targets = base.filter(rh => rh.email && rh.invite_sent_at && !rh.onboarding_completed)
+        if (targets.length === 0) { toast.info("Ingen at rykke — vælg personer der allerede har fået invitation og ikke er registreret."); return }
+        if (!confirm(`Send rykker til ${targets.length} person(er)?`)) return
+        setBulkReminding(true)
+        let sent = 0
+        for (const rh of targets) {
+            const json = await sendReminderFor(rh.id, rh.email!, rh.full_name)
+            if (json?.email_sent) sent++
+        }
+        setBulkReminding(false)
+        toast.success(`${sent} af ${targets.length} rykkere sendt`)
+        load(orgId)
+    }
+
+    async function handleArchiveSelected() {
         if (!orgId || selectedIds.size === 0) return
         const names = visible.filter(rh => selectedIds.has(rh.id)).map(rh => rh.full_name)
-        if (!confirm(`Slet ${selectedIds.size} rettighedshaver(e)? Personer med kontrakter eller værker bliver ikke slettet.\n\n${names.slice(0, 8).join("\n")}${names.length > 8 ? "\n..." : ""}`)) return
-        setDeletingSelected(true)
-        const result = await deleteRightsHolders(Array.from(selectedIds))
-        setDeletingSelected(false)
+        if (!confirm(`Arkivér ${selectedIds.size} rettighedshaver(e)? De skjules i listen, men kan gendannes.\n\n${names.slice(0, 8).join("\n")}${names.length > 8 ? "\n..." : ""}`)) return
+        setArchivingSelected(true)
+        const result = await archiveRightsHolders(Array.from(selectedIds))
+        setArchivingSelected(false)
         if (!result.success) {
-            toast.error(result.error ?? "Rettighedshavere kunne ikke slettes")
+            toast.error(result.error ?? "Rettighedshavere kunne ikke arkiveres")
             return
         }
-        if (result.deletedCount > 0) toast.success(`${result.deletedCount} rettighedshaver(e) slettet`)
+        if (result.archivedCount > 0) toast.success(`${result.archivedCount} rettighedshaver(e) arkiveret`)
         if (result.blocked.length > 0) {
-            toast.warning(`${result.blocked.length} kunne ikke slettes: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
+            toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
+        setSelectedIds(new Set())
+        await load(orgId)
+        await loadOverviewCounts(orgId)
+    }
+
+    async function handleRestoreSelected() {
+        if (!orgId || selectedIds.size === 0) return
+        setRestoringSelected(true)
+        const result = await restoreRightsHolders(Array.from(selectedIds))
+        setRestoringSelected(false)
+        if (!result.success) {
+            toast.error(result.error ?? "Rettighedshavere kunne ikke gendannes")
+            return
+        }
+        toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
+        setSelectedIds(new Set())
+        await load(orgId)
+    }
+
+    async function handlePermanentDeleteSelected() {
+        if (!orgId || selectedIds.size === 0 || deleteConfirmation !== "SLET") return
+        setPermanentDeleting(true)
+        const result = await permanentlyDeleteRightsHolders(Array.from(selectedIds), { deleteContracts, deleteUnsharedWorks })
+        setPermanentDeleting(false)
+        if (!result.success) {
+            toast.error(result.error ?? "Rettighedshavere kunne ikke slettes permanent")
+            return
+        }
+        toast.success(`${result.deletedCount} slettet permanent. ${result.deletedContracts} kontrakter og ${result.deletedWorks} værker slettet.`)
+        setPermanentDeleteOpen(false)
+        setDeleteConfirmation("")
         setSelectedIds(new Set())
         await load(orgId)
         await loadOverviewCounts(orgId)
@@ -385,17 +556,19 @@ export default function RettighedshavereAdminPage() {
                 body: JSON.stringify(
                     type === "invite"
                         ? { action: "invite", email: rh.email, name: rh.full_name, rhId: rh.id }
+                        : type === "reminder"
+                            ? { action: "reminder", email: rh.email, name: rh.full_name, rhId: rh.id }
                         : { action: "reset", userId: rh.user_id, email: rh.email }
                 ),
             })
             const json = await res.json() as AdminUserResponse
             if (!res.ok) throw new Error(json.error)
-            const link = type === "invite" ? json.invite_url : json.reset_url
+            const link = type === "invite" || type === "reminder" ? json.invite_url : json.reset_url
             setPortalLink(link ?? null)
-            if (type === "invite") {
+            if (type === "invite" || type === "reminder") {
                 const inviteSentAt = json.email_sent ? new Date().toISOString() : rh.invite_sent_at ?? null
                 setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: inviteSentAt } : r))
-                if (json.email_sent) toast.success(`Invitation sendt til ${rh.email}`)
+                if (json.email_sent) toast.success(type === "reminder" ? `Rykker sendt til ${rh.email}` : `Invitation sendt til ${rh.email}`)
                 else toast.warning(`Bruger oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt"}). Kopiér linket manuelt.`)
             }
         } catch (e: unknown) {
@@ -424,6 +597,25 @@ export default function RettighedshavereAdminPage() {
     const memberCount    = rows.filter(rh => orgId && getAffiliation(rh, orgId)?.is_member).length
     const nonMemberCount = rows.filter(rh => orgId && !getAffiliation(rh, orgId)?.is_member).length
     const portalCount    = rows.filter(rh => rh.user_id).length
+    const validatedCount = rows.filter(rh => countsByRightsHolder[rh.id]?.allContractsValidated).length
+
+    function setSort(nextKey: SortKey) {
+        if (sortKey === nextKey) {
+            setSortDirection(direction => direction === "asc" ? "desc" : "asc")
+            return
+        }
+        setSortKey(nextKey)
+        setSortDirection("asc")
+    }
+
+    function SortHeader({ sort, children }: { sort: SortKey; children: ReactNode }) {
+        return (
+            <button type="button" className="inline-flex items-center gap-1 font-medium" onClick={() => setSort(sort)}>
+                {children}
+                <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+        )
+    }
 
     return (
         <div className="space-y-6">
@@ -434,18 +626,21 @@ export default function RettighedshavereAdminPage() {
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                         {memberSyncStatus && (
                             <span className="text-xs text-muted-foreground">
-                                DFKS liste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
+                                Medlemsliste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
                             </span>
                         )}
-                        <Button size="sm" variant="outline" onClick={handleSyncDfksMembers} disabled={syncingMembers}>
-                            {syncingMembers ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Opdater DFKS medlemsliste
+                        <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
+                            {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
+                            Importer nye medlemmer
                         </Button>
                         <Button size="sm" variant="outline" onClick={handleBulkInvite} disabled={bulkInviting}>
                             {bulkInviting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}{selectedIds.size > 0 ? "Invitér valgte" : "Send invitation til alle ikke-oprettede"}
                         </Button>
+                        <Button size="sm" variant="outline" onClick={handleBulkReminder} disabled={bulkReminding}>
+                            {bulkReminding ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}{selectedIds.size > 0 ? "Ryk valgte" : "Send rykker"}
+                        </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
-                            <Plus className="h-4 w-4 mr-1" />Opret ny
+                            <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
                         </Button>
                     </div>
                 }
@@ -453,12 +648,13 @@ export default function RettighedshavereAdminPage() {
 
             {/* Stats strip */}
             {!loading && (
-                <div className="hidden gap-3 sm:grid sm:grid-cols-4">
+                <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-5">
                     {[
                         { label: "I alt",             value: rows.length    },
                         { label: "Aktive medlemmer",  value: memberCount    },
                         { label: "Ikke-medlemmer",    value: nonMemberCount },
                         { label: "Med portal-adgang", value: portalCount    },
+                        { label: "Kontrakter valideret", value: validatedCount },
                     ].map(s => (
                         <div key={s.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
                             <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
@@ -483,8 +679,19 @@ export default function RettighedshavereAdminPage() {
                         <SelectItem value="afventer">Afventer invitation</SelectItem>
                         <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
                         <SelectItem value="registreret">Registreret</SelectItem>
+                        <SelectItem value="alle-kontrakter-valideret">Alle kontrakter valideret</SelectItem>
+                        <SelectItem value="arkiverede">Arkiverede</SelectItem>
                     </SelectContent>
                 </Select>
+                <Button
+                    type="button"
+                    variant="outline"
+                    className="sm:hidden"
+                    onClick={() => toggleAllVisible(!allVisibleSelected)}
+                    disabled={visibleIds.length === 0}
+                >
+                    {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
+                </Button>
             </div>
 
             {selectedIds.size > 0 && (
@@ -492,9 +699,19 @@ export default function RettighedshavereAdminPage() {
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
-                        <Button size="sm" variant="destructive" onClick={handleDeleteSelected} disabled={deletingSelected}>
-                            {deletingSelected ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
-                            Slet valgte
+                        {filter === "arkiverede" ? (
+                            <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
+                                {restoringSelected ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArchiveRestore className="mr-1 h-4 w-4" />}
+                                Gendan valgte
+                            </Button>
+                        ) : (
+                            <Button size="sm" variant="outline" onClick={handleArchiveSelected} disabled={archivingSelected}>
+                                {archivingSelected ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                                Arkivér valgte
+                            </Button>
+                        )}
+                        <Button size="sm" variant="destructive" onClick={() => setPermanentDeleteOpen(true)}>
+                            Slet permanent
                         </Button>
                     </div>
                 </div>
@@ -514,7 +731,7 @@ export default function RettighedshavereAdminPage() {
                 ) : visible.map(rh => {
                     const aff = orgId ? getAffiliation(rh, orgId) : null
                     const hasLogin = !!rh.user_id
-                    const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0 }
+                    const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     return (
                         <MobileDataCard key={rh.id}>
                             <div className="flex items-start justify-between gap-3">
@@ -561,9 +778,13 @@ export default function RettighedshavereAdminPage() {
                                 <MobileMetaRow label="Kontrakter">{counts.contracts}</MobileMetaRow>
                                 <MobileMetaRow label="Værker">{counts.works}</MobileMetaRow>
                                 <MobileMetaRow label="Status">
-                                    {aff?.is_member
-                                        ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
-                                        : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                    <div className="flex flex-wrap gap-1">
+                                        {rh.archived_at && <Badge variant="outline" className="text-xs">Arkiveret</Badge>}
+                                        {aff?.is_member
+                                            ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
+                                            : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                        {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
+                                    </div>
                                 </MobileMetaRow>
                                 <MobileMetaRow label="Portaladgang">
                                     {hasLogin
@@ -588,15 +809,15 @@ export default function RettighedshavereAdminPage() {
                                     aria-label="Vælg alle synlige"
                                 />
                             </TableHead>
-                            <TableHead>Navn</TableHead>
-                            <TableHead>Email</TableHead>
+                            <TableHead><SortHeader sort="name">Navn</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="email">Email</SortHeader></TableHead>
                             <TableHead>Telefon</TableHead>
-                            <TableHead>DFKS medlemsnr.</TableHead>
-                            <TableHead>Kontrakter</TableHead>
-                            <TableHead>Værker</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Portaladgang</TableHead>
-                            <TableHead>Onboarding</TableHead>
+                            <TableHead><SortHeader sort="member_no">DFKS medlemsnr.</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="contracts">Kontrakter</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="works">Værker</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="status">Status</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="portal">Portaladgang</SortHeader></TableHead>
+                            <TableHead><SortHeader sort="validated">Onboarding</SortHeader></TableHead>
                             <TableHead className="w-12"></TableHead>
                         </TableRow>
                     </TableHeader>
@@ -608,7 +829,7 @@ export default function RettighedshavereAdminPage() {
                         ) : visible.map(rh => {
                             const aff = orgId ? getAffiliation(rh, orgId) : null
                             const hasLogin = !!rh.user_id
-                            const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0 }
+                            const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                             return (
                                 <TableRow key={rh.id}>
                                     <TableCell>
@@ -626,9 +847,13 @@ export default function RettighedshavereAdminPage() {
                                     <TableCell className="text-sm tabular-nums">{counts.contracts}</TableCell>
                                     <TableCell className="text-sm tabular-nums">{counts.works}</TableCell>
                                     <TableCell>
-                                        {aff?.is_member
-                                            ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
-                                            : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                        <div className="flex flex-wrap gap-1">
+                                            {rh.archived_at && <Badge variant="outline" className="text-xs">Arkiveret</Badge>}
+                                            {aff?.is_member
+                                                ? <Badge className="bg-green-600 text-white text-xs">Medlem</Badge>
+                                                : <Badge variant="outline" className="text-muted-foreground text-xs">Ikke-medlem</Badge>}
+                                            {counts.allContractsValidated && <Badge className="bg-emerald-600 text-white text-xs">Alle kontrakter valideret</Badge>}
+                                        </div>
                                     </TableCell>
                                     <TableCell>
                                         {rh.onboarding_completed
@@ -666,6 +891,19 @@ export default function RettighedshavereAdminPage() {
                                                         ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
                                                         : <><UserCheck className="h-3.5 w-3.5 mr-2 text-green-600" />Indmeld</>}
                                                 </DropdownMenuItem>
+                                                {rh.archived_at && (
+                                                    <DropdownMenuItem onClick={async () => {
+                                                        const result = await restoreRightsHolders([rh.id])
+                                                        if (result.success) {
+                                                            toast.success("Rettighedshaver gendannet")
+                                                            if (orgId) load(orgId)
+                                                        } else {
+                                                            toast.error(result.error ?? "Kunne ikke gendanne")
+                                                        }
+                                                    }}>
+                                                        <ArchiveRestore className="h-3.5 w-3.5 mr-2" />Gendan
+                                                    </DropdownMenuItem>
+                                                )}
                                                 <DropdownMenuSeparator />
                                                 {!rh.onboarding_completed && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null) }}>
@@ -677,12 +915,43 @@ export default function RettighedshavereAdminPage() {
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                                     </DropdownMenuItem>
                                                 )}
+                                                {rh.invite_sent_at && !rh.onboarding_completed && rh.email && (
+                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reminder" }); setPortalLink(null) }}>
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send rykker
+                                                    </DropdownMenuItem>
+                                                )}
                                                 {hasLogin && rh.onboarding_completed && (
                                                     <DropdownMenuItem
                                                         className="text-amber-600 focus:text-amber-600"
                                                         onClick={() => handleResetOnboarding(rh)}
                                                     >
                                                         <RotateCcw className="h-3.5 w-3.5 mr-2" />Nulstil onboarding
+                                                    </DropdownMenuItem>
+                                                )}
+                                                <DropdownMenuSeparator />
+                                                {rh.archived_at ? (
+                                                    <DropdownMenuItem onClick={async () => {
+                                                        const result = await restoreRightsHolders([rh.id])
+                                                        if (result.success) {
+                                                            toast.success("Rettighedshaver gendannet")
+                                                            if (orgId) load(orgId)
+                                                        } else {
+                                                            toast.error(result.error ?? "Kunne ikke gendanne")
+                                                        }
+                                                    }}>
+                                                        <ArchiveRestore className="h-3.5 w-3.5 mr-2" />Gendan
+                                                    </DropdownMenuItem>
+                                                ) : (
+                                                    <DropdownMenuItem onClick={async () => {
+                                                        const result = await archiveRightsHolders([rh.id])
+                                                        if (result.success) {
+                                                            toast.success("Rettighedshaver arkiveret")
+                                                            if (orgId) load(orgId)
+                                                        } else {
+                                                            toast.error(result.error ?? "Kunne ikke arkivere")
+                                                        }
+                                                    }}>
+                                                        <Trash2 className="h-3.5 w-3.5 mr-2" />Arkivér
                                                     </DropdownMenuItem>
                                                 )}
                                             </DropdownMenuContent>
@@ -792,16 +1061,141 @@ export default function RettighedshavereAdminPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Import members dialog */}
+            <Dialog open={importOpen} onOpenChange={setImportOpen}>
+                <DialogContent className="w-[min(760px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
+                    <DialogHeader>
+                        <DialogTitle>Importer nye medlemmer</DialogTitle>
+                        <DialogDescription>
+                            Hentede medlemmer fra medlemslisten kan oprettes som rettighedshavere. Eksisterende matches opdateres med medlemsstatus og medlemsnummer.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm text-muted-foreground">
+                                {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                            </div>
+                            <div className="flex gap-2">
+                                <Button type="button" variant="outline" size="sm" onClick={handleSyncDfksMembers} disabled={syncingMembers}>
+                                    {syncingMembers && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                                    Synkronisér
+                                </Button>
+                                <Button type="button" variant="outline" size="sm" onClick={refreshImportPreview} disabled={importLoading}>
+                                    {importLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+                                    Opdatér visning
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="max-h-[420px] overflow-auto rounded-md border">
+                            {importLoading ? (
+                                <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter medlemsliste...
+                                </div>
+                            ) : importCandidates.length === 0 ? (
+                                <p className="py-10 text-center text-sm text-muted-foreground">Ingen medlemmer i importlisten.</p>
+                            ) : importCandidates.map(candidate => {
+                                const disabled = candidate.match === "ambiguous" || candidate.status === "resigned"
+                                return (
+                                    <label key={candidate.id} className="flex cursor-pointer items-start gap-3 border-b px-3 py-3 last:border-b-0">
+                                        <input
+                                            type="checkbox"
+                                            className="mt-1 h-4 w-4"
+                                            checked={selectedImportIds.has(candidate.id)}
+                                            disabled={disabled}
+                                            onChange={event => {
+                                                setSelectedImportIds(current => {
+                                                    const next = new Set(current)
+                                                    if (event.target.checked) next.add(candidate.id)
+                                                    else next.delete(candidate.id)
+                                                    return next
+                                                })
+                                            }}
+                                        />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="font-medium">{candidate.full_name}</span>
+                                                {candidate.match === "new" && candidate.status !== "resigned" && <Badge className="text-xs">Ny</Badge>}
+                                                {candidate.match === "existing" && <Badge variant="outline" className="text-xs">Matcher eksisterende</Badge>}
+                                                {candidate.match === "ambiguous" && <Badge variant="destructive" className="text-xs">Kræver manuel afklaring</Badge>}
+                                                {candidate.status === "resigned" && <Badge variant="outline" className="text-xs">Udmeldt</Badge>}
+                                            </div>
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                                {candidate.email ?? "Ingen email"} · Medlemsnr. {candidate.display_id ?? "—"}
+                                                {candidate.match_reason ? ` · ${candidate.match_reason}` : ""}
+                                            </p>
+                                            {(candidate.phone || candidate.address) && (
+                                                <p className="mt-1 text-xs text-muted-foreground">{[candidate.phone, candidate.address].filter(Boolean).join(" · ")}</p>
+                                            )}
+                                        </div>
+                                    </label>
+                                )
+                            })}
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setImportOpen(false)}>Luk</Button>
+                        <Button onClick={handleImportSelectedMembers} disabled={importingMembers || selectedImportIds.size === 0}>
+                            {importingMembers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Importer {selectedImportIds.size} valgte
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Permanent delete dialog */}
+            <Dialog open={permanentDeleteOpen} onOpenChange={open => { setPermanentDeleteOpen(open); if (!open) setDeleteConfirmation("") }}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Slet rettighedshavere permanent</DialogTitle>
+                        <DialogDescription>
+                            Permanent sletning kan ikke fortrydes. Brug arkivering, hvis personen blot skal skjules.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <p className="text-sm text-muted-foreground">
+                            Du er ved at slette {selectedIds.size} rettighedshaver(e). Vælg hvad der skal ske med tilknyttede data.
+                        </p>
+                        <label className="flex items-start gap-3 rounded-md border p-3">
+                            <input type="checkbox" className="mt-1 h-4 w-4" checked={deleteContracts} onChange={event => setDeleteContracts(event.target.checked)} />
+                            <span>
+                                <span className="block text-sm font-medium">Slet medlemmets kontrakter</span>
+                                <span className="text-xs text-muted-foreground">Hvis ikke valgt, fjernes personen fra kontrakterne, men kontrakterne beholdes.</span>
+                            </span>
+                        </label>
+                        <label className="flex items-start gap-3 rounded-md border p-3">
+                            <input type="checkbox" className="mt-1 h-4 w-4" checked={deleteUnsharedWorks} onChange={event => setDeleteUnsharedWorks(event.target.checked)} />
+                            <span>
+                                <span className="block text-sm font-medium">Slet værker der kun tilhører denne person</span>
+                                <span className="text-xs text-muted-foreground">Værker med andre rettighedshavere beholdes.</span>
+                            </span>
+                        </label>
+                        <div className="space-y-1">
+                            <Label>Skriv SLET for at bekræfte</Label>
+                            <Input value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} />
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setPermanentDeleteOpen(false)}>Annuller</Button>
+                        <Button variant="destructive" onClick={handlePermanentDeleteSelected} disabled={permanentDeleting || deleteConfirmation !== "SLET"}>
+                            {permanentDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Slet permanent
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Portal adgang dialog */}
             <Dialog open={!!portalAction} onOpenChange={open => { if (!open) { setPortalAction(null); setPortalLink(null) } }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>
-                            {portalAction?.type === "invite" ? "Inviter til portal" : "Nulstil password"}
+                            {portalAction?.type === "invite" ? "Inviter til portal" : portalAction?.type === "reminder" ? "Send rykker" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
                             {portalAction?.type === "invite"
                                 ? `Generér et invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}). De kan herefter logge ind og sætte et password.`
+                                : portalAction?.type === "reminder"
+                                    ? `Send en rykker med nyt invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}).`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
                     </DialogHeader>
@@ -810,7 +1204,7 @@ export default function RettighedshavereAdminPage() {
                         <div className="space-y-3 py-2">
                             <div className="flex items-center gap-1.5 text-sm text-emerald-600 font-medium">
                                 <Link className="h-4 w-4" />
-                                {portalAction?.type === "invite" ? "Invitationslink genereret" : "Nulstillingslink genereret"}
+                                {portalAction?.type === "reset" ? "Nulstillingslink genereret" : "Invitationslink genereret"}
                             </div>
                             <div className="flex gap-2">
                                 <Input value={portalLink} readOnly className="font-mono text-xs" />
@@ -846,7 +1240,7 @@ export default function RettighedshavereAdminPage() {
                         {!portalLink && (
                             <Button onClick={handlePortalAction} disabled={portalLoading || !portalAction?.rh.email}>
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                {portalAction?.type === "invite" ? "Generér invitationslink" : "Generér nulstillingslink"}
+                                {portalAction?.type === "invite" ? "Generér invitationslink" : portalAction?.type === "reminder" ? "Send rykker" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>

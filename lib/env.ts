@@ -6,7 +6,8 @@ type EnvKey =
   | "ANTHROPIC_API_KEY"
   | "TMDB_API_KEY"
   | "FORENINGLET_USERNAME"
-  | "FORENINGLET_PASSWORD";
+  | "FORENINGLET_PASSWORD"
+  | "FORENINGLET_BASE_URL";
 
 export function getRequiredEnv(key: EnvKey) {
   const value = process.env[key];

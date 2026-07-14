@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
+import { getForeningLetIntegration, upsertForeningLetIntegration } from "@/lib/org-integrations";
 
 type OrganisationSettingsPayload = {
   short_name: string;
@@ -12,8 +13,14 @@ type OrganisationSettingsPayload = {
   logo_url: string | null;
   primary_color: string;
   from_email: string | null;
+  invite_email_text: string | null;
+  invite_reminder_text: string | null;
   coeditor_word: string;
   role_labels: string[];
+  foreninglet_base_url?: string | null;
+  foreninglet_username?: string | null;
+  foreninglet_password?: string | null;
+  foreninglet_enabled?: boolean;
 };
 
 const ADMIN_ORG_ROLES = ["superadmin", "admin", "org-admin"] as const;
@@ -49,7 +56,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, branding, terminology")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, branding, terminology")
     .eq("id", orgId)
     .single();
 
@@ -58,19 +65,24 @@ export async function getOrganisationSettings() {
   const branding = (data.branding ?? {}) as OrgBranding;
   const terminology = (data.terminology ?? {}) as OrgTerminology;
 
+  const foreninglet = await getForeningLetIntegration(db, orgId);
+
   return {
     id: data.id as string,
     name: data.name as string,
     logo_url: (data.logo_url as string | null) ?? null,
     from_email: (data.from_email as string | null) ?? null,
+    invite_email_text: (data.invite_email_text as string | null) ?? null,
+    invite_reminder_text: (data.invite_reminder_text as string | null) ?? null,
     short_name: branding.short_name ?? data.name,
     long_name: branding.long_name ?? data.name,
     primary_color: branding.primary_color ?? "#111827",
-    coeditor_word: terminology.coeditor_word ?? "medklipper",
-    member_word: terminology.member_word ?? "klipper",
+    coeditor_word: terminology.coeditor_word ?? "medskaber",
+    member_word: terminology.member_word ?? "medlem",
     role_labels: terminology.role_labels?.length
       ? terminology.role_labels
-      : ["B-klipper", "Klipper", "Konceptuerende klipper"],
+      : ["Medskaber"],
+    foreninglet,
   };
 }
 
@@ -93,7 +105,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     primary_color: normalizeColor(payload.primary_color),
   };
   const terminology: OrgTerminology = {
-    member_word: "klipper",
+    member_word: "medlem",
     coeditor_word: coeditorWord,
     role_labels: roleLabels,
   };
@@ -104,6 +116,8 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       name: longName,
       logo_url: cleanOptionalString(payload.logo_url),
       from_email: cleanOptionalString(payload.from_email),
+      invite_email_text: cleanOptionalString(payload.invite_email_text),
+      invite_reminder_text: cleanOptionalString(payload.invite_reminder_text),
       branding,
       terminology,
       updated_at: new Date().toISOString(),
@@ -111,6 +125,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     .eq("id", orgId);
 
   if (error) throw new Error(error.message);
+
+  await upsertForeningLetIntegration(db, orgId, {
+    base_url: payload.foreninglet_base_url,
+    username: payload.foreninglet_username,
+    password: payload.foreninglet_password,
+    enabled: payload.foreninglet_enabled ?? true,
+  });
 
   revalidatePath("/admin/organisation");
   revalidatePath("/admin");

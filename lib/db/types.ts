@@ -22,6 +22,8 @@ export interface DbOrganisation {
     branding: OrgBranding | null
     terminology: OrgTerminology | null
     from_email: string | null
+    invite_email_text: string | null
+    invite_reminder_text: string | null
 }
 
 export interface OrgBranding {
@@ -60,6 +62,7 @@ export interface DbRettighedshaver {
     wikidata_qid: string | null
     imdb_nm: string | null
     portrait_url: string | null
+    archived_at: string | null
     opt_out_statistics: boolean
     gender: "female" | "male" | "non_binary" | "other" | "prefer_not_to_say" | null
     created_at: string
@@ -88,6 +91,17 @@ export interface DbDfksMember {
     status: "active" | "resigned" | string
     raw: Record<string, unknown> | null
     synced_at: string
+    created_at: string
+    updated_at: string
+}
+
+export interface DbOrgIntegration {
+    id: string
+    org_id: string
+    provider: "foreninglet"
+    base_url: string | null
+    config_encrypted: string | null
+    enabled: boolean
     created_at: string
     updated_at: string
 }

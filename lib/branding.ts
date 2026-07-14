@@ -4,17 +4,17 @@ import type { DbOrganisation, OrgBranding, OrgTerminology } from "@/lib/db/types
 // har sat branding/terminologi. Gør white-label bagud-kompatibel.
 export const DEFAULT_BRANDING: Required<OrgBranding> = {
   primary_color: "#111827",
-  short_name: "DFKS",
-  long_name: "Dansk Filmklipperselskab",
+  short_name: "Portal",
+  long_name: "Medlemsportal",
 };
 
 export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
-  member_word: "klipper",
-  coeditor_word: "medklipper",
-  role_labels: ["B-klipper", "Klipper", "Konceptuerende klipper"],
+  member_word: "medlem",
+  coeditor_word: "medskaber",
+  role_labels: ["Medskaber"],
 };
 
-export const DEFAULT_FROM_EMAIL = "DFKS <noreply@dfks.dk>";
+export const DEFAULT_FROM_EMAIL = "Portal <noreply@dfks.dk>";
 
 function isEmail(value: string): boolean {
   return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value);
