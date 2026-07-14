@@ -1201,10 +1201,10 @@ function AdminKontrakterContent() {
         await runAiDataminingForContract(editContract)
     }
 
-    const handleSaveEdit = async (
-        statusOverride?: "kladde" | "valideret" | "arkiveret",
-        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean }
-    ) => {
+	    const handleSaveEdit = async (
+	        statusOverride?: "kladde" | "valideret" | "arkiveret",
+	        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean; saveOnly?: boolean }
+	    ) => {
         if (!editContract || !editForm) return false
         const newStatus = statusOverride ?? editForm.status
         let resolvedWorkId = editForm.work_id
@@ -1241,7 +1241,7 @@ function AdminKontrakterContent() {
                 return false
             }
         }
-        if (newStatus === "valideret" && !resolvedWorkId && !options?.skipMissingWorkConfirm) {
+	        if (!options?.saveOnly && newStatus === "valideret" && !resolvedWorkId && !options?.skipMissingWorkConfirm) {
             const title = (editForm.working_title || editContract.working_title || editContract.work_title || "").trim()
             if (!title) {
                 toast.error("Kontrakten kan ikke valideres uden værk eller arbejdstitel.")
@@ -1256,7 +1256,7 @@ function AdminKontrakterContent() {
         }
         setEditSaving(true)
         try {
-            if (newStatus === "valideret" && !resolvedWorkId) {
+	            if (!options?.saveOnly && newStatus === "valideret" && !resolvedWorkId) {
                 const title = (editForm.working_title || editContract.working_title || editContract.work_title || "").trim()
                 if (!title) throw new Error("Kontrakten kan ikke valideres uden værk eller arbejdstitel.")
                 const created = await createAdminWork({
@@ -1606,12 +1606,35 @@ function AdminKontrakterContent() {
                     <Search className="h-4 w-4" />
                     Find dubletter
                 </Button>
+                <div className="grid w-full grid-cols-[1fr_auto] gap-2 lg:hidden">
+                    <Select value={sortKey} onValueChange={value => setSortKey(value as SortKey)}>
+                        <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Sorter efter" /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="status">Status</SelectItem>
+                            <SelectItem value="production">Værk</SelectItem>
+                            <SelectItem value="rightsHolder">Rettighedshaver</SelectItem>
+                            <SelectItem value="employer">Producent</SelectItem>
+                            <SelectItem value="type">Type</SelectItem>
+                            <SelectItem value="overenskomst">Overenskomst</SelectItem>
+                            <SelectItem value="period">Periode</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-9 px-3">
+                        {sortDir === "asc" ? "A-Z" : "Z-A"}
+                    </Button>
+                </div>
                 <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
                     Vis
                     <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
                         {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
                     </select>
                 </label>
+                {filtered.length > 0 && (
+                    <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden" onClick={toggleAllFiltered}>
+                        {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
+                        {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+                    </Button>
+                )}
             </div>
 
             {selectedIds.length > 0 && (
@@ -1649,8 +1672,8 @@ function AdminKontrakterContent() {
                 </div>
             )}
 
-            {/* Table */}
-            <MobileCardList>
+		            {/* Table */}
+		            <MobileCardList>
                 {filtered.length === 0 ? (
                     <MobileDataCard>
                         <p className="py-6 text-center text-sm text-muted-foreground">
@@ -1709,15 +1732,21 @@ function AdminKontrakterContent() {
                                 <MobileMetaRow label="Type">{c.type === "a-løn" ? "A-løn" : "Leverandør"}</MobileMetaRow>
                                 <MobileMetaRow label="Overenskomst">{c.overenskomst ? (OVERENSKOMST_LABELS[c.overenskomst] ?? c.overenskomst) : "—"}</MobileMetaRow>
                             </div>
-                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                                <ContractStatusBadges contract={c} compact />
-                                <span className="text-xs text-muted-foreground">
+	                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+	                                <ContractStatusBadges contract={c} compact />
+	                                <span className="text-xs text-muted-foreground">
                                     {c.start_date && c.end_date
                                         ? `${new Date(c.start_date).toLocaleDateString("da-DK")} – ${new Date(c.end_date).toLocaleDateString("da-DK")}`
                                         : c.contract_date ? new Date(c.contract_date).toLocaleDateString("da-DK") : "—"}
-                                </span>
-                            </div>
-                        </MobileDataCard>
+	                                </span>
+	                            </div>
+	                            <div className="mt-3 lg:hidden">
+	                                <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={() => openPdf(c)}>
+	                                    <Eye className="h-3.5 w-3.5" />
+	                                    Se kontrakt
+	                                </Button>
+	                            </div>
+	                        </MobileDataCard>
                     )
                 })}
             </MobileCardList>
@@ -1987,18 +2016,38 @@ function AdminKontrakterContent() {
                         </div>
                     </DialogHeader>
                     <div className="flex flex-wrap gap-2 border-b pb-3">
-                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving}>
-                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                            AI datamining
-                        </Button>
-                        <Button type="button" size="sm" className="gap-2" onClick={handleValidateAndNext} disabled={editSaving}>
-                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                            Valider (⌘↵)
-                        </Button>
+	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving}>
+	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+	                            AI datamining
+	                        </Button>
+	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
+	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+	                            Gem
+	                        </Button>
+	                        <Button type="button" size="sm" className="gap-2" onClick={handleValidateAndNext} disabled={editSaving}>
+	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+	                            Valider
+	                        </Button>
                         <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
                         </Button>
+                        {editContract?.pdf_url && (
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="gap-2 md:hidden"
+                                onClick={() => {
+                                    if (editDocUrl) window.open(editDocUrl, "_blank", "noopener,noreferrer")
+                                    else void openPdf(editContract)
+                                }}
+                                disabled={editSaving}
+                            >
+                                <Eye className="h-4 w-4" />
+                                Åbn PDF
+                            </Button>
+                        )}
                         <Button type="button" variant="destructive" size="sm" className="gap-2" onClick={handleDeleteEdit} disabled={editSaving}>
                             <Trash2 className="h-4 w-4" />
                             Slet
@@ -2207,35 +2256,9 @@ function AdminKontrakterContent() {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="space-y-1 md:col-span-2">
-                                    <Label className="text-xs">Status</Label>
-                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                                        {[
-                                            { value: "kladde", label: "Kladde" },
-                                            { value: "valideret", label: "Valideret" },
-                                            { value: "arkiveret", label: "Arkiveret" },
-                                        ].map(option => {
-                                            const active = editForm.status === option.value
-                                            return (
-                                                <button
-                                                    key={option.value}
-                                                    type="button"
-                                                    onClick={() => setEditForm(f => f && ({ ...f, status: option.value }))}
-                                                    className={`h-8 rounded-md border px-3 text-xs font-medium transition-colors ${
-                                                        active
-                                                            ? "border-primary bg-primary text-primary-foreground"
-                                                            : "border-input bg-background text-muted-foreground hover:bg-muted"
-                                                    }`}
-                                                >
-                                                    {option.label}
-                                                </button>
-                                            )
-                                        })}
-                                    </div>
-                                </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Kontraktdato</Label>
-                                    <Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} />
+	                                <div className="space-y-1">
+	                                    <Label className="text-xs">Kontraktdato</Label>
+	                                    <Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} />
                                 </div>
                                 <div className="space-y-1">
                                     <Label className="text-xs">Startdato</Label>
@@ -2428,16 +2451,16 @@ function AdminKontrakterContent() {
                         </div>
                         </div>
                     )}
-                    <DialogFooter>
-                        <Button variant="outline" onClick={closeEditDialog} disabled={editSaving}>
-                            Annuller
-                        </Button>
-                        <Button variant="outline" onClick={() => handleSaveEdit("kladde")} disabled={editSaving}>
-                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Gem som kladde"}
-                        </Button>
-                        <Button onClick={handleValidateAndNext} disabled={editSaving}>
-                            {editSaving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Gemmer...</> : "Valider (⌘↵)"}
-                        </Button>
+	                    <DialogFooter>
+	                        <Button variant="outline" onClick={closeEditDialog} disabled={editSaving}>
+	                            Annuller
+	                        </Button>
+	                        <Button variant="outline" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
+	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Gem"}
+	                        </Button>
+	                        <Button onClick={handleValidateAndNext} disabled={editSaving}>
+	                            {editSaving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Gemmer...</> : "Valider"}
+	                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

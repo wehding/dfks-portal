@@ -27,6 +27,20 @@ export function parseLocalEpisodeCode(title: string | null | undefined) {
   };
 }
 
+export function seriesLookupTitleVariants(title: string | null | undefined) {
+  const raw = title?.trim();
+  if (!raw) return [];
+  const variants = [
+    raw,
+    raw.replace(/\s*[-–—:]\s*oversigt\s*$/i, "").trim(),
+    raw.replace(/\s*\(\s*oversigt\s*\)\s*$/i, "").trim(),
+    raw.replace(/\s*[-–—:]\s*sæson\s+\d+\s*$/i, "").trim(),
+    raw.replace(/\s*[-–—:]\s*season\s+\d+\s*$/i, "").trim(),
+    raw.replace(/\s+\b(?:I|II|III|IV|V|VI|VII|VIII|IX|X|\d+)\b\s*$/i, "").trim(),
+  ].filter(Boolean);
+  return Array.from(new Set(variants));
+}
+
 type EpisodeOptionInput = {
   number: number;
   title?: string | null;

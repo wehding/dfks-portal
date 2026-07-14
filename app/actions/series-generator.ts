@@ -82,9 +82,22 @@ export async function generateEpisodesForSeries(params: {
     console.error("Fejl ved hentning af eksisterende afsnit:", fetchErr);
   }
 
-  // Hvis afsnit allerede findes, behøver vi ikke oprette dem igen
-  if (existingEpisodes && existingEpisodes.length > 0) {
-    return { success: true, count: existingEpisodes.length, existing: true };
+  const existingEpisodeNumbers = new Set(
+    (existingEpisodes ?? [])
+      .map(episode => Number(episode.episode_number))
+      .filter(number => Number.isFinite(number) && number > 0)
+  );
+  const requestedTotalEpisodes = params.totalEpisodes || parentWork.episode_count || null;
+
+  // Hvis hele den efterspurgte sæson allerede findes, behøver vi ikke oprette den igen.
+  if (existingEpisodeNumbers.size > 0 && requestedTotalEpisodes) {
+    const hasFullSeason = Array.from({ length: requestedTotalEpisodes }, (_, index) => index + 1)
+      .every(number => existingEpisodeNumbers.has(number));
+    if (hasFullSeason) {
+      return { success: true, count: existingEpisodeNumbers.size, existing: true };
+    }
+  } else if (existingEpisodeNumbers.size > 0 && !requestedTotalEpisodes) {
+    return { success: true, count: existingEpisodeNumbers.size, existing: true };
   }
 
   const episodesToInsert: EpisodeInsert[] = [];
@@ -228,10 +241,15 @@ export async function generateEpisodesForSeries(params: {
     }
   }
 
-  // 5. Gem afsnit i databasen
-  let { error: insertErr } = await db.from("works").insert(episodesToInsert);
+  // 5. Gem kun de afsnit, som mangler i databasen
+  const missingEpisodesToInsert = episodesToInsert.filter(episode => !existingEpisodeNumbers.has(episode.episode_number));
+  if (missingEpisodesToInsert.length === 0) {
+    return { success: true, count: existingEpisodeNumbers.size, existing: true };
+  }
+
+  let { error: insertErr } = await db.from("works").insert(missingEpisodesToInsert);
   if (isMissingWorkMetadataColumnError(insertErr)) {
-    ({ error: insertErr } = await db.from("works").insert(episodesToInsert.map(stripOptionalWorkMetadata)));
+    ({ error: insertErr } = await db.from("works").insert(missingEpisodesToInsert.map(stripOptionalWorkMetadata)));
   }
   if (insertErr) {
     console.error("Fejl ved indsættelse af afsnit:", insertErr);
@@ -242,8 +260,8 @@ export async function generateEpisodesForSeries(params: {
   const updates: Partial<Pick<DbWork, "episode_count" | "season_count">> = {};
   if (params.totalEpisodes && parentWork.episode_count !== params.totalEpisodes) {
     updates.episode_count = params.totalEpisodes;
-  } else if (episodesToInsert.length > 0 && !parentWork.episode_count) {
-    updates.episode_count = episodesToInsert.length;
+  } else if (missingEpisodesToInsert.length > 0 && !parentWork.episode_count) {
+    updates.episode_count = Math.max(existingEpisodeNumbers.size + missingEpisodesToInsert.length, missingEpisodesToInsert.length);
   }
   if (!parentWork.season_count || parentWork.season_count < seasonNumber) {
     updates.season_count = seasonNumber;
@@ -253,5 +271,5 @@ export async function generateEpisodesForSeries(params: {
     await db.from("works").update(updates).eq("id", parentWork.id);
   }
 
-  return { success: true, count: episodesToInsert.length, existing: false };
+  return { success: true, count: missingEpisodesToInsert.length, existing: false };
 }

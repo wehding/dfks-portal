@@ -98,6 +98,7 @@ export default function PortalLayout({
     const [workMessageCount, setWorkMessageCount] = useState<number>(0)
     const [contractMessageCount, setContractMessageCount] = useState<number>(0)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string; long_name: string }>({ logo_url: null, short_name: "DFKS", long_name: "DFKS" })
+    const [isAssociationMember, setIsAssociationMember] = useState(false)
 
     useEffect(() => {
         const supabase = createClient()
@@ -120,6 +121,14 @@ export default function PortalLayout({
                 const b = resolveBranding(org as never)
                 setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name, long_name: b.long_name })
             })
+
+            const { data: memberRow } = await supabase
+                .from("rettighedshavere")
+                .select("id")
+                .eq("user_id", user.id)
+                .eq("org_id", orgId)
+                .maybeSingle()
+            setIsAssociationMember(Boolean(memberRow?.id))
 
             const [contractsRes, worksRes, contractMessagesRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
@@ -200,7 +209,8 @@ export default function PortalLayout({
         },
     ]
 
-    const adminUserNavItems = portalNavItems.filter(item => item.href !== "/portal/min-profil")
+    const visiblePortalNavItems = portalNavItems.filter(item => item.href !== "/portal/kontraktgennemgang" || isAssociationMember)
+    const adminUserNavItems = visiblePortalNavItems.filter(item => item.href !== "/portal/min-profil")
     const primaryRole = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
         .find(role => roleList.includes(role)) ?? null
     const hasAdminMenu = primaryRole !== null
@@ -323,7 +333,7 @@ export default function PortalLayout({
                         <SidebarGroup>
                             <SidebarGroupContent>
                                 <SidebarMenu>
-                                    {portalNavItems.map((item) => (
+                                        {visiblePortalNavItems.map((item) => (
                                         <SidebarMenuItem key={item.href}>
                                             <SidebarMenuButton
                                                 asChild

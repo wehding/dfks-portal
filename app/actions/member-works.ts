@@ -3,13 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { findTMDBPoster, findTMDBMatch, getTMDBExternalIds, searchTMDB, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/app/actions/dfi";
-import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
+import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
-import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -27,6 +27,7 @@ type MemberWorkData = {
   selected_episodes?: number[] | null;
   genre?: string | null;
   director?: string | null;
+  production_companies?: string[] | null;
   description?: string | null;
   poster_url?: string | null;
   dfi_metadata?: DfiMetadata | null;
@@ -76,6 +77,120 @@ function titleSimilarity(a: string, b: string) {
   return overlap / Math.max(aTokens.size, bTokens.size);
 }
 
+function isLikelySameSeriesTitle(a: string, b: string) {
+  const normalizedA = normalizeTitle(cleanDfiTitle(a));
+  const normalizedB = normalizeTitle(cleanDfiTitle(b));
+  if (!normalizedA || !normalizedB) return false;
+  return normalizedA === normalizedB || normalizedA.includes(normalizedB) || normalizedB.includes(normalizedA) || titleSimilarity(a, b) >= 0.6;
+}
+
+function dfiEpisodeOptionsFromFilm(film: DfiMetadata | Record<string, unknown> | null | undefined) {
+  const children = Array.isArray((film as Record<string, unknown> | null | undefined)?.Children)
+    ? ((film as Record<string, unknown>).Children as Array<Record<string, unknown>>)
+    : [];
+  const options = children
+    .map((child, index) => {
+      const title = typeof child.Title === "string" ? child.Title : "";
+      const parsed = parseDfiEpisodeTitleInfo(title);
+      const number = parsed?.episodeNumber ?? index + 1;
+      if (!Number.isFinite(number) || number <= 0) return null;
+      return {
+        number,
+        title: parsed?.subtitle || title || `Afsnit ${number}`,
+        dfiId: child.Id ? String(child.Id) : null,
+      };
+    })
+    .filter((option): option is { number: number; title: string; dfiId: string | null } => Boolean(option))
+    .sort((a, b) => a.number - b.number);
+  const textCount = parseDfiEpisodeCount(
+    [
+      (film as Record<string, unknown> | null | undefined)?.Comment,
+      (film as Record<string, unknown> | null | undefined)?.Synopsis,
+      (film as Record<string, unknown> | null | undefined)?.ShortSynopsis,
+    ].filter(value => typeof value === "string").join(" ")
+  );
+  const maxOption = options.reduce((max, option) => Math.max(max, option.number), 0);
+  return { options, episodeCount: Math.max(textCount ?? 0, maxOption) || null };
+}
+
+async function findDfiSeriesByTitle(title: string, year: number | null | undefined) {
+  for (const candidate of seriesLookupTitleVariants(title)) {
+    const search = await searchDFIFilms(candidate).catch(() => ({ success: false, results: [] as unknown[] }));
+    const normalized = await normalizeDfiSeriesResults((search.success ? search.results ?? [] : []) as any[]);
+    const match = normalized.find((film: any) => {
+      const mappedType = mapDfiWorkType(film.Category, film.Type);
+      if (!isSeriesType(mappedType)) return false;
+      const filmTitle = cleanDfiTitle(film.Title || film.DanishTitle || "");
+      if (!filmTitle.trim()) return false;
+      const filmYear = extractDfiPremiereYear(film);
+      if (year && filmYear && Math.abs(filmYear - year) > 1) return false;
+      return isLikelySameSeriesTitle(filmTitle, title) || isLikelySameSeriesTitle(filmTitle, candidate);
+    });
+    if (match) return match as DfiMetadata;
+  }
+  return null;
+}
+
+async function resolveExternalSeriesEpisodesForTitle(params: {
+  title: string;
+  year?: number | null;
+  dfiId?: string | null;
+  tmdbId?: number | null;
+  seasonNumber: number;
+}) {
+  let dfiMetadata: DfiMetadata | null = null;
+  let tmdbId = params.tmdbId ?? null;
+  let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
+  let episodeCount: number | null = null;
+
+  try {
+    if (params.dfiId) {
+      const details = await getDFIFilmDetails(Number(params.dfiId));
+      if (details.success && details.film) dfiMetadata = details.film as DfiMetadata;
+    }
+    if (!dfiMetadata) {
+      dfiMetadata = await findDfiSeriesByTitle(params.title, params.year);
+    }
+    if (dfiMetadata) {
+      const dfiEpisodes = dfiEpisodeOptionsFromFilm(dfiMetadata);
+      episodeOptions = dfiEpisodes.options;
+      episodeCount = dfiEpisodes.episodeCount;
+      if (!tmdbId && typeof (dfiMetadata as Record<string, unknown>).TmdbId === "number") {
+        tmdbId = Number((dfiMetadata as Record<string, unknown>).TmdbId);
+      }
+    }
+  } catch (error) {
+    console.error("DFI serieafsnit lookup fejlede:", error);
+  }
+
+  try {
+    if (!tmdbId) {
+      for (const candidate of seriesLookupTitleVariants(params.title)) {
+        const match = await findTMDBMatch(candidate, params.year);
+        if (match.tmdb_id && match.media_type === "tv") {
+          tmdbId = match.tmdb_id;
+          break;
+        }
+      }
+    }
+    if (tmdbId) {
+      const season = await getTMDBSeasonEpisodes(tmdbId, params.seasonNumber);
+      const tmdbOptions = (season.episodes ?? [])
+        .map(episode => ({
+          number: Number(episode.episode_number),
+          title: episode.name || `Afsnit ${episode.episode_number}`,
+        }))
+        .filter(option => Number.isFinite(option.number) && option.number > 0);
+      if (tmdbOptions.length > episodeOptions.length) episodeOptions = tmdbOptions;
+      if (tmdbOptions.length) episodeCount = Math.max(episodeCount ?? 0, ...tmdbOptions.map(option => option.number));
+    }
+  } catch (error) {
+    console.error("TMDB serieafsnit lookup fejlede:", error);
+  }
+
+  return { dfiMetadata, tmdbId, episodeOptions, episodeCount };
+}
+
 async function currentUser() {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
@@ -104,7 +219,7 @@ export async function fetchMemberWorkDetail(params: { rightsHolderId: string; as
   const rh = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const { data: assignment, error } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_change_requests(*, work_change_request_comments(*)))")
     .eq("id", params.assignmentId)
     .eq("rights_holder_id", rh.rightsHolder.id)
     .maybeSingle();
@@ -226,7 +341,7 @@ function deriveSeriesBaseTitle(title: string | null | undefined): string {
 async function fetchMemberAssignment(db: ReturnType<typeof createServiceClient>, workId: string, rightsHolderId: string) {
   const { data } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_change_requests(*, work_change_request_comments(*)))")
     .eq("work_id", workId)
     .eq("rights_holder_id", rightsHolderId)
     .order("created_at", { ascending: false })
@@ -368,7 +483,7 @@ export async function addWorkForMember(params: {
   // Hent det oprettede assignment
   const { data: fresh } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, status, dfi_id, tmdb_id, poster_url, description)")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description)")
     .eq("work_id", workId)
     .eq("rights_holder_id", params.rightsHolderId)
     .order("created_at", { ascending: false })
@@ -387,7 +502,7 @@ export async function searchLocalWorksForMember(query: string) {
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
     .eq("org_id", orgId)
     .ilike("title", `%${q}%`)
     .limit(10);
@@ -433,9 +548,28 @@ export async function linkExistingWorkForMember(params: {
       return { success: false, error: "Vælg mindst ét afsnit." };
     }
 
-    const genRes = await generateEpisodesForSeries({
-      parentWork: work as unknown as DbWork,
+    const externalEpisodes = await resolveExternalSeriesEpisodesForTitle({
+      title: work.title,
+      year: work.year,
+      dfiId: work.dfi_id ? String(work.dfi_id) : null,
+      tmdbId: work.tmdb_id ? Number(work.tmdb_id) : null,
       seasonNumber: params.seasonNumber,
+    });
+    const totalEpisodes = Math.max(
+      Number(work.episode_count ?? 0) || 0,
+      externalEpisodes.episodeCount ?? 0,
+      selectedEpisodeNumbers.reduce((max, number) => Math.max(max, number), 0),
+      params.episodeNumber ?? 0
+    );
+    const genRes = await generateEpisodesForSeries({
+      parentWork: {
+        ...work,
+        tmdb_id: externalEpisodes.tmdbId ?? work.tmdb_id,
+        dfi_metadata: externalEpisodes.dfiMetadata ?? work.dfi_metadata,
+        episode_count: totalEpisodes || work.episode_count,
+      } as unknown as DbWork,
+      seasonNumber: params.seasonNumber,
+      totalEpisodes: totalEpisodes || undefined,
     });
     if (!genRes.success) return { success: false, error: genRes.error };
 
@@ -556,7 +690,7 @@ export async function linkExistingWorkForMember(params: {
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
-    return { success: true, pending: true, alreadyExists, requestId, assignment: fresh };
+    return { success: true, pending: true, alreadyExists, requestId, workId: targetWorkIds[0] ?? params.workId, assignment: fresh };
   }
 
   // Genbrug af eksisterende værk kræver ikke godkendelse. Men skrev brugeren en
@@ -578,7 +712,7 @@ export async function linkExistingWorkForMember(params: {
 
   const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
 
-  return { success: true, alreadyExists, assignment: fresh };
+  return { success: true, alreadyExists, workId: targetWorkIds[0] ?? params.workId, assignment: fresh };
 }
 
 export async function addWorkForMemberWithApproval(params: {
@@ -684,6 +818,7 @@ export async function addWorkForMemberWithApproval(params: {
         season_count: enrichedWorkData.season_count ?? null,
         genre: enrichedWorkData.genre ?? null,
         director: enrichedWorkData.director ?? null,
+        production_companies: enrichedWorkData.production_companies ?? [],
         description: enrichedWorkData.description ?? null,
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
@@ -783,6 +918,7 @@ export async function addWorkForMemberWithApproval(params: {
         episode_count: enrichedWorkData.episode_count ?? null,
         genre: enrichedWorkData.genre ?? null,
         director: enrichedWorkData.director ?? null,
+        production_companies: enrichedWorkData.production_companies ?? [],
         description: enrichedWorkData.description ?? null,
         poster_url: enrichedWorkData.poster_url ?? null,
         dfi_id: enrichedWorkData.dfi_id ?? null,
@@ -874,7 +1010,7 @@ export async function addWorkForMemberWithApproval(params: {
   const fresh = await fetchMemberAssignment(db, finalWorkId, params.rightsHolderId);
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
-  return { success: true, assignment: fresh, coEditorsPending: Boolean(coEditorsRequestId), coEditorsRequestId };
+  return { success: true, workId: finalWorkId, assignment: fresh, coEditorsPending: Boolean(coEditorsRequestId), coEditorsRequestId };
 }
 
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
@@ -1060,13 +1196,13 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   let localWorks: any[] = [];
   try {
     let { data, error } = await db.from("works")
-      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
+      .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
       .eq("org_id", orgId)
       .ilike("title", `%${q}%`)
       .limit(15);
     if (isMissingOptionalWorkColumn(error)) {
       const retry = await db.from("works")
-        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
+        .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
         .eq("org_id", orgId)
         .ilike("title", `%${q}%`)
         .limit(15);
@@ -1085,7 +1221,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
     if (parentIds.length > 0) {
       const [{ data: parents }, { data: children }] = await Promise.all([
         db.from("works")
-          .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
+          .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
           .in("id", parentIds),
         db.from("works")
           .select("id, title, type, year, season_number, episode_number, parent_work_id")
@@ -1275,6 +1411,61 @@ export async function searchRightsHoldersForMember(query: string) {
   return { success: true, results: data ?? [] };
 }
 
+export async function fetchMemberSeriesEpisodeOptions(params: {
+  rightsHolderId: string;
+  workId: string;
+}) {
+  const db = createServiceClient();
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
+  const { data: current } = await db
+    .from("works")
+    .select("id,parent_work_id,season_number,episode_number,type")
+    .eq("id", params.workId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!current) return { success: false, error: "Værket findes ikke.", options: [] };
+
+  const parentId = current.parent_work_id ?? current.id;
+  const seasonNumber = current.season_number ?? 1;
+  const { data: parentWork } = await db
+    .from("works")
+    .select("*")
+    .eq("id", parentId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!parentWork) return { success: false, error: "Serien findes ikke.", options: [] };
+
+  const { data: localChildren } = await db
+    .from("works")
+    .select("id,title,season_number,episode_number,parent_work_id")
+    .eq("org_id", orgId)
+    .eq("parent_work_id", parentId)
+    .eq("season_number", seasonNumber)
+    .order("episode_number", { ascending: true });
+
+  const external = await resolveExternalSeriesEpisodesForTitle({
+    title: parentWork.title,
+    year: parentWork.year,
+    dfiId: parentWork.dfi_id ? String(parentWork.dfi_id) : null,
+    tmdbId: parentWork.tmdb_id ? Number(parentWork.tmdb_id) : null,
+    seasonNumber,
+  });
+  const episodeCount = Math.max(
+    Number(parentWork.episode_count ?? 0) || 0,
+    external.episodeCount ?? 0,
+    ...(localChildren ?? []).map(child => Number(child.episode_number ?? 0))
+  );
+  const options = buildCompleteEpisodeOptions({
+    episodeCount,
+    externalOptions: external.episodeOptions,
+    localChildren,
+    seasonNumber,
+  });
+
+  return { success: true, options, episodeCount, seasonNumber };
+}
+
 export async function syncMemberEpisodeAssignments(params: {
   rightsHolderId: string;
   workId: string;
@@ -1290,12 +1481,46 @@ export async function syncMemberEpisodeAssignments(params: {
   if (!current) return { success: false, error: "Værket findes ikke." };
   const parentId = current.parent_work_id ?? current.id;
   const seasonNumber = current.season_number ?? 1;
+  const selected = new Set(params.selectedEpisodes.filter(Number.isFinite));
+
+  const { data: parentWork } = await db
+    .from("works")
+    .select("*")
+    .eq("id", parentId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!parentWork) return { success: false, error: "Serien findes ikke." };
+
+  const externalEpisodes = await resolveExternalSeriesEpisodesForTitle({
+    title: parentWork.title,
+    year: parentWork.year,
+    dfiId: parentWork.dfi_id ? String(parentWork.dfi_id) : null,
+    tmdbId: parentWork.tmdb_id ? Number(parentWork.tmdb_id) : null,
+    seasonNumber,
+  });
+  const requiredEpisodeCount = Math.max(
+    Number(parentWork.episode_count ?? 0) || 0,
+    externalEpisodes.episodeCount ?? 0,
+    params.selectedEpisodes.reduce((max, number) => Math.max(max, number), 0)
+  );
+  if (requiredEpisodeCount > 0) {
+    await generateEpisodesForSeries({
+      parentWork: {
+        ...parentWork,
+        tmdb_id: externalEpisodes.tmdbId ?? parentWork.tmdb_id,
+        dfi_metadata: externalEpisodes.dfiMetadata ?? parentWork.dfi_metadata,
+        episode_count: requiredEpisodeCount,
+      } as DbWork,
+      seasonNumber,
+      totalEpisodes: requiredEpisodeCount,
+    });
+  }
+
   const { data: episodes, error } = await db.from("works")
     .select("id,episode_number")
     .eq("org_id", orgId).eq("parent_work_id", parentId).eq("season_number", seasonNumber)
     .not("episode_number", "is", null);
   if (error) return { success: false, error: error.message };
-  const selected = new Set(params.selectedEpisodes.filter(Number.isFinite));
   const episodeIds = (episodes ?? []).map(episode => episode.id);
   const { data: existing } = episodeIds.length ? await db.from("work_assignments")
     .select("id,work_id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).in("work_id", episodeIds) : { data: [] };
@@ -1480,6 +1705,32 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       }
     } catch (e) {
       console.error("TMDB external IDs lookup error in resolveUnifiedSearchResultDetails:", e);
+    }
+  }
+
+  const needsExternalEpisodeSupplement =
+    isSeriesType(type) &&
+    (
+      !episodeCount ||
+      episodeCount <= localChildren.length ||
+      episodeOptions.length <= localChildren.length
+    );
+
+  if (needsExternalEpisodeSupplement) {
+    const externalEpisodes = await resolveExternalSeriesEpisodesForTitle({
+      title: result.title,
+      year: result.year,
+      dfiId: result.dfi_id,
+      tmdbId,
+      seasonNumber: detailSeasonNumber,
+    });
+    if (externalEpisodes.dfiMetadata && !dfiMetadata) dfiMetadata = externalEpisodes.dfiMetadata;
+    if (externalEpisodes.tmdbId && !tmdbId) tmdbId = externalEpisodes.tmdbId;
+    if (externalEpisodes.episodeOptions.length > episodeOptions.length) {
+      episodeOptions = externalEpisodes.episodeOptions;
+    }
+    if (externalEpisodes.episodeCount && externalEpisodes.episodeCount > (episodeCount ?? 0)) {
+      episodeCount = externalEpisodes.episodeCount;
     }
   }
 

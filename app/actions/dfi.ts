@@ -9,7 +9,7 @@ import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBE
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPersonPortraitUrl, extractDfiPersonPortraitUrls, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
-import { buildCompleteEpisodeOptions, parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireOrgId } from "@/lib/org";
@@ -1175,25 +1175,81 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
       seasonNumber,
     });
   }
-  if (credit.source === "dfi") {
-    const dfiId = String(credit.id).replace(/^dfi-/, "");
-    const details = await getDFIFilmDetails(Number(dfiId));
-    const film = details.success && details.film ? details.film as DfiCredit : null;
+
+  const shouldTryDfi = credit.source === "dfi" || credit.source === "lokal";
+  if (shouldTryDfi) {
+    let film: DfiCredit | null = null;
+    const dfiId = credit.source === "dfi"
+      ? String(credit.id).replace(/^dfi-/, "")
+      : credit.raw?.dfi_id ? String(credit.raw.dfi_id) : "";
+    if (dfiId) {
+      const details = await getDFIFilmDetails(Number(dfiId));
+      film = details.success && details.film ? details.film as DfiCredit : null;
+    }
+    if (!film) {
+      for (const candidate of seriesLookupTitleVariants(credit.title)) {
+        const search = await searchDFIFilms(candidate).catch(() => ({ success: false, results: [] as DfiCredit[] }));
+        const normalized = await normalizeDfiSeriesResults((search.success ? search.results ?? [] : []) as DfiCredit[]);
+        const match = normalized.find((item: DfiCredit) => {
+          const itemTitle = cleanDfiTitle(item.Title || item.DanishTitle || "");
+          if (!itemTitle.trim()) return false;
+          const itemYear = extractDfiPremiereYear(item);
+          if (credit.year && itemYear && Math.abs(credit.year - itemYear) > 1) return false;
+          return normalizeTitle(itemTitle).includes(normalizeTitle(candidate)) || normalizeTitle(candidate).includes(normalizeTitle(itemTitle));
+        });
+        if (match) {
+          film = match;
+          break;
+        }
+      }
+    }
+
     const children: DfiCredit[] = Array.isArray(film?.Children) ? film.Children : [];
     const dfiOptions = children.map((child: DfiCredit, index: number) => {
       const parsed = parseDfiEpisodeTitleInfo(String(child.Title ?? ""));
-      return parsed ? { number: parsed.episodeNumber ?? index + 1, title: parsed.subtitle || String(child.Title ?? "") } : null;
+      const number = parsed?.episodeNumber ?? index + 1;
+      return Number.isFinite(number) && number > 0
+        ? { number, title: parsed?.subtitle || String(child.Title ?? "") || `Afsnit ${number}` }
+        : null;
     }).filter((item): item is { number: number; title: string } => Boolean(item));
-    if (dfiOptions.length) options = dfiOptions;
+    const filmRecord = film as Record<string, unknown> | null;
+    const dfiCount = Math.max(
+      parseDfiEpisodeCount(String(filmRecord?.Comment ?? filmRecord?.Synopsis ?? "")) ?? 0,
+      ...dfiOptions.map(option => option.number),
+      0
+    );
+    if (dfiOptions.length > options.length || dfiCount > options.length) {
+      options = buildCompleteEpisodeOptions({
+        episodeCount: dfiCount,
+        externalOptions: dfiOptions,
+        localChildren: credit.raw?.__local_children,
+        seasonNumber,
+      });
+    }
   }
-  if (!options.length || (credit.source === "lokal" && Number(credit.raw?.tmdb_id ?? 0) && options.length <= (credit.raw?.__local_children?.length ?? 0))) {
+  if (!options.length || (credit.source === "lokal" && options.length <= (credit.raw?.__local_children?.length ?? 0))) {
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
-    if (!tmdbId) tmdbId = Number((await findTMDBMatch(credit.title, credit.year)).tmdb_id ?? 0);
+    if (!tmdbId) {
+      for (const candidate of seriesLookupTitleVariants(credit.title)) {
+        const match = await findTMDBMatch(candidate, credit.year);
+        if (match.tmdb_id && match.media_type === "tv") {
+          tmdbId = Number(match.tmdb_id);
+          break;
+        }
+      }
+    }
     if (tmdbId) {
       const season = await getTMDBSeasonEpisodes(tmdbId, seasonNumber);
       if (season.success) {
         const tmdbOptions = (season.episodes ?? []).map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` })).filter(option => Number.isFinite(option.number) && option.number > 0);
-        if (tmdbOptions.length > options.length) options = tmdbOptions;
+        if (tmdbOptions.length > options.length) {
+          options = buildCompleteEpisodeOptions({
+            episodeCount: tmdbOptions.length,
+            externalOptions: tmdbOptions,
+            localChildren: credit.raw?.__local_children,
+            seasonNumber,
+          });
+        }
       }
     }
   }

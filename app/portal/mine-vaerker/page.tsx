@@ -42,7 +42,7 @@ export default function MineVaerkerPage() {
 
         const { data: assignments, error: assignmentsError } = await supabase
           .from("work_assignments")
-          .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
+          .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
           .eq("rights_holder_id", rh.id)
           .order("created_at", { ascending: false });
         if (assignmentsError) throw assignmentsError;

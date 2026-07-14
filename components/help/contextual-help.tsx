@@ -19,9 +19,9 @@ type ContextualHelpProps = {
   storageKey?: string;
 };
 
-export function HelpButton({ onClick, label = "Hjælp" }: { onClick: () => void; label?: string }) {
+export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-2 sm:w-auto" }: { onClick: () => void; label?: string; className?: string }) {
   return (
-    <Button type="button" variant="outline" onClick={onClick} className="w-full gap-2 sm:w-auto">
+    <Button type="button" variant="outline" onClick={onClick} className={className}>
       <HelpCircle className="h-4 w-4" />
       {label}
     </Button>

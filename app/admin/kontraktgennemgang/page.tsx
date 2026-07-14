@@ -820,6 +820,7 @@ function ManuelGennemgang() {
                 <div className="flex items-start gap-2 rounded-lg border border-muted bg-muted/30 px-4 py-3">
                     <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                     <div className="text-xs text-muted-foreground space-y-1">
+                        <p><strong className="text-foreground">AI-vurdering:</strong> Kontrakten gennemgås først af AI, og rådgivningen er derfor en foreløbig AI-baseret vurdering. Usædvanlige vilkår eller forhold, der kræver juridisk vurdering, skal sendes videre til foreningens jurist.</p>
                         <p><strong className="text-foreground">Datasikkerhed:</strong> Filen behandles server-side og gemmes ikke efter analyse. Kun udgående mails arkiveres under medlemmets navn.</p>
                         <p><strong className="text-foreground">Ekstern behandling:</strong> Kontraktindholdet analyseres via Anthropic&apos;s API (USA). CPR-numre, bankkontonumre, IBAN og private adressenumre maskeres automatisk inden afsendelse. Anthropic anvender ikke API-data til modeltræning.</p>
                         <p><strong className="text-foreground">Anbefaling:</strong> Undgå at uploade kontrakter med særligt følsomme oplysninger der ikke er nødvendige for analysen.</p>

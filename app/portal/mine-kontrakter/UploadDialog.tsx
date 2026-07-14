@@ -20,6 +20,17 @@ const CATEGORY_LABELS: Record<string, string> = {
   documentary: "Dokumentar", docSeries: "Dokumentarserie",
   tvEntertainment: "TV-underholdning", reality: "Reality", sport: "Sport",
 };
+const CATEGORY_TO_WORK_TYPE: Record<string, string> = {
+  feature: "spillefilm",
+  short: "kortfilm",
+  tvSeries: "tv-serie",
+  documentary: "dokumentarfilm",
+  docSeries: "dokumentar-serie",
+  tvEntertainment: "tv-serie",
+  reality: "tv-serie",
+  sport: "tv-serie",
+};
+const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type Props = {
   onClose: () => void;
@@ -62,6 +73,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
   const [duration, setDuration] = useState("");
   const [premiereDate, setPremiereDate] = useState("");
+  const [productionCompany, setProductionCompany] = useState("");
+  const [director, setDirector] = useState("");
   const [saving, setSaving] = useState(false);
 
   const file = files[0] ?? null;
@@ -153,6 +166,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         }
         if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate"); }
         if (result.duration && result.duration > 0) { setDuration(String(result.duration)); filled.add("duration"); }
+        if (result.productionCompany) { setProductionCompany(result.productionCompany); filled.add("productionCompany"); }
+        if (result.director) { setDirector(result.director); filled.add("director"); }
         setAiFields(filled);
         if (filled.size > 0) toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`);
       } catch (e: unknown) {
@@ -171,8 +186,25 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     const params = new URLSearchParams({ add: "1" });
     const query = workSearch.trim() || title.trim();
     if (query) params.set("q", query);
-    onClose();
-    router.push(`/portal/mine-vaerker?${params.toString()}`);
+    return (contractId?: string | null) => {
+      if (typeof window !== "undefined") {
+      const prefill = {
+        title: title.trim() || query,
+        type: CATEGORY_TO_WORK_TYPE[category] ?? "",
+        duration_minutes: duration,
+        production_company: productionCompany.trim(),
+        director: director.trim(),
+        contract_id: contractId ?? "",
+      };
+      const hasPrefill = Object.values(prefill).some(value => typeof value === "string" && value.trim().length > 0);
+      if (hasPrefill) {
+        window.sessionStorage.setItem(ADD_WORK_PREFILL_KEY, JSON.stringify(prefill));
+        params.set("prefill", String(Date.now()));
+      }
+      }
+      onClose();
+      router.push(`/portal/mine-vaerker?${params.toString()}`);
+    };
   }
 
   const saveContracts = async () => {
@@ -238,7 +270,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       toast.success(savedContracts.length === 1 ? "Kontrakt gemt og sendt til AI-gennemlæsning" : `${savedContracts.length} kontrakter gemt og sendt til AI-gennemlæsning`);
       onUploaded(savedContracts);
     }
-    goToAddWork();
+    goToAddWork()(savedContracts[0]?.id ?? null);
   };
 
   // Fælles select-stil (shadcn Select er overkill her — native select er tilstrækkeligt)
@@ -536,6 +568,32 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   </div>
                 </div>
               )}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                    Produktionsselskab
+                    {aiFields.has("productionCompany") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                  </Label>
+                  <Input
+                    value={productionCompany}
+                    onChange={e => setProductionCompany(e.target.value)}
+                    placeholder="Produktionsselskab"
+                    className={aiFields.has("productionCompany") ? "bg-purple-50" : ""}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                    Instruktør
+                    {aiFields.has("director") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                  </Label>
+                  <Input
+                    value={director}
+                    onChange={e => setDirector(e.target.value)}
+                    placeholder="Instruktør"
+                    className={aiFields.has("director") ? "bg-purple-50" : ""}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
