@@ -50,9 +50,9 @@ export async function sendEmail(payload: EmailPayload): Promise<{ ok: boolean; e
         }
 
         return { ok: true }
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[email] Uventet fejl:", err)
-        return { ok: false, error: err.message }
+        return { ok: false, error: err instanceof Error ? err.message : "Ukendt e-mailfejl" }
     }
 }
 
@@ -78,17 +78,24 @@ export function inviteEmailHtml(params: {
     inviteUrl: string
     orgName: string
     primaryColor?: string
+    bodyText?: string | null
+    variant?: "invite" | "reminder"
 }): string {
     const { recipientName, inviteUrl, orgName } = params
     const color = safeColor(params.primaryColor)
     const safeName = escapeHtml(recipientName?.trim() || "der")
     const safeOrgName = escapeHtml(orgName)
     const safeInviteUrl = escapeHtml(inviteUrl)
+    const defaultText = params.variant === "reminder"
+        ? `Du har tidligere modtaget en invitation til ${orgName}s portal. Brug knappen herunder for at oprette eller færdiggøre din adgang.`
+        : `Du er blevet inviteret til ${orgName}s portal. Klik på knappen for at oprette din adgang:`
+    const bodyText = params.bodyText?.trim() || defaultText
+    const bodyHtml = escapeHtml(bodyText).replace(/\n/g, "<br>")
     return `
 <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 480px; margin: 0 auto; color: #111827;">
   <h2 style="color: ${color}; font-size: 20px;">Velkommen til ${safeOrgName}</h2>
   <p>Hej ${safeName},</p>
-  <p>Du er blevet inviteret til ${safeOrgName}s portal. Klik på knappen for at oprette din adgang:</p>
+  <p>${bodyHtml}</p>
   <p style="margin: 24px 0;">
     <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Opret min adgang</a>
   </p>

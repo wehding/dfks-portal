@@ -18,7 +18,7 @@ import { sendEmail, inviteEmailHtml } from "@/lib/email"
 import { resolveFromEmail, resolveBranding } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
+import { assertAdminRole } from "@/lib/supabase/assert-admin"
 
 function getAdmin() {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -37,8 +37,8 @@ export async function POST(req: NextRequest) {
         const body = await req.json()
         const admin = getAdmin()
 
-        // ── Invite: opret ny bruger ──────────────────────────────
-        if (body.action === "invite") {
+        // ── Invite / reminder: opret eller gensend link ──────────
+        if (body.action === "invite" || body.action === "reminder") {
             const { email, name, rhId, role: inviteRole, phone, title } = body
             if (!email || !rhId) {
                 return NextResponse.json({ error: "email og rhId er påkrævet" }, { status: 400 })
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
             // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
                 admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
-                admin.from("organisations").select("max_users, name, from_email, branding").eq("id", orgId).single(),
+                admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text").eq("id", orgId).single(),
             ])
             if (org && org.max_users !== -1 && (userCount ?? 0) >= org.max_users) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
@@ -105,12 +105,18 @@ export async function POST(req: NextRequest) {
             const mail = await sendEmail({
                 to: email,
                 from: resolveFromEmail(orgForMail as never),
-                subject: `Invitation til ${brand.long_name}s portal`,
+                subject: body.action === "reminder"
+                    ? `Påmindelse: invitation til ${brand.long_name}s portal`
+                    : `Invitation til ${brand.long_name}s portal`,
                 html: inviteEmailHtml({
                     recipientName: name || "",
                     inviteUrl,
                     orgName: brand.long_name,
                     primaryColor: brand.primary_color,
+                    bodyText: body.action === "reminder"
+                        ? ((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? null)
+                        : ((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? null),
+                    variant: body.action === "reminder" ? "reminder" : "invite",
                 }),
             })
 
@@ -132,7 +138,7 @@ export async function POST(req: NextRequest) {
 
         // ── Reset: generer password-reset link ───────────────────
         if (body.action === "reset") {
-            const { userId, email } = body
+            const { email } = body
             if (!email) return NextResponse.json({ error: "email er påkrævet" }, { status: 400 })
 
             const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
@@ -172,8 +178,8 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ error: "Ukendt action" }, { status: 400 })
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[admin/user]", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
     }
 }
