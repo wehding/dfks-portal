@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 
 export type HelpTopic = {
   title: string;
@@ -20,15 +21,17 @@ type ContextualHelpProps = {
 };
 
 export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-2 sm:w-auto" }: { onClick: () => void; label?: string; className?: string }) {
+  const { t } = useI18n();
   return (
     <Button type="button" variant="outline" onClick={onClick} className={className}>
       <HelpCircle className="h-4 w-4" />
-      {label}
+      {label === "Hjælp" ? t("help.button") : label}
     </Button>
   );
 }
 
 export function ContextualHelp({ title, intro, topics, open, onOpenChange, storageKey }: ContextualHelpProps) {
+  const { t } = useI18n();
   useEffect(() => {
     if (!storageKey || typeof window === "undefined") return;
     if (window.localStorage.getItem(storageKey) === "seen") return;
@@ -55,7 +58,7 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
             type="button"
             onClick={() => onOpenChange(false)}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Luk hjælp"
+            aria-label={t("help.close")}
           >
             <X className="h-5 w-5" />
           </button>

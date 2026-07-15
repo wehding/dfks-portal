@@ -5,6 +5,7 @@ import { Loader2, MessageSquare, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
+import { useI18n } from "@/lib/i18n"
 
 export type MessageThreadRole = "member" | "admin"
 
@@ -62,12 +63,14 @@ export function MessageStatusBadge({
   label: string
   tone?: "neutral" | "attention" | "done"
 }) {
+  const { t } = useI18n()
+  const messageText = count === 1 ? t("messages.oneMessage") : t("messages.multipleMessages")
   return (
     <Badge
       variant={tone === "attention" ? "default" : "secondary"}
       className={tone === "attention" ? "bg-blue-600 text-white hover:bg-blue-600" : ""}
     >
-      {count && count > 0 ? `${count} ${count === 1 ? "besked" : "beskeder"}` : label}
+      {count && count > 0 ? `${count} ${messageText}` : label}
     </Badge>
   )
 }
@@ -92,6 +95,12 @@ export function MessageThread({
   onDeleteMessage,
   onClearThread,
 }: MessageThreadProps) {
+  const { t } = useI18n()
+  const resolvedTitle = title === "Beskeder" ? t("messages.title") : title
+  const resolvedMemberLabel = memberLabel === "Medlem" ? t("messages.member") : memberLabel
+  const resolvedEmptyText = emptyText === "Ingen beskeder endnu." ? t("messages.empty") : emptyText
+  const resolvedComposerPlaceholder = composerPlaceholder === "Skriv en besked..." ? t("messages.placeholder") : composerPlaceholder
+  const resolvedSendLabel = sendLabel === "Send" ? t("messages.send") : sendLabel
   const sorted = [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
   const unreadCount = sorted.filter(message => unreadForViewer(message, viewerRole)).length
   const canCompose = Boolean(onComposerChange && onSend)
@@ -101,13 +110,13 @@ export function MessageThread({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          <p className="text-sm font-medium">{title}</p>
+          <p className="text-sm font-medium">{resolvedTitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          {unreadCount > 0 && <MessageStatusBadge count={unreadCount} label="Ulæst" tone="attention" />}
+          {unreadCount > 0 && <MessageStatusBadge count={unreadCount} label={t("messages.unread")} tone="attention" />}
           {nextActionLabel && <MessageStatusBadge label={nextActionLabel} tone={nextActionTone} />}
           {viewerRole === "admin" && onClearThread && messages.length > 0 && (
-            <button type="button" className="text-xs text-destructive hover:underline" onClick={() => { if (window.confirm("Ryd alle beskeder i tråden? Handlingen kan ikke fortrydes.")) void onClearThread(); }}>Ryd tråd</button>
+            <button type="button" className="text-xs text-destructive hover:underline" onClick={() => { if (window.confirm(t("messages.clearThreadConfirm"))) void onClearThread(); }}>{t("messages.clearThread")}</button>
           )}
         </div>
       </div>
@@ -120,7 +129,7 @@ export function MessageThread({
 
       <div className="max-h-72 space-y-2 overflow-y-auto p-3">
         {sorted.length === 0 ? (
-          <p className="rounded-md bg-muted/40 px-3 py-3 text-sm text-muted-foreground">{emptyText}</p>
+          <p className="rounded-md bg-muted/40 px-3 py-3 text-sm text-muted-foreground">{resolvedEmptyText}</p>
         ) : (
           sorted.map(message => {
             const own = message.authorRole === viewerRole
@@ -133,14 +142,14 @@ export function MessageThread({
                 } ${unread ? "border-blue-500 shadow-sm" : "border-transparent"}`}
               >
                 <div className={`mb-1 flex flex-wrap items-center gap-2 text-xs ${own ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
-                  <span className="font-medium">{own ? "Dig" : roleLabel(message.authorRole, memberLabel, adminLabel)}</span>
+                  <span className="font-medium">{own ? t("messages.you") : roleLabel(message.authorRole, resolvedMemberLabel, adminLabel)}</span>
                   <span>{new Date(message.createdAt).toLocaleString("da-DK")}</span>
-                  {unread && <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">Ny</span>}
+                  {unread && <span className="rounded-full bg-blue-600 px-1.5 py-0.5 text-[10px] text-white">{t("common.new")}</span>}
                 </div>
                 <div className="flex items-start justify-between gap-3">
                   <p className="whitespace-pre-wrap leading-relaxed">{message.message}</p>
                   {viewerRole === "admin" && onDeleteMessage && (
-                    <button type="button" className={`shrink-0 text-xs hover:underline ${own ? "text-primary-foreground/80" : "text-destructive"}`} onClick={() => { if (window.confirm("Slet denne besked? Handlingen kan ikke fortrydes.")) void onDeleteMessage(message.id); }}>Slet</button>
+                    <button type="button" className={`shrink-0 text-xs hover:underline ${own ? "text-primary-foreground/80" : "text-destructive"}`} onClick={() => { if (window.confirm(t("messages.deleteMessageConfirm"))) void onDeleteMessage(message.id); }}>{t("common.delete")}</button>
                   )}
                 </div>
               </article>
@@ -156,12 +165,12 @@ export function MessageThread({
               <Textarea
                 value={composerValue ?? ""}
                 onChange={event => onComposerChange?.(event.target.value)}
-                placeholder={composerPlaceholder}
+                placeholder={resolvedComposerPlaceholder}
                 className="min-h-20"
               />
               <Button type="button" onClick={onSend} disabled={composerDisabled || composerLoading || !(composerValue ?? "").trim()} className="w-full sm:w-auto">
                 {composerLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-                {sendLabel}
+                {resolvedSendLabel}
               </Button>
             </>
           )}
