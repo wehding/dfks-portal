@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useEffect, type ChangeEvent } from "react"
-import { Lock, Heart, User, Save, Info, Loader2, Plus, X, RefreshCw, Film, Upload } from "lucide-react"
+import { Lock, Heart, User, Save, Info, Loader2, X, RefreshCw, Film, Upload } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -16,6 +16,7 @@ import { DfiImportWizard } from "@/app/portal/mine-vaerker/components/DfiImportW
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery"
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { PROFILE_PORTRAIT_TEXT } from "@/lib/profile-copy"
 
 interface ProfileData {
     id: string
@@ -46,14 +47,16 @@ export default function MinProfilPage() {
     const [matchAlternativeName, setMatchAlternativeName] = useState("")
     const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null)
     const [uploadingPortrait, setUploadingPortrait] = useState(false)
+    const [portraitPreviewOpen, setPortraitPreviewOpen] = useState(false)
 
     // Editable fields
     const [name, setName]         = useState("")
     const [email, setEmail]       = useState("")
     const [phone, setPhone]       = useState("")
-    const [address, setAddress]   = useState("")
+    const [streetAddress, setStreetAddress] = useState("")
+    const [postalCode, setPostalCode] = useState("")
+    const [city, setCity] = useState("")
     const [altNavne, setAltNavne] = useState<string[]>([])
-    const [nytAltNavn, setNytAltNavn] = useState("")
 
     // Arvekontakt (stored in user_metadata — ingen DB-tabel endnu)
     const [kinName, setKinName]         = useState("")
@@ -107,7 +110,10 @@ export default function MinProfilPage() {
                 setName(rh.full_name)
                 setEmail(rh.email ?? "")
                 setPhone(rh.phone ?? "")
-                setAddress(rh.address ?? "")
+                const parsedAddress = parseAddress(rh.address ?? "")
+                setStreetAddress(parsedAddress.street)
+                setPostalCode(parsedAddress.postalCode)
+                setCity(parsedAddress.city)
                 setAltNavne(rh.alternative_names ?? [])
             }
 
@@ -132,7 +138,7 @@ export default function MinProfilPage() {
             // Opdater rettighedshaver
             const { error } = await supabase
                 .from("rettighedshavere")
-                .update({ full_name: name, email, phone, address, alternative_names: altNavne })
+                .update({ full_name: name, email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
 
@@ -253,7 +259,7 @@ export default function MinProfilPage() {
                     <Button type="button" variant="outline" onClick={openPersonSearch} className="shrink-0 gap-2">
                         <RefreshCw className="h-4 w-4" /> Søg nye titler på dit navn
                     </Button>
-                    <Button type="button" variant="ghost" onClick={openPersonSearch} className="shrink-0">Ret personmatch</Button>
+                    <Button type="button" onClick={openPersonSearch} className="shrink-0">Ret personmatch</Button>
                 </div>
             </section>
 
@@ -265,16 +271,22 @@ export default function MinProfilPage() {
                 </div>
                 <div className="p-5 space-y-4">
                     <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-center">
-                        <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-background">
+                        <button
+                            type="button"
+                            onClick={() => profile?.portrait_url && setPortraitPreviewOpen(true)}
+                            disabled={!profile?.portrait_url}
+                            className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-full border bg-background disabled:cursor-default"
+                            title={profile?.portrait_url ? "Vis billede i fuld størrelse" : undefined}
+                        >
                             {profile?.portrait_url ? (
                                 <img src={profile.portrait_url} alt="" className="h-full w-full object-cover" />
                             ) : (
                                 <User className="h-8 w-8 text-muted-foreground" />
                             )}
-                        </div>
+                        </button>
                         <div className="min-w-0 flex-1">
                             <div className="font-medium">Profilbillede</div>
-                            <p className="text-sm text-muted-foreground">Bruges til at genkende dig i profil- og rettighedshaverflows.</p>
+                            <p className="text-sm text-muted-foreground">{PROFILE_PORTRAIT_TEXT}</p>
                         </div>
                         <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
                             {uploadingPortrait ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
@@ -310,69 +322,18 @@ export default function MinProfilPage() {
                             <Input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+45 XX XX XX XX" />
                         </div>
                     </div>
-                    <div className="space-y-1.5">
-                        <Label>Adresse</Label>
-                        <Input value={address} onChange={e => setAddress(e.target.value)} placeholder="Vejnavn og husnummer, postnummer, by" />
-                    </div>
-
-                    <Separator />
-
-                    <div className="space-y-2">
-                        <div>
-                            <Label>Alternative navne</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                                Fx tidligere navn, kunstnernavn eller forkortede versioner. Bruges til at genkende dig i kontrakter og sikre korrekt kreditering.
-                            </p>
+                    <div className="grid gap-4 sm:grid-cols-[1fr_8rem_1fr]">
+                        <div className="space-y-1.5">
+                            <Label>Adresse</Label>
+                            <Input value={streetAddress} onChange={e => setStreetAddress(e.target.value)} placeholder="Vejnavn og husnummer" />
                         </div>
-                        <div className="space-y-2">
-                            {altNavne.map((navn, i) => (
-                                <div key={i} className="flex items-center gap-2">
-                                    <Input
-                                        value={navn}
-                                        onChange={e => {
-                                            const ny = [...altNavne]
-                                            ny[i] = e.target.value
-                                            setAltNavne(ny)
-                                        }}
-                                        className="h-8 text-sm"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setAltNavne(altNavne.filter((_, j) => j !== i))}
-                                        className="text-muted-foreground hover:text-destructive transition-colors"
-                                    >
-                                        <X className="h-4 w-4" />
-                                    </button>
-                                </div>
-                            ))}
-                            <div className="flex items-center gap-2">
-                                <Input
-                                    value={nytAltNavn}
-                                    onChange={e => setNytAltNavn(e.target.value)}
-                                    onKeyDown={e => {
-                                        if (e.key === "Enter" && nytAltNavn.trim()) {
-                                            e.preventDefault()
-                                            setAltNavne([...altNavne, nytAltNavn.trim()])
-                                            setNytAltNavn("")
-                                        }
-                                    }}
-                                    placeholder="Tilføj alternativt navn..."
-                                    className="h-8 text-sm"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        if (nytAltNavn.trim()) {
-                                            setAltNavne([...altNavne, nytAltNavn.trim()])
-                                            setNytAltNavn("")
-                                        }
-                                    }}
-                                    className="text-muted-foreground hover:text-primary transition-colors"
-                                    title="Tilføj"
-                                >
-                                    <Plus className="h-4 w-4" />
-                                </button>
-                            </div>
+                        <div className="space-y-1.5">
+                            <Label>Postnr.</Label>
+                            <Input value={postalCode} onChange={e => setPostalCode(e.target.value)} placeholder="1234" inputMode="numeric" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label>By</Label>
+                            <Input value={city} onChange={e => setCity(e.target.value)} placeholder="København" />
                         </div>
                     </div>
 
@@ -461,11 +422,32 @@ export default function MinProfilPage() {
                 <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
                     <DialogHeader><DialogTitle>Vælg de navneprofiler, der er dig</DialogTitle></DialogHeader>
                     <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. Du kan vælge flere profiler fra samme database.</p>
-                    <div className="space-y-2 rounded-md border bg-muted/30 p-3"><div><Label>Alternative navne</Label><p className="text-xs text-muted-foreground">Tilføj andre stavemåder, mellemnavne eller tidligere krediteringsnavne. Resultaterne flettes sammen med de eksisterende.</p></div><div className="flex gap-2"><Input value={matchAlternativeName} onChange={event => setMatchAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addMatchAlternativeName() } }} placeholder="Tilføj en navnevariant" /><Button type="button" variant="outline" onClick={() => void addMatchAlternativeName()} disabled={!matchAlternativeName.trim() || personSearching}>Tilføj og søg</Button></div></div>
+                    <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                        <div>
+                            <Label>Alternative navne</Label>
+                            <p className="text-xs text-muted-foreground">Tilføj andre stavemåder, mellemnavne eller tidligere krediteringsnavne. Resultaterne flettes sammen med de eksisterende.</p>
+                        </div>
+                        {altNavne.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {altNavne.map(name => (
+                                    <button key={name} type="button" onClick={() => setAltNavne(current => current.filter(item => item !== name))} className="inline-flex items-center gap-1 rounded-full border bg-background px-2.5 py-1 text-xs">
+                                        {name}<X className="h-3 w-3" />
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <div className="flex gap-2">
+                            <Input value={matchAlternativeName} onChange={event => setMatchAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addMatchAlternativeName() } }} placeholder="Tilføj en navnevariant" />
+                            <Button type="button" variant="outline" onClick={() => void addMatchAlternativeName()} disabled={!matchAlternativeName.trim() || personSearching}>Tilføj og søg</Button>
+                        </div>
+                    </div>
                     <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonError(null) }} />
-                    {portraitOptions.length > 1 && (
+                    {portraitOptions.length > 0 && (
                         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-                            <Label>Vælg portræt</Label>
+                            <div>
+                                <Label>Vælg profilbillede</Label>
+                                <p className="text-xs text-muted-foreground">{PROFILE_PORTRAIT_TEXT}</p>
+                            </div>
                             <div className="flex flex-wrap gap-2">
                                 {portraitOptions.map(([url, candidate]) => (
                                     <button
@@ -484,6 +466,30 @@ export default function MinProfilPage() {
                     <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>Annuller</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>Bekræft og find værker</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
+            <Dialog open={portraitPreviewOpen} onOpenChange={setPortraitPreviewOpen}>
+                <DialogContent className="max-w-3xl">
+                    <DialogHeader><DialogTitle>Profilbillede</DialogTitle></DialogHeader>
+                    {profile?.portrait_url && (
+                        <img src={profile.portrait_url} alt="Profilbillede" className="max-h-[75vh] w-full rounded-md object-contain" />
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     )
+}
+
+function parseAddress(value: string) {
+    const parts = value.split(",").map(part => part.trim()).filter(Boolean)
+    const street = parts[0] ?? ""
+    const rest = parts.slice(1).join(" ")
+    const match = rest.match(/^(\d{4})\s+(.+)$/)
+    return {
+        street,
+        postalCode: match?.[1] ?? "",
+        city: match?.[2] ?? rest,
+    }
+}
+
+function formatAddress(street: string, postalCode: string, city: string) {
+    return [street.trim(), [postalCode.trim(), city.trim()].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null
 }

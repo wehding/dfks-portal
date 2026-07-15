@@ -13,7 +13,7 @@ export default async function OnboardingPage() {
 
   const { data: rh } = await supabase
     .from("rettighedshavere")
-    .select("full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed")
+    .select("full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed, alternative_names, org_affiliations(is_member)")
     .eq("user_id", user.id)
     .single();
 
@@ -21,5 +21,8 @@ export default async function OnboardingPage() {
     redirect("/portal");
   }
 
-  return <OnboardingClient rh={decryptRettighedshaver(rh)} user={user} />;
+  const affiliation = Array.isArray(rh?.org_affiliations) ? rh?.org_affiliations[0] : rh?.org_affiliations;
+  const profile = rh ? { ...rh, is_member: Boolean(affiliation?.is_member) } : null;
+
+  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} />;
 }
