@@ -137,6 +137,7 @@ export async function saveUploadedContract(params: {
   roles: string[];
   duration?: number;
   premiereDate?: string;
+  season?: number;
   episodes?: { number: number; role: string }[];
 }) {
   const db = createServiceClient();
@@ -182,6 +183,7 @@ export async function saveUploadedContract(params: {
       creditedRoles: params.roles,
       duration: params.duration,
       premiereDate: params.premiereDate,
+      season: params.season,
       episodes: params.episodes,
       submittedByMember: true,
     }),

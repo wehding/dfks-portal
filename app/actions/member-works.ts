@@ -1013,6 +1013,102 @@ export async function addWorkForMemberWithApproval(params: {
   return { success: true, workId: finalWorkId, assignment: fresh, coEditorsPending: Boolean(coEditorsRequestId), coEditorsRequestId };
 }
 
+export async function addManualWorkAndLinkContract(params: {
+  rightsHolderId: string;
+  role: string;
+  workData: MemberWorkData;
+  comment: string;
+  coEditors?: ProposedCoEditor[];
+  overrideLocalMatch?: boolean;
+  contractId?: string | null;
+  reuseWorkId?: string | null;
+  reusePending?: boolean;
+}) {
+  let workId = params.reuseWorkId ?? null;
+  let pending = params.reuseWorkId ? Boolean(params.reusePending) : false;
+  let assignment: unknown = null;
+
+  if (!workId) {
+    const createResult = await addWorkForMemberWithApproval({
+      rightsHolderId: params.rightsHolderId,
+      role: params.role,
+      workData: params.workData,
+      comment: params.comment,
+      coEditors: params.coEditors,
+      source: "manual",
+      overrideLocalMatch: params.overrideLocalMatch,
+    });
+    if (!createResult.success || !createResult.workId) {
+      return { success: false, error: createResult.error ?? "Kunne ikke oprette værket.", workId: null, pending: false, retryable: false };
+    }
+    workId = createResult.workId;
+    pending = "pending" in createResult ? Boolean(createResult.pending) : false;
+    assignment = createResult.assignment ?? null;
+  }
+
+  if (!params.contractId) {
+    return { success: true, workId, pending, assignment, retryable: false };
+  }
+
+  const db = createServiceClient();
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
+
+  const [{ data: contract }, { data: work }, { data: ownAssignment }] = await Promise.all([
+    db
+      .from("contracts")
+      .select("id, org_id, work_id")
+      .eq("id", params.contractId)
+      .eq("rights_holder_id", params.rightsHolderId)
+      .maybeSingle(),
+    db.from("works").select("id, org_id").eq("id", workId).maybeSingle(),
+    db
+      .from("work_assignments")
+      .select("id")
+      .eq("work_id", workId)
+      .eq("rights_holder_id", params.rightsHolderId)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (!contract) {
+    return { success: false, error: "Værket blev oprettet, men kontrakten blev ikke fundet. Prøv at linke igen.", workId, pending, retryable: true };
+  }
+  if (!work || work.org_id !== orgId || contract.org_id !== orgId || !ownAssignment) {
+    console.error("Afvist link efter manuel værksoprettelse", { contractId: params.contractId, workId, orgId });
+    return { success: false, error: "Værket blev oprettet, men kunne ikke godkendes til denne kontrakt.", workId, pending, retryable: false };
+  }
+  if (contract.work_id === workId) {
+    return { success: true, workId, pending, assignment, retryable: false };
+  }
+
+  const { data: linked, error: linkError } = await db
+    .from("contracts")
+    .update({ work_id: workId })
+    .eq("id", params.contractId)
+    .eq("rights_holder_id", params.rightsHolderId)
+    .select("id, work_id")
+    .maybeSingle();
+
+  if (linkError || linked?.work_id !== workId) {
+    console.error("Manuelt værk oprettet, men kontraktlink fejlede", {
+      contractId: params.contractId,
+      workId,
+      error: linkError?.message ?? "Opdateringen returnerede ikke det forventede work_id",
+    });
+    return {
+      success: false,
+      error: `Værket blev oprettet, men kontrakten kunne ikke tilknyttes${linkError?.message ? `: ${linkError.message}` : "."}`,
+      workId,
+      pending,
+      retryable: true,
+    };
+  }
+
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true, workId, pending, assignment, retryable: false };
+}
+
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
   const db = createServiceClient();
   await ensureOwnRightsHolder(db, rightsHolderId);
