@@ -109,7 +109,7 @@ export default function RettighedshavereAdminPage() {
 
     const [createOpen, setCreateOpen] = useState(false)
     const [createSaving, setCreateSaving] = useState(false)
-    const [bulkInviting, setBulkInviting] = useState(false)
+    const [bulkSendingInvitations, setBulkSendingInvitations] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
     const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
 
@@ -130,7 +130,6 @@ export default function RettighedshavereAdminPage() {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [archivingSelected, setArchivingSelected] = useState(false)
     const [restoringSelected, setRestoringSelected] = useState(false)
-    const [bulkReminding, setBulkReminding] = useState(false)
     const [permanentDeleteOpen, setPermanentDeleteOpen] = useState(false)
     const [permanentDeleting, setPermanentDeleting] = useState(false)
     const [deleteContracts, setDeleteContracts] = useState(false)
@@ -428,38 +427,22 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    // Masseudsend: invitér alle synlige personer der har email og endnu ikke er registreret.
-    async function handleBulkInvite() {
+    async function handleBulkSendInvitation() {
         if (!orgId) return
-        const base = selectedIds.size > 0 ? visible.filter(rh => selectedIds.has(rh.id)) : visible
-        const targets = base.filter(rh => rh.email && !rh.onboarding_completed)
-        if (targets.length === 0) { toast.info("Ingen at invitere — alle synlige er enten registreret eller mangler email."); return }
-        if (!confirm(`Send invitation til ${targets.length} person(er) der endnu ikke er oprettet?`)) return
-        setBulkInviting(true)
+        if (selectedIds.size === 0) return
+        const targets = visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed)
+        if (targets.length === 0) { toast.info("Ingen at invitere — de valgte er enten registreret eller mangler email."); return }
+        if (!confirm(`Send invitation til ${targets.length} valgt(e) person(er)? Personer der allerede har fået en invitation får en 2. invitation.`)) return
+        setBulkSendingInvitations(true)
         let sent = 0
         for (const rh of targets) {
-            const json = await sendInviteFor(rh.id, rh.email!, rh.full_name)
+            const json = rh.invite_sent_at
+                ? await sendReminderFor(rh.id, rh.email!, rh.full_name)
+                : await sendInviteFor(rh.id, rh.email!, rh.full_name)
             if (json?.email_sent) sent++
         }
-        setBulkInviting(false)
+        setBulkSendingInvitations(false)
         toast.success(`${sent} af ${targets.length} invitationer sendt`)
-        load(orgId)
-    }
-
-    async function handleBulkReminder() {
-        if (!orgId) return
-        const base = selectedIds.size > 0 ? visible.filter(rh => selectedIds.has(rh.id)) : visible
-        const targets = base.filter(rh => rh.email && rh.invite_sent_at && !rh.onboarding_completed)
-        if (targets.length === 0) { toast.info("Ingen at rykke — vælg personer der allerede har fået invitation og ikke er registreret."); return }
-        if (!confirm(`Send rykker til ${targets.length} person(er)?`)) return
-        setBulkReminding(true)
-        let sent = 0
-        for (const rh of targets) {
-            const json = await sendReminderFor(rh.id, rh.email!, rh.full_name)
-            if (json?.email_sent) sent++
-        }
-        setBulkReminding(false)
-        toast.success(`${sent} af ${targets.length} rykkere sendt`)
         load(orgId)
     }
 
@@ -568,7 +551,7 @@ export default function RettighedshavereAdminPage() {
             if (type === "invite" || type === "reminder") {
                 const inviteSentAt = json.email_sent ? new Date().toISOString() : rh.invite_sent_at ?? null
                 setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: inviteSentAt } : r))
-                if (json.email_sent) toast.success(type === "reminder" ? `Rykker sendt til ${rh.email}` : `Invitation sendt til ${rh.email}`)
+                if (json.email_sent) toast.success(type === "reminder" ? `2. invitation sendt til ${rh.email}` : `Invitation sendt til ${rh.email}`)
                 else toast.warning(`Bruger oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt"}). Kopiér linket manuelt.`)
             }
         } catch (e: unknown) {
@@ -631,13 +614,7 @@ export default function RettighedshavereAdminPage() {
                         )}
                         <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
                             {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Importer nye medlemmer
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={handleBulkInvite} disabled={bulkInviting}>
-                            {bulkInviting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}{selectedIds.size > 0 ? "Invitér valgte" : "Send invitation til alle ikke-oprettede"}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={handleBulkReminder} disabled={bulkReminding}>
-                            {bulkReminding ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}{selectedIds.size > 0 ? "Ryk valgte" : "Send rykker"}
+                            Synkroniser med medlemssystem
                         </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
@@ -699,6 +676,10 @@ export default function RettighedshavereAdminPage() {
                     <div className="text-sm font-medium">{selectedIds.size} valgt</div>
                     <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="outline" onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                        <Button size="sm" variant="outline" onClick={handleBulkSendInvitation} disabled={bulkSendingInvitations}>
+                            {bulkSendingInvitations ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Mail className="mr-1 h-4 w-4" />}
+                            Send invitation
+                        </Button>
                         {filter === "arkiverede" ? (
                             <Button size="sm" variant="outline" onClick={handleRestoreSelected} disabled={restoringSelected}>
                                 {restoringSelected ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <ArchiveRestore className="mr-1 h-4 w-4" />}
@@ -917,7 +898,7 @@ export default function RettighedshavereAdminPage() {
                                                 )}
                                                 {rh.invite_sent_at && !rh.onboarding_completed && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reminder" }); setPortalLink(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send rykker
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send 2. invitation
                                                     </DropdownMenuItem>
                                                 )}
                                                 {hasLogin && rh.onboarding_completed && (
@@ -1065,7 +1046,7 @@ export default function RettighedshavereAdminPage() {
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
                 <DialogContent className="w-[min(760px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
-                        <DialogTitle>Importer nye medlemmer</DialogTitle>
+                        <DialogTitle>Synkroniser med medlemssystem</DialogTitle>
                         <DialogDescription>
                             Hentede medlemmer fra medlemslisten kan oprettes som rettighedshavere. Eksisterende matches opdateres med medlemsstatus og medlemsnummer.
                         </DialogDescription>
@@ -1189,13 +1170,13 @@ export default function RettighedshavereAdminPage() {
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>
-                            {portalAction?.type === "invite" ? "Inviter til portal" : portalAction?.type === "reminder" ? "Send rykker" : "Nulstil password"}
+                            {portalAction?.type === "invite" ? "Inviter til portal" : portalAction?.type === "reminder" ? "Send 2. invitation" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
                             {portalAction?.type === "invite"
                                 ? `Generér et invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}). De kan herefter logge ind og sætte et password.`
                                 : portalAction?.type === "reminder"
-                                    ? `Send en rykker med nyt invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}).`
+                                    ? `Send en 2. invitation med nyt invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}).`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
                     </DialogHeader>
@@ -1240,7 +1221,7 @@ export default function RettighedshavereAdminPage() {
                         {!portalLink && (
                             <Button onClick={handlePortalAction} disabled={portalLoading || !portalAction?.rh.email}>
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                {portalAction?.type === "invite" ? "Generér invitationslink" : portalAction?.type === "reminder" ? "Send rykker" : "Generér nulstillingslink"}
+                                {portalAction?.type === "invite" ? "Generér invitationslink" : portalAction?.type === "reminder" ? "Send 2. invitation" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>

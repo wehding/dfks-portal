@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
                 to: email,
                 from: resolveFromEmail(orgForMail as never),
                 subject: body.action === "reminder"
-                    ? `Påmindelse: invitation til ${brand.long_name}s portal`
+                    ? `2. invitation til ${brand.long_name}s portal`
                     : `Invitation til ${brand.long_name}s portal`,
                 html: inviteEmailHtml({
                     recipientName: name || "",

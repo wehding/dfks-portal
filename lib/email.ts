@@ -87,7 +87,7 @@ export function inviteEmailHtml(params: {
     const safeOrgName = escapeHtml(orgName)
     const safeInviteUrl = escapeHtml(inviteUrl)
     const defaultText = params.variant === "reminder"
-        ? `Du har tidligere modtaget en invitation til ${orgName}s portal. Brug knappen herunder for at oprette eller færdiggøre din adgang.`
+        ? `Du får her en 2. invitation til ${orgName}s portal. Brug knappen herunder for at oprette eller færdiggøre din adgang.`
         : `Du er blevet inviteret til ${orgName}s portal. Klik på knappen for at oprette din adgang:`
     const bodyText = params.bodyText?.trim() || defaultText
     const bodyHtml = escapeHtml(bodyText).replace(/\n/g, "<br>")
