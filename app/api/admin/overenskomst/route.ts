@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
+import { requireAdminApi } from "@/lib/api-auth"
 
 function sb() {
     return createClient(
@@ -28,6 +29,8 @@ function chunkDokument(tekst: string, opts: { størrelse: number; overlap: numbe
 
 export async function POST(req: NextRequest) {
     try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
         const { pdfBase64, overenskomst, gyldigFra } = await req.json()
         if (!pdfBase64 || !overenskomst || !gyldigFra) {
             return NextResponse.json({ error: "pdfBase64, overenskomst og gyldigFra er påkrævet" }, { status: 400 })
@@ -113,6 +116,8 @@ Kategorier: helligdagsbetaling, beta-fond, copydan-forbehold, streaming-forbehol
 
 export async function PUT(req: NextRequest) {
     try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
         const { sektioner, overenskomst, gyldigFra, pdfTekst, filnavn } = await req.json()
         if (!sektioner || !overenskomst || !gyldigFra) {
             return NextResponse.json({ error: "sektioner, overenskomst og gyldigFra er påkrævet" }, { status: 400 })
@@ -215,6 +220,8 @@ export async function PUT(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
     try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
         const { overenskomst, gyldigFra, aktiv } = await req.json()
         if (!overenskomst || !gyldigFra) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
@@ -236,6 +243,8 @@ export async function PATCH(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
     try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
         const { overenskomst, gyldigFra } = await req.json()
         if (!overenskomst || !gyldigFra) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
@@ -263,6 +272,8 @@ export async function DELETE(req: NextRequest) {
 // ── GET /api/admin/overenskomst — hent alle versioner ────────
 
 export async function GET() {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = sb()
 
     // Hent alle versioner (aktive + arkiverede)

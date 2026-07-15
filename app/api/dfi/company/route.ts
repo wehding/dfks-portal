@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireSessionApi } from "@/lib/api-auth";
 
 // GET /api/dfi/company?name=<query>
 // Søger efter produktionsselskaber i DFI
 export async function GET(req: NextRequest) {
+  const auth = await requireSessionApi();
+  if (!auth.ok) return auth.response;
   const name = req.nextUrl.searchParams.get("name");
   if (!name) return NextResponse.json({ companies: [] });
 

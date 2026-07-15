@@ -19,6 +19,7 @@ import { resolveFromEmail, resolveBranding } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
 
 function getAdmin() {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -39,12 +40,26 @@ export async function POST(req: NextRequest) {
 
         // ── Invite / reminder: opret eller gensend link ──────────
         if (body.action === "invite" || body.action === "reminder") {
-            const { email, name, rhId, role: inviteRole, phone, title } = body
-            if (!email || !rhId) {
-                return NextResponse.json({ error: "email og rhId er påkrævet" }, { status: 400 })
-            }
+            const { rhId, role: inviteRole, title } = body
+            if (!rhId) return NextResponse.json({ error: "rhId er påkrævet" }, { status: 400 })
 
             const isStaff = rhId === "__staff__"
+            if (isStaff && !["superadmin", "admin", "org-admin"].includes(caller.role)) {
+                return NextResponse.json({ error: "Kun administratorer kan invitere medarbejdere" }, { status: 403 })
+            }
+            if (isStaff && inviteRole === "superadmin" && caller.role !== "superadmin") {
+                return NextResponse.json({ error: "Kun superadmin kan invitere en superadmin" }, { status: 403 })
+            }
+            const holder = isStaff ? null : await getRightsHolderInOrg(admin, rhId, caller.orgId)
+            if (!isStaff && !holder) {
+                return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
+            }
+
+            const email = isStaff ? String(body.email ?? "") : holder?.email
+            const name = isStaff ? String(body.name ?? "") : holder?.full_name
+            const phone = isStaff ? String(body.phone ?? "") : holder?.phone
+            if (!email) return NextResponse.json({ error: "Der mangler email på brugeren" }, { status: 400 })
+
             const userRole = isStaff ? (inviteRole ?? "admin") : "member"
             const redirectTo = isStaff
                 ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
@@ -80,7 +95,11 @@ export async function POST(req: NextRequest) {
 
             const newUserId = linkData.user.id
             const { roles, role: singleRole } = body
-            const rolesToAssign: string[] = roles ?? (singleRole ? [singleRole] : [])
+            const rolesToAssign: string[] = (roles ?? (singleRole ? [singleRole] : []))
+                .filter((role: string) => ["superadmin", "admin", "org-admin", "jurist"].includes(role))
+            if (rolesToAssign.includes("superadmin") && caller.role !== "superadmin") {
+                return NextResponse.json({ error: "Kun superadmin kan tildele superadmin-rollen" }, { status: 403 })
+            }
 
             // Tildel staff-roller i user_org_roles
             if (rolesToAssign.length > 0 && rhId === "__staff__") {
@@ -138,8 +157,22 @@ export async function POST(req: NextRequest) {
 
         // ── Reset: generer password-reset link ───────────────────
         if (body.action === "reset") {
-            const { email } = body
-            if (!email) return NextResponse.json({ error: "email er påkrævet" }, { status: 400 })
+            let email: string | null = null
+            if (body.rhId) {
+                const holder = await getRightsHolderInOrg(admin, String(body.rhId), caller.orgId)
+                if (!holder) return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
+                email = holder.email
+            } else if (body.userId) {
+                try {
+                    await assertUserInOrg(admin, String(body.userId), caller.orgId)
+                } catch {
+                    return NextResponse.json({ error: "Brugeren tilhører ikke din organisation" }, { status: 403 })
+                }
+                const { data: authUser, error: authErr } = await admin.auth.admin.getUserById(String(body.userId))
+                if (authErr) throw new Error(authErr.message)
+                email = authUser.user?.email ?? null
+            }
+            if (!email) return NextResponse.json({ error: "Der mangler email på brugeren" }, { status: 400 })
 
             const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
                 type: "recovery",
@@ -160,6 +193,11 @@ export async function POST(req: NextRequest) {
         if (body.action === "unlink") {
             const { rhId } = body
             if (!rhId) return NextResponse.json({ error: "rhId påkrævet" }, { status: 400 })
+            try {
+                await assertRightsHolderInOrg(admin, String(rhId), caller.orgId)
+            } catch {
+                return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
+            }
             await admin.from("rettighedshavere").update({ user_id: null }).eq("id", rhId)
             return NextResponse.json({ ok: true })
         }
@@ -168,6 +206,11 @@ export async function POST(req: NextRequest) {
         if (body.action === "reset-onboarding") {
             const { rhId } = body
             if (!rhId) return NextResponse.json({ error: "rhId påkrævet" }, { status: 400 })
+            try {
+                await assertRightsHolderInOrg(admin, String(rhId), caller.orgId)
+            } catch {
+                return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
+            }
             const { error: upErr } = await admin
                 .from("rettighedshavere")
                 .update({ onboarding_completed: false })

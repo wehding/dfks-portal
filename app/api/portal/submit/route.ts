@@ -15,6 +15,8 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 
+const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024
+
 function getAdmin() {
     return createAdminClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -50,6 +52,9 @@ export async function POST(req: NextRequest) {
 
     const file = formData.get("file") as File | null
     if (!file) return NextResponse.json({ error: "Ingen fil" }, { status: 400 })
+    if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+        return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 })
+    }
 
     const memberName         = formData.get("memberName")          as string | null
     const memberEmail        = formData.get("memberEmail")         as string | null
@@ -167,6 +172,10 @@ export async function POST(req: NextRequest) {
             const internalHeaders: HeadersInit = {}
             if (process.env.INVITE_CODE) {
                 internalHeaders["Cookie"] = `dfks_invite=${process.env.INVITE_CODE}`
+            }
+            const internalSecret = process.env.INTERNAL_API_SECRET ?? process.env.CONTRACT_AI_JOB_SECRET ?? process.env.CRON_SECRET
+            if (internalSecret) {
+                internalHeaders["Authorization"] = `Bearer ${internalSecret}`
             }
 
             const resp = await fetch(`${baseUrl}/api/gennemgang`, {

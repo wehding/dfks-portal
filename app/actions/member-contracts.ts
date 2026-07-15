@@ -7,6 +7,7 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 
 import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
+const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 type ContractExtractData = {
   contractType?: string | null;
@@ -52,6 +53,9 @@ export async function uploadMemberContract(formData: FormData) {
 
   const file = formData.get("file") as File | null;
   if (!file) return { success: false, error: "Ingen fil modtaget" };
+  if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+    return { success: false, error: "Filen er for stor. Maksimum er 25 MB." };
+  }
 
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!["pdf", "docx", "txt"].includes(ext)) {
@@ -136,12 +140,26 @@ export async function saveUploadedContract(params: {
   episodes?: { number: number; role: string }[];
 }) {
   const db = createServiceClient();
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id, full_name")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
+
+  const orgId = await requireOrgId(db, user.id);
+  if (!params.filePath.startsWith(`${orgId}/`)) {
+    return { success: false, error: "Filstien tilhører ikke din organisation" };
+  }
 
   const { data: saved, error: dbErr } = await db
     .from("contracts")
     .insert({
-      org_id: params.orgId,
-      rights_holder_id: params.rhId,
+      org_id: orgId,
+      rights_holder_id: rh.id,
       type: "a-løn",
       status: "kladde",
       pdf_url: params.filePath,
@@ -155,9 +173,9 @@ export async function saveUploadedContract(params: {
 
   const { error: validationError } = await db.from("contract_validations").insert({
     contract_id: saved.id,
-    org_id: params.orgId,
+    org_id: orgId,
     notes: JSON.stringify({
-      memberName: params.memberName,
+      memberName: rh.full_name ?? params.memberName,
       workTitle: params.workTitle,
       workId: params.workId,
       productionType: params.category || undefined,
@@ -177,7 +195,7 @@ export async function saveUploadedContract(params: {
 
   const { error: jobError } = await db.from("contract_ai_jobs").insert({
     contract_id: saved.id,
-    org_id: params.orgId,
+    org_id: orgId,
     status: "queued",
     priority: 0,
   });
@@ -252,7 +270,42 @@ export async function fetchMemberContractDetail(contractId: string) {
 }
 
 export async function getContractSignedUrl(pdfUrl: string) {
+  const user = await currentUser();
+  if (!user) return { url: null, error: "Ikke logget ind" };
   const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { url: null, error: "Ingen rettighedshaver-profil" };
+
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id, pdf_url")
+    .eq("pdf_url", pdfUrl)
+    .maybeSingle();
+
+  if (contract) {
+    if (contract.rights_holder_id !== rh.id) {
+      const isAdmin = await assertAdminForOrg(db, user.id, contract.org_id);
+      if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
+    }
+  } else {
+    const { data: attachment } = await db
+      .from("contract_attachments")
+      .select("pdf_url, contracts(id, org_id, rights_holder_id)")
+      .eq("pdf_url", pdfUrl)
+      .maybeSingle();
+    const relation = (attachment as { contracts?: { org_id: string; rights_holder_id: string | null } | { org_id: string; rights_holder_id: string | null }[] | null } | null)?.contracts;
+    const owner = Array.isArray(relation) ? relation[0] : relation;
+    if (!owner) return { url: null, error: "Fil ikke fundet" };
+    if (owner.rights_holder_id !== rh.id) {
+      const isAdmin = await assertAdminForOrg(db, user.id, owner.org_id);
+      if (!isAdmin) return { url: null, error: "Ikke autoriseret" };
+    }
+  }
+
   const { data } = await db.storage.from(BUCKET).createSignedUrl(pdfUrl, 3600);
   return { url: data?.signedUrl ?? null };
 }

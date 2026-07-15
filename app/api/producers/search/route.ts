@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { requireSessionApi } from "@/lib/api-auth"
 
 // GET /api/producers/search?q=<query>
 // Søger i DFKS employers-tabel. Markerer om producenten er overenskomstbundet
 // (dvs. har en aktiv gruppe-tilknytning i employer_registries).
 export async function GET(req: NextRequest) {
+    const auth = await requireSessionApi()
+    if (!auth.ok) return auth.response
     const q = req.nextUrl.searchParams.get("q")?.trim()
     if (!q || q.length < 2) return NextResponse.json({ results: [] })
 

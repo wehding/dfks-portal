@@ -56,8 +56,8 @@ function buildExamplesBlock(examples: FeedbackExample[]): string {
 }
 
 export async function POST(req: NextRequest) {
-    const denied = await requireAdminApi()
-    if (denied) return denied
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     try {
         const { rawTitle, channel, productionYear, broadcastDate, duration, examples = [], provider, model } = await req.json()
 

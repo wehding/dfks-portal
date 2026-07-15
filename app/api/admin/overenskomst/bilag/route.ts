@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
+import { requireAdminApi } from "@/lib/api-auth"
 import mammoth from "mammoth"
 
 function sb() {
@@ -71,6 +72,8 @@ Udtræk ALLE satser fra lønskemaet og returner KUN valid JSON:
 
 export async function POST(req: NextRequest) {
     try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
         const { pdfBase64, pdfTekst, overenskomst, gyldigFra, bilagType, filnavn } = await req.json()
         if (!pdfTekst || !overenskomst || !gyldigFra || !bilagType) {
             return NextResponse.json({ error: "pdfTekst, overenskomst, gyldigFra og bilagType er påkrævet" }, { status: 400 })
@@ -175,6 +178,8 @@ const BILAG_LABELS: Record<string, string> = {
 // ── GET — hent bilag for en overenskomst ──────────────────────
 
 export async function GET(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { searchParams } = new URL(req.url)
     const overenskomst = searchParams.get("overenskomst")
     const gyldigFra = searchParams.get("gyldigFra")

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireSessionApi } from "@/lib/api-auth"
 
 // GET /api/dfi/search?q=<query>
 // Server-side proxy til DFI's filmkatalog API.
@@ -8,6 +9,8 @@ import { NextRequest, NextResponse } from "next/server"
 export const revalidate = 86400 // 24 timer (Next.js route cache)
 
 export async function GET(req: NextRequest) {
+    const auth = await requireSessionApi()
+    if (!auth.ok) return auth.response
     const q = req.nextUrl.searchParams.get("q")?.trim()
     if (!q || q.length < 2) return NextResponse.json({ results: [] })
 

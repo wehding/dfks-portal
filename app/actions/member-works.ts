@@ -369,8 +369,8 @@ export async function addWorkForMember(params: {
     wikidata_id?: string | null;
   };
 }) {
-  const user = await currentUser();
   const db = createServiceClient();
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const orgId = await currentOrgId(db, user.id);
 
   // Find eksisterende værk
@@ -1015,6 +1015,7 @@ export async function addWorkForMemberWithApproval(params: {
 
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
   const db = createServiceClient();
+  await ensureOwnRightsHolder(db, rightsHolderId);
 
   // Hent work_id for denne work_assignment
   const { data: assignment, error: assignError } = await db
@@ -1051,6 +1052,7 @@ export async function removeWorkAssignment(assignmentId: string, rightsHolderId:
 
 export async function removeWorkAssignments(assignmentIds: string[], rightsHolderId: string) {
   const db = createServiceClient();
+  await ensureOwnRightsHolder(db, rightsHolderId);
   const deletedIds: string[] = [];
   const errors: string[] = [];
 
@@ -1107,10 +1109,13 @@ export async function ensureWorkPosterFromTMDB(params: {
   year: number | null;
 }) {
   const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
   const { data: work } = await db
     .from("works")
-    .select("id, poster_url")
+    .select("id, org_id, poster_url")
     .eq("id", params.workId)
+    .eq("org_id", orgId)
     .maybeSingle();
 
   if (!work || work.poster_url) return { success: true, poster_url: work?.poster_url ?? null };

@@ -10,8 +10,8 @@ import { upsertKnowledgeChunk, deleteKnowledgeChunk } from "@/lib/retrieval"
 import { requireAdminApi } from "@/lib/api-auth"
 
 export async function POST(req: NextRequest) {
-    const denied = await requireAdminApi()
-    if (denied) return denied
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     try {
         const body = await req.json()
         const { kilde_id, kilde_type, kilde_titel, tekst, org_id, metadata } = body
@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-    const denied = await requireAdminApi()
-    if (denied) return denied
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     try {
         const { kilde_id } = await req.json()
         if (!kilde_id) return NextResponse.json({ error: "kilde_id påkrævet" }, { status: 400 })

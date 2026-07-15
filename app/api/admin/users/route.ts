@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
+import { assertUserInOrg } from "@/lib/authz"
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
 const ROLE_RANK: Record<string, number> = {
@@ -28,6 +29,15 @@ function getAdmin() {
         process.env.SUPABASE_SERVICE_ROLE_KEY!,
         { auth: { autoRefreshToken: false, persistSession: false } }
     )
+}
+
+async function ensureTargetUserInOrg(admin: ReturnType<typeof getAdmin>, userId: string, orgId: string) {
+    try {
+        await assertUserInOrg(admin, userId, orgId)
+        return null
+    } catch {
+        return NextResponse.json({ error: "Brugeren tilhører ikke din organisation" }, { status: 403 })
+    }
 }
 
 export async function GET() {
@@ -131,6 +141,8 @@ export async function PATCH(req: NextRequest) {
         if (!userId || !roles?.length) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
         }
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
 
         // Slet eksisterende roller for denne bruger i org
         await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId)
@@ -152,6 +164,11 @@ export async function PATCH(req: NextRequest) {
     if (body.action === "deactivate") {
         const { userId } = body
         if (!userId) return NextResponse.json({ error: "userId påkrævet" }, { status: 400 })
+        if (patchCaller.role !== "superadmin") {
+            return NextResponse.json({ error: "Kun superadmin kan deaktivere brugere" }, { status: 403 })
+        }
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
         const far = new Date()
         far.setFullYear(far.getFullYear() + 100)
         const { error } = await admin.auth.admin.updateUserById(userId, {
@@ -165,6 +182,11 @@ export async function PATCH(req: NextRequest) {
     if (body.action === "activate") {
         const { userId } = body
         if (!userId) return NextResponse.json({ error: "userId påkrævet" }, { status: 400 })
+        if (patchCaller.role !== "superadmin") {
+            return NextResponse.json({ error: "Kun superadmin kan aktivere brugere" }, { status: 403 })
+        }
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
         const { error } = await admin.auth.admin.updateUserById(userId, {
             ban_duration: "none",
         })
@@ -174,6 +196,8 @@ export async function PATCH(req: NextRequest) {
 
     // Bagudkompatibilitet: enkel rolle-sætning uden action
     if (body.userId && body.role && !body.action) {
+        const targetError = await ensureTargetUserInOrg(admin, body.userId, orgId)
+        if (targetError) return targetError
         const { error } = await admin.auth.admin.updateUserById(body.userId, {
             user_metadata: { role: body.role }
         })
