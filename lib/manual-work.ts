@@ -25,6 +25,14 @@ export const CONTRACT_CATEGORY_TO_WORK_TYPE: Record<string, string> = {
   sport: "tv-serie",
 };
 
+export function contractWorkTypeFilter(
+  category: string | null | undefined,
+  results: Array<{ type: string }>,
+) {
+  const preferredType = category ? CONTRACT_CATEGORY_TO_WORK_TYPE[category] : null;
+  return preferredType && results.some(result => result.type === preferredType) ? preferredType : "all";
+}
+
 export function emptyManualWorkForm(seed: ManualWorkFormSeed = {}): ManualWorkFormValue {
   const { selected_episodes: selectedEpisodes = [], ...rest } = seed;
   return {

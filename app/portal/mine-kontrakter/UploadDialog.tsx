@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONTRACT_SCREENING_TEXT } from "@/lib/profile-copy";
-import { contractDataToManualWorkSeed, emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
+import { CONTRACT_CATEGORY_TO_WORK_TYPE, contractDataToManualWorkSeed, contractWorkTypeFilter, emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 
 const BUCKET = "kontrakter";
@@ -84,6 +84,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [hasSearched, setHasSearched] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const manualSeededRef = React.useRef(false);
+  const autoSearchKeyRef = React.useRef("");
 
   const file = files[0] ?? null;
   const isBatchUpload = files.length > 1;
@@ -154,6 +155,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     setHasSearched(false);
     setSearchError(null);
     manualSeededRef.current = false;
+    autoSearchKeyRef.current = "";
     const first = limited[0];
     if (first.type === "application/pdf" || /\.pdf$/i.test(first.name)) setPdfUrl(URL.createObjectURL(first));
     else setPdfUrl(null);
@@ -220,8 +222,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     contractId,
   }), [aiFields, category, director, duration, episodeCredits, episodesTouched, isSeries, premiereDate, productionCompany, seriesSeason, title, workSearch]);
 
-  const handleWorkSearch = useCallback(async () => {
-    const query = (workSearch.trim() || title.trim());
+  const handleWorkSearch = useCallback(async (queryOverride?: string, preferredTypeOverride?: string | null) => {
+    const query = queryOverride?.trim() || workSearch.trim() || title.trim();
     if (!query) return;
     setIsSearching(true);
     setHasSearched(true);
@@ -234,14 +236,44 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         setSearchError("Søgningen mislykkedes. Prøv igen.");
         return;
       }
-      setUnifiedResults(result.results ?? []);
+      const results = result.results ?? [];
+      setUnifiedResults(results);
+      setTypeFilter(preferredTypeOverride
+        ? (results.some(item => item.type === preferredTypeOverride) ? preferredTypeOverride : "all")
+        : contractWorkTypeFilter(category, results));
     } catch (error) {
       console.error("Værkssøgning i kontraktupload fejlede", error);
       setSearchError("Søgningen mislykkedes. Prøv igen.");
     } finally {
       setIsSearching(false);
     }
-  }, [title, workSearch]);
+  }, [category, title, workSearch]);
+
+  useEffect(() => {
+    if (
+      !file
+      || screening
+      || isBatchUpload
+      || selectedWorkId
+      || pickedUnifiedResult
+      || hasSearched
+      || !aiFields.has("title")
+    ) return;
+
+    const query = (workSearch.trim() || title.trim());
+    if (!query) return;
+    const preferredType = CONTRACT_CATEGORY_TO_WORK_TYPE[category] ?? null;
+    const searchKey = `${file.name}:${file.size}:${query}:${preferredType ?? "all"}`;
+    if (autoSearchKeyRef.current === searchKey) return;
+    autoSearchKeyRef.current = searchKey;
+
+    setWorkPickerOpen(true);
+    if (!manualSeededRef.current) {
+      setManualWork(emptyManualWorkForm(buildManualSeed()));
+      manualSeededRef.current = true;
+    }
+    void handleWorkSearch(query, preferredType);
+  }, [aiFields, buildManualSeed, category, file, handleWorkSearch, hasSearched, isBatchUpload, pickedUnifiedResult, screening, selectedWorkId, title, workSearch]);
 
   const openWorkPicker = () => {
     setWorkPickerOpen(true);
@@ -632,6 +664,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setHasSearched(false);
                       setSearchError(null);
                       manualSeededRef.current = false;
+                      autoSearchKeyRef.current = "";
                     }}
                     className="text-muted-foreground hover:text-foreground shrink-0"
                   >
