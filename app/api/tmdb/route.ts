@@ -3,8 +3,8 @@ import { requireSessionApi } from "@/lib/api-auth";
 
 // GET /api/tmdb?q=<query>&type=search|person|details&id=<tmdb_id>&media=movie|tv
 export async function GET(req: NextRequest) {
-  const denied = await requireSessionApi();
-  if (denied) return denied;
+  const auth = await requireSessionApi();
+  if (!auth.ok) return auth.response;
   const { searchParams } = req.nextUrl;
   const query = searchParams.get("q");
   const type = searchParams.get("type") || "search";

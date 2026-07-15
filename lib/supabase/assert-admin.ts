@@ -31,8 +31,9 @@ export async function assertAdminRole(
         .select("role, org_id")
         .eq("user_id", user.id)
         .in("role", roles)
+        .order("created_at", { ascending: true })
         .limit(1)
-        .single()
+        .maybeSingle()
 
     if (!data) return null
     return { userId: user.id, role: data.role, orgId: data.org_id }

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireSessionApi } from "@/lib/api-auth";
 
 // GET /api/dfi?type=person|film|film_details&q=<query>&id=<dfi_id>
 export async function GET(req: NextRequest) {
+  const auth = await requireSessionApi();
+  if (!auth.ok) return auth.response;
   const { searchParams } = req.nextUrl;
   const type = searchParams.get("type") || "film";
   const query = searchParams.get("q");

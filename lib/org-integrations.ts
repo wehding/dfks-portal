@@ -16,6 +16,31 @@ export type PublicForeningLetIntegration = {
 };
 
 const DEFAULT_FORENINGLET_BASE_URL = "https://foreninglet.dk/api/members";
+const OFFICIAL_FORENINGLET_HOST = "foreninglet.dk";
+
+function assertAllowedForeningLetUrl(rawUrl: string | null | undefined): string {
+  const value = rawUrl?.trim() || DEFAULT_FORENINGLET_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("ForeningLet-URL er ugyldig.");
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const isAllowedHost =
+    hostname === OFFICIAL_FORENINGLET_HOST ||
+    hostname.endsWith(`.${OFFICIAL_FORENINGLET_HOST}`);
+
+  if (parsed.protocol !== "https:" || !isAllowedHost) {
+    throw new Error("ForeningLet-URL skal bruge https og ligge på foreninglet.dk.");
+  }
+
+  parsed.hash = "";
+  parsed.username = "";
+  parsed.password = "";
+  return parsed.toString();
+}
 
 function parseConfig(value: string | null | undefined): Partial<ForeningLetConfig> {
   if (!value) return {};
@@ -45,7 +70,7 @@ export async function getForeningLetIntegration(
   const config = parseConfig(data?.config_encrypted as string | null | undefined);
   return {
     provider: "foreninglet",
-    base_url: (data?.base_url as string | null) || DEFAULT_FORENINGLET_BASE_URL,
+    base_url: assertAllowedForeningLetUrl(data?.base_url as string | null),
     enabled: data?.enabled !== false,
     has_credentials: Boolean(config.username && config.password),
   };
@@ -64,13 +89,17 @@ export async function resolveForeningLetCredentials(
 
   if (data?.enabled !== false) {
     const config = parseConfig(data?.config_encrypted as string | null | undefined);
+    const orgBaseUrl = data?.base_url as string | null;
     if (config.username && config.password) {
       return {
-        baseUrl: (data?.base_url as string | null) || DEFAULT_FORENINGLET_BASE_URL,
+        baseUrl: assertAllowedForeningLetUrl(orgBaseUrl),
         username: config.username,
         password: config.password,
         source: "org",
       };
+    }
+    if (orgBaseUrl && assertAllowedForeningLetUrl(orgBaseUrl) !== DEFAULT_FORENINGLET_BASE_URL) {
+      throw new Error("Organisationens ForeningLet-URL kræver egne credentials.");
     }
   }
 
@@ -79,8 +108,12 @@ export async function resolveForeningLetCredentials(
   if (!username || !password) {
     throw new Error("ForeningLet-login mangler i miljøet eller i organisationens opsætning.");
   }
+  const envBaseUrl = assertAllowedForeningLetUrl(process.env.FORENINGLET_BASE_URL || DEFAULT_FORENINGLET_BASE_URL);
+  if (envBaseUrl !== assertAllowedForeningLetUrl(DEFAULT_FORENINGLET_BASE_URL)) {
+    throw new Error("Globale ForeningLet-credentials må kun bruges mod standard ForeningLet-URL'en.");
+  }
   return {
-    baseUrl: process.env.FORENINGLET_BASE_URL || DEFAULT_FORENINGLET_BASE_URL,
+    baseUrl: envBaseUrl,
     username,
     password,
     source: "env",
@@ -109,7 +142,7 @@ export async function upsertForeningLetIntegration(
     .upsert({
       org_id: orgId,
       provider: "foreninglet",
-      base_url: input.base_url?.trim() || DEFAULT_FORENINGLET_BASE_URL,
+      base_url: assertAllowedForeningLetUrl(input.base_url),
       config_encrypted: config,
       enabled: input.enabled,
       updated_at: new Date().toISOString(),

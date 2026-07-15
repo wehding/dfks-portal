@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
+import { requireAdminApi } from "@/lib/api-auth"
 
 function getSupabase() {
     return createClient(
@@ -10,6 +11,8 @@ function getSupabase() {
 }
 
 export async function GET() {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = getSupabase()
     const { data, error } = await supabase
         .from("knowledge_chunks")
@@ -20,6 +23,8 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { kilde_id, dfks_fortolkning } = await req.json()
     if (!kilde_id) return NextResponse.json({ error: "kilde_id mangler" }, { status: 400 })
 
@@ -54,6 +59,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const body = await req.json()
     const { kilde_id, kilde_titel, tekst, kilde_type, dfks_fortolkning } = body
     if (!kilde_id || !kilde_titel || !tekst) {

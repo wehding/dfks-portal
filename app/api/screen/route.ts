@@ -14,8 +14,8 @@ import { errorMessage, logWarn } from "@/lib/server-log"
 import { requireSessionApi } from "@/lib/api-auth"
 
 export async function POST(req: NextRequest) {
-    const denied = await requireSessionApi()
-    if (denied) return denied
+    const auth = await requireSessionApi()
+    if (!auth.ok) return auth.response
     try {
         const { system, userMessage, provider, model } = await req.json()
 

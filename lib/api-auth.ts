@@ -1,37 +1,48 @@
-/**
- * lib/api-auth.ts
- *
- * Genbrugelige auth-guards til /api-ruter. Middleware dækker IKKE /api,
- * så hver rute der rører følsom data / dyre eksterne kald skal selv tjekke.
- *
- * Brug øverst i hver handler:
- *   const denied = await requireAdminApi()
- *   if (denied) return denied
- */
+import "server-only";
 
-import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
-import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { assertAdminRole, ADMIN_ROLES } from "@/lib/supabase/assert-admin";
 
-/**
- * Kræver en indlogget bruger med admin-rolle (user_org_roles).
- * Returnerer et 403-svar hvis ikke — ellers null (fortsæt).
- */
-export async function requireAdminApi(roles?: readonly string[]): Promise<NextResponse | null> {
-    const supabase = await createClient()
-    const caller = await assertAdminRole(supabase, roles)
-    if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
-    return null
+type ApiAuthResult =
+  | { ok: true; userId: string }
+  | { ok: false; response: NextResponse };
+
+type ApiAdminResult =
+  | { ok: true; userId: string; orgId: string; role: string }
+  | { ok: false; response: NextResponse };
+
+export async function requireSessionApi(): Promise<ApiAuthResult> {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, response: NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 }) };
+  }
+  return { ok: true, userId: user.id };
 }
 
-/**
- * Kræver blot en indlogget bruger (vilkårlig rolle). Bruges til dyre
- * proxy-/AI-ruter der skal være lukket for anonyme, men er tilgængelige
- * for både medlemmer og admins.
- */
-export async function requireSessionApi(): Promise<NextResponse | null> {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke logget ind" }, { status: 401 })
-    return null
+export async function requireAdminApi(roles: readonly string[] = ADMIN_ROLES): Promise<ApiAdminResult> {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, roles);
+  if (!caller) {
+    return { ok: false, response: NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 }) };
+  }
+  return { ok: true, userId: caller.userId, orgId: caller.orgId, role: caller.role };
+}
+
+export async function requireCronOrAdminApi(
+  req: NextRequest,
+  roles: readonly string[] = ADMIN_ROLES
+): Promise<ApiAdminResult | { ok: true; isCron: true }> {
+  const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) return { ok: true, isCron: true };
+  return requireAdminApi(roles);
+}
+
+export function requireInternalSecretApi(req: NextRequest): boolean {
+  const authHeader = req.headers.get("authorization") ?? "";
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
+  const allowed = [process.env.INTERNAL_API_SECRET, process.env.CONTRACT_AI_JOB_SECRET, process.env.CRON_SECRET].filter(Boolean);
+  return Boolean(bearer && allowed.includes(bearer));
 }

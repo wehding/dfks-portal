@@ -106,11 +106,18 @@ const VERDICT_CONFIG = {
 }
 
 function renderMailWithHighlights(text: string): React.ReactNode {
-    // Normaliser alle GUL-formater til <span> — spans bevares ved paste i Gmail
-    const html = text
+    const normalizeMarkers = text
         .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
         .replace(/===GUL START===([\s\S]*?)===GUL SLUT===/g, '<span style="background-color:#fef08a">$1</span>')
         .replace(/<mark[^>]*>([\s\S]*?)<\/mark>/g, '<span style="background-color:#fef08a">$1</span>')
+        .replace(/<span[^>]*background-color:#fef08a[^>]*>([\s\S]*?)<\/span>/g, "[GUL]$1[/GUL]")
+    const html = normalizeMarkers
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;")
+        .replace(/\[GUL\]([\s\S]*?)\[\/GUL\]/g, '<span style="background-color:#fef08a">$1</span>')
         .replace(/\n/g, "<br/>")
     return (
         <span

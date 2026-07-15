@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
+import { requireAdminApi } from "@/lib/api-auth"
 
 function sb() {
     return createClient(
@@ -9,6 +10,8 @@ function sb() {
 }
 
 export async function GET() {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { data, error } = await sb()
         .from("legal_notes")
         .select("*")
@@ -19,6 +22,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const body = await req.json()
     const { title, body: noteBody, priority, gyldig_fra, gyldig_til } = body
     if (!title || noteBody === undefined || noteBody === null || !priority) {
@@ -34,6 +39,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const body = await req.json()
     const { id, ...updates } = body
     if (!id) return NextResponse.json({ error: "id mangler" }, { status: 400 })
@@ -51,6 +58,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { id } = await req.json()
     if (!id) return NextResponse.json({ error: "id mangler" }, { status: 400 })
     const { error } = await sb().from("legal_notes").delete().eq("id", id)

@@ -8,12 +8,11 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
     getRettighedshavere,
-    createRettighedshaver,
-    updateRettighedshaver,
     setMemberStatus,
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
+import { createRettighedshaverSecure, updateRettighedshaverSecure } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
@@ -407,15 +406,15 @@ export default function RettighedshavereAdminPage() {
     async function handleCreate() {
         if (!orgId || !createForm.full_name.trim()) return
         setCreateSaving(true)
-        const result = await createRettighedshaver(
+        const result = await createRettighedshaverSecure(
             { full_name: createForm.full_name.trim(), email: createForm.email || null, phone: createForm.phone || null, address: createForm.address || null, cpr_no: createForm.cpr_no || null, bank_account: createForm.bank_account || null },
             orgId, createForm.is_member, createForm.member_no || undefined
         )
-        if (result) {
+        if (result.success && result.rightsHolder) {
             toast.success(`${createForm.full_name} er oprettet`)
             // Send invitationsmail med det samme, hvis valgt og email er angivet
             if (createForm.send_invite && createForm.email.trim()) {
-                const json = await sendInviteFor(result.id, createForm.email.trim(), createForm.full_name.trim())
+                const json = await sendInviteFor(result.rightsHolder.id, createForm.email.trim(), createForm.full_name.trim())
                 if (json?.email_sent) toast.success(`Invitation sendt til ${createForm.email.trim()}`)
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
@@ -423,7 +422,7 @@ export default function RettighedshavereAdminPage() {
             setCreateOpen(false); load(orgId); loadOverviewCounts(orgId)
         } else {
             setCreateSaving(false)
-            toast.error("Kunne ikke oprette rettighedshaver")
+            toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
         }
     }
 
@@ -508,7 +507,12 @@ export default function RettighedshavereAdminPage() {
     async function handleEdit() {
         if (!editTarget || !orgId) return
         setEditSaving(true)
-        await updateRettighedshaver(editTarget.id, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, bank_account: editForm.bank_account || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
+        const updateResult = await updateRettighedshaverSecure(editTarget.id, orgId, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, bank_account: editForm.bank_account || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
+        if (!updateResult.success) {
+            setEditSaving(false)
+            toast.error(updateResult.error ?? "Kunne ikke gemme")
+            return
+        }
         await setMemberStatus(editTarget.id, orgId, editForm.is_member, editForm.member_no || undefined)
         setEditSaving(false)
         toast.success("Gemt")

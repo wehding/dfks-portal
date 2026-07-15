@@ -5,19 +5,36 @@ export type RettighedshaverWithAffiliation = DbRettighedshaver & {
     org_affiliations: DbOrgAffiliation[]
 }
 
+const PUBLIC_RIGHTS_HOLDER_SELECT = `
+    id,
+    full_name,
+    email,
+    phone,
+    address,
+    created_at,
+    user_id,
+    onboarding_completed,
+    archived_at,
+    invite_sent_at,
+    portal_invite_sent_at,
+    dfi_person_id,
+    tmdb_person_id,
+    wikidata_id,
+    gender,
+    portrait_url,
+    org_affiliations!inner(*)
+`
+
 // Hent alle rettighedshavere i min org
 export async function getRettighedshavere(orgId: string): Promise<RettighedshaverWithAffiliation[]> {
     const supabase = createClient()
     const { data } = await supabase
         .from("rettighedshavere")
-        .select(`
-            *,
-            org_affiliations!inner(*)
-        `)
+        .select(PUBLIC_RIGHTS_HOLDER_SELECT)
         .eq("org_affiliations.org_id", orgId)
         .order("full_name")
 
-    return (data as RettighedshaverWithAffiliation[]) ?? []
+    return (data as unknown as RettighedshaverWithAffiliation[]) ?? []
 }
 
 // Hent én rettighedshaver
@@ -25,11 +42,11 @@ export async function getRettighedshaver(id: string): Promise<RettighedshaverWit
     const supabase = createClient()
     const { data } = await supabase
         .from("rettighedshavere")
-        .select(`*, org_affiliations(*)`)
+        .select(PUBLIC_RIGHTS_HOLDER_SELECT.replace("org_affiliations!inner(*)", "org_affiliations(*)"))
         .eq("id", id)
         .single()
 
-    return (data as RettighedshaverWithAffiliation) ?? null
+    return (data as unknown as RettighedshaverWithAffiliation) ?? null
 }
 
 // Opret ny rettighedshaver (uden portallogin)

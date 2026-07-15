@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
+import { requireCronOrAdminApi } from "@/lib/api-auth"
 
 function sb() {
     return createClient(
@@ -9,7 +10,9 @@ function sb() {
     )
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+    const auth = await requireCronOrAdminApi(req)
+    if (!auth.ok) return auth.response
     const supabase = sb()
 
     const { data: chunks, error } = await supabase
@@ -53,6 +56,6 @@ export async function POST() {
 }
 
 // Vercel cron: kald med GET (cron jobs bruger GET)
-export async function GET() {
-    return POST()
+export async function GET(req: NextRequest) {
+    return POST(req)
 }

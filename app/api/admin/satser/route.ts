@@ -8,8 +8,11 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { requireAdminApi } from "@/lib/api-auth"
 
 export async function GET(request: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const overenskomst = request.nextUrl.searchParams.get("overenskomst")
     const supabase = await createClient()
 
@@ -36,6 +39,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = await createClient()
     const body = await request.json()
 
@@ -55,6 +60,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     // Ny overenskomstrunde: luk alle aktuelle satser og opret nye
     const supabase = await createClient()
     const body = await request.json()
@@ -95,6 +102,8 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = await createClient()
     const id = request.nextUrl.searchParams.get("id")
     if (!id) return NextResponse.json({ error: "Mangler id" }, { status: 400 })

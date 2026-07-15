@@ -11,10 +11,14 @@ import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { analyserKontrakt } from "@/lib/analyse"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
+import { requireInternalSecretApi } from "@/lib/api-auth"
+
+const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024
 
 export async function POST(req: NextRequest) {
     try {
         logInfo("gennemgang", "Modtager request")
+        const isInternal = requireInternalSecretApi(req)
         const formData = await req.formData()
         const file       = formData.get("file")       as File | null
         const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
@@ -31,6 +35,9 @@ export async function POST(req: NextRequest) {
             sessionUser = user
         } catch (authErr) {
             logWarn("gennemgang", "Auth-opslag fejlede", { error: errorMessage(authErr) })
+        }
+        if (!sessionUser && !isInternal) {
+            return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
         }
 
         const memberName: string =
@@ -59,10 +66,13 @@ export async function POST(req: NextRequest) {
         if (!file) {
             return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
         }
+        if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+            return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 })
+        }
 
         logInfo("gennemgang", "Læser filbuffer", { fileType: file.type || "ukendt" })
         const fileBuffer = Buffer.from(await file.arrayBuffer())
-        let resolvedOrgId = portalOrgId
+        let resolvedOrgId = isInternal ? portalOrgId : null
         if (!resolvedOrgId && sessionUser?.id) {
             const admin = createAdminClient(
                 process.env.NEXT_PUBLIC_SUPABASE_URL!,

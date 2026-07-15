@@ -12,8 +12,8 @@ import { requireAdminApi } from "@/lib/api-auth"
 const PROVIDERS = ["anthropic", "openai", "google"] as const
 
 export async function GET() {
-    const denied = await requireAdminApi()
-    if (denied) return denied
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const status = Object.fromEntries(
         PROVIDERS.map(p => [p, getKeyStatus(p)])
     )
@@ -21,8 +21,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-    const denied = await requireAdminApi()
-    if (denied) return denied
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     try {
         const body = await req.json() as Partial<Record<typeof PROVIDERS[number], string>>
 

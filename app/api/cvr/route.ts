@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { requireSessionApi } from "@/lib/api-auth"
 
 export async function GET(req: NextRequest) {
-    const denied = await requireSessionApi()
-    if (denied) return denied
+    const auth = await requireSessionApi()
+    if (!auth.ok) return auth.response
     const cvr = req.nextUrl.searchParams.get("cvr")?.trim()
     if (!cvr || !/^\d{8}$/.test(cvr)) {
         return NextResponse.json({ error: "Ugyldigt CVR-nummer" }, { status: 400 })
