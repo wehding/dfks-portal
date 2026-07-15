@@ -8,6 +8,7 @@
     "start": "next start",
     "check": "npm run lint && npx tsc --noEmit",
     "i18n:audit": "node scripts/check-i18n-coverage.mjs",
+    "test:manual-work": "tsx --test tests/manual-work-flow.test.ts",
     "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
     "lint": "eslint",
     "db:link": "set -a && . ./.env.local && set +a && supabase link --project-ref icxywdymyaxluaxxcpye",

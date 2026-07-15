@@ -158,9 +158,11 @@ type SortValue = string | number;
 export default function MineKontrakterClient({
   initialContracts,
   myWorks = [],
+  rightsHolderId,
 }: {
   initialContracts: Contract[];
   myWorks?: MyWork[];
+  rightsHolderId: string;
 }) {
   const { t } = useI18n();
   const [contracts, setContracts] = useState(initialContracts);
@@ -714,6 +716,7 @@ export default function MineKontrakterClient({
           workId={uploadWorkId}
           workTitle={uploadWorkTitle}
           myWorks={myWorks}
+          rightsHolderId={rightsHolderId}
           onClose={() => setIsUploading(false)}
           onUploaded={(savedContracts) => {
             const normalizedContracts = savedContracts.map((saved) => {
@@ -733,7 +736,7 @@ export default function MineKontrakterClient({
                 works: linkedWork
                   ? { id: linkedWork.id, title: linkedWork.title, year: linkedWork.year, type: linkedWork.type }
                   : linkedWorkId
-                    ? { id: linkedWorkId, title: uploadWorkTitle ?? saved.working_title ?? "Værk", year: null, type: null }
+                    ? { id: linkedWorkId, title: saved.linked_work_title ?? uploadWorkTitle ?? saved.working_title ?? "Værk", year: null, type: null }
                     : null,
                 employers: null,
                 contract_validations: null,
@@ -746,7 +749,9 @@ export default function MineKontrakterClient({
             setMsg({
               type: "success",
               text: savedContracts.length === 1
-                ? "Kontrakt indsendt til DFKS."
+                ? savedContracts[0]?.work_pending
+                  ? "Kontrakt indsendt. Det nye værk afventer admin-godkendelse."
+                  : "Kontrakt indsendt til DFKS."
                 : `${savedContracts.length} kontrakter indsendt til DFKS.`,
             });
           }}

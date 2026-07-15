@@ -12,6 +12,7 @@ import { fetchMemberWorkDetail, removeWorkAssignments } from "@/app/actions/memb
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
+import type { ManualWorkFormSeed } from "@/lib/manual-work";
 import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
@@ -49,14 +50,6 @@ export type OtherAssignment = { id: string; work_id: string; role: string | null
 type WorkProductionNumber = { tv_station: string | null; number: string | null };
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
-type InitialManualWork = {
-  title?: string;
-  type?: string;
-  duration_minutes?: string;
-  director?: string;
-  production_company?: string;
-  contract_id?: string;
-};
 const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
 type RequestComment = {
@@ -228,7 +221,7 @@ export default function MineVaerkerClient({
   const [isAdding, setIsAdding]             = useState(false);
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
   const [initialAddQuery, setInitialAddQuery] = useState("");
-  const [initialManualWork, setInitialManualWork] = useState<InitialManualWork | null>(null);
+  const [initialManualWork, setInitialManualWork] = useState<ManualWorkFormSeed | null>(null);
   const addParamHandledRef = React.useRef<string | null>(null);
 
   const supabase = createClient();
@@ -240,12 +233,12 @@ export default function MineVaerkerClient({
       const key = searchParams.toString();
       if (addParamHandledRef.current === key) return;
       addParamHandledRef.current = key;
-      let prefill: InitialManualWork | null = null;
+      let prefill: ManualWorkFormSeed | null = null;
       if (typeof window !== "undefined") {
         const raw = window.sessionStorage.getItem(ADD_WORK_PREFILL_KEY);
         if (raw) {
           try {
-            prefill = JSON.parse(raw) as InitialManualWork;
+            prefill = JSON.parse(raw) as ManualWorkFormSeed;
           } catch {
             prefill = null;
           }

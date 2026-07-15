@@ -10,6 +10,7 @@ import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPrem
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
+import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -272,6 +273,25 @@ async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, titl
       return yearsClose && (normalizeTitle(work.title) === normalizeTitle(title) || titleSimilarity(work.title, title) >= 0.65);
     })
     .slice(0, 8);
+}
+
+export async function findManualWorkDuplicates(title: string, year: number | null) {
+  const db = createServiceClient();
+  const user = await currentUser();
+  const orgId = await currentOrgId(db, user.id);
+  if (!title.trim() || !year) return { success: true, matches: [] };
+
+  const { data, error } = await db
+    .from("works")
+    .select("id, title, type, year, poster_url, status")
+    .eq("org_id", orgId)
+    .eq("year", year);
+  if (error) return { success: false, error: error.message, matches: [] };
+
+  return {
+    success: true,
+    matches: (data ?? []).filter(work => isExactManualWorkMatch(work, { title, year })),
+  };
 }
 
 async function createWorkRequest(params: {
@@ -729,14 +749,18 @@ export async function addWorkForMemberWithApproval(params: {
   const orgId = await currentOrgId(db, user.id);
   const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
   const exactExistingWork = similarWorks.find(work => {
+    if (params.source === "manual") {
+      return isExactManualWorkMatch(work, { title: params.workData.title, year: params.workData.year });
+    }
     const sameTitle = normalizeTitle(work.title) === normalizeTitle(params.workData.title);
     const sameYear = params.workData.year && work.year ? work.year === params.workData.year : true;
     return sameTitle && sameYear;
   }) ?? null;
   const coEditors = normalizeCoEditors(params.coEditors);
-  // Godkendelse kræves KUN når værket allerede findes i databasen (dublet-tilføjelse
-  // via DFI/TMDB/manuelt). Helt nye, umatchede værker godkendes automatisk.
-  const requiresApproval = similarWorks.length > 0;
+  const forceManualDuplicate = params.source === "manual" && Boolean(params.overrideLocalMatch);
+  // Manuelle værker kræver kun godkendelse ved et eksakt titel/år-match, som brugeren
+  // eksplicit har valgt at oprette på trods af. Eksterne kilder beholder den bredere kontrol.
+  const requiresApproval = params.source === "manual" ? forceManualDuplicate : similarWorks.length > 0;
   let dfiMetadata = params.workData.dfi_metadata ?? null;
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? null;
@@ -794,14 +818,20 @@ export async function addWorkForMemberWithApproval(params: {
 
   if (isSeries) {
     // 1. Forsøg at finde eksisterende overordnet serieværk
-    if (enrichedWorkData.dfi_id) {
+    if (forceManualDuplicate) {
+      parentWork = null;
+    } else if (enrichedWorkData.dfi_id) {
       const { data } = await db.from("works").select("*").eq("dfi_id", enrichedWorkData.dfi_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
       parentWork = data;
     } else if (enrichedWorkData.tmdb_id) {
       const { data } = await db.from("works").select("*").eq("tmdb_id", enrichedWorkData.tmdb_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
       parentWork = data;
     } else {
-      const { data } = await db.from("works").select("*").eq("title", enrichedWorkData.title).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      let parentQuery = db.from("works").select("*").eq("title", enrichedWorkData.title).eq("org_id", orgId).is("parent_work_id", null);
+      if (params.source === "manual" && enrichedWorkData.year) {
+        parentQuery = parentQuery.eq("year", enrichedWorkData.year);
+      }
+      const { data } = await parentQuery.maybeSingle();
       parentWork = data;
     }
 
@@ -906,7 +936,7 @@ export async function addWorkForMemberWithApproval(params: {
     }
   } else {
     // Enkeltværk flow
-    let workId = exactExistingWork?.id ?? null;
+    let workId = forceManualDuplicate ? null : exactExistingWork?.id ?? null;
     if (!workId) {
       const insertPayload = {
         org_id: orgId,
@@ -1011,6 +1041,122 @@ export async function addWorkForMemberWithApproval(params: {
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
   return { success: true, workId: finalWorkId, assignment: fresh, coEditorsPending: Boolean(coEditorsRequestId), coEditorsRequestId };
+}
+
+export async function addManualWorkAndLinkContract(params: {
+  rightsHolderId: string;
+  role: string;
+  workData: MemberWorkData;
+  comment: string;
+  coEditors?: ProposedCoEditor[];
+  overrideLocalMatch?: boolean;
+  contractId?: string | null;
+  reuseWorkId?: string | null;
+  reusePending?: boolean;
+  forceCreateDuplicate?: boolean;
+}) {
+  let workId = params.reuseWorkId ?? null;
+  let pending = params.reuseWorkId ? Boolean(params.reusePending) : false;
+  let assignment: unknown = null;
+
+  if (!workId) {
+    if (!params.workData.year) {
+      return { success: false, error: "Premiereår skal udfyldes.", workId: null, pending: false, retryable: false };
+    }
+    const duplicateResult = await findManualWorkDuplicates(params.workData.title, params.workData.year);
+    if (!duplicateResult.success) {
+      return { success: false, error: duplicateResult.error ?? "Kunne ikke kontrollere for eksisterende værker.", workId: null, pending: false, retryable: false };
+    }
+    const duplicateDecision = manualWorkDuplicateDecision(duplicateResult.matches.length > 0, Boolean(params.forceCreateDuplicate));
+    if (duplicateDecision === "block") {
+      return {
+        success: false,
+        error: "Der findes allerede et værk med samme titel og premiereår.",
+        duplicate: true,
+        matches: duplicateResult.matches,
+        workId: null,
+        pending: false,
+        retryable: false,
+      };
+    }
+    const createResult = await addWorkForMemberWithApproval({
+      rightsHolderId: params.rightsHolderId,
+      role: params.role,
+      workData: params.workData,
+      comment: params.comment,
+      coEditors: params.coEditors,
+      source: "manual",
+      overrideLocalMatch: duplicateDecision === "create_pending",
+    });
+    if (!createResult.success || !createResult.workId) {
+      return { success: false, error: createResult.error ?? "Kunne ikke oprette værket.", workId: null, pending: false, retryable: false };
+    }
+    workId = createResult.workId;
+    pending = "pending" in createResult ? Boolean(createResult.pending) : false;
+    assignment = createResult.assignment ?? null;
+  }
+
+  if (!params.contractId) {
+    return { success: true, workId, pending, assignment, retryable: false };
+  }
+
+  const db = createServiceClient();
+  const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const orgId = await currentOrgId(db, user.id);
+
+  const [{ data: contract }, { data: work }, { data: ownAssignment }] = await Promise.all([
+    db
+      .from("contracts")
+      .select("id, org_id, work_id")
+      .eq("id", params.contractId)
+      .eq("rights_holder_id", params.rightsHolderId)
+      .maybeSingle(),
+    db.from("works").select("id, org_id").eq("id", workId).maybeSingle(),
+    db
+      .from("work_assignments")
+      .select("id")
+      .eq("work_id", workId)
+      .eq("rights_holder_id", params.rightsHolderId)
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  if (!contract) {
+    return { success: false, error: "Værket blev oprettet, men kontrakten blev ikke fundet. Prøv at linke igen.", workId, pending, retryable: true };
+  }
+  if (!work || work.org_id !== orgId || contract.org_id !== orgId || !ownAssignment) {
+    console.error("Afvist link efter manuel værksoprettelse", { contractId: params.contractId, workId, orgId });
+    return { success: false, error: "Værket blev oprettet, men kunne ikke godkendes til denne kontrakt.", workId, pending, retryable: false };
+  }
+  if (contract.work_id === workId) {
+    return { success: true, workId, pending, assignment, retryable: false };
+  }
+
+  const { data: linked, error: linkError } = await db
+    .from("contracts")
+    .update({ work_id: workId })
+    .eq("id", params.contractId)
+    .eq("rights_holder_id", params.rightsHolderId)
+    .select("id, work_id")
+    .maybeSingle();
+
+  if (linkError || linked?.work_id !== workId) {
+    console.error("Manuelt værk oprettet, men kontraktlink fejlede", {
+      contractId: params.contractId,
+      workId,
+      error: linkError?.message ?? "Opdateringen returnerede ikke det forventede work_id",
+    });
+    return {
+      success: false,
+      error: `Værket blev oprettet, men kontrakten kunne ikke tilknyttes${linkError?.message ? `: ${linkError.message}` : "."}`,
+      workId,
+      pending,
+      retryable: true,
+    };
+  }
+
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true, workId, pending, assignment, retryable: false };
 }
 
 export async function removeWorkAssignment(assignmentId: string, rightsHolderId: string) {
