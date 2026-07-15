@@ -480,6 +480,7 @@ Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
   "premiereDate": "YYYY-MM-DD eller null",
   "productionCompany": "produktionsselskab/producer/opdragsgiver for produktionen som string eller null",
   "director": "instruktør som string eller null",
+  "seasonNumber": "sæsonnummer som heltal eller null",
   "episodes": [{"number": 1, "title": "Afsnit 1", "duration": 45}]
 }
 
@@ -488,6 +489,7 @@ Regler:
 - category baseres på produktionstype: spillefilm/feature film → feature, tv-serie/dramaserie → tvSeries, dokumentarfilm → documentary, dokumentarserie → docSeries, kortfilm → short, tv-show/underholdning → tvEntertainment, reality → reality, sport → sport
 - productionCompany skal være selve produktionsselskabet/producerende selskab, ikke personens arbejdsgiver hvis det tydeligt er noget andet
 - director skal kun udfyldes hvis instruktøren fremgår tydeligt
+- seasonNumber skal kun udfyldes for serier, når sæsonen fremgår tydeligt af kontrakten
 - episodes skal KUN udfyldes hvis det er en serie (tvSeries eller docSeries) og kontrakten nævner specifikke afsnit med titler og/eller varighed. Ellers returner tom liste []
 - duration for serier sættes til summen af episodes hvis de er kendte, ellers 0
 - Returner null for felter du ikke kan finde i kontrakten`
@@ -501,6 +503,7 @@ export interface PortalScreeningResult {
     premiereDate: string | null
     productionCompany: string | null
     director: string | null
+    seasonNumber: number | null
     episodes: { number: number; title: string; duration: number }[]
 }
 

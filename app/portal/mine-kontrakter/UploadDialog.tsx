@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONTRACT_SCREENING_TEXT } from "@/lib/profile-copy";
+import { contractDataToManualWorkSeed } from "@/lib/manual-work";
 
 const BUCKET = "kontrakter";
 const MAX_FILES = 15;
@@ -20,16 +21,6 @@ const CATEGORY_LABELS: Record<string, string> = {
   feature: "Spillefilm", short: "Kortfilm", tvSeries: "TV-serie",
   documentary: "Dokumentar", docSeries: "Dokumentarserie",
   tvEntertainment: "TV-underholdning", reality: "Reality", sport: "Sport",
-};
-const CATEGORY_TO_WORK_TYPE: Record<string, string> = {
-  feature: "spillefilm",
-  short: "kortfilm",
-  tvSeries: "tv-serie",
-  documentary: "dokumentarfilm",
-  docSeries: "dokumentar-serie",
-  tvEntertainment: "tv-serie",
-  reality: "tv-serie",
-  sport: "tv-serie",
 };
 const ADD_WORK_PREFILL_KEY = "dfks_add_work_prefill";
 
@@ -72,10 +63,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [category, setCategory] = useState("");
   const [creditedRoles, setCreditedRoles] = useState<string[]>(["Klipper"]);
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
+  const [episodesTouched, setEpisodesTouched] = useState(false);
   const [duration, setDuration] = useState("");
   const [premiereDate, setPremiereDate] = useState("");
   const [productionCompany, setProductionCompany] = useState("");
   const [director, setDirector] = useState("");
+  const [seriesSeason, setSeriesSeason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const file = files[0] ?? null;
@@ -135,6 +128,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
 
     setFiles(limited);
+    setEpisodesTouched(false);
     const first = limited[0];
     if (first.type === "application/pdf" || /\.pdf$/i.test(first.name)) setPdfUrl(URL.createObjectURL(first));
     else setPdfUrl(null);
@@ -161,14 +155,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           filled.add("title");
         }
         if (result.category && CATEGORY_LABELS[result.category]) { setCategory(result.category); filled.add("category"); }
+        let screenedRole = "Klipper";
         if (result.creditedRole) {
           const match = ROLES.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase());
-          if (match) { setCreditedRoles([match]); filled.add("creditedRole"); }
+          if (match) { screenedRole = match; setCreditedRoles([match]); filled.add("creditedRole"); }
         }
         if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate"); }
         if (result.duration && result.duration > 0) { setDuration(String(result.duration)); filled.add("duration"); }
         if (result.productionCompany) { setProductionCompany(result.productionCompany); filled.add("productionCompany"); }
         if (result.director) { setDirector(result.director); filled.add("director"); }
+        if (result.seasonNumber && result.seasonNumber > 0) { setSeriesSeason(String(result.seasonNumber)); filled.add("seasonNumber"); }
+        if (result.episodes?.length) {
+          setEpisodeCredits(result.episodes.map(episode => ({ number: episode.number, role: screenedRole })));
+          filled.add("episodes");
+        }
         setAiFields(filled);
         if (filled.size > 0) toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`);
       } catch (e: unknown) {
@@ -189,15 +189,18 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (query) params.set("q", query);
     return (contractId?: string | null) => {
       if (typeof window !== "undefined") {
-      const prefill = {
+      const prefill = contractDataToManualWorkSeed({
         title: title.trim() || query,
-        type: CATEGORY_TO_WORK_TYPE[category] ?? "",
-        duration_minutes: duration,
-        production_company: productionCompany.trim(),
-        director: director.trim(),
-        contract_id: contractId ?? "",
-      };
-      const hasPrefill = Object.values(prefill).some(value => typeof value === "string" && value.trim().length > 0);
+        category,
+        duration,
+        premiereDate,
+        productionCompany,
+        director,
+        seasonNumber: seriesSeason,
+        episodes: isSeries && (aiFields.has("episodes") || episodesTouched) ? episodeCredits : [],
+        contractId,
+      });
+      const hasPrefill = Boolean(prefill.title || prefill.contract_id);
       if (hasPrefill) {
         window.sessionStorage.setItem(ADD_WORK_PREFILL_KEY, JSON.stringify(prefill));
         params.set("prefill", String(Date.now()));
@@ -241,6 +244,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           category, roles,
           duration: duration ? Number(duration) : undefined,
           premiereDate: premiereDate || undefined,
+          season: isSeries && seriesSeason ? Number(seriesSeason) : undefined,
           episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
         });
 
@@ -352,7 +356,23 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 </div>
                 {!screening && (
                   <button
-                    onClick={() => { setFiles([]); setPdfUrl(null); setTitle(workTitle ?? ""); setSelectedWorkId(workId ?? ""); setWorkSearch(workTitle ?? ""); setCategory(""); setCreditedRoles(["Klipper"]); setDuration(""); setPremiereDate(""); setAiFields(new Set()); }}
+                    onClick={() => {
+                      setFiles([]);
+                      setPdfUrl(null);
+                      setTitle(workTitle ?? "");
+                      setSelectedWorkId(workId ?? "");
+                      setWorkSearch(workTitle ?? "");
+                      setCategory("");
+                      setCreditedRoles(["Klipper"]);
+                      setEpisodeCredits([{ number: 1, role: "Klipper" }]);
+                      setEpisodesTouched(false);
+                      setSeriesSeason("");
+                      setDuration("");
+                      setPremiereDate("");
+                      setProductionCompany("");
+                      setDirector("");
+                      setAiFields(new Set());
+                    }}
                     className="text-muted-foreground hover:text-foreground shrink-0"
                   >
                     <X className="h-4 w-4" />
@@ -428,7 +448,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     </div>
                     <Button type="button" variant="outline" size="sm" onClick={handleSaveAndAddWork} disabled={saving || (files.length > 0 && !canSubmit)} className="w-full">
                       {saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-                      Tilføj værk
+                      Søg i databasen eller indtast manuelt
                     </Button>
                     <div className="max-h-40 overflow-y-auto flex flex-col gap-1">
                       {filteredWorks.map(w => (
@@ -442,8 +462,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                           <span className="text-xs text-muted-foreground">{w.year ?? ""}</span>
                         </button>
                       ))}
-                      {filteredWorks.length === 0 && (
-                        <p className="px-2 py-1.5 text-sm italic text-muted-foreground">Ingen værker fundet</p>
+                      {filteredWorks.length === 0 && workSearch.trim() && (
+                        <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-2 text-sm text-amber-950">
+                          Værket findes ikke blandt dine nuværende værker. Fortsæt for at søge i databasen eller oprette det manuelt med kontraktens oplysninger.
+                        </p>
                       )}
                     </div>
                   </>
@@ -503,10 +525,27 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 </div>
               ) : (
                 <div className="space-y-1.5">
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                      Sæson
+                      {aiFields.has("seasonNumber") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                    </Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={seriesSeason}
+                      onChange={event => setSeriesSeason(event.target.value)}
+                      placeholder="1"
+                      className={aiFields.has("seasonNumber") ? "bg-purple-50" : ""}
+                    />
+                  </div>
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium text-muted-foreground">Afsnit og kreditering</Label>
                     <button
-                      onClick={() => setEpisodeCredits(prev => [...prev, { number: (prev.at(-1)?.number ?? 0) + 1, role: prev.at(-1)?.role ?? "Klipper" }])}
+                      onClick={() => {
+                        setEpisodesTouched(true);
+                        setEpisodeCredits(prev => [...prev, { number: (prev.at(-1)?.number ?? 0) + 1, role: prev.at(-1)?.role ?? "Klipper" }]);
+                      }}
                       className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border hover:bg-muted"
                     >
                       <Plus className="h-3 w-3" /> Tilføj afsnit
@@ -518,20 +557,29 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">#</span>
                         <input
                           type="number" value={ec.number} min={1}
-                          onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x))}
+                          onChange={e => {
+                            setEpisodesTouched(true);
+                            setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, number: parseInt(e.target.value) || 1 } : x));
+                          }}
                           className="w-full pl-5 pr-2 py-2 rounded-md border border-input bg-background text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                         />
                       </div>
                       <select
                         value={ec.role}
-                        onChange={e => setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, role: e.target.value } : x))}
+                        onChange={e => {
+                          setEpisodesTouched(true);
+                          setEpisodeCredits(prev => prev.map((x, i) => i === idx ? { ...x, role: e.target.value } : x));
+                        }}
                         className={selectCls}
                       >
                         <option value="">—</option>
                         {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
                       </select>
                       <button
-                        onClick={() => setEpisodeCredits(prev => prev.filter((_, i) => i !== idx))}
+                        onClick={() => {
+                          setEpisodesTouched(true);
+                          setEpisodeCredits(prev => prev.filter((_, i) => i !== idx));
+                        }}
                         className="text-muted-foreground hover:text-foreground"
                       >
                         <X className="h-3.5 w-3.5" />

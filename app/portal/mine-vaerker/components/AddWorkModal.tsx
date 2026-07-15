@@ -10,12 +10,14 @@ import { Modal } from "./Modal";
 import { linkContractToWork } from "@/app/actions/member-contracts";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
 import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
-import { addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
+import { ManualWorkFormFields } from "@/components/works/manual-work-form";
+import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const DEFAULT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -31,17 +33,6 @@ interface CoEditorDraft {
   rightsHolderId?: string | null;
   locked?: boolean;
   action?: "add" | "remove" | "change";
-}
-
-interface ManualWorkForm {
-  title: string;
-  type: string;
-  year: string;
-  duration_minutes: string;
-  episode_count: string;
-  director: string;
-  production_company: string;
-  contract_id: string;
 }
 
 interface LocalWorkResult {
@@ -148,20 +139,7 @@ interface AddWorkModalProps {
   reloadAssignments: () => Promise<void>;
   locale: string;
   initialQuery?: string;
-  initialManualWork?: Partial<ManualWorkForm> | null;
-}
-
-function emptyManualWorkForm(): ManualWorkForm {
-  return {
-    title: "",
-    type: "spillefilm",
-    year: "",
-    duration_minutes: "",
-    episode_count: "",
-    director: "",
-    production_company: "",
-    contract_id: "",
-  };
+  initialManualWork?: ManualWorkFormSeed | null;
 }
 
 function emptyCoEditor(): CoEditorDraft {
@@ -394,7 +372,7 @@ export function AddWorkModal({
   const [typeFilter, setTypeFilter]           = useState("all");
   const [addRole, setAddRole]                 = useState("Klipper");
   const [manualMode, setManualMode]           = useState(false);
-  const [manualWork, setManualWork]           = useState<ManualWorkForm>(emptyManualWorkForm());
+  const [manualWork, setManualWork]           = useState<ManualWorkFormValue>(emptyManualWorkForm());
   const [addSeason, setAddSeason]             = useState("");
   const [addEpisode, setAddEpisode]           = useState("");
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
@@ -409,6 +387,9 @@ export function AddWorkModal({
   const [isSearching, setIsSearching]         = useState(false);
   const [detailsLoading, setDetailsLoading]   = useState(false);
   const [isSaving, setIsSaving]               = useState(false);
+  const [hasSearched, setHasSearched]         = useState(false);
+  const [searchError, setSearchError]         = useState<string | null>(null);
+  const [manualLinkRetry, setManualLinkRetry] = useState<{ workId: string; pending: boolean } | null>(null);
   const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
@@ -445,33 +426,8 @@ export function AddWorkModal({
     updateTmdbEpisodes();
   }, [addSeason, pickedUnifiedResult]);
 
-  useEffect(() => {
-    if (manualMode && (manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie")) {
-      const count = parseInt(manualWork.episode_count) || null;
-      setDetectedEpisodeCount(count);
-      if (count) {
-        setEpisodeOptions(buildCompleteEpisodeOptions({
-          episodeCount: count,
-          seasonNumber: Number(addSeason) || 1,
-        }));
-        setSelectedEpisodes(prev => {
-          const filtered = prev.filter(x => x <= count);
-          if (filtered.length === 0) {
-            return Array.from({ length: count }, (_, i) => i + 1);
-          }
-          return filtered;
-        });
-      } else {
-        setEpisodeOptions([]);
-        setSelectedEpisodes([]);
-      }
-    }
-  }, [addSeason, manualMode, manualWork.episode_count, manualWork.type]);
-
   const resetAddState = React.useCallback(() => {
-    const nextManualWork = initialManualWork
-      ? { ...emptyManualWorkForm(), ...initialManualWork }
-      : emptyManualWorkForm();
+    const nextManualWork = emptyManualWorkForm(initialManualWork ?? {});
     autoSearchKeyRef.current = "";
     setManualMode(false);
     setTypeFilter("all");
@@ -486,6 +442,9 @@ export function AddWorkModal({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
+    setHasSearched(false);
+    setSearchError(null);
+    setManualLinkRetry(null);
   }, [initialManualWork, initialQuery]);
 
   useEffect(() => {
@@ -499,6 +458,8 @@ export function AddWorkModal({
     if (!query) return;
     if (queryOverride) setAddQuery(query);
     setIsSearching(true);
+    setHasSearched(true);
+    setSearchError(null);
     setUnifiedResults([]);
     setPickedUnifiedResult(null);
     setAddCoEditors([]);
@@ -510,9 +471,12 @@ export function AddWorkModal({
         if (res.results.length > 0) {
           await pickUnifiedResult(res.results[0]);
         }
+      } else {
+        setSearchError(locale === "da" ? "Søgningen mislykkedes." : "The search failed.");
       }
     } catch (e) {
       console.error(e);
+      setSearchError(locale === "da" ? "Søgningen mislykkedes. Prøv igen." : "The search failed. Please try again.");
     } finally {
       setIsSearching(false);
     }
@@ -582,8 +546,10 @@ export function AddWorkModal({
     if ((!manualMode && !pickedUnifiedResult) || !rightsHolderId) return;
     setIsSaving(true);
     try {
-      const selectedSeasonNumber = showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
-      if (showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0) {
+      const selectedSeasonNumber = manualMode
+        ? numberOrNull(manualWork.season_number) ?? 1
+        : showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
+      if (!manualMode && showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0) {
         throw new Error(locale === "da" ? "Vælg mindst ét afsnit." : "Select at least one episode.");
       }
 
@@ -597,29 +563,39 @@ export function AddWorkModal({
       };
 
       if (manualMode) {
-        const res = await addWorkForMemberWithApproval({
+        const validationError = validateManualWork(manualWork, locale);
+        if (validationError) throw new Error(validationError);
+        const manualEpisodeNumber = numberOrNull(manualWork.episode_number);
+        const manualEpisodeCount = numberOrNull(manualWork.episode_count)
+          ?? (isManualSeries(manualWork) ? manualEpisodeNumber : null);
+        const res = await addManualWorkAndLinkContract({
           rightsHolderId,
           role: addRole,
           comment: addComment,
-          source: "manual",
           overrideLocalMatch: false,
           coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          contractId: manualWork.contract_id.trim() || null,
+          reuseWorkId: manualLinkRetry?.workId ?? null,
+          reusePending: manualLinkRetry?.pending ?? false,
           workData: {
             title: manualWork.title,
             type: manualWork.type,
             year: numberOrNull(manualWork.year),
             duration_minutes: numberOrNull(manualWork.duration_minutes),
-            episode_count: numberOrNull(manualWork.episode_count),
+            episode_count: manualEpisodeCount,
             season_number: selectedSeasonNumber,
-            episode_number: numberOrNull(addEpisode),
-            selected_episodes: selectedEpisodes,
+            episode_number: manualEpisodeNumber,
+            selected_episodes: manualWork.selected_episodes,
             director: manualWork.director || null,
             production_companies: manualWork.production_company.trim() ? [manualWork.production_company.trim()] : undefined,
             description: null,
           },
         });
-        if (!res.success) throw new Error(res.error ?? t("works.createFailed"));
-        await linkUploadedContract(res.workId);
+        if (!res.success) {
+          if (res.workId && res.retryable) setManualLinkRetry({ workId: res.workId, pending: Boolean(res.pending) });
+          throw new Error(res.error ?? t("works.createFailed"));
+        }
+        setManualLinkRetry(null);
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
         await closeAfterSuccess();
         return;
@@ -700,20 +676,24 @@ export function AddWorkModal({
   };
 
   const showSeriesFields =
-    (manualMode && (manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie")) ||
+    (manualMode && isManualSeries(manualWork)) ||
     (!manualMode &&
       pickedUnifiedResult &&
       (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie"));
-  const selectedEpisodeLabel = selectedEpisodes.length > 0
-    ? selectedEpisodes.join(", ")
-    : numberOrNull(addEpisode)
-    ? String(numberOrNull(addEpisode))
+  const activeSelectedEpisodes = manualMode ? manualWork.selected_episodes : selectedEpisodes;
+  const activeEpisodeNumber = manualMode ? manualWork.episode_number : addEpisode;
+  const selectedEpisodeLabel = activeSelectedEpisodes.length > 0
+    ? activeSelectedEpisodes.join(", ")
+    : numberOrNull(activeEpisodeNumber)
+    ? String(numberOrNull(activeEpisodeNumber))
     : "";
   const chosenTitle = manualMode ? manualWork.title : pickedUnifiedResult?.title ?? "";
   const chosenSummary = showSeriesFields && selectedEpisodeLabel
     ? `${chosenTitle}, ${locale === "da" ? "afsnit" : "episodes"} ${selectedEpisodeLabel}`
     : chosenTitle;
-  const missingSeriesEpisodes = Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
+  const missingSeriesEpisodes = manualMode
+    ? Boolean(validateManualWork(manualWork, locale))
+    : Boolean(showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0);
 
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
@@ -795,12 +775,7 @@ export function AddWorkModal({
 	            onClick={() => {
 	              if (!manualMode) {
                   setManualMode(true);
-                  setManualWork(prev => ({
-                    ...emptyManualWorkForm(),
-                    ...prev,
-                    ...(initialManualWork ?? {}),
-                    title: prev.title || initialManualWork?.title || addQuery,
-                  }));
+                  setManualWork(prev => prev.title.trim() ? prev : { ...prev, title: addQuery });
 	                setPickedUnifiedResult(null);
 	                setAddCoEditors([]);
                 } else {
@@ -808,7 +783,7 @@ export function AddWorkModal({
 	              }
 	            }}
 	          >
-            {manualMode ? (locale === "da" ? "Skift til søgning" : "Switch to search") : t("works.createManual")}
+            {manualMode ? t("works.backToSearch") : t("works.enterManually")}
         </Button>
       </div>
 
@@ -826,71 +801,7 @@ export function AddWorkModal({
       {manualMode && (
         <div className="mb-4 rounded-lg border p-4">
           <p className="mb-3 text-sm font-semibold text-foreground">{t("works.manualWorkData")}</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.titleField")}</Label>
-              <Input
-                value={manualWork.title}
-                onChange={e => setManualWork({ ...manualWork, title: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.typeField")}</Label>
-              <select
-                value={manualWork.type}
-                onChange={e => setManualWork({ ...manualWork, type: e.target.value })}
-                className={selectCls}
-              >
-                {WORK_TYPES.map(type => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.yearField")}</Label>
-              <Input
-                value={manualWork.year}
-                onChange={e => setManualWork({ ...manualWork, year: e.target.value })}
-                inputMode="numeric"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.durationField")}</Label>
-              <Input
-                value={manualWork.duration_minutes}
-                onChange={e => setManualWork({ ...manualWork, duration_minutes: e.target.value })}
-                inputMode="numeric"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">Produktionsselskab</Label>
-              <Input
-                value={manualWork.production_company}
-                onChange={e => setManualWork({ ...manualWork, production_company: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">Instruktør</Label>
-              <Input
-                value={manualWork.director}
-                onChange={e => setManualWork({ ...manualWork, director: e.target.value })}
-              />
-            </div>
-          </div>
-          {showSeriesFields && (
-            <div className="mt-3 space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
-              <Input
-                value={manualWork.episode_count}
-                onChange={e => setManualWork({ ...manualWork, episode_count: e.target.value })}
-                inputMode="numeric"
-              />
-            </div>
-          )}
-          <p className="mt-3 text-xs text-muted-foreground">{t("works.posterHint")}</p>
-          {showSeriesFields && seriesEpisodePicker}
+          <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale={locale} />
           <div className="mt-4 space-y-1.5">
             <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
             <Textarea
@@ -899,6 +810,34 @@ export function AddWorkModal({
               placeholder={t("works.commentPlaceholder")}
             />
           </div>
+          {manualLinkRetry && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+              <p>{t("works.linkRetryMessage")}</p>
+              <Button type="button" variant="outline" size="sm" className="mt-2" onClick={handleAddWork} disabled={isSaving}>
+                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {t("works.retryLink")}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+
+      {!manualMode && searchError && (
+        <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          {searchError}
+        </div>
+      )}
+
+      {!manualMode && hasSearched && !isSearching && !searchError && unifiedResults.length === 0 && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+          <p>{t("works.noDatabaseMatchManualHint")}</p>
+          <Button type="button" size="sm" className="mt-3" onClick={() => {
+            setManualMode(true);
+            setManualWork(prev => prev.title.trim() ? prev : { ...prev, title: addQuery });
+          }}>
+            {t("works.enterWorkDataManually")}
+          </Button>
         </div>
       )}
 
