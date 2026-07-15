@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CONTRACT_SCREENING_TEXT } from "@/lib/profile-copy";
 
 const BUCKET = "kontrakter";
 const MAX_FILES = 15;
@@ -267,7 +268,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     const savedContracts: UploadedContract[] | null = files.length > 0 ? await saveContracts() : [];
     if (!savedContracts) return;
     if (savedContracts.length > 0) {
-      toast.success(savedContracts.length === 1 ? "Kontrakt gemt og sendt til AI-gennemlæsning" : `${savedContracts.length} kontrakter gemt og sendt til AI-gennemlæsning`);
+      toast.success(savedContracts.length === 1 ? "Kontrakt gemt og sendt til automatisk gennemgang" : `${savedContracts.length} kontrakter gemt og sendt til automatisk gennemgang`);
       onUploaded(savedContracts);
     }
     goToAddWork()(savedContracts[0]?.id ?? null);
@@ -345,7 +346,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   {isBatchUpload && <p className="text-xs text-muted-foreground mt-0.5">Kontrakt 1 af {files.length} - systemet forsøger automatisk at koble alle kontrakterne til værker</p>}
                   {screening && (
                     <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1">
-                      <Sparkles className="h-3 w-3" /> Screener første kontrakt med Claude AI...
+                      <Sparkles className="h-3 w-3" /> {CONTRACT_SCREENING_TEXT}
                     </p>
                   )}
                 </div>

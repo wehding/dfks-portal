@@ -9,6 +9,7 @@ import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCan
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
+import { PROFILE_PORTRAIT_TEXT } from "@/lib/profile-copy";
 
 const STEPS = [
   { id: 1, title: "Velkommen", icon: "👋" },
@@ -28,6 +29,7 @@ type OnboardingProfile = {
   bank_account?: string | null;
   gender?: string | null;
   alternative_names?: string[] | null;
+  is_member?: boolean | null;
 };
 
 type OnboardingUser = {
@@ -76,6 +78,7 @@ export default function OnboardingClient({
   const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
   const [newAlternativeName, setNewAlternativeName] = useState("");
   const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
+  const isOrganisationMember = Boolean(rh?.is_member);
 
   // Import timer
   const [importSeconds, setImportSeconds] = useState(0);
@@ -83,14 +86,15 @@ export default function OnboardingClient({
   // Formulardata præ-udfyldt fra rettighedshaveren
   const existingName = rh?.full_name || "";
   const nameParts = existingName.split(" ");
+  const parsedInitialAddress = parseAddress(rh?.address || "");
   const [formData, setFormData] = useState({
     first_name: nameParts[0] || "",
     last_name: nameParts.slice(1).join(" ") || "",
     email: rh?.email || user?.email || "",
     phone: rh?.phone || "",
-    address: rh?.address || "",
-    zip: "",
-    city: "",
+    address: parsedInitialAddress.street,
+    zip: parsedInitialAddress.postalCode,
+    city: parsedInitialAddress.city,
     cpr: rh?.cpr_no || "",
     bank_account: rh?.bank_account || "",
     gender: rh?.gender || "prefer_not_to_say",
@@ -178,7 +182,7 @@ export default function OnboardingClient({
       setPersonCandidates(current => merge ? Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score) : candidates);
       setSelectedPersonCandidates(current => ({ ...(merge ? current : {}), ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }));
       const portrait = candidates.find(candidate => candidate.imageUrl)?.imageUrl ?? null;
-      if (portrait && (!merge || !selectedPortraitUrl)) setSelectedPortraitUrl(portrait);
+      if (isOrganisationMember && portrait && (!merge || !selectedPortraitUrl)) setSelectedPortraitUrl(portrait);
       if (!result.success) setPersonSearchError(result.error ?? "Kunne ikke søge efter navneprofiler.");
     } catch {
       setPersonSearchError("Kunne ikke kontakte persondatabaserne.");
@@ -219,7 +223,7 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, selectedPortraitUrl);
+        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, isOrganisationMember ? selectedPortraitUrl : null);
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
@@ -278,13 +282,13 @@ export default function OnboardingClient({
     }
   };
 
-  const portraitOptions = Array.from(
+  const portraitOptions = isOrganisationMember ? Array.from(
     new Map(
       personCandidates
         .filter(candidate => selectedPersonCandidates[candidate.key])
         .flatMap(candidate => (candidate.portraitUrls?.length ? candidate.portraitUrls : candidate.imageUrl ? [candidate.imageUrl] : []).map(url => [url, candidate] as const))
     ).entries()
-  );
+  ) : [];
 
   const progress = ((step - 1) / (STEPS.length - 1)) * 100;
 
@@ -552,9 +556,12 @@ export default function OnboardingClient({
                   <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}>Tilføj variant</button>
                 </div>
               </div>
-              {portraitOptions.length > 1 && (
+              {isOrganisationMember && portraitOptions.length > 0 && (
                 <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#FFFFFF", display: "flex", flexDirection: "column", gap: "10px" }}>
-                  <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Vælg portræt</div>
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Vælg profilbillede</div>
+                    <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", lineHeight: 1.5, margin: "4px 0 0" }}>{PROFILE_PORTRAIT_TEXT}</p>
+                  </div>
                   <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                     {portraitOptions.map(([url, candidate]) => (
                       <button
@@ -863,4 +870,16 @@ export default function OnboardingClient({
       </div>
     </div>
   );
+}
+
+function parseAddress(value: string) {
+  const parts = value.split(",").map(part => part.trim()).filter(Boolean);
+  const street = parts[0] ?? "";
+  const rest = parts.slice(1).join(" ");
+  const match = rest.match(/^(\d{4})\s+(.+)$/);
+  return {
+    street,
+    postalCode: match?.[1] ?? "",
+    city: match?.[2] ?? rest,
+  };
 }
