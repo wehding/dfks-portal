@@ -1,12 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  contractWorkTypeFilter,
   contractDataToManualWorkSeed,
   emptyManualWorkForm,
   isExactManualWorkMatch,
   manualWorkDuplicateDecision,
   validateManualWork,
 } from "../lib/manual-work";
+
+test("contract type filters automatic work search when matching results exist", () => {
+  assert.equal(contractWorkTypeFilter("tvSeries", [{ type: "spillefilm" }, { type: "tv-serie" }]), "tv-serie");
+});
+
+test("automatic work search shows all types when the extracted type has no match", () => {
+  assert.equal(contractWorkTypeFilter("docSeries", [{ type: "dokumentarfilm" }]), "all");
+});
 
 test("AI contract data prefills the shared manual work form", () => {
   const seed = contractDataToManualWorkSeed({
