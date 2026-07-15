@@ -6,7 +6,6 @@ import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import {
-    FileText,
     Building2,
     Wallet,
     Play,
@@ -17,9 +16,6 @@ import {
     Users2,
     Receipt,
     Scale,
-    Film,
-    Library,
-    Layers,
     UserCheck,
     BrainCircuit,
     ShieldCheck,
@@ -130,7 +126,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const pathname = usePathname()
     const router = useRouter()
     const [userRole, setUserRole] = useState<string>("admin")
-    const [isSuperadmin, setIsSuperadmin] = useState<boolean>(false)
     const [pendingCount, setPendingCount] = useState<number>(0)
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
@@ -190,7 +185,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const roleList = (roles ?? []).map(r => r.role)
             const primary = ["superadmin", "admin", "org-admin", "jurist", "viewer"].find(r => roleList.includes(r)) ?? "viewer"
             setUserRole(primary)
-            setIsSuperadmin(roleList.includes("superadmin"))
             fetchCount()
         })
 
@@ -238,20 +232,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     {item.key === "kontrakter" && (pendingCount > 0 || pendingContractMessagesCount > 0) && (
                         <span className="ml-auto flex shrink-0 items-center gap-1">
                             {pendingContractMessagesCount > 0 && (
-                                <span title="Ulæste beskeder" className={MENU_BADGE_BESKED}>{pendingContractMessagesCount}</span>
+                                <span title={t("common.unreadMessages")} className={MENU_BADGE_BESKED}>{pendingContractMessagesCount}</span>
                             )}
                             {pendingCount > 0 && (
-                                <span title="Afventer godkendelse" className={MENU_BADGE_GODKEND}>{pendingCount}</span>
+                                <span title={t("common.pendingApproval")} className={MENU_BADGE_GODKEND}>{pendingCount}</span>
                             )}
                         </span>
                     )}
                     {item.key === "vaerker" && (pendingWorksCount > 0 || pendingWorkMessagesCount > 0) && (
                         <span className="ml-auto flex shrink-0 items-center gap-1">
                             {pendingWorkMessagesCount > 0 && (
-                                <span title="Ulæste beskeder" className={MENU_BADGE_BESKED}>{pendingWorkMessagesCount}</span>
+                                <span title={t("common.unreadMessages")} className={MENU_BADGE_BESKED}>{pendingWorkMessagesCount}</span>
                             )}
                             {pendingWorksCount > 0 && (
-                                <span title="Afventer godkendelse" className={MENU_BADGE_GODKEND}>{pendingWorksCount}</span>
+                                <span title={t("common.pendingApproval")} className={MENU_BADGE_GODKEND}>{pendingWorksCount}</span>
                             )}
                         </span>
                     )}
@@ -310,7 +304,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     {/* Rettighedsbetaling-sektion */}
                     {rettighedsItems.length > 0 && (
                         <NavSection
-                            title="Rettighedsbetaling"
+                            title={t("nav.rightsPaymentsSection")}
                             isOpen={rettighedsOpen}
                             onToggle={() => setRettighedsOpen(o => !o)}
                         >

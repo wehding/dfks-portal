@@ -1,13 +1,13 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, CheckCircle2, AlertTriangle, Plus } from "lucide-react";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { toast } from "sonner";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
 import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
+import { useI18n } from "@/lib/i18n";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -161,8 +162,8 @@ export default function MineKontrakterClient({
   initialContracts: Contract[];
   myWorks?: MyWork[];
 }) {
+  const { t } = useI18n();
   const [contracts, setContracts] = useState(initialContracts);
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [isUploading, setIsUploading] = useState(searchParams?.get("upload") === "true");
   const uploadWorkId    = searchParams?.get("workId") ?? undefined;
@@ -450,14 +451,6 @@ export default function MineKontrakterClient({
     if (res.success) window.dispatchEvent(new CustomEvent("contracts-updated"));
   }
 
-  function goToAddWork() {
-    const params = new URLSearchParams({ add: "1" });
-    if (workSearch.trim()) params.set("q", workSearch.trim());
-    setSelectedContract(null);
-    setIsUploading(false);
-    router.push(`/portal/mine-vaerker?${params.toString()}`);
-  }
-
   async function handleLinkWork(workId: string | null) {
     if (!selectedContract) return;
     setLinkingSaving(true);
@@ -524,13 +517,13 @@ export default function MineKontrakterClient({
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Mine Kontrakter</h1>
-          <p className="text-sm text-muted-foreground mt-1">Upload dine kontrakter — DFKS validerer dem herefter.</p>
+          <h1 className="text-2xl font-bold text-foreground">{t("contracts.mineTitle")}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t("contracts.mineSubtitle")}</p>
         </div>
         <div className="grid w-full gap-2 sm:flex sm:w-auto">
           <HelpButton onClick={() => setHelpOpen(true)} className="w-full sm:w-auto" />
           <Button onClick={() => setIsUploading(true)} className="w-full gap-2 sm:w-auto">
-            <Upload className="h-4 w-4" /> Upload kontrakt
+            <Upload className="h-4 w-4" /> {t("contracts.upload")}
           </Button>
         </div>
       </div>
@@ -538,9 +531,9 @@ export default function MineKontrakterClient({
       {/* Statistik */}
       <div className="hidden grid-cols-3 gap-4 sm:grid">
         {[
-          { label: "Total",               value: total },
-          { label: "Validerede",          value: validerede },
-          { label: "Afventer validering", value: afventer },
+          { label: t("common.total"),              value: total },
+          { label: t("common.validated"),          value: validerede },
+          { label: t("common.pendingValidation"), value: afventer },
         ].map(s => (
           <div key={s.label} className="rounded-lg border bg-card px-6 py-5 text-card-foreground">
             <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
@@ -569,18 +562,18 @@ export default function MineKontrakterClient({
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {selectedIds.length > 0 ? (
               <>
-                <span className="text-sm font-semibold text-red-700">{selectedIds.length} valgt</span>
+                <span className="text-sm font-semibold text-red-700">{selectedIds.length} {t("common.selected")}</span>
                 <Button size="sm" variant="destructive" onClick={handleDeleteSelected} className="h-8 gap-1.5 text-xs">
-                  <Trash2 className="h-3.5 w-3.5" /> Fjern valgte
+                  <Trash2 className="h-3.5 w-3.5" /> {t("contracts.removeSelected")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setSelectedIds([])} className="h-8 text-xs">Annuller</Button>
+                <Button size="sm" variant="outline" onClick={() => setSelectedIds([])} className="h-8 text-xs">{t("common.cancel")}</Button>
               </>
             ) : (
               <>
                 <div className="relative w-full sm:max-w-xs">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                   <Input
-                    placeholder="Søg i kontrakter..."
+                    placeholder={t("contracts.searchPlaceholder")}
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     className="h-8 w-full pl-8 pr-8 text-sm sm:w-72"
@@ -590,25 +583,25 @@ export default function MineKontrakterClient({
                       type="button"
                       onClick={() => setSearch("")}
                       className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border text-muted-foreground hover:text-foreground"
-                      aria-label="Tøm søgefelt"
+                      aria-label={t("common.clearSearch")}
                     >
                       <X className="h-3 w-3" />
                     </button>
                   )}
                 </div>
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-                  <option value="all">Status</option>
-                  <option value="missingWork">Mangler værk</option>
-                  <option value="linked">Værk tilknyttet</option>
-                  <option value="kladde">Afventer validering</option>
-                  <option value="valideret">Valideret</option>
-                  <option value="arkiveret">Arkiveret</option>
-                  <option value="messages">Nye beskeder fra DFKS</option>
-                  <option value="missingDocument">Mangler dokument</option>
-                  <option value="actionRequired">Kræver handling</option>
+                  <option value="all">{t("common.status")}</option>
+                  <option value="missingWork">{t("contracts.missingWork")}</option>
+                  <option value="linked">{t("contracts.workLinked")}</option>
+                  <option value="kladde">{t("common.pendingValidation")}</option>
+                  <option value="valideret">{t("contracts.validated")}</option>
+                  <option value="arkiveret">{t("contracts.archived")}</option>
+                  <option value="messages">{t("contracts.newMessagesFromOrg")}</option>
+                  <option value="missingDocument">{t("contracts.missingDocument")}</option>
+                  <option value="actionRequired">{t("contracts.actionRequired")}</option>
                 </select>
                 <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
-                  <option value="all">Type</option>
+                  <option value="all">{t("common.type")}</option>
                   {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
                 </select>
                 <ResetFiltersButton
@@ -621,29 +614,29 @@ export default function MineKontrakterClient({
                     onChange={e => setSortKey(e.target.value as SortKey)}
                     className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground"
                   >
-                    <option value="date">Dato</option>
-                    <option value="title">Værk</option>
-                    <option value="employer">Producent</option>
-                    <option value="overenskomst">Overenskomst</option>
-                    <option value="rights">Rettigheder</option>
-                    <option value="status">Status</option>
+                    <option value="date">{t("contracts.date")}</option>
+                    <option value="title">{t("contracts.work")}</option>
+                    <option value="employer">{t("contracts.producer")}</option>
+                    <option value="overenskomst">{t("contracts.agreement")}</option>
+                    <option value="rights">{t("contracts.rights")}</option>
+                    <option value="status">{t("common.status")}</option>
                   </select>
                   <Button type="button" variant="outline" onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")} className="h-8 px-3 text-xs">
-                    {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortDir === "asc" ? "A-Z" : "Z-A"}
+                    {sortKey === "date" ? (sortDir === "asc" ? t("contracts.oldest") : t("contracts.newest")) : sortDir === "asc" ? "A-Z" : "Z-A"}
                   </Button>
                 </div>
               </>
             )}
           </div>
 	          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-	            Vis
+	            {t("contracts.show")}
 	            <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-8 rounded-md border border-input bg-background px-2 text-sm text-foreground">
 	              {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
 	            </select>
 	          </label>
 	          {filtered.length > 0 && (
 	            <Button type="button" variant="outline" className="w-full sm:w-auto md:hidden" onClick={toggleAllFiltered}>
-	              {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
+	              {allFilteredSelected ? t("common.deselectAll") : t("common.selectAll")}
 	              {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
 	            </Button>
 	          )}
@@ -652,11 +645,11 @@ export default function MineKontrakterClient({
 	        {/* Kolonnehoveder */}
 	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
-          <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">Værk{sortArrow("title")}</button>
-          <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">Producent{sortArrow("employer")}</button>
-          <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">Overenskomst{sortArrow("overenskomst")}</button>
-          <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">Rettigheder{sortArrow("rights")}</button>
-          <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-foreground">Status{sortArrow("status")}</button>
+          <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">{t("contracts.work")}{sortArrow("title")}</button>
+          <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">{t("contracts.producer")}{sortArrow("employer")}</button>
+          <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">{t("contracts.agreement")}{sortArrow("overenskomst")}</button>
+          <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">{t("contracts.rights")}{sortArrow("rights")}</button>
+          <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-foreground">{t("common.status")}{sortArrow("status")}</button>
           <div />
         </div>
 
@@ -664,7 +657,7 @@ export default function MineKontrakterClient({
         {filtered.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             <FileText className="mx-auto h-10 w-10 text-muted-foreground/50 mb-3" />
-          <p>{contracts.length === 0 ? "Ingen kontrakter endnu. Klik 'Upload kontrakt' for at starte." : "Ingen resultater."}</p>
+          <p>{contracts.length === 0 ? t("contracts.empty") : t("contracts.noResults")}</p>
           </div>
         ) : visibleContracts.map(c => {
           const val = getValidation(c);

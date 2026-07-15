@@ -9,16 +9,7 @@ import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCan
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
-import { PROFILE_PORTRAIT_TEXT } from "@/lib/profile-copy";
-
-const STEPS = [
-  { id: 1, title: "Velkommen", icon: "👋" },
-  { id: 2, title: "Dine oplysninger", icon: "👤" },
-  { id: 3, title: "Dit navn", icon: "🔎" },
-  { id: 4, title: "Film & Serier", icon: "🎬" },
-  { id: 5, title: "Privatliv & Data", icon: "🔒" },
-  { id: 6, title: "Bekræft & Start", icon: "✅" },
-];
+import { useI18n } from "@/lib/i18n";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -52,7 +43,16 @@ export default function OnboardingClient({
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
 }) {
+  const { t } = useI18n();
   const router = useRouter();
+  const steps = [
+    { id: 1, title: t("onboarding.stepWelcome"), icon: "👋" },
+    { id: 2, title: t("onboarding.stepInfo"), icon: "👤" },
+    { id: 3, title: t("onboarding.stepName"), icon: "🔎" },
+    { id: 4, title: t("onboarding.stepWorks"), icon: "🎬" },
+    { id: 5, title: t("onboarding.stepPrivacy"), icon: "🔒" },
+    { id: 6, title: t("onboarding.stepConfirm"), icon: "✅" },
+  ];
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
@@ -290,7 +290,7 @@ export default function OnboardingClient({
     ).entries()
   ) : [];
 
-  const progress = ((step - 1) / (STEPS.length - 1)) * 100;
+  const progress = ((step - 1) / (steps.length - 1)) * 100;
 
   if (isImportingDfi) {
     const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
@@ -355,7 +355,7 @@ export default function OnboardingClient({
         {/* Fremskridtsindikator */}
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-            {STEPS.map((s) => (
+            {steps.map((s) => (
               <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", flex: 1 }}>
                 <div style={{
                   width: "36px", height: "36px", borderRadius: "50%",
@@ -436,24 +436,23 @@ export default function OnboardingClient({
                 {/* Ét samlet navnefelt (fuld bredde) med fælles hjælpetekst */}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
-                    Dit navn
+                    {t("onboarding.yourName")}
                   </label>
                   <input
                     value={fullNameValue}
                     onChange={(e) => handleFullName(e.target.value)}
-                    placeholder="Dit fulde navn"
+                    placeholder={t("onboarding.fullNamePlaceholder")}
                     style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
                   />
                 </div>
                 <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
-                  Det er vigtigt at du skriver dit navn sådan som du typisk bliver krediteret. Vi bruger
-                  navnet til at søge dine værker frem i DFI Filmdatabasen og TMDb.
+                  {t("onboarding.nameHint")}
                 </div>
                 {([
-                  { label: "Telefon", key: "phone", placeholder: "+45 12 34 56 78" },
-                  { label: "Adresse", key: "address", placeholder: "Gadenavn 1", full: true },
-                  { label: "Postnr.", key: "zip", placeholder: "1234" },
-                  { label: "By", key: "city", placeholder: "København" },
+                  { label: t("profile.phone"), key: "phone", placeholder: "+45 12 34 56 78" },
+                  { label: t("profile.address"), key: "address", placeholder: "Gadenavn 1", full: true },
+                  { label: t("profile.postalCode"), key: "zip", placeholder: "1234" },
+                  { label: t("profile.city"), key: "city", placeholder: "København" },
                 ] satisfies FormField[]).map((f) => (
                   <div key={f.key} style={{ gridColumn: f.full ? "1 / -1" : undefined }}>
                     <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
@@ -469,7 +468,7 @@ export default function OnboardingClient({
                 ))}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
-                    E-mail
+                    {t("profile.email")}
                   </label>
                   <input
                     value={formData.email}
@@ -481,10 +480,10 @@ export default function OnboardingClient({
               </div>
 
               <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "#F9FAFB", borderRadius: "8px", border: "1px solid #E5E7EB" }}>
-                <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-surface)" }}>🏦 Bankoplysninger (til udbetaling)</div>
+                <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-surface)" }}>{t("onboarding.bankInfo")}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                   {([
-                    { label: "CPR-nummer", key: "cpr", placeholder: "DDMMÅÅ-XXXX" },
+                    { label: t("profile.cpr"), key: "cpr", placeholder: "DDMMÅÅ-XXXX" },
                     { label: "NemKonto / Kontonr.", key: "bank_account", placeholder: "Reg.nr. + kontonr." },
                   ] satisfies FormField[]).map((f) => (
                     <div key={f.key}>
@@ -504,7 +503,7 @@ export default function OnboardingClient({
                 <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "6px" }}>
                   <span style={{ fontSize: "16px" }}>🔒</span>
                   <p style={{ fontSize: "12px", color: "#065F46", margin: 0, lineHeight: 1.5 }}>
-                    <strong>Sikkerhed & Kryptering:</strong> Dit CPR-nummer og kontonummer krypteres automatisk i din browser, før de sendes afsted, og opbevares i krypteret form i vores database.
+                    <strong>{t("onboarding.securityTitle")}</strong> {t("onboarding.securityText")}
                   </p>
                 </div>
               </div>
@@ -515,19 +514,19 @@ export default function OnboardingClient({
           {step === 3 && (
             <div style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}>
               <div>
-                <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>Vælg de navneprofiler, der er dig</h2>
+                <h2 style={{ fontSize: "20px", fontWeight: 700, margin: 0, color: "var(--on-surface)" }}>{t("onboarding.chooseProfiles")}</h2>
                 <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: "8px 0 0", lineHeight: 1.6 }}>
-                  Vi søger bredt efter stavemåder, manglende mellemnavne og initialer. Du kan vælge flere navneprofiler fra samme database.
+                  {t("onboarding.chooseProfilesIntro")}
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB" }}>
                 <p style={{ margin: 0, fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>
-                  Søg på dit krediteringsnavn. Tilføj eventuelle stavevarianter eller tidligere navne nedenfor, så søger vi på dem samlet.
+                  {t("onboarding.searchCreditName")}
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--on-surface-variant)" }}>Navn fra dine oplysninger</span>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--on-surface-variant)" }}>{t("onboarding.nameFromInfo")}</span>
                   <div style={{ padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", color: "#111827", fontWeight: 600 }}>
-                    {dfiSearchQuery || fullNameValue || "Navn mangler"}
+                    {dfiSearchQuery || fullNameValue || t("onboarding.missingName")}
                   </div>
                 </div>
                 {alternativeNames.length > 0 && (
@@ -537,7 +536,7 @@ export default function OnboardingClient({
                         key={name}
                         type="button"
                         onClick={() => setAlternativeNames(current => current.filter(item => item !== name))}
-                        title="Fjern navnevariant"
+                        title={t("onboarding.removeNameVariant")}
                         style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer", color: "#111827" }}
                       >
                         {name} ×
@@ -550,17 +549,17 @@ export default function OnboardingClient({
                     value={newAlternativeName}
                     onChange={event => setNewAlternativeName(event.target.value)}
                     onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }}
-                    placeholder="Tilføj navnevariant"
+                    placeholder={t("onboarding.addNameVariant")}
                     style={{ flex: "1 1 220px", minWidth: 0, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB", color: "#111827" }}
                   />
-                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}>Tilføj variant</button>
+                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}>{t("onboarding.addVariant")}</button>
                 </div>
               </div>
               {isOrganisationMember && portraitOptions.length > 0 && (
                 <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#FFFFFF", display: "flex", flexDirection: "column", gap: "10px" }}>
                   <div>
-                    <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>Vælg profilbillede</div>
-                    <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", lineHeight: 1.5, margin: "4px 0 0" }}>{PROFILE_PORTRAIT_TEXT}</p>
+                    <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>{t("onboarding.choosePortrait")}</div>
+                    <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", lineHeight: 1.5, margin: "4px 0 0" }}>{t("profile.portraitText")}</p>
                   </div>
                   <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                     {portraitOptions.map(([url, candidate]) => (
@@ -843,7 +842,7 @@ export default function OnboardingClient({
               <ArrowLeft size={16} /> Tilbage
             </button>
 
-            {step < STEPS.length ? (
+            {step < steps.length ? (
               <button
                 onClick={handleNextStep}
                 disabled={isSearchingDfi || isImportingDfi}

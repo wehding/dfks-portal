@@ -16,7 +16,7 @@ import { DfiImportWizard } from "@/app/portal/mine-vaerker/components/DfiImportW
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery"
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { PROFILE_PORTRAIT_TEXT } from "@/lib/profile-copy"
+import { useI18n } from "@/lib/i18n"
 
 interface ProfileData {
     id: string
@@ -34,6 +34,7 @@ interface ProfileData {
 }
 
 export default function MinProfilPage() {
+    const { locale, t } = useI18n()
     const router = useRouter()
     const [profile, setProfile] = useState<ProfileData | null>(null)
     const [loading, setLoading] = useState(true)
@@ -245,21 +246,21 @@ export default function MinProfilPage() {
     return (
         <div className="space-y-8 max-w-2xl">
             <PageHeader
-                title="Min profil"
-                subtitle="Ret dine personlige oplysninger og kontaktdata"
+                title={t("profile.title")}
+                subtitle={t("profile.subtitle")}
             />
 
             <section className="rounded-lg border">
                 <div className="flex items-center gap-2 border-b px-5 py-4">
                     <Film className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="font-medium">Find manglende værker</h2>
+                    <h2 className="font-medium">{t("profile.findMissingWorks")}</h2>
                 </div>
                 <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-sm text-muted-foreground">Søg efter produktioner, hvor du er krediteret, men som endnu ikke findes under Mine værker.</p>
+                    <p className="text-sm text-muted-foreground">{t("profile.findMissingWorksIntro")}</p>
                     <Button type="button" variant="outline" onClick={openPersonSearch} className="shrink-0 gap-2">
-                        <RefreshCw className="h-4 w-4" /> Søg nye titler på dit navn
+                        <RefreshCw className="h-4 w-4" /> {t("profile.searchNewTitles")}
                     </Button>
-                    <Button type="button" onClick={openPersonSearch} className="shrink-0">Ret personmatch</Button>
+                    <Button type="button" onClick={openPersonSearch} className="shrink-0">{t("profile.editPersonMatch")}</Button>
                 </div>
             </section>
 
@@ -267,7 +268,7 @@ export default function MinProfilPage() {
             <section className="rounded-lg border">
                 <div className="flex items-center gap-2 px-5 py-4 border-b">
                     <User className="h-4 w-4 text-muted-foreground" />
-                    <h2 className="font-medium">Personoplysninger</h2>
+                    <h2 className="font-medium">{t("profile.personalInfo")}</h2>
                 </div>
                 <div className="p-5 space-y-4">
                     <div className="flex flex-col gap-4 rounded-lg border bg-muted/20 p-4 sm:flex-row sm:items-center">
@@ -285,23 +286,23 @@ export default function MinProfilPage() {
                             )}
                         </button>
                         <div className="min-w-0 flex-1">
-                            <div className="font-medium">Profilbillede</div>
-                            <p className="text-sm text-muted-foreground">{PROFILE_PORTRAIT_TEXT}</p>
+                            <div className="font-medium">{t("profile.portrait")}</div>
+                            <p className="text-sm text-muted-foreground">{t("profile.portraitText")}</p>
                         </div>
                         <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium hover:bg-accent">
                             {uploadingPortrait ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                            Skift billede
+                            {t("profile.changePicture")}
                             <input type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" className="hidden" onChange={handlePortraitUpload} disabled={uploadingPortrait} />
                         </label>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
-                            <Label>Navn</Label>
+                            <Label>{t("profile.name")}</Label>
                             <Input value={name} onChange={e => setName(e.target.value)} />
                         </div>
                         <div className="space-y-1.5">
                             <Label className="flex items-center gap-1.5">
-                                CPR-nummer
+                                {t("profile.cpr")}
                                 <Lock className="h-3 w-3 text-muted-foreground" />
                             </Label>
                             <Input
@@ -309,47 +310,47 @@ export default function MinProfilPage() {
                                 disabled
                                 className="bg-muted/50 text-muted-foreground"
                             />
-                            <p className="text-[11px] text-muted-foreground">Kontakt DFKS for at ændre CPR-nummer</p>
+                            <p className="text-[11px] text-muted-foreground">{t("profile.contactAdminForCpr")}</p>
                         </div>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
-                            <Label>E-mail</Label>
+                            <Label>{t("profile.email")}</Label>
                             <Input type="email" value={email} onChange={e => setEmail(e.target.value)} />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Telefon</Label>
+                            <Label>{t("profile.phone")}</Label>
                             <Input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+45 XX XX XX XX" />
                         </div>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-[1fr_8rem_1fr]">
                         <div className="space-y-1.5">
-                            <Label>Adresse</Label>
-                            <Input value={streetAddress} onChange={e => setStreetAddress(e.target.value)} placeholder="Vejnavn og husnummer" />
+                            <Label>{t("profile.address")}</Label>
+                            <Input value={streetAddress} onChange={e => setStreetAddress(e.target.value)} placeholder={t("profile.addressPlaceholder")} />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Postnr.</Label>
-                            <Input value={postalCode} onChange={e => setPostalCode(e.target.value)} placeholder="1234" inputMode="numeric" />
+                            <Label>{t("profile.postalCode")}</Label>
+                            <Input value={postalCode} onChange={e => setPostalCode(e.target.value)} placeholder={t("profile.postalCodePlaceholder")} inputMode="numeric" />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>By</Label>
-                            <Input value={city} onChange={e => setCity(e.target.value)} placeholder="København" />
+                            <Label>{t("profile.city")}</Label>
+                            <Input value={city} onChange={e => setCity(e.target.value)} placeholder={t("profile.cityPlaceholder")} />
                         </div>
                     </div>
 
                     {profile && (
                         <div className="flex flex-wrap items-center gap-2 pt-1">
                             <Badge variant={profile.is_member ? "default" : "secondary"} className="text-[10px] font-normal">
-                                {profile.is_member ? "Aktivt medlem" : "Ikke-medlem"}
+                                {profile.is_member ? t("profile.activeMember") : t("profile.nonMember")}
                             </Badge>
                             {profile.member_no && (
                                 <Badge variant="outline" className="text-[10px] font-normal">
-                                    Medlemsnr. {profile.member_no}
+                                    {t("profile.memberNo").replace("{number}", profile.member_no)}
                                 </Badge>
                             )}
                             {profile.valid_from && (
                                 <Badge variant="outline" className="text-[10px] font-normal">
-                                    Medlem siden {new Date(profile.valid_from).toLocaleDateString("da-DK", { year: "numeric", month: "long" })}
+                                    {t("profile.memberSince").replace("{date}", new Date(profile.valid_from).toLocaleDateString(locale === "da" ? "da-DK" : "en-US", { year: "numeric", month: "long" }))}
                                 </Badge>
                             )}
                         </div>
@@ -361,38 +362,38 @@ export default function MinProfilPage() {
             <section className="rounded-lg border border-amber-200 dark:border-amber-900">
                 <div className="flex items-center gap-2 px-5 py-4 border-b border-amber-200 dark:border-amber-900">
                     <Heart className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                    <h2 className="font-medium">Kontakt i forbindelse med arv</h2>
+                    <h2 className="font-medium">{t("profile.inheritanceContact")}</h2>
                 </div>
                 <div className="p-5 space-y-4">
                     <div className="flex gap-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 px-3.5 py-3 text-xs text-amber-800 dark:text-amber-300">
                         <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                         <p>
-                            Rettigheder til vederlag fra DFKS er <strong>arvelige</strong>. Vi anbefaler at du registrerer en kontaktperson, så vi kan tage kontakt til dine nærmeste og sikre at rettigheder videregives korrekt.
+                            {t("profile.inheritanceIntro")}
                         </p>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
-                            <Label>Navn</Label>
-                            <Input value={kinName} onChange={e => setKinName(e.target.value)} placeholder="Fulde navn" />
+                            <Label>{t("profile.name")}</Label>
+                            <Input value={kinName} onChange={e => setKinName(e.target.value)} placeholder={t("profile.fullNamePlaceholder")} />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Relation</Label>
-                            <Input value={kinRelation} onChange={e => setKinRelation(e.target.value)} placeholder="f.eks. Ægtefælle, Barn, Søskende" />
+                            <Label>{t("profile.relation")}</Label>
+                            <Input value={kinRelation} onChange={e => setKinRelation(e.target.value)} placeholder={t("profile.relationPlaceholder")} />
                         </div>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
-                            <Label>Telefon</Label>
+                            <Label>{t("profile.phone")}</Label>
                             <Input type="tel" value={kinPhone} onChange={e => setKinPhone(e.target.value)} placeholder="+45 XX XX XX XX" />
                         </div>
                         <div className="space-y-1.5">
-                            <Label>E-mail</Label>
-                            <Input type="email" value={kinEmail} onChange={e => setKinEmail(e.target.value)} placeholder="kontakt@eksempel.dk" />
+                            <Label>{t("profile.email")}</Label>
+                            <Input type="email" value={kinEmail} onChange={e => setKinEmail(e.target.value)} placeholder={t("profile.contactEmailPlaceholder")} />
                         </div>
                     </div>
                     <div className="space-y-1.5">
-                        <Label>Noter (valgfrit)</Label>
-                        <Input value={kinNotes} onChange={e => setKinNotes(e.target.value)} placeholder="f.eks. advokat, notarforhold, særlige ønsker" />
+                        <Label>{t("profile.notesOptional")}</Label>
+                        <Input value={kinNotes} onChange={e => setKinNotes(e.target.value)} placeholder={t("profile.notesPlaceholder")} />
                     </div>
                 </div>
             </section>
@@ -402,7 +403,7 @@ export default function MinProfilPage() {
             <div className="flex justify-end">
                 <Button onClick={handleSave} disabled={saving} className="gap-2">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                    Gem ændringer
+                    {t("profile.saveChanges")}
                 </Button>
             </div>
 
@@ -420,12 +421,12 @@ export default function MinProfilPage() {
             />
             <Dialog open={personMatchOpen} onOpenChange={setPersonMatchOpen}>
                 <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
-                    <DialogHeader><DialogTitle>Vælg de navneprofiler, der er dig</DialogTitle></DialogHeader>
-                    <p className="text-sm text-muted-foreground">Søgningen inkluderer stavevarianter, manglende mellemnavne og initialer. Du kan vælge flere profiler fra samme database.</p>
+                    <DialogHeader><DialogTitle>{t("profile.personProfilesTitle")}</DialogTitle></DialogHeader>
+                    <p className="text-sm text-muted-foreground">{t("profile.personProfilesIntro")}</p>
                     <div className="space-y-3 rounded-md border bg-muted/30 p-3">
                         <div>
-                            <Label>Alternative navne</Label>
-                            <p className="text-xs text-muted-foreground">Tilføj andre stavemåder, mellemnavne eller tidligere krediteringsnavne. Resultaterne flettes sammen med de eksisterende.</p>
+                            <Label>{t("profile.alternativeNames")}</Label>
+                            <p className="text-xs text-muted-foreground">{t("profile.alternativeNamesIntro")}</p>
                         </div>
                         {altNavne.length > 0 && (
                             <div className="flex flex-wrap gap-2">
@@ -437,16 +438,16 @@ export default function MinProfilPage() {
                             </div>
                         )}
                         <div className="flex gap-2">
-                            <Input value={matchAlternativeName} onChange={event => setMatchAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addMatchAlternativeName() } }} placeholder="Tilføj en navnevariant" />
-                            <Button type="button" variant="outline" onClick={() => void addMatchAlternativeName()} disabled={!matchAlternativeName.trim() || personSearching}>Tilføj og søg</Button>
+                            <Input value={matchAlternativeName} onChange={event => setMatchAlternativeName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addMatchAlternativeName() } }} placeholder={t("profile.addNameVariant")} />
+                            <Button type="button" variant="outline" onClick={() => void addMatchAlternativeName()} disabled={!matchAlternativeName.trim() || personSearching}>{t("profile.addAndSearch")}</Button>
                         </div>
                     </div>
                     <PersonIdentityPicker candidates={personCandidates} selected={selectedPeople} loading={personSearching} error={personError} onSelect={candidate => { setSelectedPeople(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonError(null) }} />
                     {portraitOptions.length > 0 && (
                         <div className="space-y-2 rounded-md border bg-muted/30 p-3">
                             <div>
-                                <Label>Vælg profilbillede</Label>
-                                <p className="text-xs text-muted-foreground">{PROFILE_PORTRAIT_TEXT}</p>
+                                <Label>{t("profile.choosePortrait")}</Label>
+                                <p className="text-xs text-muted-foreground">{t("profile.portraitText")}</p>
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 {portraitOptions.map(([url, candidate]) => (
@@ -463,7 +464,7 @@ export default function MinProfilPage() {
                             </div>
                         </div>
                     )}
-                    <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>Annuller</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>Bekræft og find værker</Button></DialogFooter>
+                    <DialogFooter><Button variant="outline" onClick={() => setPersonMatchOpen(false)}>{t("common.cancel")}</Button><Button onClick={confirmPersonMatch} disabled={personSearching}>{t("profile.confirmAndFindWorks")}</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
             <Dialog open={portraitPreviewOpen} onOpenChange={setPortraitPreviewOpen}>

@@ -5,12 +5,9 @@ import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import {
-    Film,
-    FileText,
     Wallet,
     LogOut,
     UserCircle,
-    Layers,
     ScanSearch,
     Building2,
     Play,
@@ -20,7 +17,6 @@ import {
     Users2,
     Receipt,
     Scale,
-    Library,
     UserCheck,
     BrainCircuit,
     ShieldCheck,
@@ -198,12 +194,12 @@ export default function PortalLayout({
             icon: SHARED_NAV_ICONS.screenings,
         },
         {
-            label: "Kontraktgennemgang",
+            label: t("nav.contractReview"),
             href: "/portal/kontraktgennemgang",
             icon: ScanSearch,
         },
         {
-            label: "Min profil",
+            label: t("nav.myProfile"),
             href: "/portal/min-profil",
             icon: UserCircle,
         },
@@ -369,7 +365,7 @@ export default function PortalLayout({
                                 <SidebarMenuButton asChild>
                                     <SidebarNavigationLink href="/admin/organisationer">
                                         <ShieldCheck className="h-4 w-4" />
-                                        <span>Superadmin</span>
+                                        <span>{t("nav.superadmin")}</span>
                                     </SidebarNavigationLink>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
