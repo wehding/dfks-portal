@@ -16,6 +16,10 @@ export async function completeOnboarding(formData: FormData) {
   const firstName = (formData.get("first_name") as string)?.trim() ?? "";
   const lastName = (formData.get("last_name") as string)?.trim() ?? "";
   const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  const street = ((formData.get("address") as string) ?? "").trim();
+  const zip = ((formData.get("zip") as string) ?? "").trim();
+  const city = ((formData.get("city") as string) ?? "").trim();
+  const address = [street, [zip, city].filter(Boolean).join(" ")].filter(Boolean).join(", ") || null;
 
   let { error } = await supabase
     .from("rettighedshavere")
@@ -23,7 +27,7 @@ export async function completeOnboarding(formData: FormData) {
       full_name: fullName || undefined,
       email: (formData.get("email") as string) || undefined,
       phone: (formData.get("phone") as string) || null,
-      address: (formData.get("address") as string) || null,
+      address,
       cpr_no: encryptValue(formData.get("cpr")),
       bank_account: encryptValue(formData.get("bank_account")),
       gender: (formData.get("gender") as string) || null,
@@ -40,7 +44,7 @@ export async function completeOnboarding(formData: FormData) {
         full_name: fullName || undefined,
         email: (formData.get("email") as string) || undefined,
         phone: (formData.get("phone") as string) || null,
-        address: (formData.get("address") as string) || null,
+        address,
         cpr_no: encryptValue(formData.get("cpr")),
         bank_account: encryptValue(formData.get("bank_account")),
         opt_out_statistics: formData.get("opt_out_statistics") === "true",
