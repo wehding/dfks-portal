@@ -117,6 +117,7 @@ export default async function MineKontrakterPage() {
       <MineKontrakterClient
         initialContracts={normalizedContracts}
         myWorks={uniqueWorks}
+        rightsHolderId={rh?.id ?? ""}
       />
     </Suspense>
   );

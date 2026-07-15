@@ -47,9 +47,40 @@ export function isManualSeries(value: Pick<ManualWorkFormValue, "type">) {
   return value.type === "tv-serie" || value.type === "dokumentar-serie";
 }
 
+export function normalizeManualWorkTitle(title: string) {
+  return title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(the|en|et|den|det)\b/g, " ")
+    .replace(/[^a-z0-9æøå\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function isExactManualWorkMatch(
+  candidate: { title: string; year: number | null },
+  manual: { title: string; year: number | null },
+) {
+  return Boolean(
+    manual.year
+    && candidate.year === manual.year
+    && normalizeManualWorkTitle(candidate.title) === normalizeManualWorkTitle(manual.title),
+  );
+}
+
+export function manualWorkDuplicateDecision(hasExactMatch: boolean, forceCreateDuplicate: boolean) {
+  if (!hasExactMatch) return "create" as const;
+  return forceCreateDuplicate ? "create_pending" as const : "block" as const;
+}
+
 export function validateManualWork(value: ManualWorkFormValue, locale = "da"): string | null {
   const da = locale === "da";
   if (!value.title.trim()) return da ? "Angiv værkets titel." : "Enter the work title.";
+  const premiereYear = Number.parseInt(value.year, 10);
+  if (!/^\d{4}$/.test(value.year.trim()) || !Number.isFinite(premiereYear)) {
+    return da ? "Angiv et gyldigt premiereår med fire cifre." : "Enter a valid four-digit premiere year.";
+  }
   if (!isManualSeries(value)) return null;
 
   const episodeCount = Number.parseInt(value.episode_count, 10);

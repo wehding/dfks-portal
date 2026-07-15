@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   contractDataToManualWorkSeed,
   emptyManualWorkForm,
+  isExactManualWorkMatch,
+  manualWorkDuplicateDecision,
   validateManualWork,
 } from "../lib/manual-work";
 
@@ -47,6 +49,7 @@ test("series validation accepts selected AI episodes", () => {
   const value = emptyManualWorkForm({
     title: "Serie",
     type: "dokumentar-serie",
+    year: "2026",
     season_number: "1",
     episode_count: "6",
     selected_episodes: [2, 4],
@@ -55,8 +58,33 @@ test("series validation accepts selected AI episodes", () => {
   assert.equal(validateManualWork(value, "da"), null);
 });
 
+test("manual work requires a four-digit premiere year", () => {
+  const missingYear = emptyManualWorkForm({ title: "Film" });
+  assert.equal(validateManualWork(missingYear, "da"), "Angiv et gyldigt premiereår med fire cifre.");
+
+  const validYear = { ...missingYear, year: "2026" };
+  assert.equal(validateManualWork(validYear, "da"), null);
+});
+
+test("duplicate matching requires normalized title and the same premiere year", () => {
+  assert.equal(isExactManualWorkMatch(
+    { title: "Den Store Film!", year: 2026 },
+    { title: "store film", year: 2026 },
+  ), true);
+  assert.equal(isExactManualWorkMatch(
+    { title: "Den Store Film", year: 2025 },
+    { title: "Store Film", year: 2026 },
+  ), false);
+});
+
+test("manual duplicate policy only requires approval for an explicitly forced exact match", () => {
+  assert.equal(manualWorkDuplicateDecision(false, false), "create");
+  assert.equal(manualWorkDuplicateDecision(true, false), "block");
+  assert.equal(manualWorkDuplicateDecision(true, true), "create_pending");
+});
+
 test("series validation requires a manual episode when no episode count is known", () => {
-  const missingEpisode = emptyManualWorkForm({ title: "Serie", type: "tv-serie" });
+  const missingEpisode = emptyManualWorkForm({ title: "Serie", type: "tv-serie", year: "2026" });
   assert.equal(validateManualWork(missingEpisode, "da"), "Angiv mindst ét afsnit.");
 
   const withEpisode = { ...missingEpisode, episode_number: "7" };
