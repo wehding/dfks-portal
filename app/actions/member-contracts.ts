@@ -139,6 +139,7 @@ export async function saveUploadedContract(params: {
   premiereDate?: string;
   season?: number;
   episodes?: { number: number; role: string }[];
+  deferAiJob?: boolean;
 }) {
   const db = createServiceClient();
   const user = await currentUser();
@@ -195,19 +196,57 @@ export async function saveUploadedContract(params: {
     return { success: false, error: validationError.message };
   }
 
-  const { error: jobError } = await db.from("contract_ai_jobs").insert({
-    contract_id: saved.id,
-    org_id: orgId,
-    status: "queued",
-    priority: 0,
-  });
+  if (!params.deferAiJob) {
+    const { error: jobError } = await db.from("contract_ai_jobs").insert({
+      contract_id: saved.id,
+      org_id: orgId,
+      status: "queued",
+      priority: 0,
+    });
 
-  if (jobError) {
-    console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
+    if (jobError) {
+      console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
+    }
   }
 
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, contract: saved };
+}
+
+export async function queueUploadedContractAiJob(contractId: string) {
+  const db = createServiceClient();
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const { data: rh } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet" };
+  const orgId = await requireOrgId(db, user.id);
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id")
+    .eq("id", contractId)
+    .eq("org_id", orgId)
+    .eq("rights_holder_id", rh.id)
+    .maybeSingle();
+  if (!contract) return { success: false, error: "Kontrakten blev ikke fundet" };
+
+  const { data: existing } = await db
+    .from("contract_ai_jobs")
+    .select("id")
+    .eq("contract_id", contractId)
+    .in("status", ["queued", "processing"])
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { success: true, alreadyQueued: true };
+
+  const { error } = await db.from("contract_ai_jobs").insert({
+    contract_id: contractId,
+    org_id: orgId,
+    status: "queued",
+    priority: 0,
+  });
+  if (error) return { success: false, error: error.message };
+  return { success: true, alreadyQueued: false };
 }
 
 export async function linkContractToWork(contractId: string, workId: string | null) {

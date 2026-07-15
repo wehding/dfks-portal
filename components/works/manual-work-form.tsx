@@ -44,8 +44,16 @@ export function ManualWorkFormFields({ value, onChange, locale }: Props) {
           </select>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-muted-foreground">{t("works.yearField")}</Label>
-          <Input value={value.year} onChange={event => update("year", event.target.value)} inputMode="numeric" />
+          <Label className="text-sm font-medium text-muted-foreground">
+            {locale === "da" ? "Premiereår" : "Premiere year"} <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            required
+            value={value.year}
+            onChange={event => update("year", event.target.value.replace(/\D/g, "").slice(0, 4))}
+            inputMode="numeric"
+            placeholder="2026"
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-sm font-medium text-muted-foreground">{t("works.durationField")}</Label>

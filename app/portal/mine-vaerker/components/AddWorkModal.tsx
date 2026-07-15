@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Loader2, Plus, Search, X } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,8 +15,7 @@ import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPrem
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
-import { WORK_TYPES } from "@/lib/work-types";
-import { ManualWorkFormFields } from "@/components/works/manual-work-form";
+import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
@@ -201,27 +200,6 @@ function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
     .filter(editor => editor.name.trim());
 }
 
-function typeLabel(type: string | null, lang: string) {
-  if (!type) return "";
-  const t = type.toLowerCase();
-  if (lang === "en") {
-    if (t === "spillefilm") return "Feature Film";
-    if (t === "kortfilm") return "Short Film";
-    if (t === "tv-serie" || t === "serie") return "TV Series";
-    if (t === "dokumentarfilm") return "Documentary";
-    if (t === "dokumentar-serie") return "Docu-Series";
-    if (t === "dokudrama") return "Docudrama";
-    return type;
-  }
-  if (t === "spillefilm") return "Spillefilm";
-  if (t === "kortfilm") return "Kortfilm";
-  if (t === "tv-serie" || t === "serie") return "Tv-serie";
-  if (t === "dokumentarfilm") return "Dokumentarfilm";
-  if (t === "dokumentar-serie") return "Dokumentar-serie";
-  if (t === "dokudrama") return "Dokudrama";
-  return type;
-}
-
 function numberOrNull(val: string) {
   const n = parseInt(val);
   return isNaN(n) ? null : n;
@@ -390,6 +368,7 @@ export function AddWorkModal({
   const [hasSearched, setHasSearched]         = useState(false);
   const [searchError, setSearchError]         = useState<string | null>(null);
   const [manualLinkRetry, setManualLinkRetry] = useState<{ workId: string; pending: boolean } | null>(null);
+  const [manualDuplicateMatches, setManualDuplicateMatches] = useState<Array<{ id: string; title: string; type: string; year: number | null; poster_url: string | null }>>([]);
   const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
@@ -445,6 +424,7 @@ export function AddWorkModal({
     setHasSearched(false);
     setSearchError(null);
     setManualLinkRetry(null);
+    setManualDuplicateMatches([]);
   }, [initialManualWork, initialQuery]);
 
   useEffect(() => {
@@ -542,7 +522,7 @@ export function AddWorkModal({
     void reloadAssignments();
   };
 
-  const handleAddWork = async () => {
+  const handleAddWork = async (options: { forceDuplicate?: boolean } = {}) => {
     if ((!manualMode && !pickedUnifiedResult) || !rightsHolderId) return;
     setIsSaving(true);
     try {
@@ -577,6 +557,7 @@ export function AddWorkModal({
           contractId: manualWork.contract_id.trim() || null,
           reuseWorkId: manualLinkRetry?.workId ?? null,
           reusePending: manualLinkRetry?.pending ?? false,
+          forceCreateDuplicate: Boolean(options.forceDuplicate),
           workData: {
             title: manualWork.title,
             type: manualWork.type,
@@ -592,10 +573,15 @@ export function AddWorkModal({
           },
         });
         if (!res.success) {
+          if ("duplicate" in res && res.duplicate && "matches" in res && Array.isArray(res.matches)) {
+            setManualDuplicateMatches(res.matches);
+            return;
+          }
           if (res.workId && res.retryable) setManualLinkRetry({ workId: res.workId, pending: Boolean(res.pending) });
           throw new Error(res.error ?? t("works.createFailed"));
         }
         setManualLinkRetry(null);
+        setManualDuplicateMatches([]);
         onWorkAdded(res.pending ? t("works.pendingApproval") : t("works.added"), true);
         await closeAfterSuccess();
         return;
@@ -748,161 +734,100 @@ export function AddWorkModal({
         </button>
       </div>
 
-      <div className="flex flex-col gap-2 mb-4 sm:flex-row">
-        <Input
-          autoFocus
-          placeholder={t("works.addSearchPlaceholder")}
-          value={addQuery}
-          onChange={e => setAddQuery(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === "Enter") handleSearch();
-          }}
-        />
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={`${selectCls} sm:w-48`}>
-          <option value="all">Type</option>
-          {WORK_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
-        </select>
-        <Button variant="outline" onClick={() => handleSearch()} disabled={isSearching} className="w-full gap-1.5 shrink-0 sm:w-auto">
-          {isSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} {t("common.searchButton")}
-        </Button>
-      </div>
+      <WorkSelectionPanel
+        query={addQuery}
+        onQueryChange={setAddQuery}
+        onSearch={() => void handleSearch()}
+        isSearching={isSearching}
+        hasSearched={hasSearched}
+        searchError={searchError}
+        results={unifiedResults}
+        selectedId={pickedUnifiedResult?.id}
+        onSelect={item => void pickUnifiedResult(item)}
+        typeFilter={typeFilter}
+        onTypeFilterChange={setTypeFilter}
+        manualMode={manualMode}
+        onManualModeChange={manual => {
+          setManualMode(manual);
+          if (manual) {
+            setPickedUnifiedResult(null);
+            setAddCoEditors([]);
+          }
+        }}
+        manualWork={manualWork}
+        onManualWorkChange={setManualWork}
+        locale={locale}
+        autoFocus
+        renderSelectedDetails={() => (
+          <>
+            {detailsLoading && (
+              <div className="flex items-center justify-center gap-2 p-3 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {locale === "da" ? "Indlæser detaljer…" : "Loading details…"}
+              </div>
+            )}
+            {!detailsLoading && showSeriesFields && seriesEpisodePicker}
+          </>
+        )}
+        manualExtra={(
+          <>
+            <div className="mt-4 space-y-1.5">
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
+              <Textarea value={addComment} onChange={e => setAddComment(e.target.value)} placeholder={t("works.commentPlaceholder")} />
+            </div>
+            {manualLinkRetry && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                <p>{t("works.linkRetryMessage")}</p>
+                <Button type="button" variant="outline" size="sm" className="mt-2" onClick={() => void handleAddWork()} disabled={isSaving}>
+                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {t("works.retryLink")}
+                </Button>
+              </div>
+            )}
+            {manualDuplicateMatches.length > 0 && (
+              <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                <p className="font-medium">{locale === "da" ? "Der findes allerede et værk med samme titel og premiereår." : "A work with the same title and premiere year already exists."}</p>
+                <div className="mt-3 space-y-2">
+                  {manualDuplicateMatches.map(match => (
+                    <Button
+                      key={match.id}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mr-2"
+                      onClick={() => void pickUnifiedResult({
+                        id: `local:${match.id}`,
+                        local_id: match.id,
+                        title: match.title,
+                        type: match.type,
+                        year: match.year,
+                        poster_url: match.poster_url,
+                        description: null,
+                        director: null,
+                        genre: null,
+                        duration_minutes: null,
+                        sources: ["local"],
+                      })}
+                    >
+                      {locale === "da" ? "Vælg eksisterende værk" : "Select existing work"}
+                    </Button>
+                  ))}
+                  <Button type="button" size="sm" onClick={() => void handleAddWork({ forceDuplicate: true })} disabled={isSaving}>
+                    {locale === "da" ? "Opret nyt alligevel – kræver godkendelse" : "Create new anyway – requires approval"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      />
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        <Button
-            type="button"
-            size="sm"
-	            variant={manualMode ? "default" : "outline"}
-	            onClick={() => {
-	              if (!manualMode) {
-                  setManualMode(true);
-                  setManualWork(prev => prev.title.trim() ? prev : { ...prev, title: addQuery });
-	                setPickedUnifiedResult(null);
-	                setAddCoEditors([]);
-                } else {
-                  setManualMode(false);
-	              }
-	            }}
-	          >
-            {manualMode ? t("works.backToSearch") : t("works.enterManually")}
-        </Button>
-      </div>
-
-      <div className="mb-4 space-y-1.5">
+      <div className="my-4 space-y-1.5">
         <Label className="text-sm font-medium text-muted-foreground">{t("works.yourRole")}</Label>
         <select value={addRole} onChange={e => setAddRole(e.target.value)} className={selectCls}>
-          {roleOptions.map(r => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
+          {roleOptions.map(role => <option key={role} value={role}>{role}</option>)}
         </select>
       </div>
-
-      {manualMode && (
-        <div className="mb-4 rounded-lg border p-4">
-          <p className="mb-3 text-sm font-semibold text-foreground">{t("works.manualWorkData")}</p>
-          <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale={locale} />
-          <div className="mt-4 space-y-1.5">
-            <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
-            <Textarea
-              value={addComment}
-              onChange={e => setAddComment(e.target.value)}
-              placeholder={t("works.commentPlaceholder")}
-            />
-          </div>
-          {manualLinkRetry && (
-            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-              <p>{t("works.linkRetryMessage")}</p>
-              <Button type="button" variant="outline" size="sm" className="mt-2" onClick={handleAddWork} disabled={isSaving}>
-                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {t("works.retryLink")}
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {!manualMode && searchError && (
-        <div className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
-          {searchError}
-        </div>
-      )}
-
-      {!manualMode && hasSearched && !isSearching && !searchError && unifiedResults.length === 0 && (
-        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
-          <p>{t("works.noDatabaseMatchManualHint")}</p>
-          <Button type="button" size="sm" className="mt-3" onClick={() => {
-            setManualMode(true);
-            setManualWork(prev => prev.title.trim() ? prev : { ...prev, title: addQuery });
-          }}>
-            {t("works.enterWorkDataManually")}
-          </Button>
-        </div>
-      )}
-
-
-      {!manualMode && unifiedResults.length > 0 && (
-        <div className="mb-4">
-          <p className="text-xs font-medium text-muted-foreground mb-2">
-            {locale === "da" ? "Søgeresultater" : "Search results"} ({unifiedResults.filter(item => typeFilter === "all" || item.type === typeFilter).length})
-          </p>
-          <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
-            {unifiedResults.filter(item => typeFilter === "all" || item.type === typeFilter).map(item => {
-              const sel = pickedUnifiedResult?.id === item.id;
-              return (
-                <React.Fragment key={item.id}>
-                  <button
-                    onClick={() => pickUnifiedResult(item)}
-                    className={`text-left px-3 py-2.5 rounded-md border text-sm transition-colors flex gap-3 items-start w-full ${
-                      sel ? "border-primary bg-primary/10" : "border-border hover:bg-muted"
-                    }`}
-                  >
-                    {item.poster_url && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.poster_url} alt={item.title} className="w-8 h-11 object-cover rounded shrink-0" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-foreground truncate">{item.title}</p>
-                        <div className="flex gap-1">
-                          {item.sources.map(src => (
-                            <span
-                              key={src}
-                              className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
-                                src === "local"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : src === "dfi"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-purple-100 text-purple-800"
-                              }`}
-                            >
-                              {src === "local" ? (locale === "da" ? "Findes allerede" : "Already exists") : src}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {item.year ?? "-"} · {typeLabel(item.type, locale)} {item.director ? `· Instruktør: ${item.director}` : ""}
-                      </p>
-                      {item.description && (
-                        <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{item.description}</p>
-                      )}
-                    </div>
-                  </button>
-                  {sel && detailsLoading && (
-                    <div className="flex items-center justify-center p-3 text-sm text-muted-foreground gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {locale === "da" ? "Indlæser detaljer…" : "Loading details…"}
-                    </div>
-                  )}
-                  {sel && !detailsLoading && showSeriesFields && seriesEpisodePicker}
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       <div className="space-y-4 border-t pt-4">
         {(pickedUnifiedResult || manualMode) && (
@@ -974,7 +899,7 @@ export function AddWorkModal({
                 {chosenSummary}
               </strong>
             </p>
-            <Button onClick={handleAddWork} disabled={isSaving || (!manualMode && !pickedUnifiedResult) || (manualMode && !manualWork.title.trim()) || missingSeriesEpisodes} className="w-full gap-2 sm:w-auto">
+            <Button onClick={() => void handleAddWork()} disabled={isSaving || (!manualMode && !pickedUnifiedResult) || (manualMode && !manualWork.title.trim()) || missingSeriesEpisodes} className="w-full gap-2 sm:w-auto">
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               {isSaving ? t("works.adding") : t("works.addWork")}
             </Button>
