@@ -543,6 +543,25 @@ export default function MineVaerkerClient({
               </>
             ) : (
               <>
+              <div className="relative w-full sm:w-56">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+                <Input
+                  placeholder={t("works.searchPlaceholder")}
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="h-9 w-full pl-8 pr-8 text-sm"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border text-muted-foreground hover:text-foreground"
+                    aria-label="Tøm søgefelt"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
               <Select value={catFilter} onValueChange={setCatFilter}>
                 <SelectTrigger className="h-9 w-full text-sm sm:w-[160px]"><SelectValue placeholder="Type" /></SelectTrigger>
                 <SelectContent>
@@ -564,25 +583,6 @@ export default function MineVaerkerClient({
                 </SelectContent>
               </Select>
               </>
-            )}
-          </div>
-          <div className="relative w-full md:w-auto">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-            <Input
-              placeholder={t("works.searchPlaceholder")}
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="h-9 w-full pl-8 pr-8 text-sm md:w-56"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded-full border text-muted-foreground hover:text-foreground"
-                aria-label="Tøm søgefelt"
-              >
-                <X className="h-3 w-3" />
-              </button>
             )}
           </div>
           <ResetFiltersButton
@@ -905,9 +905,9 @@ export default function MineVaerkerClient({
         open={helpOpen}
         onOpenChange={setHelpOpen}
         title="Hjælp til Mine værker"
-        intro="Kort overblik over de vigtigste handlinger på siden."
+        intro="Sådan finder, tilføjer og retter du de værker, du har arbejdet på."
         topics={MINE_VAERKER_HELP}
-        storageKey="dfks-help-mine-vaerker-v2"
+        storageKey="dfks-help-mine-vaerker-v3"
       />
 
       <Dialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>

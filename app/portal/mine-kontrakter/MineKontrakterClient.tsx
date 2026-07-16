@@ -920,6 +920,7 @@ export default function MineKontrakterClient({
                                 })}
                                 selected={selectedEpisodes}
                                 onSelectedChange={setSelectedEpisodes}
+                                showSeason={false}
                                 compact
                               />
                             ) : null}
@@ -1044,9 +1045,9 @@ export default function MineKontrakterClient({
         open={helpOpen}
         onOpenChange={setHelpOpen}
         title="Hjælp til Mine kontrakter"
-        intro="Praktisk forklaring af upload, kobling og validering."
+        intro="Sådan uploader, forbinder og følger du dine kontrakter."
         topics={MINE_KONTRAKTER_HELP}
-        storageKey="dfks-help-mine-kontrakter-v2"
+        storageKey="dfks-help-mine-kontrakter-v3"
       />
 
       {/* Tilføj allonge-dialog */}

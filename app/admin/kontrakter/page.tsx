@@ -2348,6 +2348,7 @@ function AdminKontrakterContent() {
                                                             })}
                                                             selected={selectedEpisodes}
                                                             onSelectedChange={setSelectedEpisodes}
+                                                            showSeason={false}
                                                             compact
                                                         />
                                                     ) : null}
