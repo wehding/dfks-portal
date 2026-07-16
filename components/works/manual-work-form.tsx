@@ -112,6 +112,7 @@ export function ManualWorkFormFields({ value, onChange, locale }: Props) {
               selected={value.selected_episodes}
               onSelectedChange={episodes => update("selected_episodes", episodes)}
               label={locale === "da" ? "Vælg de afsnit, du har arbejdet på" : "Select the episodes you worked on"}
+              showSeason={false}
               compact={false}
             />
           ) : (
@@ -133,8 +134,6 @@ export function ManualWorkFormFields({ value, onChange, locale }: Props) {
           )}
         </div>
       )}
-
-      <p className="text-xs text-muted-foreground">{t("works.posterHint")}</p>
     </div>
   );
 }

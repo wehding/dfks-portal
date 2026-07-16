@@ -2703,6 +2703,7 @@ export default function VaerksadministrationPage() {
                         })}
                         selected={addSelectedEpisodes}
                         onSelectedChange={setAddSelectedEpisodes}
+                        showSeason={false}
                         compact
                       />
                       <p className="mt-2 text-xs text-muted-foreground">

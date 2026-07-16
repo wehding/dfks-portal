@@ -3,54 +3,64 @@ import type { HelpTopic } from "@/components/help/contextual-help";
 export const MINE_KONTRAKTER_HELP: HelpTopic[] = [
   {
     title: "Upload kontrakt",
-    body: "Upload en eller flere kontrakter. Systemet AI-læser kontrakterne og prøver at finde arbejdstitel, datoer, produktionsselskab og rettighedsmarkeringer.",
+    body: "Upload en eller flere kontrakter. Systemet aflæser kontrakterne og udfylder forslag til blandt andet værktitel, datoer, produktionsselskab og rettigheder.",
     tips: [
       "Du kan uploade op til 15 kontrakter ad gangen.",
-      "Ved flere kontrakter prøver systemet selv at koble dem til dine værker.",
+      "Kontroller de aflæste oplysninger, da du altid selv skal sikre, at de er korrekte.",
+      "Når du uploader flere kontrakter, forsøger systemet at forbinde dem med de rigtige værker.",
     ],
   },
   {
     title: "Forbind med værk",
-    body: "Kontrakten skal være forbundet med det rigtige værk for at kunne indgå korrekt i rettighedssystemet. Kontroller især kontrakter med mærket Mangler værk.",
+    body: "En kontrakt skal være forbundet med det værk, den handler om. Kontroller især kontrakter med mærket Mangler værk.",
     tips: [
-      "Hvis en kontrakt er koblet forkert eller slet ikke er koblet, kan den ikke danne grundlag for rettighedsbetaling.",
-      "Du kan forbinde værket i kontraktens redigeringsvindue.",
+      "Åbn kontrakten for at søge efter værket eller oprette det, hvis det ikke findes endnu.",
+      "En forkert eller manglende forbindelse kan betyde, at kontrakten ikke indgår korrekt i beregningen af rettigheder.",
     ],
   },
   {
-    title: "Mærker på kontrakter",
-    body: "Mangler værk vises før Afventer validering, fordi DFKS ikke kan validere kontrakten korrekt, før værket er valgt. Når værket er koblet, kan valideringsstatus vises.",
+    title: "Status på kontrakten",
+    body: "Mærkerne viser, om kontrakten mangler et værk, afventer gennemgang eller er færdigbehandlet. Hvis der står Mangler værk, skal du først forbinde kontrakten med det rigtige værk.",
   },
   {
     title: "Rettigheder",
-    body: "Rettighedsmærkerne viser de AI-fundne forhold, f.eks. overenskomst, kreditering, Copydan, streaming, AI/datamining og fremtidige rettigheder.",
+    body: "Rettighedsmærkerne giver et hurtigt overblik over de forhold, systemet har aflæst i kontrakten, for eksempel overenskomst, kreditering, Copydan, streaming, datamining og fremtidige rettigheder.",
+    tips: ["Åbn kontrakten for at kontrollere oplysningerne og se flere detaljer."],
   },
   {
-    title: "Kommentarer",
-    body: "Du kan skrive en kommentar til DFKS på den enkelte kontrakt. Svar fra DFKS vises samme sted og markeres i menuen, indtil du har åbnet dem.",
+    title: "Beskeder til DFKS",
+    body: "Du kan skrive til DFKS direkte på den enkelte kontrakt. Svar vises i samme samtale, og nye beskeder markeres, indtil du har åbnet dem.",
   },
 ];
 
 export const MINE_VAERKER_HELP: HelpTopic[] = [
   {
     title: "Tilføj værk",
-    body: "Brug søgning først, så systemet kan genbruge værker, der allerede findes. Hvis værket er en serie, kan du vælge præcis de afsnit, du har klippet, inden du sender oprettelsen.",
+    body: "Her kan du tilknytte film, serier og andre værker, som du har arbejdet på. Søg efter titlen, vælg værket og angiv din rolle. For serier vælger du også de afsnit, du har arbejdet på.",
     tips: [
-      "Lokale match kobler dig direkte på det eksisterende værk.",
-      "DFI/TMDB-oprettelser og manuelle oprettelser kan kræve administratorgodkendelse.",
+      "Vælg et eksisterende værk, når den rigtige titel allerede findes.",
+      "Hvis titlen ikke kan findes, kan du indtaste værkets oplysninger manuelt.",
     ],
   },
   {
-    title: "Søg nye titler på dit navn",
-    body: "Søgningen finder nye titler, som ikke allerede optræder på din værksliste. Resultater fra lokale data, DFI, TMDB og Wikidata samles, så du kan vælge de relevante titler.",
+    title: "Værkssøgning",
+    body: "Søgningen viser først værker, der allerede er registreret hos DFKS. Den kan også hente titeloplysninger fra Det Danske Filminstitut (DFI) og den internationale filmdatabase TMDB, så du kan finde og tilknytte det rigtige værk.",
+    tips: [
+      "Under din profil kan du søge efter nye titler, som du har arbejdet på.",
+      "Kontroller titel, premiereår og værktype, før du tilføjer værket.",
+    ],
   },
   {
-    title: "Kontraktstatus",
-    body: "Mangler kontrakt betyder, at systemet ikke kan se en valideret kontrakt på værket endnu. Klik på mærket for at uploade en kontrakt direkte til værket.",
-    tips: ["Værk tilknyttet betyder, at der findes en kontraktforbindelse til værket."],
+    title: "Rediger værksoplysninger",
+    body: "Klik på et værk for at rette din rolle, vælge afsnit eller foreslå ændringer til værkets oplysninger. Ændringer til titel, type, premiereår og andre fælles værksdata sendes til administrator til gennemgang.",
+    tips: ["De nuværende værksoplysninger bliver stående, mens dit forslag behandles."],
   },
   {
-    title: "Rettelser og admin-kommentarer",
-    body: "Når du retter værksdata, sendes ændringen til administrator. Klik på værket for at se status, kommentarer og hvilken type request kommentaren handler om.",
+    title: "Godkendelse og beskeder",
+    body: "Nye eller ændrede oplysninger kan kræve godkendelse fra administrator. Det gælder blandt andet, hvis du ændrer oplysninger hentet fra en filmdatabase, eller hvis en manuel oprettelse ligner et værk, der allerede findes.",
+    tips: [
+      "Skriv en kort bemærkning til administrator, når du sender en rettelse eller manuel oprettelse til godkendelse.",
+      "Klik på værket for at følge status og læse eller besvare administratorens kommentarer.",
+    ],
   },
 ];

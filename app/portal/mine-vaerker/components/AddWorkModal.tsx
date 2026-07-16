@@ -716,6 +716,7 @@ export function AddWorkModal({
             selected={selectedEpisodes}
             onSelectedChange={setSelectedEpisodes}
             label={locale === "da" ? "Vælg de afsnit, du har arbejdet på" : "Select the episodes you worked on"}
+            showSeason={false}
             compact={false}
           />
         </div>
