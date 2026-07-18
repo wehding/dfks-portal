@@ -8,6 +8,7 @@ import {
   manualWorkDuplicateDecision,
   validateManualWork,
 } from "../lib/manual-work";
+import { inferSeriesWorkFields } from "../lib/series-episodes";
 
 test("contract type filters automatic work search when matching results exist", () => {
   assert.equal(contractWorkTypeFilter("tvSeries", [{ type: "spillefilm" }, { type: "tv-serie" }]), "tv-serie");
@@ -98,4 +99,13 @@ test("series validation requires a manual episode when no episode count is known
 
   const withEpisode = { ...missingEpisode, episode_number: "7" };
   assert.equal(validateManualWork(withEpisode, "da"), null);
+});
+
+test("series correction fields are inferred from an SxxExx title", () => {
+  assert.deepEqual(inferSeriesWorkFields({ title: "Frontlinjen - S02E04", episodeCount: 8 }), {
+    seasonNumber: 2,
+    episodeNumber: 4,
+    seasonCount: 2,
+    episodeCount: 8,
+  });
 });

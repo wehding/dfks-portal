@@ -441,6 +441,7 @@ export async function getContractValidation(contractId: string) {
   });
 
   const linkedEpisodes: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number; role: string | null }> = [];
+  const episodeOptions: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number }> = [];
   if (relatedWork && contract.rights_holder_id) {
     const parentId = relatedWork.parent_work_id ?? relatedWork.id;
     const { data: relatedWorks } = await db
@@ -461,12 +462,13 @@ export async function getContractValidation(contractId: string) {
     const roleByWork = new Map((assignments ?? []).map(item => [item.work_id, item.role]));
 
     for (const episode of episodeWorks) {
-      const isDirectContractEpisode = episode.id === relatedWork.id;
-      if (!isDirectContractEpisode && !roleByWork.has(episode.id)) continue;
       const parsed = parseLocalEpisodeCode(episode.title);
       const seasonNumber = episode.season_number ?? parsed?.seasonNumber;
       const episodeNumber = episode.episode_number ?? parsed?.episodeNumber;
       if (seasonNumber == null || episodeNumber == null) continue;
+      episodeOptions.push({ id: episode.id, title: episode.title, seasonNumber, episodeNumber });
+      const isDirectContractEpisode = episode.id === relatedWork.id;
+      if (!isDirectContractEpisode && !roleByWork.has(episode.id)) continue;
       linkedEpisodes.push({
         id: episode.id,
         title: episode.title,
@@ -476,10 +478,87 @@ export async function getContractValidation(contractId: string) {
       });
     }
     linkedEpisodes.sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
+    episodeOptions.sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
   }
 
   const isSeriesWork = relatedWork?.type === "tv-serie" || relatedWork?.type === "dokumentar-serie" || Boolean(relatedWork?.parent_work_id);
-  return { success: true, extractedData, linkedEpisodes, isSeriesWork };
+  return { success: true, extractedData, linkedEpisodes, episodeOptions, isSeriesWork };
+}
+
+export async function updateAdminContractEpisodeAssignments(params: {
+  contractId: string;
+  selectedWorkIds: string[];
+}) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: contract } = await db
+    .from("contracts")
+    .select("id, org_id, rights_holder_id, works(id, parent_work_id, type)")
+    .eq("id", params.contractId)
+    .single();
+  if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
+  if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  if (!contract.rights_holder_id) return { success: false, error: "Kontrakten mangler et medlem" };
+
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
+  if (!relatedWork) return { success: false, error: "Kontrakten mangler et værk" };
+  const parentId = relatedWork.parent_work_id ?? relatedWork.id;
+  const { data: relatedWorks, error: worksError } = await db
+    .from("works")
+    .select("id, title, season_number, episode_number, parent_work_id")
+    .eq("org_id", contract.org_id)
+    .or(`id.eq.${parentId},parent_work_id.eq.${parentId}`);
+  if (worksError) return { success: false, error: worksError.message };
+
+  const episodeWorks = (relatedWorks ?? []).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
+  const allowedIds = new Set(episodeWorks.map(item => item.id));
+  const selectedIds = [...new Set(params.selectedWorkIds.filter(id => allowedIds.has(id)))];
+  if (selectedIds.length !== new Set(params.selectedWorkIds).size) {
+    return { success: false, error: "Et eller flere valgte afsnit tilhører ikke kontraktens serie" };
+  }
+
+  const episodeIds = [...allowedIds];
+  const { data: existing, error: existingError } = episodeIds.length > 0
+    ? await db
+      .from("work_assignments")
+      .select("id, work_id, role")
+      .eq("org_id", contract.org_id)
+      .eq("rights_holder_id", contract.rights_holder_id)
+      .in("work_id", episodeIds)
+    : { data: [], error: null };
+  if (existingError) return { success: false, error: existingError.message };
+
+  const selectedSet = new Set(selectedIds);
+  const existingWorkIds = new Set((existing ?? []).map(item => item.work_id));
+  const removeIds = (existing ?? []).filter(item => !selectedSet.has(item.work_id)).map(item => item.id);
+  const role = (existing ?? []).find(item => item.role)?.role ?? "Klipper";
+  const additions = selectedIds.filter(id => !existingWorkIds.has(id)).map(workId => ({
+    org_id: contract.org_id,
+    work_id: workId,
+    rights_holder_id: contract.rights_holder_id,
+    role,
+  }));
+  if (additions.length > 0) {
+    const { error } = await db.from("work_assignments").upsert(additions, { onConflict: "work_id,rights_holder_id,role" });
+    if (error) return { success: false, error: error.message };
+  }
+  if (removeIds.length > 0) {
+    const { error } = await db.from("work_assignments").delete().in("id", removeIds);
+    if (error) return { success: false, error: error.message };
+  }
+
+  const { error: contractError } = await db
+    .from("contracts")
+    .update({ work_id: selectedIds.length === 1 ? selectedIds[0] : parentId })
+    .eq("id", contract.id)
+    .eq("org_id", contract.org_id);
+  if (contractError) return { success: false, error: contractError.message };
+
+  revalidatePath("/admin/kontrakter");
+  revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/portal/mine-vaerker");
+  return { success: true, selectedWorkIds: selectedIds };
 }
 
 export async function saveContractValidation(params: { contractId: string; extractedData: Record<string, unknown> }) {
@@ -641,6 +720,7 @@ export async function addAdminContractComment(contractId: string, message: strin
       author_role: "admin",
       message: text,
       admin_read_at: new Date().toISOString(),
+      member_read_at: null,
     })
     .select("id, author_role, message, created_at, member_read_at, admin_read_at")
     .single();

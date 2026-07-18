@@ -13,7 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
-import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, inferSeriesWorkFields, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 import { createClientId } from "@/lib/client-id";
 
@@ -43,6 +43,8 @@ interface WorkCorrectionForm {
   year: string;
   duration_minutes: string;
   season_count: string;
+  season_number: string;
+  episode_number: string;
   episode_count: string;
   genre: string;
   director: string;
@@ -129,13 +131,22 @@ function displayRole(role: string | null | undefined) {
 }
 
 function workToCorrectionForm(w: Work): WorkCorrectionForm {
+  const series = inferSeriesWorkFields({
+    title: w.title,
+    seasonCount: w.season_count,
+    seasonNumber: w.season_number,
+    episodeNumber: w.episode_number,
+    episodeCount: w.episode_count,
+  });
   return {
     title: w.title ?? "",
     type: w.type ?? "spillefilm",
     year: w.year != null ? String(w.year) : "",
     duration_minutes: w.duration_minutes != null ? String(w.duration_minutes) : "",
-    season_count: w.season_count != null ? String(w.season_count) : "",
-    episode_count: w.episode_count != null ? String(w.episode_count) : "",
+    season_count: series.seasonCount != null ? String(series.seasonCount) : "",
+    season_number: series.seasonNumber != null ? String(series.seasonNumber) : "",
+    episode_number: series.episodeNumber != null ? String(series.episodeNumber) : "",
+    episode_count: series.episodeCount != null ? String(series.episodeCount) : "",
     genre: w.genre ?? "",
     director: w.director ?? "",
     description: w.description ?? "",
@@ -234,6 +245,8 @@ export function EditWorkModal({
       setEditRole(displayRole(assignment.role));
       setShowWorkCorrection(false);
       setWorkCorrection(assignment.works ? workToCorrectionForm(assignment.works) : null);
+      setExternalQuery(assignment.works?.title ?? "");
+      setExternalResults([]);
       setWorkCorrectionComment("");
       setCommentError(false);
       const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
@@ -244,7 +257,14 @@ export function EditWorkModal({
       }).map(other => [other.works!.episode_number!, true])));
       setCoEditorSuggestions({});
       setDirectEpisodeOptions([]);
-      setDirectEpisodeSeason(assignment.works?.season_number ?? 1);
+      const inferredSeries = inferSeriesWorkFields({
+        title: assignment.works?.title,
+        seasonCount: assignment.works?.season_count,
+        seasonNumber: assignment.works?.season_number,
+        episodeNumber: assignment.works?.episode_number,
+        episodeCount: assignment.works?.episode_count,
+      });
+      setDirectEpisodeSeason(inferredSeries.seasonNumber ?? 1);
       setEditCoEditors(
         (allAssignments ?? [])
           .filter(other => other.work_id === assignment.works?.id)
@@ -271,9 +291,24 @@ export function EditWorkModal({
         if (result.success) {
           setDirectEpisodeOptions(result.options ?? []);
           setDirectEpisodeSeason(result.seasonNumber ?? 1);
-          if (result.episodeCount) {
-            setWorkCorrection(current => current ? { ...current, episode_count: String(result.episodeCount) } : current);
-          }
+          setWorkCorrection(current => {
+            if (!current) return current;
+            const inferred = inferSeriesWorkFields({
+              title: work.title,
+              seasonCount: numberOrNull(current.season_count),
+              seasonNumber: result.seasonNumber ?? numberOrNull(current.season_number),
+              episodeNumber: work.episode_number ?? numberOrNull(current.episode_number),
+              episodeCount: numberOrNull(current.episode_count),
+              knownEpisodeCount: result.episodeCount,
+            });
+            return {
+              ...current,
+              season_count: inferred.seasonCount != null ? String(inferred.seasonCount) : current.season_count,
+              season_number: inferred.seasonNumber != null ? String(inferred.seasonNumber) : current.season_number,
+              episode_number: inferred.episodeNumber != null ? String(inferred.episodeNumber) : current.episode_number,
+              episode_count: inferred.episodeCount != null ? String(inferred.episodeCount) : current.episode_count,
+            };
+          });
         }
       } finally {
         setDirectEpisodesLoading(false);
@@ -315,13 +350,24 @@ export function EditWorkModal({
       if (!resolved.success || !resolved.details) throw new Error("Kunne ikke hente værksdata.");
       const d = resolved.details;
       const source = result.sources.includes("dfi") ? "dfi" : result.sources.includes("tmdb") ? "tmdb" : "manual";
+      const inferred = inferSeriesWorkFields({
+        title: d.title,
+        seasonCount: d.season_count ?? numberOrNull(workCorrection.season_count),
+        seasonNumber: d.season_hint ?? numberOrNull(workCorrection.season_number),
+        episodeNumber: numberOrNull(workCorrection.episode_number),
+        episodeCount: d.episode_count ?? numberOrNull(workCorrection.episode_count),
+        knownEpisodeCount: d.episode_options?.length,
+      });
       setWorkCorrection({
         ...workCorrection,
         title: d.title || workCorrection.title,
         type: d.type || workCorrection.type,
         year: d.year != null ? String(d.year) : workCorrection.year,
         duration_minutes: d.duration_minutes != null ? String(d.duration_minutes) : workCorrection.duration_minutes,
-        episode_count: d.episode_count != null ? String(d.episode_count) : workCorrection.episode_count,
+        season_count: inferred.seasonCount != null ? String(inferred.seasonCount) : workCorrection.season_count,
+        season_number: inferred.seasonNumber != null ? String(inferred.seasonNumber) : workCorrection.season_number,
+        episode_number: inferred.episodeNumber != null ? String(inferred.episodeNumber) : workCorrection.episode_number,
+        episode_count: inferred.episodeCount != null ? String(inferred.episodeCount) : workCorrection.episode_count,
         genre: d.genre || workCorrection.genre,
         director: d.director || workCorrection.director,
         description: d.description || workCorrection.description,
@@ -356,6 +402,8 @@ export function EditWorkModal({
           year: numberOrNull(workCorrection.year),
           duration_minutes: numberOrNull(workCorrection.duration_minutes),
           season_count: numberOrNull(workCorrection.season_count),
+          season_number: numberOrNull(workCorrection.season_number),
+          episode_number: numberOrNull(workCorrection.episode_number),
           episode_count: numberOrNull(workCorrection.episode_count),
           genre: workCorrection.genre || null,
           director: workCorrection.director || null,
@@ -438,6 +486,8 @@ export function EditWorkModal({
               year: numberOrNull(workCorrection.year),
               duration_minutes: numberOrNull(workCorrection.duration_minutes),
               season_count: numberOrNull(workCorrection.season_count),
+              season_number: numberOrNull(workCorrection.season_number),
+              episode_number: numberOrNull(workCorrection.episode_number),
               episode_count: numberOrNull(workCorrection.episode_count),
               genre: workCorrection.genre || null,
               director: workCorrection.director || null,
@@ -453,6 +503,8 @@ export function EditWorkModal({
               year: assignment.works.year,
               duration_minutes: assignment.works.duration_minutes,
               season_count: assignment.works.season_count,
+              season_number: assignment.works.season_number,
+              episode_number: assignment.works.episode_number,
               episode_count: assignment.works.episode_count,
               genre: assignment.works.genre,
               director: assignment.works.director,
@@ -473,6 +525,7 @@ export function EditWorkModal({
       }
 
       onWorkUpdated(t("common.saved"), true, editRole, assignment.id);
+      onClose();
     } catch (err: unknown) {
       onWorkUpdated(err instanceof Error ? err.message : t("common.genericError"), false);
     } finally {
@@ -788,18 +841,41 @@ export function EditWorkModal({
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-muted-foreground">Sæson</Label>
                   <Input
-                    value={workCorrection.season_count}
-                    onChange={e => setWorkCorrection({ ...workCorrection, season_count: e.target.value })}
+                    value={workCorrection.season_number}
+                    onChange={e => {
+                      setWorkCorrection({ ...workCorrection, season_number: e.target.value });
+                      setDirectEpisodeSeason(numberOrNull(e.target.value) ?? 1);
+                    }}
                     inputMode="numeric"
                   />
                 </div>
               )}
               {isSeriesType(workCorrection.type) && (
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
+                  <Label className="text-sm font-medium text-muted-foreground">Afsnit</Label>
+                  <Input
+                    value={workCorrection.episode_number}
+                    onChange={e => setWorkCorrection({ ...workCorrection, episode_number: e.target.value })}
+                    inputMode="numeric"
+                  />
+                </div>
+              )}
+              {isSeriesType(workCorrection.type) && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-muted-foreground">Antal afsnit</Label>
                   <Input
                     value={workCorrection.episode_count}
                     onChange={e => setWorkCorrection({ ...workCorrection, episode_count: e.target.value })}
+                    inputMode="numeric"
+                  />
+                </div>
+              )}
+              {isSeriesType(workCorrection.type) && (
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium text-muted-foreground">Antal sæsoner</Label>
+                  <Input
+                    value={workCorrection.season_count}
+                    onChange={e => setWorkCorrection({ ...workCorrection, season_count: e.target.value })}
                     inputMode="numeric"
                   />
                 </div>

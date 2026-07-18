@@ -1571,14 +1571,14 @@ export async function fetchMemberSeriesEpisodeOptions(params: {
   const orgId = await currentOrgId(db, user.id);
   const { data: current } = await db
     .from("works")
-    .select("id,parent_work_id,season_number,episode_number,type")
+    .select("id,title,parent_work_id,season_number,episode_number,type")
     .eq("id", params.workId)
     .eq("org_id", orgId)
     .maybeSingle();
   if (!current) return { success: false, error: "Værket findes ikke.", options: [] };
 
   const parentId = current.parent_work_id ?? current.id;
-  const seasonNumber = current.season_number ?? 1;
+  const seasonNumber = current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
   const { data: parentWork } = await db
     .from("works")
     .select("*")
@@ -1627,11 +1627,11 @@ export async function syncMemberEpisodeAssignments(params: {
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const orgId = await currentOrgId(db, user.id);
   const { data: current } = await db.from("works")
-    .select("id,parent_work_id,season_number,episode_number,type")
+    .select("id,title,parent_work_id,season_number,episode_number,type")
     .eq("id", params.workId).eq("org_id", orgId).single();
   if (!current) return { success: false, error: "Værket findes ikke." };
   const parentId = current.parent_work_id ?? current.id;
-  const seasonNumber = current.season_number ?? 1;
+  const seasonNumber = current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
   const selected = new Set(params.selectedEpisodes.filter(Number.isFinite));
 
   const { data: parentWork } = await db

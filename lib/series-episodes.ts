@@ -27,6 +27,38 @@ export function parseLocalEpisodeCode(title: string | null | undefined) {
   };
 }
 
+export function inferSeriesWorkFields({
+  title,
+  seasonCount,
+  seasonNumber,
+  episodeNumber,
+  episodeCount,
+  knownEpisodeCount,
+}: {
+  title?: string | null;
+  seasonCount?: number | null;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  episodeCount?: number | null;
+  knownEpisodeCount?: number | null;
+}) {
+  const parsed = parseLocalEpisodeCode(title);
+  const inferredSeasonNumber = seasonNumber ?? parsed?.seasonNumber ?? null;
+  const inferredEpisodeNumber = episodeNumber ?? parsed?.episodeNumber ?? null;
+  const inferredSeasonCount = Math.max(Number(seasonCount ?? 0) || 0, Number(inferredSeasonNumber ?? 0) || 0) || null;
+  const inferredEpisodeCount = Math.max(
+    Number(episodeCount ?? 0) || 0,
+    Number(knownEpisodeCount ?? 0) || 0,
+    Number(inferredEpisodeNumber ?? 0) || 0,
+  ) || null;
+  return {
+    seasonCount: inferredSeasonCount,
+    seasonNumber: inferredSeasonNumber,
+    episodeNumber: inferredEpisodeNumber,
+    episodeCount: inferredEpisodeCount,
+  };
+}
+
 export function seriesLookupTitleVariants(title: string | null | undefined) {
   const raw = title?.trim();
   if (!raw) return [];
