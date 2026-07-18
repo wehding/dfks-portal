@@ -15,6 +15,7 @@ import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, sea
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
+import { createClientId } from "@/lib/client-id";
 
 const ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 
@@ -120,7 +121,7 @@ interface EditWorkModalProps {
 }
 
 function emptyCoEditor(): CoEditorDraft {
-  return { id: crypto.randomUUID(), name: "", role: "Klipper", action: "add" };
+  return { id: createClientId("co-editor"), name: "", role: "Klipper", action: "add" };
 }
 
 function displayRole(role: string | null | undefined) {
