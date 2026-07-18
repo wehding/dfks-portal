@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { getContractValidation, saveContractValidation } from "@/app/actions/member-contracts";
+import { getContractValidation, saveContractValidation, updateAdminContractEpisodeAssignments } from "@/app/actions/member-contracts";
 import { SourceBtn } from "@/components/source-btn";
 
 // Fuld redigering af den AI-udtrukne kontraktdata. Skriver til den fælles
@@ -57,12 +57,23 @@ const GROUPS: { title: string; fields: Field[] }[] = [
         { key: "director", label: "Instruktør", type: "text" },
         { key: "duration", label: "Varighed (min.)", type: "number" },
         { key: "premiereYear", label: "Premiereår", type: "number" },
+        { key: "genre", label: "Genre", type: "text" },
         { key: "employerName", label: "Producent / produktionsselskab", type: "text" },
+        { key: "productionCompanies", label: "Produktionsselskaber", type: "text" },
+        { key: "productionCountries", label: "Produktionslande", type: "text" },
         { key: "parentCompanyName", label: "Moderselskab", type: "text" },
         { key: "rightsHolderName", label: "Rettighedshaver", type: "text" },
         { key: "creditedFunction", label: "Krediteret funktion", type: "text" },
         { key: "creditedRoles", label: "Krediterede roller", type: "text" },
         { key: "productionType", label: "Produktionstype", type: "text" },
+        { key: "seasonNumber", label: "Sæson", type: "number" },
+        { key: "episodeNumber", label: "Afsnit", type: "number" },
+        { key: "episodeCount", label: "Antal afsnit", type: "number" },
+        { key: "seasonCount", label: "Antal sæsoner", type: "number" },
+        { key: "dfiId", label: "DFI-id", type: "text" },
+        { key: "tmdbId", label: "TMDB-id", type: "text" },
+        { key: "imdbId", label: "IMDb-id", type: "text" },
+        { key: "description", label: "Beskrivelse", type: "textarea" },
     ]},
     { title: "Kontrakt", fields: [
         { key: "contractType", label: "Kontrakttype", type: "text" },
@@ -102,8 +113,18 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     ]},
 ];
 
-const ARRAY_KEYS = new Set(["creditedRoles", "distribution"]);
-const NUMBER_KEYS = new Set(["duration", "premiereYear", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate"]);
+const ARRAY_KEYS = new Set(["creditedRoles", "distribution", "productionCompanies", "productionCountries"]);
+const NUMBER_KEYS = new Set(["duration", "premiereYear", "seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate"]);
+
+type LinkedEpisode = {
+    id: string;
+    title: string;
+    seasonNumber: number;
+    episodeNumber: number;
+    role: string | null;
+};
+
+type EpisodeOption = Omit<LinkedEpisode, "role">;
 
 type FormValues = Record<string, string | boolean>;
 
@@ -164,6 +185,11 @@ export function ContractAiDataEditor({
     const [found, setFound] = useState(false);
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
     const [sources, setSources] = useState<Record<string, string | null> | null>(null);
+    const [linkedEpisodes, setLinkedEpisodes] = useState<LinkedEpisode[]>([]);
+    const [episodeOptions, setEpisodeOptions] = useState<EpisodeOption[]>([]);
+    const [selectedEpisodeIds, setSelectedEpisodeIds] = useState<string[]>([]);
+    const [isSeriesWork, setIsSeriesWork] = useState(false);
+    const [savingEpisodes, setSavingEpisodes] = useState(false);
     const loadedRef = useRef(false);
 
     useEffect(() => {
@@ -171,10 +197,14 @@ export function ContractAiDataEditor({
         getContractValidation(contractId).then(res => {
             if (!active) return;
             const ed = res.success ? (res.extractedData ?? null) : null;
-            setFound(Boolean(ed));
+            setFound(Boolean(ed && Object.keys(ed).length > 0));
             setValues(toFormValues(ed));
             setLockedFields(new Set((ed?._lockedFields ?? []) as string[]));
             setSources((ed?._sources ?? null) as Record<string, string | null>);
+            setLinkedEpisodes(res.success ? (res.linkedEpisodes ?? []) : []);
+            setEpisodeOptions(res.success ? (res.episodeOptions ?? []) : []);
+            setSelectedEpisodeIds(res.success ? (res.linkedEpisodes ?? []).map(episode => episode.id) : []);
+            setIsSeriesWork(res.success ? Boolean(res.isSeriesWork) : false);
             setLoading(false);
             loadedRef.current = true;
         });
@@ -209,8 +239,8 @@ export function ContractAiDataEditor({
         }
         const res = await saveContractValidation({ contractId, extractedData: ed });
         setSaving(false);
-        if (res.success) { if (showToast) toast.success("AI-data gemt"); setFound(true); }
-        else toast.error(res.error ?? "Kunne ikke gemme AI-data");
+        if (res.success) { if (showToast) toast.success("Data gemt"); setFound(true); }
+        else toast.error(res.error ?? "Kunne ikke gemme data");
     };
 
     useEffect(() => {
@@ -223,12 +253,63 @@ export function ContractAiDataEditor({
     }, [values, lockedFields]);
 
     if (loading || !values) {
-        return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter AI-data…</div>;
+        return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter data…</div>;
     }
 
     return (
         <div className="space-y-4">
-            {!found && <p className="text-xs text-muted-foreground">Ingen AI-data endnu — udfyld felterne og gem for at oprette valideringsdata.</p>}
+            {!found && <p className="text-xs text-muted-foreground">Ingen data endnu — udfyld felterne for at oprette valideringsdata.</p>}
+            {isSeriesWork && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Afsnit knyttet til medlemmet</p>
+                    {episodeOptions.length > 0 ? (
+                        <div className="space-y-3">
+                            <div className="grid gap-2 sm:grid-cols-2">
+                                {episodeOptions.map(episode => (
+                                    <label key={episode.id} className="flex cursor-pointer items-start gap-2 rounded-md border bg-background px-3 py-2 text-xs">
+                                        <input
+                                            type="checkbox"
+                                            className="mt-0.5 h-4 w-4"
+                                            checked={selectedEpisodeIds.includes(episode.id)}
+                                            onChange={event => setSelectedEpisodeIds(current => event.target.checked
+                                                ? [...current, episode.id]
+                                                : current.filter(id => id !== episode.id))}
+                                        />
+                                        <span>
+                                            <span className="font-semibold">S{String(episode.seasonNumber).padStart(2, "0")}E{String(episode.episodeNumber).padStart(2, "0")}</span>
+                                            {episode.title ? <span className="ml-1 text-muted-foreground">· {episode.title}</span> : null}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                            <button
+                                type="button"
+                                disabled={savingEpisodes}
+                                onClick={async () => {
+                                    setSavingEpisodes(true);
+                                    const res = await updateAdminContractEpisodeAssignments({ contractId, selectedWorkIds: selectedEpisodeIds });
+                                    setSavingEpisodes(false);
+                                    if (!res.success) {
+                                        toast.error(res.error ?? "Kunne ikke gemme afsnit");
+                                        return;
+                                    }
+                                    const roleById = new Map(linkedEpisodes.map(episode => [episode.id, episode.role]));
+                                    setLinkedEpisodes(episodeOptions.filter(episode => selectedEpisodeIds.includes(episode.id)).map(episode => ({
+                                        ...episode,
+                                        role: roleById.get(episode.id) ?? "Klipper",
+                                    })));
+                                    toast.success("Afsnitstilknytninger gemt");
+                                }}
+                                className="inline-flex h-8 items-center rounded-md border bg-background px-3 text-xs font-medium hover:bg-muted disabled:opacity-50"
+                            >
+                                {savingEpisodes ? "Gemmer…" : "Gem afsnit"}
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">Serien har endnu ingen oprettede afsnit.</p>
+                    )}
+                </div>
+            )}
             {GROUPS.map(g => (
                 <div key={g.title}>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</p>

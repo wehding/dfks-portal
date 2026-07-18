@@ -17,6 +17,7 @@ import { SeriesEpisodeSelector } from "@/components/works/series-episode-selecto
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
+import { createClientId } from "@/lib/client-id";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const DEFAULT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -142,7 +143,7 @@ interface AddWorkModalProps {
 }
 
 function emptyCoEditor(): CoEditorDraft {
-  return { id: crypto.randomUUID(), name: "", role: "Klipper", action: "add" };
+  return { id: createClientId("co-editor"), name: "", role: "Klipper", action: "add" };
 }
 
 function displayRole(role: string | null | undefined) {
@@ -192,7 +193,7 @@ function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
       return isEditorCategory && !isAssistantOrOther;
     })
     .map(credit => ({
-      id: crypto.randomUUID(),
+      id: createClientId("co-editor"),
       name: credit.Name ?? "",
       role: "Klipper",
       action: "add" as const,

@@ -96,7 +96,7 @@ function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
 
 function adminContractNextAction(contract: ContractRow | null) {
     const latest = contract?.contract_comments?.at(-1)
-    if (!latest) return "Ingen beskeder endnu"
+    if (!latest) return null
     if (latest.author_role === "member" && !latest.admin_read_at) return "Kræver svar fra DFKS"
     if (latest.author_role === "admin") return "Afventer bruger"
     return "Samtalen er ajour"
@@ -2018,7 +2018,7 @@ function AdminKontrakterContent() {
                     <div className="flex flex-wrap gap-2 border-b pb-3">
 	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-	                            AI datamining
+	                            Hent data
 	                        </Button>
 	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
@@ -2405,7 +2405,6 @@ function AdminKontrakterContent() {
                                 </div>
                             </div>
                             <div className="rounded-md border p-3">
-                                <p className="mb-2 text-sm font-medium">AI-udtrukket data</p>
                                 {editContract && (
                                     <ContractAiDataEditor
                                         key={editContract.id}
@@ -2416,19 +2415,19 @@ function AdminKontrakterContent() {
                                 )}
                             </div>
                             <MessageThread
-                                title="Beskeder med medlem"
+                                title="Beskeder"
                                 messages={contractMessages(editContract?.contract_comments ?? [])}
                                 viewerRole="admin"
                                 memberLabel="Medlem"
                                 adminLabel="DFKS"
-                                emptyText="Ingen beskeder endnu."
+                                emptyText=""
                                 nextActionLabel={adminContractNextAction(editContract)}
                                 nextActionTone={adminContractNextActionTone(editContract)}
                                 composerValue={adminReply}
                                 onComposerChange={setAdminReply}
                                 onSend={handleAdminReply}
                                 composerLoading={replySaving}
-                                composerPlaceholder="Svar medlemmet..."
+                                composerPlaceholder="Skriv besked"
                                 sendLabel="Send besked"
                                 onDeleteMessage={async messageId => {
                                     if (!editContract) return

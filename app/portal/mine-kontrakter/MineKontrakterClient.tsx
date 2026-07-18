@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
-import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
+import { MessageStatusBadge, MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
@@ -22,6 +22,7 @@ import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
+import { shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -645,14 +646,13 @@ export default function MineKontrakterClient({
 	        </div>
 
 	        {/* Kolonnehoveder */}
-	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
+	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">{t("contracts.work")}{sortArrow("title")}</button>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">{t("contracts.producer")}{sortArrow("employer")}</button>
           <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">{t("contracts.agreement")}{sortArrow("overenskomst")}</button>
           <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">{t("contracts.rights")}{sortArrow("rights")}</button>
           <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-foreground">{t("common.status")}{sortArrow("status")}</button>
-          <div />
         </div>
 
         {/* Rækker */}
@@ -664,11 +664,12 @@ export default function MineKontrakterClient({
         ) : visibleContracts.map(c => {
           const val = getValidation(c);
           const title = contractDisplayTitle(c);
+          const unreadMessages = unreadAdminMessageCount(c.contract_comments);
           return (
             <div
               key={c.id}
               onClick={() => openContract(c)}
-              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]"
+              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]"
             >
               <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
                 <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
@@ -696,14 +697,9 @@ export default function MineKontrakterClient({
                 ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
               </div>
               <div className="space-y-1">
-                <WorkLinkBadge linked={hasWorkLink(c)} />
+                {shouldShowWorkLinkBadge(Boolean(c.works), c.status) && <WorkLinkBadge linked={hasWorkLink(c)} />}
                 {c.works && <StatusBadge status={c.status} />}
-              </div>
-              <div
-                onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
-                className="flex justify-center text-muted-foreground hover:text-red-500 transition-colors cursor-pointer"
-              >
-                <Trash2 className="h-4 w-4" />
+                {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
               </div>
             </div>
           );
@@ -796,7 +792,8 @@ export default function MineKontrakterClient({
               )}
 
               <StatusBadge status={selectedContract.status} />
-              <WorkLinkBadge linked={hasWorkLink(selectedContract)} />
+              {shouldShowWorkLinkBadge(Boolean(selectedContract.works), selectedContract.status) && <WorkLinkBadge linked={hasWorkLink(selectedContract)} />}
+              {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
 
               {/* Metadata-rækker */}
               <div className="flex flex-col gap-2">
