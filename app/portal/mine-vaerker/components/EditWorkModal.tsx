@@ -9,9 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
-import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
-import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, updateMemberCoEditors, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions, inferSeriesWorkFields, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
@@ -418,6 +417,7 @@ export function EditWorkModal({
           editor => !editor.locked || editor.action === "remove" || editor.action === "change"
         ),
         myEpisodes,
+        memberRole: editRole,
       });
       if (!res.success) throw new Error(t("works.createFailed"));
       onWorkUpdated(t("works.correctionSent"), true);
@@ -425,111 +425,6 @@ export function EditWorkModal({
       onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
     } finally {
       setIsSendingCorrection(false);
-    }
-  };
-
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
-
-  const handleSaveEdit = async () => {
-    setIsSavingEdit(true);
-    const supabase = createClient();
-
-    const coEditorChanges = editCoEditors.filter(
-      editor => !editor.locked || editor.action === "remove" || editor.action === "change"
-    );
-
-    // "Gem" sender også en åben værks-rettelse med — så indtastede felter
-    // ikke tabes fordi brugeren trykkede "Gem" i stedet for "Send rettelse".
-    const selectedEpisodeNumbers = Object.entries(selectedEpisodes)
-      .filter(([, checked]) => checked)
-      .map(([num]) => parseInt(num, 10))
-      .filter(Number.isFinite)
-      .sort((a, b) => a - b);
-    const wantsEpisodeUpdate = !!workCorrection && isSeriesType(workCorrection.type) && directSeriesEpisodeCount > 0;
-    const wantsCorrection = showWorkCorrection && !!workCorrection;
-    const willSubmit = wantsCorrection;
-
-    if (willSubmit && !workCorrectionComment.trim()) {
-      setCommentError(true);
-      setIsSavingEdit(false);
-      return;
-    }
-
-    try {
-      let ownRoleError = null;
-      if (editRole !== displayRole(assignment.role)) {
-        const { error } = await supabase
-          .from("work_assignments")
-          .update({ role: editRole })
-          .eq("id", assignment.id);
-        ownRoleError = error;
-      }
-
-      if (ownRoleError) throw new Error(ownRoleError.message);
-
-      if (coEditorChanges.length && assignment.works) {
-        const coEditorResult = await updateMemberCoEditors({ workId: assignment.works.id, changes: coEditorChanges });
-        if (!coEditorResult.success) throw new Error(coEditorResult.error);
-      }
-
-      if (wantsEpisodeUpdate && assignment.rights_holder_id) {
-        const episodeResult = await syncMemberEpisodeAssignments({ rightsHolderId: assignment.rights_holder_id, workId: assignment.works!.id, role: editRole, selectedEpisodes: selectedEpisodeNumbers });
-        if (!episodeResult.success) throw new Error(episodeResult.error);
-      }
-
-      if (willSubmit) {
-        if (!assignment.works) throw new Error("Værket mangler.");
-        const data = wantsCorrection && workCorrection
-          ? {
-              title: workCorrection.title,
-              type: workCorrection.type,
-              year: numberOrNull(workCorrection.year),
-              duration_minutes: numberOrNull(workCorrection.duration_minutes),
-              season_count: numberOrNull(workCorrection.season_count),
-              season_number: numberOrNull(workCorrection.season_number),
-              episode_number: numberOrNull(workCorrection.episode_number),
-              episode_count: numberOrNull(workCorrection.episode_count),
-              genre: workCorrection.genre || null,
-              director: workCorrection.director || null,
-              description: workCorrection.description || null,
-              dfi_id: workCorrection.dfi_id || null,
-              tmdb_id: numberOrNull(workCorrection.tmdb_id),
-              imdb_id: workCorrection.imdb_id || null,
-              field_sources: workCorrection.field_sources,
-            }
-          : {
-              title: assignment.works.title,
-              type: assignment.works.type ?? "spillefilm",
-              year: assignment.works.year,
-              duration_minutes: assignment.works.duration_minutes,
-              season_count: assignment.works.season_count,
-              season_number: assignment.works.season_number,
-              episode_number: assignment.works.episode_number,
-              episode_count: assignment.works.episode_count,
-              genre: assignment.works.genre,
-              director: assignment.works.director,
-              description: assignment.works.description,
-              dfi_id: assignment.works.dfi_id,
-              tmdb_id: assignment.works.tmdb_id == null ? null : Number(assignment.works.tmdb_id),
-              imdb_id: null,
-              field_sources: {},
-            };
-        await submitWorkDataCorrection({
-          assignmentId: assignment.id,
-          workId: assignment.works.id,
-          data,
-          comment: workCorrectionComment,
-          coEditors: [],
-          myEpisodes: [],
-        });
-      }
-
-      onWorkUpdated(t("common.saved"), true, editRole, assignment.id);
-      onClose();
-    } catch (err: unknown) {
-      onWorkUpdated(err instanceof Error ? err.message : t("common.genericError"), false);
-    } finally {
-      setIsSavingEdit(false);
     }
   };
 
@@ -776,7 +671,12 @@ export function EditWorkModal({
           <Button
             type="button"
             variant="outline"
-            onClick={() => setShowWorkCorrection(v => !v)}
+            onClick={() => {
+              setShowWorkCorrection(v => !v);
+              if (!showWorkCorrection && !externalQuery.trim()) {
+                setExternalQuery(workCorrection?.title ?? assignment.works?.title ?? "");
+              }
+            }}
             className="w-full sm:w-auto"
           >
             {showWorkCorrection ? t("works.hideCorrection") : t("works.suggestCorrection")}
@@ -914,27 +814,21 @@ export function EditWorkModal({
               <div className="space-y-1.5"><Label>TMDB-id</Label><Input value={workCorrection.tmdb_id} onChange={e => setWorkCorrection({ ...workCorrection, tmdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, tmdb_id: "manual" } })} /></div>
               <div className="space-y-1.5"><Label>IMDb-id</Label><Input value={workCorrection.imdb_id} onChange={e => setWorkCorrection({ ...workCorrection, imdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, imdb_id: "manual" } })} /></div>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
-              <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort hvorfor værksdataene bør ændres." : "Briefly explain why the work data should change."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
-              {commentError && <p className="text-xs text-red-600">{locale === "da" ? "Skriv en bemærkning til admin, før du sender rettelsen." : "Add a note to admin before sending the correction."}</p>}
-            </div>
-            <div className="flex justify-end mt-2">
-              <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
-                {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
-                {locale === "da" ? "Send rettelse til admin" : "Send correction to admin"}
-              </Button>
-            </div>
           </div>
         )}
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
+        <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort rettelsen, fx ændrede værksdata, rolle, afsnit eller medklippere." : "Briefly explain the correction, such as changed work data, role, episodes, or co-editors."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
+        {commentError && <p className="text-xs text-red-600">{locale === "da" ? "Skriv en bemærkning til admin, før du sender rettelsen." : "Add a note to admin before sending the correction."}</p>}
       </div>
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end mt-4 pt-4 border-t border-gray-100">
         <Button variant="outline" onClick={onClose}>
           {t("common.cancel")}
         </Button>
-        <Button onClick={handleSaveEdit} disabled={isSavingEdit} className="gap-2">
-          {isSavingEdit && <Loader2 className="h-4 w-4 animate-spin" />}
-          {locale === "da" ? "Gem" : "Save"}
+        <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
+          {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
+          {locale === "da" ? "Send rettelse til admin" : "Send correction to admin"}
         </Button>
       </div>
     </Modal>

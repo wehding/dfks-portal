@@ -101,11 +101,24 @@ test("series validation requires a manual episode when no episode count is known
   assert.equal(validateManualWork(withEpisode, "da"), null);
 });
 
-test("series correction fields are inferred from an SxxExx title", () => {
-  assert.deepEqual(inferSeriesWorkFields({ title: "Frontlinjen - S02E04", episodeCount: 8 }), {
+test("series fields are inferred from an SxxExx title", () => {
+  assert.deepEqual(inferSeriesWorkFields({ title: "Frontlinjen - S01E03" }), {
+    seasonNumber: 1,
+    episodeNumber: 3,
+    seasonCount: 1,
+    episodeCount: 3,
+  });
+});
+
+test("known series totals are preserved when the title identifies one episode", () => {
+  assert.deepEqual(inferSeriesWorkFields({
+    title: "Frontlinjen S02E04",
+    seasonCount: 3,
+    episodeCount: 8,
+  }), {
     seasonNumber: 2,
     episodeNumber: 4,
-    seasonCount: 2,
+    seasonCount: 3,
     episodeCount: 8,
   });
 });

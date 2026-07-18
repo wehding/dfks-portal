@@ -45,12 +45,16 @@ export function inferSeriesWorkFields({
   const parsed = parseLocalEpisodeCode(title);
   const inferredSeasonNumber = seasonNumber ?? parsed?.seasonNumber ?? null;
   const inferredEpisodeNumber = episodeNumber ?? parsed?.episodeNumber ?? null;
-  const inferredSeasonCount = Math.max(Number(seasonCount ?? 0) || 0, Number(inferredSeasonNumber ?? 0) || 0) || null;
+  const inferredSeasonCount = Math.max(
+    Number(seasonCount ?? 0) || 0,
+    Number(inferredSeasonNumber ?? 0) || 0,
+  ) || null;
   const inferredEpisodeCount = Math.max(
     Number(episodeCount ?? 0) || 0,
     Number(knownEpisodeCount ?? 0) || 0,
     Number(inferredEpisodeNumber ?? 0) || 0,
   ) || null;
+
   return {
     seasonCount: inferredSeasonCount,
     seasonNumber: inferredSeasonNumber,
