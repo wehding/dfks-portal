@@ -388,6 +388,7 @@ export async function submitWorkDataCorrection(params: {
   comment: string;
   coEditors?: ProposedCoEditor[];
   myEpisodes?: number[];
+  memberRole?: string;
 }) {
   const comment = params.comment.trim();
   if (!comment) throw new Error("Skriv en bemærkning til admin.");
@@ -401,7 +402,7 @@ export async function submitWorkDataCorrection(params: {
 
   const { data: assignment, error: assignmentError } = await db
     .from("work_assignments")
-    .select("id, work_id, rights_holder_id, rettighedshavere(id,user_id)")
+    .select("id, work_id, rights_holder_id, role, rettighedshavere(id,user_id)")
     .eq("id", params.assignmentId)
     .eq("work_id", params.workId)
     .single();
@@ -420,7 +421,9 @@ export async function submitWorkDataCorrection(params: {
 
   const proposedChanges = changedFields(work, proposed);
   const coEditors = params.coEditors ?? [];
-  const hasChanges = Object.keys(proposedChanges).length > 0 || coEditors.length > 0 || (params.myEpisodes ?? []).length > 0;
+  const memberRole = cleanText(params.memberRole);
+  const roleChanged = Boolean(memberRole && memberRole !== assignment.role);
+  const hasChanges = Object.keys(proposedChanges).length > 0 || coEditors.length > 0 || (params.myEpisodes ?? []).length > 0 || roleChanged;
   if (!hasChanges) throw new Error("Der er ingen ændringer at sende til admin.");
 
   const orgId = await currentOrgId(db, user.id);
@@ -433,7 +436,7 @@ export async function submitWorkDataCorrection(params: {
       requested_by_rights_holder_id: rightsHolder.id,
       source: "Mine værker",
       old_data: work,
-      proposed_data: { kind: "correction", ...proposedChanges, coEditors, myEpisodes: params.myEpisodes || [] },
+      proposed_data: { kind: "correction", ...proposedChanges, coEditors, myEpisodes: params.myEpisodes || [], ...(roleChanged ? { memberRole } : {}) },
       status: "pending",
     })
     .select("id")
@@ -1229,6 +1232,14 @@ export async function reviewWorkDataCorrection(params: {
     if (error) throw new Error(error.message);
     await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.coEditors);
     await applyCoEditorChanges(db, request.work_id, request.org_id, proposed.assignmentChanges);
+    if (proposed.memberRole && request.requested_by_rights_holder_id) {
+      const { error: roleError } = await db
+        .from("work_assignments")
+        .update({ role: proposed.memberRole })
+        .eq("work_id", request.work_id)
+        .eq("rights_holder_id", request.requested_by_rights_holder_id);
+      if (roleError) throw new Error(roleError.message);
+    }
 
     // Automatisk generering og tildeling af afsnit
     const oldWork = (request.old_data ?? {}) as Partial<CreateWorkData>;
