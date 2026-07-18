@@ -246,6 +246,7 @@ export default function MinProfilPage() {
     return (
         <div className="space-y-8 max-w-2xl">
             <PageHeader
+                hideTitleOnMobile
                 title={t("profile.title")}
                 subtitle={t("profile.subtitle")}
             />

@@ -502,6 +502,7 @@ export default function PortalKontraktgennemgangPage() {
     return (
         <div className="space-y-8">
             <PageHeader
+                hideTitleOnMobile
                 title="Kontraktgennemgang"
                 subtitle="Upload din kontrakt og angiv kontekst, så vi kan give dig den bedste vurdering"
             />

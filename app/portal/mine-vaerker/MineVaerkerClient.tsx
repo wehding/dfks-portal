@@ -490,7 +490,7 @@ export default function MineVaerkerClient({
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-foreground">{t("works.title")}</h1>
+          <h1 className="hidden text-2xl font-bold text-foreground sm:block">{t("works.title")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t("works.registeredSubtitle")}</p>
         </div>
         <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">

@@ -326,7 +326,7 @@ export default function PortalOkonomiPage() {
         <>
         <div className="space-y-6 max-w-2xl">
             <div>
-                <h1 className="text-2xl font-semibold tracking-tight">Økonomi</h1>
+                <h1 className="hidden text-2xl font-semibold tracking-tight sm:block">Økonomi</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
                     Dine streaming-vederlag via Create Denmark
                 </p>
