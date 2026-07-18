@@ -96,7 +96,7 @@ function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
 
 function adminContractNextAction(contract: ContractRow | null) {
     const latest = contract?.contract_comments?.at(-1)
-    if (!latest) return "Ingen beskeder endnu"
+    if (!latest) return null
     if (latest.author_role === "member" && !latest.admin_read_at) return "Kræver svar fra DFKS"
     if (latest.author_role === "admin") return "Afventer bruger"
     return "Samtalen er ajour"
@@ -2416,19 +2416,19 @@ function AdminKontrakterContent() {
                                 )}
                             </div>
                             <MessageThread
-                                title="Beskeder med medlem"
+                                title="Beskeder"
                                 messages={contractMessages(editContract?.contract_comments ?? [])}
                                 viewerRole="admin"
                                 memberLabel="Medlem"
                                 adminLabel="DFKS"
-                                emptyText="Ingen beskeder endnu."
+                                emptyText=""
                                 nextActionLabel={adminContractNextAction(editContract)}
                                 nextActionTone={adminContractNextActionTone(editContract)}
                                 composerValue={adminReply}
                                 onComposerChange={setAdminReply}
                                 onSend={handleAdminReply}
                                 composerLoading={replySaving}
-                                composerPlaceholder="Svar medlemmet..."
+                                composerPlaceholder="Skriv besked"
                                 sendLabel="Send besked"
                                 onDeleteMessage={async messageId => {
                                     if (!editContract) return

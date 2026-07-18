@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
+import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
+import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 
 import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -398,7 +400,21 @@ export async function getContractValidation(contractId: string) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
-  const { data: contract } = await db.from("contracts").select("id, org_id").eq("id", contractId).single();
+  const { data: contract } = await db
+    .from("contracts")
+    .select(`
+      id, org_id, type, overenskomst, contract_date, start_date, end_date,
+      working_title, rights_holder_id,
+      employers(name), rettighedshavere(full_name),
+      works(
+        id, title, type, year, duration_minutes, season_count, season_number,
+        episode_count, episode_number, parent_work_id, genre, director,
+        production_companies, production_countries, description,
+        dfi_id, tmdb_id, imdb_id
+      )
+    `)
+    .eq("id", contractId)
+    .single();
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
   if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
   const { data } = await db
@@ -406,7 +422,64 @@ export async function getContractValidation(contractId: string) {
     .select("extracted_data")
     .eq("contract_id", contractId)
     .maybeSingle();
-  return { success: true, extractedData: (data?.extracted_data ?? null) as Record<string, unknown> | null };
+
+  const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
+  const employer = Array.isArray(contract.employers) ? contract.employers[0] : contract.employers;
+  const rightsHolder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
+  const parsedEpisode = parseLocalEpisodeCode(relatedWork?.title);
+  const work: LinkedContractWorkData | null = relatedWork ? {
+    ...relatedWork,
+    season_number: relatedWork.season_number ?? parsedEpisode?.seasonNumber ?? null,
+    episode_number: relatedWork.episode_number ?? parsedEpisode?.episodeNumber ?? null,
+  } : null;
+  const extractedData = mergeContractWorkData({
+    extractedData: (data?.extracted_data ?? null) as Record<string, unknown> | null,
+    contract,
+    work,
+    employerName: employer?.name ?? null,
+    rightsHolderName: rightsHolder?.full_name ?? null,
+  });
+
+  const linkedEpisodes: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number; role: string | null }> = [];
+  if (relatedWork && contract.rights_holder_id) {
+    const parentId = relatedWork.parent_work_id ?? relatedWork.id;
+    const { data: relatedWorks } = await db
+      .from("works")
+      .select("id, title, season_number, episode_number, parent_work_id")
+      .eq("org_id", contract.org_id)
+      .or(`id.eq.${parentId},parent_work_id.eq.${parentId}`);
+    const episodeWorks = (relatedWorks ?? []).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
+    const episodeIds = episodeWorks.map(item => item.id);
+    const { data: assignments } = episodeIds.length > 0
+      ? await db
+        .from("work_assignments")
+        .select("work_id, role")
+        .eq("org_id", contract.org_id)
+        .eq("rights_holder_id", contract.rights_holder_id)
+        .in("work_id", episodeIds)
+      : { data: [] as Array<{ work_id: string; role: string | null }> };
+    const roleByWork = new Map((assignments ?? []).map(item => [item.work_id, item.role]));
+
+    for (const episode of episodeWorks) {
+      const isDirectContractEpisode = episode.id === relatedWork.id;
+      if (!isDirectContractEpisode && !roleByWork.has(episode.id)) continue;
+      const parsed = parseLocalEpisodeCode(episode.title);
+      const seasonNumber = episode.season_number ?? parsed?.seasonNumber;
+      const episodeNumber = episode.episode_number ?? parsed?.episodeNumber;
+      if (seasonNumber == null || episodeNumber == null) continue;
+      linkedEpisodes.push({
+        id: episode.id,
+        title: episode.title,
+        seasonNumber,
+        episodeNumber,
+        role: roleByWork.get(episode.id) ?? null,
+      });
+    }
+    linkedEpisodes.sort((a, b) => a.seasonNumber - b.seasonNumber || a.episodeNumber - b.episodeNumber);
+  }
+
+  const isSeriesWork = relatedWork?.type === "tv-serie" || relatedWork?.type === "dokumentar-serie" || Boolean(relatedWork?.parent_work_id);
+  return { success: true, extractedData, linkedEpisodes, isSeriesWork };
 }
 
 export async function saveContractValidation(params: { contractId: string; extractedData: Record<string, unknown> }) {

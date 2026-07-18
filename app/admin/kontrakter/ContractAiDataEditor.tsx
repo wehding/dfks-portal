@@ -57,12 +57,23 @@ const GROUPS: { title: string; fields: Field[] }[] = [
         { key: "director", label: "Instruktør", type: "text" },
         { key: "duration", label: "Varighed (min.)", type: "number" },
         { key: "premiereYear", label: "Premiereår", type: "number" },
+        { key: "genre", label: "Genre", type: "text" },
         { key: "employerName", label: "Producent / produktionsselskab", type: "text" },
+        { key: "productionCompanies", label: "Produktionsselskaber", type: "text" },
+        { key: "productionCountries", label: "Produktionslande", type: "text" },
         { key: "parentCompanyName", label: "Moderselskab", type: "text" },
         { key: "rightsHolderName", label: "Rettighedshaver", type: "text" },
         { key: "creditedFunction", label: "Krediteret funktion", type: "text" },
         { key: "creditedRoles", label: "Krediterede roller", type: "text" },
         { key: "productionType", label: "Produktionstype", type: "text" },
+        { key: "seasonNumber", label: "Sæson", type: "number" },
+        { key: "episodeNumber", label: "Afsnit", type: "number" },
+        { key: "episodeCount", label: "Antal afsnit", type: "number" },
+        { key: "seasonCount", label: "Antal sæsoner", type: "number" },
+        { key: "dfiId", label: "DFI-id", type: "text" },
+        { key: "tmdbId", label: "TMDB-id", type: "text" },
+        { key: "imdbId", label: "IMDb-id", type: "text" },
+        { key: "description", label: "Beskrivelse", type: "textarea" },
     ]},
     { title: "Kontrakt", fields: [
         { key: "contractType", label: "Kontrakttype", type: "text" },
@@ -102,8 +113,16 @@ const GROUPS: { title: string; fields: Field[] }[] = [
     ]},
 ];
 
-const ARRAY_KEYS = new Set(["creditedRoles", "distribution"]);
-const NUMBER_KEYS = new Set(["duration", "premiereYear", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate"]);
+const ARRAY_KEYS = new Set(["creditedRoles", "distribution", "productionCompanies", "productionCountries"]);
+const NUMBER_KEYS = new Set(["duration", "premiereYear", "seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate"]);
+
+type LinkedEpisode = {
+    id: string;
+    title: string;
+    seasonNumber: number;
+    episodeNumber: number;
+    role: string | null;
+};
 
 type FormValues = Record<string, string | boolean>;
 
@@ -164,6 +183,8 @@ export function ContractAiDataEditor({
     const [found, setFound] = useState(false);
     const [lockedFields, setLockedFields] = useState<Set<string>>(new Set());
     const [sources, setSources] = useState<Record<string, string | null> | null>(null);
+    const [linkedEpisodes, setLinkedEpisodes] = useState<LinkedEpisode[]>([]);
+    const [isSeriesWork, setIsSeriesWork] = useState(false);
     const loadedRef = useRef(false);
 
     useEffect(() => {
@@ -171,10 +192,12 @@ export function ContractAiDataEditor({
         getContractValidation(contractId).then(res => {
             if (!active) return;
             const ed = res.success ? (res.extractedData ?? null) : null;
-            setFound(Boolean(ed));
+            setFound(Boolean(ed && Object.keys(ed).length > 0));
             setValues(toFormValues(ed));
             setLockedFields(new Set((ed?._lockedFields ?? []) as string[]));
             setSources((ed?._sources ?? null) as Record<string, string | null>);
+            setLinkedEpisodes(res.success ? (res.linkedEpisodes ?? []) : []);
+            setIsSeriesWork(res.success ? Boolean(res.isSeriesWork) : false);
             setLoading(false);
             loadedRef.current = true;
         });
@@ -229,6 +252,23 @@ export function ContractAiDataEditor({
     return (
         <div className="space-y-4">
             {!found && <p className="text-xs text-muted-foreground">Ingen AI-data endnu — udfyld felterne og gem for at oprette valideringsdata.</p>}
+            {isSeriesWork && (
+                <div className="rounded-md border bg-muted/30 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Afsnit knyttet til medlemmet</p>
+                    {linkedEpisodes.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                            {linkedEpisodes.map(episode => (
+                                <span key={episode.id} title={episode.title} className="rounded-full border bg-background px-2.5 py-1 text-xs">
+                                    S{String(episode.seasonNumber).padStart(2, "0")}E{String(episode.episodeNumber).padStart(2, "0")}
+                                    {episode.role ? ` · ${episode.role}` : ""}
+                                </span>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-muted-foreground">Ingen afsnit er knyttet til medlemmet.</p>
+                    )}
+                </div>
+            )}
             {GROUPS.map(g => (
                 <div key={g.title}>
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.title}</p>

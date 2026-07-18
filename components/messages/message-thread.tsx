@@ -127,10 +127,11 @@ export function MessageThread({
         </div>
       )}
 
-      <div className="max-h-72 space-y-2 overflow-y-auto p-3">
-        {sorted.length === 0 ? (
-          <p className="rounded-md bg-muted/40 px-3 py-3 text-sm text-muted-foreground">{resolvedEmptyText}</p>
-        ) : (
+      {(sorted.length > 0 || resolvedEmptyText) && (
+        <div className="max-h-72 space-y-2 overflow-y-auto p-3">
+          {sorted.length === 0 ? (
+            <p className="rounded-md bg-muted/40 px-3 py-3 text-sm text-muted-foreground">{resolvedEmptyText}</p>
+          ) : (
           sorted.map(message => {
             const own = message.authorRole === viewerRole
             const unread = unreadForViewer(message, viewerRole)
@@ -155,8 +156,9 @@ export function MessageThread({
               </article>
             )
           })
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {(canCompose || footer) && (
         <div className="space-y-2 border-t p-3">

@@ -645,14 +645,13 @@ export default function MineKontrakterClient({
 	        </div>
 
 	        {/* Kolonnehoveder */}
-	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]">
+	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">{t("contracts.work")}{sortArrow("title")}</button>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">{t("contracts.producer")}{sortArrow("employer")}</button>
           <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">{t("contracts.agreement")}{sortArrow("overenskomst")}</button>
           <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">{t("contracts.rights")}{sortArrow("rights")}</button>
           <button type="button" onClick={() => handleSort("status")} className="text-left hover:text-foreground">{t("common.status")}{sortArrow("status")}</button>
-          <div />
         </div>
 
         {/* Rækker */}
@@ -668,7 +667,7 @@ export default function MineKontrakterClient({
             <div
               key={c.id}
               onClick={() => openContract(c)}
-              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr_40px]"
+              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]"
             >
               <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
                 <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
@@ -698,12 +697,6 @@ export default function MineKontrakterClient({
               <div className="space-y-1">
                 <WorkLinkBadge linked={hasWorkLink(c)} />
                 {c.works && <StatusBadge status={c.status} />}
-              </div>
-              <div
-                onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
-                className="flex justify-center text-muted-foreground hover:text-red-500 transition-colors cursor-pointer"
-              >
-                <Trash2 className="h-4 w-4" />
               </div>
             </div>
           );
