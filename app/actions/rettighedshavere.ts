@@ -6,6 +6,34 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { encryptValue } from "@/lib/encryption";
+import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
+
+export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
+  organisation_names: string[];
+};
+
+export type AdminRightsHolderCounts = Record<string, {
+  contracts: number;
+  works: number;
+  allContractsValidated: boolean;
+}>;
+
+const ADMIN_RIGHTS_HOLDER_FIELDS = `
+  id,
+  full_name,
+  email,
+  phone,
+  address,
+  created_at,
+  user_id,
+  onboarding_completed,
+  archived_at,
+  invite_sent_at,
+  dfi_person_id,
+  tmdb_person_id,
+  wikidata_qid,
+  portrait_url
+`;
 
 type RightsHolderInput = {
   full_name: string;
@@ -28,6 +56,80 @@ function securePayload(input: RightsHolderInput) {
     bank_account: encryptValue(input.bank_account),
     ...(input.gender !== undefined ? { gender: input.gender || null } : {}),
     ...(input.opt_out_statistics !== undefined ? { opt_out_statistics: Boolean(input.opt_out_statistics) } : {}),
+  };
+}
+
+export async function getAdminRightsHolders() {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
+  if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
+
+  const db = createServiceClient();
+  const canSeeAllOrganisations = caller.role === "superadmin";
+  const holdersQuery = canSeeAllOrganisations
+    ? db.from("rettighedshavere").select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations(*)`)
+    : db
+        .from("rettighedshavere")
+        .select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations!inner(*)`)
+        .eq("org_affiliations.org_id", caller.orgId);
+  const { data: holderRows, error: holdersError } = await holdersQuery.order("full_name");
+  if (holdersError) throw new Error(holdersError.message);
+
+  const orgIds = Array.from(new Set((holderRows ?? [])
+    .flatMap(holder => (holder.org_affiliations ?? []).map((affiliation: { org_id: string }) => affiliation.org_id))));
+  const { data: organisations, error: organisationsError } = orgIds.length
+    ? await db.from("organisations").select("id, name").in("id", orgIds)
+    : { data: [], error: null };
+  if (organisationsError) throw new Error(organisationsError.message);
+  const orgNames = new Map((organisations ?? []).map(org => [org.id as string, String(org.name)]));
+
+  const rows = (holderRows ?? []).map(holder => ({
+    ...holder,
+    organisation_names: Array.from(new Set((holder.org_affiliations ?? [])
+      .map((affiliation: { org_id: string }) => orgNames.get(affiliation.org_id))
+      .filter((name): name is string => Boolean(name)))),
+  })) as unknown as AdminRightsHolderListItem[];
+
+  const holderIds = rows.map(holder => holder.id);
+  let contractsQuery = db.from("contracts").select("rights_holder_id, status").in("rights_holder_id", holderIds.length ? holderIds : ["00000000-0000-0000-0000-000000000000"]);
+  let assignmentsQuery = db.from("work_assignments").select("rights_holder_id").in("rights_holder_id", holderIds.length ? holderIds : ["00000000-0000-0000-0000-000000000000"]);
+  if (!canSeeAllOrganisations) {
+    contractsQuery = contractsQuery.eq("org_id", caller.orgId);
+    assignmentsQuery = assignmentsQuery.eq("org_id", caller.orgId);
+  }
+  const [{ data: contracts, error: contractsError }, { data: assignments, error: assignmentsError }] = await Promise.all([
+    contractsQuery,
+    assignmentsQuery,
+  ]);
+  if (contractsError) throw new Error(contractsError.message);
+  if (assignmentsError) throw new Error(assignmentsError.message);
+
+  const countsByRightsHolder: AdminRightsHolderCounts = {};
+  const statusesByRightsHolder: Record<string, string[]> = {};
+  for (const contract of contracts ?? []) {
+    const rightsHolderId = contract.rights_holder_id as string | null;
+    if (!rightsHolderId) continue;
+    countsByRightsHolder[rightsHolderId] ??= { contracts: 0, works: 0, allContractsValidated: false };
+    countsByRightsHolder[rightsHolderId].contracts += 1;
+    statusesByRightsHolder[rightsHolderId] ??= [];
+    statusesByRightsHolder[rightsHolderId].push(String(contract.status ?? ""));
+  }
+  for (const assignment of assignments ?? []) {
+    const rightsHolderId = assignment.rights_holder_id as string | null;
+    if (!rightsHolderId) continue;
+    countsByRightsHolder[rightsHolderId] ??= { contracts: 0, works: 0, allContractsValidated: false };
+    countsByRightsHolder[rightsHolderId].works += 1;
+  }
+  for (const [rightsHolderId, counts] of Object.entries(countsByRightsHolder)) {
+    const statuses = statusesByRightsHolder[rightsHolderId] ?? [];
+    counts.allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status));
+  }
+
+  return {
+    rows,
+    countsByRightsHolder,
+    orgId: caller.orgId,
+    canSeeAllOrganisations,
   };
 }
 

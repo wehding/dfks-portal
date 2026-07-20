@@ -7,12 +7,11 @@ import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Lin
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
-    getRettighedshavere,
     setMemberStatus,
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
-import { createRettighedshaverSecure, updateRettighedshaverSecure } from "@/app/actions/rettighedshavere"
+import { createRettighedshaverSecure, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
@@ -100,6 +99,13 @@ function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
     return rh.org_affiliations?.find(a => a.org_id === orgId) ?? null
 }
 
+function getVisibleAffiliation(rh: RettighedshaverWithAffiliation, orgId: string, canSeeAllOrganisations: boolean) {
+    if (!canSeeAllOrganisations) return getAffiliation(rh, orgId)
+    return rh.org_affiliations?.find(affiliation => affiliation.is_member && !affiliation.valid_to)
+        ?? rh.org_affiliations?.[0]
+        ?? null
+}
+
 function normalizeName(value: string) {
     return value
         .normalize("NFKD")
@@ -123,7 +129,8 @@ const EMPTY_FORM = {
 
 export default function RettighedshavereAdminPage() {
     const [orgId, setOrgId] = useState<string | null>(null)
-    const [rows, setRows] = useState<RettighedshaverWithAffiliation[]>([])
+    const [rows, setRows] = useState<AdminRightsHolderListItem[]>([])
+    const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
@@ -172,33 +179,28 @@ export default function RettighedshavereAdminPage() {
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
     useEffect(() => {
-        const supabase = createClient()
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-            if (!user) return
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const oid = roleRow?.org_id
-            if (!oid) {
-                toast.error("Din bruger er ikke knyttet til en organisation.")
-                return
-            }
-            setOrgId(oid)
-            load(oid)
-            loadDfksMembers(oid)
-            loadOverviewCounts(oid)
-            refreshMemberSyncStatus()
+        void load().then(result => {
+            if (!result) return
+            void loadDfksMembers(result.orgId)
+            void refreshMemberSyncStatus()
         })
     }, [])
 
-    async function load(oid: string) {
+    async function load() {
         setLoading(true)
-        const data = await getRettighedshavere(oid)
-        setRows(data)
-        setLoading(false)
+        try {
+            const result = await getAdminRightsHolders()
+            setRows(result.rows)
+            setCountsByRightsHolder(result.countsByRightsHolder)
+            setOrgId(result.orgId)
+            setCanSeeAllOrganisations(result.canSeeAllOrganisations)
+            return result
+        } catch (error) {
+            toast.error(errorMessage(error))
+            return null
+        } finally {
+            setLoading(false)
+        }
     }
 
     async function loadDfksMembers(oid: string) {
@@ -211,41 +213,6 @@ export default function RettighedshavereAdminPage() {
             .order("full_name")
 
         setDfksMembers((data as DfksMemberOption[] | null) ?? [])
-    }
-
-    async function loadOverviewCounts(oid: string) {
-        const supabase = createClient()
-        const [{ data: contracts }, { data: assignments }] = await Promise.all([
-            supabase
-                .from("contracts")
-                .select("rights_holder_id, status")
-                .eq("org_id", oid)
-                .not("rights_holder_id", "is", null),
-            supabase
-                .from("work_assignments")
-                .select("rights_holder_id")
-                .eq("org_id", oid)
-                .not("rights_holder_id", "is", null),
-        ])
-
-        const next: Record<string, RightsHolderCounts> = {}
-        const contractStatuses: Record<string, string[]> = {}
-        for (const row of (contracts ?? []) as Array<{ rights_holder_id: string | null; status?: string | null }>) {
-            if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
-            next[row.rights_holder_id].contracts += 1
-            contractStatuses[row.rights_holder_id] ??= []
-            contractStatuses[row.rights_holder_id].push(row.status ?? "")
-        }
-        for (const row of (assignments ?? []) as Array<{ rights_holder_id: string | null }>) {
-            if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
-            next[row.rights_holder_id].works += 1
-        }
-        for (const [rightsHolderId, statuses] of Object.entries(contractStatuses)) {
-            next[rightsHolderId].allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status))
-        }
-        setCountsByRightsHolder(next)
     }
 
     async function refreshMemberSyncStatus() {
@@ -320,8 +287,7 @@ export default function RettighedshavereAdminPage() {
         toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
         setImportOpen(false)
         setSelectedImportIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
         await refreshMemberSyncStatus()
     }
 
@@ -398,7 +364,7 @@ export default function RettighedshavereAdminPage() {
     const visible = useMemo(() => {
         const q = search.toLowerCase().trim()
         const list = rows.filter(rh => {
-            const aff = orgId ? getAffiliation(rh, orgId) : null
+            const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const archived = Boolean(rh.archived_at)
             if (filter === "arkiverede") {
@@ -423,8 +389,8 @@ export default function RettighedshavereAdminPage() {
         })
 
         return list.sort((a, b) => {
-            const affA = orgId ? getAffiliation(a, orgId) : null
-            const affB = orgId ? getAffiliation(b, orgId) : null
+            const affA = orgId ? getVisibleAffiliation(a, orgId, canSeeAllOrganisations) : null
+            const affB = orgId ? getVisibleAffiliation(b, orgId, canSeeAllOrganisations) : null
             const countsA = countsByRightsHolder[a.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const countsB = countsByRightsHolder[b.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const direction = sortDirection === "asc" ? 1 : -1
@@ -441,7 +407,7 @@ export default function RettighedshavereAdminPage() {
             if (sortKey === "validated") result = Number(countsA.allContractsValidated) - Number(countsB.allContractsValidated)
             return result * direction
         })
-    }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection])
+    }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -515,7 +481,7 @@ export default function RettighedshavereAdminPage() {
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
             setCreateSaving(false)
-            setCreateOpen(false); load(orgId); loadOverviewCounts(orgId)
+            setCreateOpen(false); load()
         } else {
             setCreateSaving(false)
             toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
@@ -538,7 +504,7 @@ export default function RettighedshavereAdminPage() {
         }
         setBulkSendingInvitations(false)
         toast.success(`${sent} af ${targets.length} invitationer sendt`)
-        load(orgId)
+        load()
     }
 
     async function handleArchiveSelected() {
@@ -557,8 +523,7 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
         setSelectedIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
     }
 
     async function handleRestoreSelected() {
@@ -572,7 +537,7 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
         setSelectedIds(new Set())
-        await load(orgId)
+        await load()
     }
 
     async function handlePermanentDeleteSelected() {
@@ -588,12 +553,11 @@ export default function RettighedshavereAdminPage() {
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
-        const aff = orgId ? getAffiliation(rh, orgId) : null
+        const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
         setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), send_invite: false })
         setEditMemberNoTouched(false)
@@ -613,18 +577,17 @@ export default function RettighedshavereAdminPage() {
         setEditSaving(false)
         toast.success("Gemt")
         setEditTarget(null)
-        load(orgId)
-        loadOverviewCounts(orgId)
+        load()
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
         if (!orgId) return
-        const aff = getAffiliation(rh, orgId)
+        const aff = getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)
         const next = !aff?.is_member
         await setMemberStatus(rh.id, orgId, next, aff?.member_no ?? undefined)
         if (!next) await setAffiliationEnd(rh.id, orgId, new Date().toISOString().slice(0, 10))
         toast.success(next ? `${rh.full_name} er nu medlem` : `${rh.full_name} er udmeldt`)
-        load(orgId)
+        load()
     }
 
     async function handlePortalAction() {
@@ -677,8 +640,8 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    const memberCount    = rows.filter(rh => orgId && getAffiliation(rh, orgId)?.is_member).length
-    const nonMemberCount = rows.filter(rh => orgId && !getAffiliation(rh, orgId)?.is_member).length
+    const memberCount    = rows.filter(rh => orgId && getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
+    const nonMemberCount = rows.filter(rh => orgId && !getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
     const portalCount    = rows.filter(rh => rh.user_id).length
     const validatedCount = rows.filter(rh => countsByRightsHolder[rh.id]?.allContractsValidated).length
 
@@ -704,7 +667,7 @@ export default function RettighedshavereAdminPage() {
         <div className="space-y-6">
             <PageHeader
                 title="Rettighedshavere"
-                subtitle="Klippere tilknyttet organisationen"
+                subtitle={canSeeAllOrganisations ? "Rettighedshavere på tværs af alle organisationer" : "Rettighedshavere tilknyttet organisationen"}
                 actions={
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                         {memberSyncStatus && (
@@ -810,7 +773,7 @@ export default function RettighedshavereAdminPage() {
                         <p className="py-6 text-center text-sm text-muted-foreground">Ingen rettighedshavere fundet</p>
                     </MobileDataCard>
                 ) : visible.map(rh => {
-                    const aff = orgId ? getAffiliation(rh, orgId) : null
+                    const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                     const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     return (
@@ -854,6 +817,7 @@ export default function RettighedshavereAdminPage() {
                                 </DropdownMenu>
                             </div>
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                {canSeeAllOrganisations && <MobileMetaRow label="Organisation">{rh.organisation_names.join(", ") || "Uden tilknytning"}</MobileMetaRow>}
                                 <MobileMetaRow label="Telefon">{rh.phone ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="DFKS nr.">{aff?.member_no ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="Kontrakter">{counts.contracts}</MobileMetaRow>
@@ -891,6 +855,7 @@ export default function RettighedshavereAdminPage() {
                                 />
                             </TableHead>
                             <TableHead><SortHeader sort="name">Navn</SortHeader></TableHead>
+                            {canSeeAllOrganisations && <TableHead>Organisation</TableHead>}
                             <TableHead><SortHeader sort="email">Email</SortHeader></TableHead>
                             <TableHead>Telefon</TableHead>
                             <TableHead><SortHeader sort="member_no">DFKS medlemsnr.</SortHeader></TableHead>
@@ -904,11 +869,11 @@ export default function RettighedshavereAdminPage() {
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
                         ) : visible.length === 0 ? (
-                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
                         ) : visible.map(rh => {
-                            const aff = orgId ? getAffiliation(rh, orgId) : null
+                            const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                             const hasLogin = !!rh.user_id
                             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                             return (
@@ -922,6 +887,7 @@ export default function RettighedshavereAdminPage() {
                                         />
                                     </TableCell>
                                     <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
+                                    {canSeeAllOrganisations && <TableCell className="text-sm text-muted-foreground">{rh.organisation_names.join(", ") || "Uden tilknytning"}</TableCell>}
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{aff?.member_no ?? "—"}</TableCell>
@@ -977,7 +943,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1015,7 +981,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -1027,7 +993,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await archiveRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver arkiveret")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke arkivere")
                                                         }

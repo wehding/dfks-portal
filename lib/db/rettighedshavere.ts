@@ -16,11 +16,9 @@ const PUBLIC_RIGHTS_HOLDER_SELECT = `
     onboarding_completed,
     archived_at,
     invite_sent_at,
-    portal_invite_sent_at,
     dfi_person_id,
     tmdb_person_id,
-    wikidata_id,
-    gender,
+    wikidata_qid,
     portrait_url,
     org_affiliations!inner(*)
 `
