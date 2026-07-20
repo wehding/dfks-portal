@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Building2, Loader2, Plus, Save, Trash2 } from "lucide-react";
-import { getOrganisationSettings, updateOrganisationSettings } from "@/app/actions/organisation-settings";
+import { AlertCircle, Building2, CheckCircle2, Copy, ImageIcon, Loader2, Plus, Save, Trash2, Upload, Wifi } from "lucide-react";
+import { getOrganisationSettings, removeOrganisationLogo, testOrganisationForeningLetConnection, updateOrganisationSettings, uploadOrganisationLogo } from "@/app/actions/organisation-settings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 
 type FormState = {
+  org_id: string;
   short_name: string;
   long_name: string;
   logo_url: string;
@@ -25,9 +26,13 @@ type FormState = {
   foreninglet_password: string;
   foreninglet_enabled: boolean;
   foreninglet_has_credentials: boolean;
+  foreninglet_has_username: boolean;
+  foreninglet_has_password: boolean;
+  foreninglet_credential_source: "organisation" | "environment" | "missing";
 };
 
 const emptyForm: FormState = {
+  org_id: "",
   short_name: "",
   long_name: "",
   logo_url: "",
@@ -42,12 +47,18 @@ const emptyForm: FormState = {
   foreninglet_password: "",
   foreninglet_enabled: true,
   foreninglet_has_credentials: false,
+  foreninglet_has_username: false,
+  foreninglet_has_password: false,
+  foreninglet_credential_source: "missing",
 };
 
 export default function OrganisationSettingsPage() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [isPending, startTransition] = useTransition();
+  const [logoPending, setLogoPending] = useState(false);
+  const [connectionPending, setConnectionPending] = useState(false);
+  const [loginUrl, setLoginUrl] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -55,6 +66,7 @@ export default function OrganisationSettingsPage() {
       .then(settings => {
         if (!active) return;
         setForm({
+          org_id: settings.id,
           short_name: settings.short_name,
           long_name: settings.long_name,
           logo_url: settings.logo_url ?? "",
@@ -69,7 +81,11 @@ export default function OrganisationSettingsPage() {
           foreninglet_password: "",
           foreninglet_enabled: settings.foreninglet.enabled,
           foreninglet_has_credentials: settings.foreninglet.has_credentials,
+          foreninglet_has_username: settings.foreninglet.has_username,
+          foreninglet_has_password: settings.foreninglet.has_password,
+          foreninglet_credential_source: settings.foreninglet.credential_source,
         });
+        setLoginUrl(`${window.location.origin}/?org=${settings.id}`);
       })
       .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente organisationen."))
       .finally(() => {
@@ -119,11 +135,62 @@ export default function OrganisationSettingsPage() {
           foreninglet_password: form.foreninglet_password || null,
           foreninglet_enabled: form.foreninglet_enabled,
         });
+        const settings = await getOrganisationSettings();
+        setForm(current => ({
+          ...current,
+          foreninglet_username: "",
+          foreninglet_password: "",
+          foreninglet_has_credentials: settings.foreninglet.has_credentials,
+          foreninglet_has_username: settings.foreninglet.has_username,
+          foreninglet_has_password: settings.foreninglet.has_password,
+          foreninglet_credential_source: settings.foreninglet.credential_source,
+        }));
         toast.success("Organisationsindstillinger gemt");
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Kunne ikke gemme organisationen.");
       }
     });
+  }
+
+  async function handleLogoUpload(file: File | undefined) {
+    if (!file) return;
+    setLogoPending(true);
+    try {
+      const data = new FormData();
+      data.set("logo", file);
+      const result = await uploadOrganisationLogo(data);
+      setForm(current => ({ ...current, logo_url: result.logo_url }));
+      toast.success("Logo uploadet");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kunne ikke uploade logoet.");
+    } finally {
+      setLogoPending(false);
+    }
+  }
+
+  async function handleLogoRemove() {
+    setLogoPending(true);
+    try {
+      await removeOrganisationLogo();
+      setForm(current => ({ ...current, logo_url: "" }));
+      toast.success("Logo fjernet");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kunne ikke fjerne logoet.");
+    } finally {
+      setLogoPending(false);
+    }
+  }
+
+  async function handleConnectionTest() {
+    setConnectionPending(true);
+    try {
+      const result = await testOrganisationForeningLetConnection();
+      toast.success(`Forbindelsen virker. ${result.count} medlemmer fundet.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Forbindelsen kunne ikke oprettes.");
+    } finally {
+      setConnectionPending(false);
+    }
   }
 
   if (loading) {
@@ -166,9 +233,57 @@ export default function OrganisationSettingsPage() {
             <Label>Fuldt navn</Label>
             <Input value={form.long_name} onChange={event => setForm(f => ({ ...f, long_name: event.target.value }))} placeholder="Organisationens fulde navn" />
           </div>
+          <div className="space-y-3 sm:col-span-2">
+            <Label>Organisationens logo</Label>
+            <div className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center">
+              <div className="flex h-20 w-full items-center justify-center bg-muted/30 sm:w-44">
+                {form.logo_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={form.logo_url} alt={form.short_name || "Organisationens logo"} className="max-h-16 max-w-[156px] object-contain" />
+                ) : (
+                  <ImageIcon className="h-7 w-7 text-muted-foreground" />
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" asChild disabled={logoPending}>
+                  <label className="cursor-pointer">
+                    {logoPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                    {form.logo_url ? "Udskift logo" : "Upload logo"}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="sr-only"
+                      disabled={logoPending}
+                      onChange={event => void handleLogoUpload(event.target.files?.[0])}
+                    />
+                  </label>
+                </Button>
+                {form.logo_url && (
+                  <Button type="button" variant="outline" onClick={() => void handleLogoRemove()} disabled={logoPending}>
+                    <Trash2 className="mr-2 h-4 w-4" />Fjern
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">PNG, JPG eller WebP. Højst 2 MB.</p>
+          </div>
           <div className="space-y-2 sm:col-span-2">
-            <Label>Logo-url</Label>
-            <Input value={form.logo_url} onChange={event => setForm(f => ({ ...f, logo_url: event.target.value }))} placeholder="https://..." />
+            <Label>Organisationsspecifikt loginlink</Label>
+            <div className="flex gap-2">
+              <Input value={loginUrl} readOnly />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="Kopiér loginlink"
+                onClick={() => {
+                  void navigator.clipboard.writeText(loginUrl);
+                  toast.success("Loginlink kopieret");
+                }}
+              >
+                <Copy className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <div className="space-y-2">
             <Label>Primær farve</Label>
@@ -220,6 +335,30 @@ export default function OrganisationSettingsPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           Bruges til at hente medlemslisten fra organisationens medlemssystem. Login gemmes krypteret og vises ikke igen.
         </p>
+        <div className={`mt-4 flex items-start gap-3 rounded-md border px-3 py-3 ${
+          !form.foreninglet_enabled
+            ? "bg-muted/30"
+            : form.foreninglet_has_credentials
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-destructive/30 bg-destructive/5"
+        }`}>
+          {!form.foreninglet_enabled ? (
+            <AlertCircle className="mt-0.5 h-5 w-5 text-muted-foreground" />
+          ) : form.foreninglet_has_credentials ? (
+            <CheckCircle2 className="mt-0.5 h-5 w-5 text-emerald-600" />
+          ) : (
+            <AlertCircle className="mt-0.5 h-5 w-5 text-destructive" />
+          )}
+          <div>
+            <p className="text-sm font-medium">
+              {!form.foreninglet_enabled ? "ForeningLet-import er deaktiveret" : form.foreninglet_has_credentials ? "Loginoplysninger er gemt" : "Loginoplysninger mangler"}
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Brugernavn: {form.foreninglet_has_username ? "gemt" : "mangler"} · Kodeord: {form.foreninglet_has_password ? "gemt" : "mangler"}
+              {form.foreninglet_credential_source === "environment" ? " · Bruger systemets fælles login" : ""}
+            </p>
+          </div>
+        </div>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           <div className="space-y-2 sm:col-span-2">
             <Label>ForeningLet API-adresse</Label>
@@ -234,7 +373,7 @@ export default function OrganisationSettingsPage() {
             <Input
               value={form.foreninglet_username}
               onChange={event => setForm(f => ({ ...f, foreninglet_username: event.target.value }))}
-              placeholder={form.foreninglet_has_credentials ? "Gemmer eksisterende brugernavn" : "Brugernavn"}
+              placeholder={form.foreninglet_has_username ? "Behold gemt brugernavn" : "Brugernavn"}
               autoComplete="off"
             />
           </div>
@@ -244,7 +383,7 @@ export default function OrganisationSettingsPage() {
               type="password"
               value={form.foreninglet_password}
               onChange={event => setForm(f => ({ ...f, foreninglet_password: event.target.value }))}
-              placeholder={form.foreninglet_has_credentials ? "Gemmer eksisterende kodeord" : "Kodeord"}
+              placeholder={form.foreninglet_has_password ? "Behold gemt kodeord" : "Kodeord"}
               autoComplete="new-password"
             />
           </div>
@@ -252,13 +391,19 @@ export default function OrganisationSettingsPage() {
             <div>
               <Label>Aktivér ForeningLet-import</Label>
               <p className="text-xs text-muted-foreground">
-                {form.foreninglet_has_credentials ? "Der er gemt loginoplysninger for organisationen." : "Der er ikke gemt loginoplysninger endnu."}
+                Tomme loginfelter bevarer de oplysninger, der allerede er gemt.
               </p>
             </div>
             <Switch
               checked={form.foreninglet_enabled}
               onCheckedChange={checked => setForm(f => ({ ...f, foreninglet_enabled: checked }))}
             />
+          </div>
+          <div className="sm:col-span-2">
+            <Button type="button" variant="outline" onClick={() => void handleConnectionTest()} disabled={connectionPending || !form.foreninglet_enabled || !form.foreninglet_has_credentials}>
+              {connectionPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wifi className="mr-2 h-4 w-4" />}
+              Test forbindelse
+            </Button>
           </div>
         </div>
       </section>

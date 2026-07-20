@@ -124,6 +124,7 @@ export default function RettighedshavereAdminPage() {
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
+    const [memberSyncSummary, setMemberSyncSummary] = useState<{ updated: number; newCount: number; ambiguous: number; source: "org" | "env" | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -234,7 +235,14 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.count ?? 0} medlemmer hentet. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret.`)
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        if (orgId) loadDfksMembers(orgId)
+        setMemberSyncSummary({
+            updated: result.updatedExisting ?? 0,
+            newCount: result.newCount ?? 0,
+            ambiguous: result.ambiguousCount ?? 0,
+            source: result.source ?? null,
+        })
+        if (orgId) await loadDfksMembers(orgId)
+        await refreshImportPreview()
     }
 
     async function refreshImportPreview() {
@@ -260,6 +268,12 @@ export default function RettighedshavereAdminPage() {
             return
         }
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+        setMemberSyncSummary({
+            updated: result.updatedExisting ?? 0,
+            newCount: result.newCount ?? 0,
+            ambiguous: result.ambiguousCount ?? 0,
+            source: result.source ?? null,
+        })
         if (orgId) await loadDfksMembers(orgId)
         await refreshImportPreview()
     }
@@ -278,6 +292,7 @@ export default function RettighedshavereAdminPage() {
         setSelectedImportIds(new Set())
         await load(orgId)
         await loadOverviewCounts(orgId)
+        await refreshMemberSyncStatus()
     }
 
     const createMatchedMemberNo = useMemo(
@@ -618,7 +633,7 @@ export default function RettighedshavereAdminPage() {
                         )}
                         <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
                             {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Synkroniser med medlemssystem
+                            Hent fra medlemssystem
                         </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
@@ -1050,20 +1065,26 @@ export default function RettighedshavereAdminPage() {
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
                 <DialogContent className="w-[min(760px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
-                        <DialogTitle>Synkroniser med medlemssystem</DialogTitle>
+                        <DialogTitle>Hent og importér medlemmer</DialogTitle>
                         <DialogDescription>
-                            Hentede medlemmer fra medlemslisten kan oprettes som rettighedshavere. Eksisterende matches opdateres med medlemsstatus og medlemsnummer.
+                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-sm text-muted-foreground">
                                 {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                                {memberSyncSummary && (
+                                    <span className="block text-xs">
+                                        {memberSyncSummary.updated} eksisterende opdateret · {memberSyncSummary.ambiguous} kræver afklaring
+                                        {memberSyncSummary.source ? ` · ${memberSyncSummary.source === "org" ? "organisationens login" : "fælles systemlogin"}` : ""}
+                                    </span>
+                                )}
                             </div>
                             <div className="flex gap-2">
                                 <Button type="button" variant="outline" size="sm" onClick={handleSyncDfksMembers} disabled={syncingMembers}>
                                     {syncingMembers && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-                                    Synkronisér
+                                    Hent igen
                                 </Button>
                                 <Button type="button" variant="outline" size="sm" onClick={refreshImportPreview} disabled={importLoading}>
                                     {importLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}

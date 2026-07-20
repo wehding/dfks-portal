@@ -14,6 +14,7 @@ import { SupabaseClient } from "@supabase/supabase-js"
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"] as const
 const SUPERADMIN_ROLES = ["superadmin", "admin"] as const
+const ROLE_RANK: Record<string, number> = { superadmin: 4, admin: 3, "org-admin": 2, jurist: 1 }
 
 /**
  * Tjekker om den indloggede bruger har en admin-rolle i user_org_roles.
@@ -31,12 +32,10 @@ export async function assertAdminRole(
         .select("role, org_id")
         .eq("user_id", user.id)
         .in("role", roles)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle()
+    const highestRole = data?.slice().sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))[0]
 
-    if (!data) return null
-    return { userId: user.id, role: data.role, orgId: data.org_id }
+    if (!highestRole) return null
+    return { userId: user.id, role: highestRole.role, orgId: highestRole.org_id }
 }
 
 export { ADMIN_ROLES, SUPERADMIN_ROLES }

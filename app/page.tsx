@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LanguageToggle } from "@/components/language-toggle"
 import { createClient } from "@/lib/supabase/client"
+import { resolvePostLoginDestination } from "@/lib/auth/post-login"
 
 const TEST_MEMBER = { email: "test@dfks.dk", password: "test1234" }
 
@@ -26,6 +27,22 @@ export default function LoginPage() {
         !process.env.NEXT_PUBLIC_SUPABASE_URL ||
         !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     const [resettingOnboarding, setResettingOnboarding] = useState(false)
+    const [brand, setBrand] = useState({
+        logo_url: null as string | null,
+        short_name: "DFKS",
+        long_name: "Dansk Filmklipperselskab",
+        primary_color: "#111827",
+    })
+
+    useEffect(() => {
+        const orgId = new URLSearchParams(window.location.search).get("org")
+        if (!orgId) return
+        void fetch(`/api/public/branding?org=${encodeURIComponent(orgId)}`)
+            .then(response => response.ok ? response.json() : null)
+            .then(nextBrand => {
+                if (nextBrand) setBrand(nextBrand)
+            })
+    }, [])
 
     const handleResetOnboarding = async () => {
         if (missingSupabaseConfig) {
@@ -76,14 +93,8 @@ export default function LoginPage() {
         const { error: authError } = await supabase.auth.signInWithPassword(creds)
         if (authError) { setError(authError.message); setLoading(false); return }
         const { data: { user } } = await supabase.auth.getUser()
-        const role = user?.user_metadata?.role ?? "member"
-        if (role === "admin" || role === "org-admin" || role === "superadmin") {
-            router.push("/admin/kontraktgennemgang")
-        } else {
-            const supabase2 = createClient()
-            const { data: rh } = await supabase2.from("rettighedshavere").select("onboarding_completed").eq("user_id", user!.id).single()
-            router.push(rh?.onboarding_completed ? "/portal/mine-vaerker" : "/onboarding")
-        }
+        if (!user) { setError("Kunne ikke hente den indloggede bruger."); setLoading(false); return }
+        router.push(await resolvePostLoginDestination(supabase, user.id))
         router.refresh()
     }
 
@@ -107,21 +118,9 @@ export default function LoginPage() {
             return
         }
 
-        // Hent brugerens rolle og redirect til relevant portal
         const { data: { user } } = await supabase.auth.getUser()
-        const role = user?.user_metadata?.role ?? "member"
-
-        if (role === "admin" || role === "org-admin" || role === "superadmin") {
-            router.push("/admin/kontraktgennemgang")
-        } else {
-            // Tjek om onboarding er gennemført
-            const { data: rh } = await supabase
-                .from("rettighedshavere")
-                .select("onboarding_completed")
-                .eq("user_id", user!.id)
-                .single()
-            router.push(rh?.onboarding_completed ? "/portal/mine-vaerker" : "/onboarding")
-        }
+        if (!user) { setError("Kunne ikke hente den indloggede bruger."); setLoading(false); return }
+        router.push(await resolvePostLoginDestination(supabase, user.id))
         router.refresh()
     }
 
@@ -135,14 +134,19 @@ export default function LoginPage() {
             <main className="flex flex-1 items-center justify-center px-4">
                 <div className="w-full max-w-sm space-y-8">
                     <div className="flex flex-col items-center gap-6">
-                        <Image
-                            src="/logo.png"
-                            alt="Dansk Filmklipperselskab"
-                            width={280}
-                            height={120}
-                            className="dark:invert"
-                            priority
-                        />
+                        {brand.logo_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={brand.logo_url} alt={brand.long_name} className="max-h-[120px] max-w-[280px] object-contain" />
+                        ) : (
+                            <Image
+                                src="/logo.png"
+                                alt={brand.long_name}
+                                width={280}
+                                height={120}
+                                className="dark:invert"
+                                priority
+                            />
+                        )}
                         <div className="text-center">
                             <h1 className="text-xl font-semibold tracking-tight">
                                 {t("auth.welcome")}
@@ -188,7 +192,7 @@ export default function LoginPage() {
                         {error && (
                             <p className="text-sm text-destructive">{error}</p>
                         )}
-                        <Button type="submit" className="w-full" disabled={loading}>
+                        <Button type="submit" className="w-full" disabled={loading} style={{ backgroundColor: brand.primary_color }}>
                             {loading ? "Logger ind…" : t("auth.login")}
                         </Button>
                     </form>

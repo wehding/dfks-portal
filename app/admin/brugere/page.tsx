@@ -52,6 +52,8 @@ type UsersResponse = {
     staff?: Array<Partial<User> & { roles?: string[] }>
     portal?: Array<Partial<User>>
     error?: string
+    callerRole?: string
+    callerUserId?: string
 }
 
 // ── Rolle-konfiguration ───────────────────────────────────
@@ -65,7 +67,7 @@ const ROLE_CONFIG: Record<string, { label: string; color: string }> = {
     rettighedshaver:  { label: "Rettighedshaver",  color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
 }
 
-const STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
+const BASE_STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
 
 const GENDER_LABELS: Record<string, string> = {
     female: "Kvinde",
@@ -151,6 +153,7 @@ const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
 
 export default function AdminBrugerePage() {
     const [users, setUsers] = useState<User[]>([])
+    const [callerRole, setCallerRole] = useState("")
     const [loading, setLoading] = useState(true)
     const [tab, setTab] = useState<Tab>("alle")
     const [search, setSearch] = useState("")
@@ -190,6 +193,7 @@ export default function AdminBrugerePage() {
         const res = await fetch("/api/admin/users")
         const json = await res.json() as UsersResponse
         if (res.ok) {
+            setCallerRole(json.callerRole ?? "")
             // Brug merged users hvis tilgængeligt, ellers bagudkompatibel sammensætning
             if (json.users) {
                 setUsers(json.users)
@@ -222,6 +226,19 @@ export default function AdminBrugerePage() {
         jurister:         users.filter(u => u.org_roles.includes("jurist")).length,
         rettighedshavere: users.filter(u => u.is_rettighedshaver).length,
     }), [users])
+    const staffRoles = callerRole === "superadmin"
+        ? (["superadmin", ...BASE_STAFF_ROLES] as Array<keyof typeof ROLE_CONFIG>)
+        : BASE_STAFF_ROLES
+
+    function toggleStaffRole(roles: string[], role: string) {
+        if (role === "superadmin") {
+            const confirmed = window.confirm(roles.includes(role)
+                ? "Vil du fjerne superadmin-adgangen fra denne bruger?"
+                : "Superadmin giver adgang til alle organisationens funktioner og brugerroller. Vil du fortsætte?")
+            if (!confirmed) return roles
+        }
+        return toggleRole(roles, role)
+    }
 
     useEffect(() => {
         if (!inviteIsPortal || inviteRhSearch.length < 2) {
@@ -433,7 +450,7 @@ export default function AdminBrugerePage() {
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                    {u.org_roles.length > 0 && (
+                                    {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
                                         <DropdownMenuItem onClick={() => {
                                             setEditUser(u)
                                             setEditRoles(u.org_roles.slice())
@@ -446,16 +463,20 @@ export default function AdminBrugerePage() {
                                             <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                         </DropdownMenuItem>
                                     )}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                        onClick={() => setToggleUser(u)}
-                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                    >
-                                        {u.banned
-                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                        }
-                                    </DropdownMenuItem>
+                                    {callerRole === "superadmin" && (
+                                        <>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                                onClick={() => setToggleUser(u)}
+                                                className={u.banned ? "text-emerald-600" : "text-destructive"}
+                                            >
+                                                {u.banned
+                                                    ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
+                                                    : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
+                                                }
+                                            </DropdownMenuItem>
+                                        </>
+                                    )}
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </div>
@@ -528,7 +549,7 @@ export default function AdminBrugerePage() {
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
-                                            {u.org_roles.length > 0 && (
+                                            {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
                                                 <DropdownMenuItem onClick={() => {
                                                     setEditUser(u)
                                                     setEditRoles(u.org_roles.slice())
@@ -541,16 +562,20 @@ export default function AdminBrugerePage() {
                                                     <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                                 </DropdownMenuItem>
                                             )}
-                                            <DropdownMenuSeparator />
-                                            <DropdownMenuItem
-                                                onClick={() => setToggleUser(u)}
-                                                className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                            >
-                                                {u.banned
-                                                    ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                                    : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                                }
-                                            </DropdownMenuItem>
+                                            {callerRole === "superadmin" && (
+                                                <>
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        onClick={() => setToggleUser(u)}
+                                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
+                                                    >
+                                                        {u.banned
+                                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
+                                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
+                                                        }
+                                                    </DropdownMenuItem>
+                                                </>
+                                            )}
                                         </DropdownMenuContent>
                                     </DropdownMenu>
                                 </TableCell>
@@ -674,12 +699,12 @@ export default function AdminBrugerePage() {
                                 <div className="space-y-1.5">
                                     <Label>Rolle(r) *</Label>
                                     <div className="space-y-0.5">
-                                        {STAFF_ROLES.map(r => (
+                                        {staffRoles.map(r => (
                                             <RoleToggle
                                                 key={r}
                                                 role={r}
                                                 selected={inviteRoles.includes(r)}
-                                                onToggle={() => setInviteRoles(prev => toggleRole(prev, r))}
+                                                onToggle={() => setInviteRoles(prev => toggleStaffRole(prev, r))}
                                             />
                                         ))}
                                     </div>
@@ -726,12 +751,12 @@ export default function AdminBrugerePage() {
                         <DialogDescription>{editUser?.full_name}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-0.5 py-2">
-                        {STAFF_ROLES.map(r => (
+                        {staffRoles.map(r => (
                             <RoleToggle
                                 key={r}
                                 role={r}
                                 selected={editRoles.includes(r)}
-                                onToggle={() => setEditRoles(prev => toggleRole(prev, r))}
+                                onToggle={() => setEditRoles(prev => toggleStaffRole(prev, r))}
                             />
                         ))}
                     </div>
