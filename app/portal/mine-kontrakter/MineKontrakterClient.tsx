@@ -520,7 +520,7 @@ export default function MineKontrakterClient({
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{t("contracts.mineTitle")}</h1>
+          <h1 className="hidden text-2xl font-bold text-foreground sm:block">{t("contracts.mineTitle")}</h1>
           <p className="text-sm text-muted-foreground mt-1">{t("contracts.mineSubtitle")}</p>
         </div>
         <div className="grid w-full gap-2 sm:flex sm:w-auto">

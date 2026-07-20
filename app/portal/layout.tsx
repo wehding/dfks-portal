@@ -42,6 +42,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
+import { resolveNavigationTitle } from "@/lib/navigation-title"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -218,6 +219,7 @@ export default function PortalLayout({
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
+    const currentPageTitle = resolveNavigationTitle(pathname, visiblePortalNavItems, t("nav.portal"))
 
     const handleLogout = async () => {
         const supabase = createClient()
@@ -380,19 +382,22 @@ export default function PortalLayout({
                 </SidebarFooter>
             </Sidebar>
 
-            <SidebarInset className="min-w-0 overflow-x-hidden">
-                <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
-                    <SidebarTrigger className="-ml-1" />
-                    <Separator orientation="vertical" className="h-4" />
-                    <span className="text-sm font-medium text-muted-foreground">
-                        {t("nav.portal")}
+            <SidebarInset className="min-w-0">
+                <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-2.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:h-12 sm:px-4 sm:shadow-none">
+                    <SidebarTrigger className="shrink-0" />
+                    <Separator orientation="vertical" className="hidden h-4 sm:block" />
+                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">
+                        {currentPageTitle}
+                    </h1>
+                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">
+                        {currentPageTitle}
                     </span>
-                    <div className="ml-auto flex items-center gap-1">
+                    <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>
                 </header>
-                <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
+                <main className="min-w-0 flex-1 overflow-x-hidden p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>
     )
