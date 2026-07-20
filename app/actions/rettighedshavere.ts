@@ -59,6 +59,25 @@ function securePayload(input: RightsHolderInput) {
   };
 }
 
+type DatabaseError = {
+  code?: string;
+  message?: string;
+} | null;
+
+function isMissingGenderColumn(error: DatabaseError) {
+  return Boolean(
+    error &&
+    error.code === "PGRST204" &&
+    error.message?.includes("'gender' column of 'rettighedshavere'")
+  );
+}
+
+function withoutGender(payload: ReturnType<typeof securePayload>) {
+  const compatiblePayload: Record<string, string | boolean | null> = { ...payload };
+  delete compatiblePayload.gender;
+  return compatiblePayload;
+}
+
 export async function getAdminRightsHolders() {
   const supabase = await createClient();
   const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
@@ -144,11 +163,22 @@ export async function createRettighedshaverSecure(
   if (!caller || caller.orgId !== orgId) return { success: false, error: "Ikke autoriseret" };
 
   const db = createServiceClient();
-  const { data: rh, error } = await db
+  const payload = securePayload(input);
+  let createResult = await db
     .from("rettighedshavere")
-    .insert(securePayload(input))
+    .insert(payload)
     .select("id")
     .single();
+
+  if (isMissingGenderColumn(createResult.error)) {
+    createResult = await db
+      .from("rettighedshavere")
+      .insert(withoutGender(payload))
+      .select("id")
+      .single();
+  }
+
+  const { data: rh, error } = createResult;
 
   if (error || !rh) return { success: false, error: error?.message ?? "Kunne ikke oprette rettighedshaver" };
 
@@ -184,17 +214,26 @@ export async function updateRettighedshaverSecure(
     return { success: false, error: "Rettighedshaveren tilhører ikke din organisation" };
   }
 
-  const { error } = await db
+  const payload = Object.fromEntries(
+    Object.entries(securePayload(input)).filter(([key, value]) => {
+      if ((key === "cpr_no" || key === "bank_account") && value === null) return false;
+      return true;
+    })
+  ) as ReturnType<typeof securePayload>;
+
+  let updateResult = await db
     .from("rettighedshavere")
-    .update(Object.fromEntries(
-      Object.entries(securePayload(input)).filter(([key, value]) => {
-        if ((key === "cpr_no" || key === "bank_account") && value === null) return false;
-        return true;
-      })
-    ))
+    .update(payload)
     .eq("id", id);
 
-  if (error) return { success: false, error: error.message };
+  if (isMissingGenderColumn(updateResult.error)) {
+    updateResult = await db
+      .from("rettighedshavere")
+      .update(withoutGender(payload))
+      .eq("id", id);
+  }
+
+  if (updateResult.error) return { success: false, error: updateResult.error.message };
   revalidatePath("/admin/rettighedshavere");
   return { success: true };
 }
