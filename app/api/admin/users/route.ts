@@ -19,6 +19,8 @@ const ROLE_RANK: Record<string, number> = {
     viewer: 0,
 }
 const ALLOWED_STAFF_ROLES = Object.keys(ROLE_RANK)
+const PRESERVED_SYSTEM_ROLES = ["member"]
+const ALLOWED_ORG_ROLES = new Set([...ALLOWED_STAFF_ROLES, ...PRESERVED_SYSTEM_ROLES])
 
 function primaryRole(roles: string[]): string {
     return roles.reduce((best, r) => (ROLE_RANK[r] ?? -1) > (ROLE_RANK[best] ?? -1) ? r : best, "viewer")
@@ -188,8 +190,11 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
         }
         const nextRoles = Array.from(new Set(roles))
-        if (nextRoles.some(role => !ALLOWED_STAFF_ROLES.includes(role))) {
-            return NextResponse.json({ error: "En eller flere roller er ugyldige" }, { status: 400 })
+        const invalidRoles = nextRoles.filter(role => !ALLOWED_ORG_ROLES.has(role))
+        if (invalidRoles.length > 0) {
+            return NextResponse.json({
+                error: `En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`,
+            }, { status: 400 })
         }
         const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
         if (targetError) return targetError
