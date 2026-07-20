@@ -66,6 +66,31 @@ type ImportCandidate = {
     rights_holder_id: string | null
     match_reason: string | null
 }
+type ImportMatchFilter = "all" | "new" | "existing" | "ambiguous"
+type ImportMembershipFilter = "all" | "active" | "resigned"
+type ImportSortKey = "name" | "member_no" | "email" | "membership" | "match"
+
+function ImportSortHeader({
+    sort,
+    activeSort,
+    direction,
+    onSort,
+    children,
+}: {
+    sort: ImportSortKey
+    activeSort: ImportSortKey
+    direction: "asc" | "desc"
+    onSort: (sort: ImportSortKey) => void
+    children: ReactNode
+}) {
+    return (
+        <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap font-medium" onClick={() => onSort(sort)}>
+            {children}
+            <ArrowUpDown className={`h-3.5 w-3.5 ${activeSort === sort ? "text-foreground" : "text-muted-foreground"}`} />
+            <span className="sr-only">{activeSort === sort ? (direction === "asc" ? "sorteret stigende" : "sorteret faldende") : "sortér kolonne"}</span>
+        </button>
+    )
+}
 
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : "Fejl"
@@ -140,6 +165,11 @@ export default function RettighedshavereAdminPage() {
     const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
     const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set())
     const [importingMembers, setImportingMembers] = useState(false)
+    const [importSearch, setImportSearch] = useState("")
+    const [importMatchFilter, setImportMatchFilter] = useState<ImportMatchFilter>("all")
+    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("all")
+    const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
+    const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
     useEffect(() => {
         const supabase = createClient()
@@ -313,6 +343,57 @@ export default function RettighedshavereAdminPage() {
         if (!editTarget || editMemberNoTouched || editForm.member_no.trim() || !editMatchedMemberNo) return
         setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
     }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
+
+    const visibleImportCandidates = useMemo(() => {
+        const query = normalizeName(importSearch)
+        const direction = importSortDirection === "asc" ? 1 : -1
+        const matchRank: Record<ImportCandidate["match"], number> = { new: 0, existing: 1, ambiguous: 2 }
+        const membershipRank: Record<string, number> = { active: 0, resigned: 1 }
+
+        return importCandidates
+            .filter(candidate => {
+                if (importMatchFilter !== "all" && candidate.match !== importMatchFilter) return false
+                if (importMembershipFilter !== "all" && candidate.status !== importMembershipFilter) return false
+                if (!query) return true
+                return [candidate.full_name, candidate.email, candidate.display_id, candidate.phone, candidate.address]
+                    .some(value => normalizeName(value ?? "").includes(query))
+            })
+            .sort((left, right) => {
+                let result = 0
+                if (importSortKey === "name") result = left.full_name.localeCompare(right.full_name, "da")
+                if (importSortKey === "member_no") result = (left.display_id ?? "").localeCompare(right.display_id ?? "", "da", { numeric: true })
+                if (importSortKey === "email") result = (left.email ?? "").localeCompare(right.email ?? "", "da")
+                if (importSortKey === "membership") result = (membershipRank[left.status] ?? 9) - (membershipRank[right.status] ?? 9)
+                if (importSortKey === "match") result = matchRank[left.match] - matchRank[right.match]
+                return result * direction
+            })
+    }, [importCandidates, importMatchFilter, importMembershipFilter, importSearch, importSortDirection, importSortKey])
+
+    const selectableVisibleImportIds = visibleImportCandidates
+        .filter(candidate => candidate.match !== "ambiguous" && candidate.status !== "resigned")
+        .map(candidate => candidate.id)
+    const selectedVisibleImportCount = selectableVisibleImportIds.filter(id => selectedImportIds.has(id)).length
+    const allVisibleImportSelected = selectableVisibleImportIds.length > 0 && selectedVisibleImportCount === selectableVisibleImportIds.length
+
+    function setImportSort(nextSort: ImportSortKey) {
+        if (nextSort === importSortKey) {
+            setImportSortDirection(direction => direction === "asc" ? "desc" : "asc")
+            return
+        }
+        setImportSortKey(nextSort)
+        setImportSortDirection("asc")
+    }
+
+    function toggleAllVisibleImports(checked: boolean) {
+        setSelectedImportIds(current => {
+            const next = new Set(current)
+            for (const id of selectableVisibleImportIds) {
+                if (checked) next.add(id)
+                else next.delete(id)
+            }
+            return next
+        })
+    }
 
     const visible = useMemo(() => {
         const q = search.toLowerCase().trim()
@@ -1063,11 +1144,11 @@ export default function RettighedshavereAdminPage() {
 
             {/* Import members dialog */}
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
-                <DialogContent className="w-[min(760px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
+                <DialogContent className="w-[min(1040px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
                         <DialogTitle>Hent og importér medlemmer</DialogTitle>
                         <DialogDescription>
-                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte.
+                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
@@ -1092,50 +1173,125 @@ export default function RettighedshavereAdminPage() {
                                 </Button>
                             </div>
                         </div>
+                        <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_180px]">
+                            <div className="relative">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    value={importSearch}
+                                    onChange={event => setImportSearch(event.target.value)}
+                                    placeholder="Søg navn, e-mail eller medlemsnr."
+                                    className="pl-8"
+                                />
+                            </div>
+                            <Select value={importMatchFilter} onValueChange={value => setImportMatchFilter(value as ImportMatchFilter)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Alle importstatusser</SelectItem>
+                                    <SelectItem value="new">Ikke importeret</SelectItem>
+                                    <SelectItem value="existing">Allerede importeret</SelectItem>
+                                    <SelectItem value="ambiguous">Kræver afklaring</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Select value={importMembershipFilter} onValueChange={value => setImportMembershipFilter(value as ImportMembershipFilter)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Alle medlemsstatusser</SelectItem>
+                                    <SelectItem value="active">Aktivt medlemskab</SelectItem>
+                                    <SelectItem value="resigned">Udmeldt</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                            <span className="text-muted-foreground">
+                                Viser {visibleImportCandidates.length} af {importCandidates.length}
+                            </span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleAllVisibleImports(!allVisibleImportSelected)}
+                                disabled={selectableVisibleImportIds.length === 0}
+                            >
+                                {allVisibleImportSelected ? "Fravælg alle viste" : `Vælg alle viste (${selectableVisibleImportIds.length})`}
+                            </Button>
+                        </div>
                         <div className="max-h-[420px] overflow-auto rounded-md border">
                             {importLoading ? (
                                 <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter medlemsliste...
                                 </div>
-                            ) : importCandidates.length === 0 ? (
-                                <p className="py-10 text-center text-sm text-muted-foreground">Ingen medlemmer i importlisten.</p>
-                            ) : importCandidates.map(candidate => {
-                                const disabled = candidate.match === "ambiguous" || candidate.status === "resigned"
-                                return (
-                                    <label key={candidate.id} className="flex cursor-pointer items-start gap-3 border-b px-3 py-3 last:border-b-0">
-                                        <input
-                                            type="checkbox"
-                                            className="mt-1 h-4 w-4"
-                                            checked={selectedImportIds.has(candidate.id)}
-                                            disabled={disabled}
-                                            onChange={event => {
-                                                setSelectedImportIds(current => {
-                                                    const next = new Set(current)
-                                                    if (event.target.checked) next.add(candidate.id)
-                                                    else next.delete(candidate.id)
-                                                    return next
-                                                })
-                                            }}
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <span className="font-medium">{candidate.full_name}</span>
-                                                {candidate.match === "new" && candidate.status !== "resigned" && <Badge className="text-xs">Ny</Badge>}
-                                                {candidate.match === "existing" && <Badge variant="outline" className="text-xs">Matcher eksisterende</Badge>}
-                                                {candidate.match === "ambiguous" && <Badge variant="destructive" className="text-xs">Kræver manuel afklaring</Badge>}
-                                                {candidate.status === "resigned" && <Badge variant="outline" className="text-xs">Udmeldt</Badge>}
-                                            </div>
-                                            <p className="mt-1 text-xs text-muted-foreground">
-                                                {candidate.email ?? "Ingen email"} · Medlemsnr. {candidate.display_id ?? "—"}
-                                                {candidate.match_reason ? ` · ${candidate.match_reason}` : ""}
-                                            </p>
-                                            {(candidate.phone || candidate.address) && (
-                                                <p className="mt-1 text-xs text-muted-foreground">{[candidate.phone, candidate.address].filter(Boolean).join(" · ")}</p>
-                                            )}
-                                        </div>
-                                    </label>
-                                )
-                            })}
+                            ) : visibleImportCandidates.length === 0 ? (
+                                <p className="py-10 text-center text-sm text-muted-foreground">Ingen medlemmer matcher filtrene.</p>
+                            ) : (
+                                <Table>
+                                    <TableHeader className="sticky top-0 z-10 bg-background">
+                                        <TableRow>
+                                            <TableHead className="w-10">
+                                                <input
+                                                    type="checkbox"
+                                                    aria-label="Vælg alle viste medlemmer"
+                                                    checked={allVisibleImportSelected}
+                                                    onChange={event => toggleAllVisibleImports(event.target.checked)}
+                                                    disabled={selectableVisibleImportIds.length === 0}
+                                                    className="h-4 w-4"
+                                                />
+                                            </TableHead>
+                                            <TableHead><ImportSortHeader sort="name" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Navn</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="member_no" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Medlemsnr.</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="email" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>E-mail</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="membership" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Medlemsstatus</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="match" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Importstatus</ImportSortHeader></TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {visibleImportCandidates.map(candidate => {
+                                            const disabled = candidate.match === "ambiguous" || candidate.status === "resigned"
+                                            return (
+                                                <TableRow key={candidate.id} className={disabled ? "text-muted-foreground" : undefined}>
+                                                    <TableCell>
+                                                        <input
+                                                            type="checkbox"
+                                                            aria-label={`Vælg ${candidate.full_name}`}
+                                                            className="h-4 w-4"
+                                                            checked={selectedImportIds.has(candidate.id)}
+                                                            disabled={disabled}
+                                                            onChange={event => {
+                                                                setSelectedImportIds(current => {
+                                                                    const next = new Set(current)
+                                                                    if (event.target.checked) next.add(candidate.id)
+                                                                    else next.delete(candidate.id)
+                                                                    return next
+                                                                })
+                                                            }}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell className="min-w-48 font-medium">
+                                                        {candidate.full_name}
+                                                        {(candidate.phone || candidate.address) && (
+                                                            <span className="mt-1 block max-w-64 truncate text-xs font-normal text-muted-foreground" title={[candidate.phone, candidate.address].filter(Boolean).join(" · ")}>
+                                                                {[candidate.phone, candidate.address].filter(Boolean).join(" · ")}
+                                                            </span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="whitespace-nowrap">{candidate.display_id ?? "—"}</TableCell>
+                                                    <TableCell>{candidate.email ?? "—"}</TableCell>
+                                                    <TableCell>
+                                                        {candidate.status === "resigned"
+                                                            ? <Badge variant="outline">Udmeldt</Badge>
+                                                            : <Badge className="bg-emerald-600 text-white">Aktiv</Badge>}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {candidate.match === "new" && <Badge>Ikke importeret</Badge>}
+                                                        {candidate.match === "existing" && <Badge variant="outline">Allerede importeret</Badge>}
+                                                        {candidate.match === "ambiguous" && <Badge variant="destructive">Kræver afklaring</Badge>}
+                                                        {candidate.match_reason && <span className="mt-1 block text-xs text-muted-foreground">{candidate.match_reason}</span>}
+                                                    </TableCell>
+                                                </TableRow>
+                                            )
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            )}
                         </div>
                     </div>
                     <DialogFooter>
