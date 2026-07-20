@@ -2,6 +2,7 @@ import "server-only";
 
 import { decryptValue, encryptValue, isEncryptedValue } from "@/lib/encryption";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseForeningLetMemberPayload } from "@/lib/foreninglet";
 
 export type ForeningLetConfig = {
   username: string;
@@ -106,7 +107,7 @@ export async function testForeningLetCredentials(
   }
 
   const body = await response.json();
-  const members = Array.isArray(body) ? body : Array.isArray(body.members) ? body.members : [];
+  const members = parseForeningLetMemberPayload(body);
   return { count: members.length, source: credentials.source };
 }
 
