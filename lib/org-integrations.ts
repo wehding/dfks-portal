@@ -2,6 +2,7 @@ import "server-only";
 
 import { decryptValue, encryptValue, isEncryptedValue } from "@/lib/encryption";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { parseForeningLetMemberPayload } from "@/lib/foreninglet";
 
 export type ForeningLetConfig = {
   username: string;
@@ -13,6 +14,9 @@ export type PublicForeningLetIntegration = {
   base_url: string;
   enabled: boolean;
   has_credentials: boolean;
+  has_username: boolean;
+  has_password: boolean;
+  credential_source: "organisation" | "environment" | "missing";
 };
 
 const DEFAULT_FORENINGLET_BASE_URL = "https://foreninglet.dk/api/members";
@@ -68,12 +72,43 @@ export async function getForeningLetIntegration(
     .maybeSingle();
 
   const config = parseConfig(data?.config_encrypted as string | null | undefined);
+  const hasOrgCredentials = Boolean(config.username && config.password);
+  const hasEnvironmentCredentials = Boolean(process.env.FORENINGLET_USERNAME && process.env.FORENINGLET_PASSWORD);
   return {
     provider: "foreninglet",
     base_url: assertAllowedForeningLetUrl(data?.base_url as string | null),
     enabled: data?.enabled !== false,
-    has_credentials: Boolean(config.username && config.password),
+    has_credentials: hasOrgCredentials || hasEnvironmentCredentials,
+    has_username: Boolean(config.username) || Boolean(process.env.FORENINGLET_USERNAME),
+    has_password: Boolean(config.password) || Boolean(process.env.FORENINGLET_PASSWORD),
+    credential_source: hasOrgCredentials ? "organisation" : hasEnvironmentCredentials ? "environment" : "missing",
   };
+}
+
+export async function testForeningLetCredentials(
+  db: SupabaseClient,
+  orgId: string
+): Promise<{ count: number; source: "org" | "env" }> {
+  const credentials = await resolveForeningLetCredentials(db, orgId);
+  const url = new URL(credentials.baseUrl);
+  url.searchParams.set("version", "1");
+  const response = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`).toString("base64")}`,
+      Accept: "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(response.status === 401
+      ? "ForeningLet afviste brugernavn eller kodeord."
+      : `ForeningLet svarede med ${response.status}.`);
+  }
+
+  const body = await response.json();
+  const members = parseForeningLetMemberPayload(body);
+  return { count: members.length, source: credentials.source };
 }
 
 export async function resolveForeningLetCredentials(

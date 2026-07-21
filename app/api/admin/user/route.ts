@@ -60,6 +60,17 @@ export async function POST(req: NextRequest) {
             const phone = isStaff ? String(body.phone ?? "") : holder?.phone
             if (!email) return NextResponse.json({ error: "Der mangler email på brugeren" }, { status: 400 })
 
+            const requestedRoles = Array.isArray(body.roles)
+                ? body.roles
+                : body.role ? [body.role] : []
+            const allowedRoles = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
+            if (isStaff && requestedRoles.some((role: unknown) => typeof role !== "string" || !allowedRoles.includes(role))) {
+                return NextResponse.json({ error: "En eller flere roller er ugyldige" }, { status: 400 })
+            }
+            if (isStaff && requestedRoles.includes("superadmin") && caller.role !== "superadmin") {
+                return NextResponse.json({ error: "Kun superadmin kan tildele superadmin-rollen" }, { status: 403 })
+            }
+
             const userRole = isStaff ? (inviteRole ?? "admin") : "member"
             const redirectTo = isStaff
                 ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
@@ -94,12 +105,7 @@ export async function POST(req: NextRequest) {
             if (linkErr) throw new Error(linkErr.message)
 
             const newUserId = linkData.user.id
-            const { roles, role: singleRole } = body
-            const rolesToAssign: string[] = (roles ?? (singleRole ? [singleRole] : []))
-                .filter((role: string) => ["superadmin", "admin", "org-admin", "jurist"].includes(role))
-            if (rolesToAssign.includes("superadmin") && caller.role !== "superadmin") {
-                return NextResponse.json({ error: "Kun superadmin kan tildele superadmin-rollen" }, { status: 403 })
-            }
+            const rolesToAssign = requestedRoles as string[]
 
             // Tildel staff-roller i user_org_roles
             if (rolesToAssign.length > 0 && rhId === "__staff__") {

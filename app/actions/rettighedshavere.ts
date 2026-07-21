@@ -6,6 +6,34 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { encryptValue } from "@/lib/encryption";
+import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
+
+export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
+  organisation_names: string[];
+};
+
+export type AdminRightsHolderCounts = Record<string, {
+  contracts: number;
+  works: number;
+  allContractsValidated: boolean;
+}>;
+
+const ADMIN_RIGHTS_HOLDER_FIELDS = `
+  id,
+  full_name,
+  email,
+  phone,
+  address,
+  created_at,
+  user_id,
+  onboarding_completed,
+  archived_at,
+  invite_sent_at,
+  dfi_person_id,
+  tmdb_person_id,
+  wikidata_qid,
+  portrait_url
+`;
 
 type RightsHolderInput = {
   full_name: string;
@@ -31,6 +59,99 @@ function securePayload(input: RightsHolderInput) {
   };
 }
 
+type DatabaseError = {
+  code?: string;
+  message?: string;
+} | null;
+
+function isMissingGenderColumn(error: DatabaseError) {
+  return Boolean(
+    error &&
+    error.code === "PGRST204" &&
+    error.message?.includes("'gender' column of 'rettighedshavere'")
+  );
+}
+
+function withoutGender(payload: ReturnType<typeof securePayload>) {
+  const compatiblePayload: Record<string, string | boolean | null> = { ...payload };
+  delete compatiblePayload.gender;
+  return compatiblePayload;
+}
+
+export async function getAdminRightsHolders() {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
+  if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
+
+  const db = createServiceClient();
+  const canSeeAllOrganisations = caller.role === "superadmin";
+  const holdersQuery = canSeeAllOrganisations
+    ? db.from("rettighedshavere").select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations(*)`)
+    : db
+        .from("rettighedshavere")
+        .select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations!inner(*)`)
+        .eq("org_affiliations.org_id", caller.orgId);
+  const { data: holderRows, error: holdersError } = await holdersQuery.order("full_name");
+  if (holdersError) throw new Error(holdersError.message);
+
+  const orgIds = Array.from(new Set((holderRows ?? [])
+    .flatMap(holder => (holder.org_affiliations ?? []).map((affiliation: { org_id: string }) => affiliation.org_id))));
+  const { data: organisations, error: organisationsError } = orgIds.length
+    ? await db.from("organisations").select("id, name").in("id", orgIds)
+    : { data: [], error: null };
+  if (organisationsError) throw new Error(organisationsError.message);
+  const orgNames = new Map((organisations ?? []).map(org => [org.id as string, String(org.name)]));
+
+  const rows = (holderRows ?? []).map(holder => ({
+    ...holder,
+    organisation_names: Array.from(new Set((holder.org_affiliations ?? [])
+      .map((affiliation: { org_id: string }) => orgNames.get(affiliation.org_id))
+      .filter((name): name is string => Boolean(name)))),
+  })) as unknown as AdminRightsHolderListItem[];
+
+  const holderIds = rows.map(holder => holder.id);
+  let contractsQuery = db.from("contracts").select("rights_holder_id, status").in("rights_holder_id", holderIds.length ? holderIds : ["00000000-0000-0000-0000-000000000000"]);
+  let assignmentsQuery = db.from("work_assignments").select("rights_holder_id").in("rights_holder_id", holderIds.length ? holderIds : ["00000000-0000-0000-0000-000000000000"]);
+  if (!canSeeAllOrganisations) {
+    contractsQuery = contractsQuery.eq("org_id", caller.orgId);
+    assignmentsQuery = assignmentsQuery.eq("org_id", caller.orgId);
+  }
+  const [{ data: contracts, error: contractsError }, { data: assignments, error: assignmentsError }] = await Promise.all([
+    contractsQuery,
+    assignmentsQuery,
+  ]);
+  if (contractsError) throw new Error(contractsError.message);
+  if (assignmentsError) throw new Error(assignmentsError.message);
+
+  const countsByRightsHolder: AdminRightsHolderCounts = {};
+  const statusesByRightsHolder: Record<string, string[]> = {};
+  for (const contract of contracts ?? []) {
+    const rightsHolderId = contract.rights_holder_id as string | null;
+    if (!rightsHolderId) continue;
+    countsByRightsHolder[rightsHolderId] ??= { contracts: 0, works: 0, allContractsValidated: false };
+    countsByRightsHolder[rightsHolderId].contracts += 1;
+    statusesByRightsHolder[rightsHolderId] ??= [];
+    statusesByRightsHolder[rightsHolderId].push(String(contract.status ?? ""));
+  }
+  for (const assignment of assignments ?? []) {
+    const rightsHolderId = assignment.rights_holder_id as string | null;
+    if (!rightsHolderId) continue;
+    countsByRightsHolder[rightsHolderId] ??= { contracts: 0, works: 0, allContractsValidated: false };
+    countsByRightsHolder[rightsHolderId].works += 1;
+  }
+  for (const [rightsHolderId, counts] of Object.entries(countsByRightsHolder)) {
+    const statuses = statusesByRightsHolder[rightsHolderId] ?? [];
+    counts.allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status));
+  }
+
+  return {
+    rows,
+    countsByRightsHolder,
+    orgId: caller.orgId,
+    canSeeAllOrganisations,
+  };
+}
+
 export async function createRettighedshaverSecure(
   input: RightsHolderInput,
   orgId: string,
@@ -42,11 +163,22 @@ export async function createRettighedshaverSecure(
   if (!caller || caller.orgId !== orgId) return { success: false, error: "Ikke autoriseret" };
 
   const db = createServiceClient();
-  const { data: rh, error } = await db
+  const payload = securePayload(input);
+  let createResult = await db
     .from("rettighedshavere")
-    .insert(securePayload(input))
+    .insert(payload)
     .select("id")
     .single();
+
+  if (isMissingGenderColumn(createResult.error)) {
+    createResult = await db
+      .from("rettighedshavere")
+      .insert(withoutGender(payload))
+      .select("id")
+      .single();
+  }
+
+  const { data: rh, error } = createResult;
 
   if (error || !rh) return { success: false, error: error?.message ?? "Kunne ikke oprette rettighedshaver" };
 
@@ -82,17 +214,26 @@ export async function updateRettighedshaverSecure(
     return { success: false, error: "Rettighedshaveren tilhører ikke din organisation" };
   }
 
-  const { error } = await db
+  const payload = Object.fromEntries(
+    Object.entries(securePayload(input)).filter(([key, value]) => {
+      if ((key === "cpr_no" || key === "bank_account") && value === null) return false;
+      return true;
+    })
+  ) as ReturnType<typeof securePayload>;
+
+  let updateResult = await db
     .from("rettighedshavere")
-    .update(Object.fromEntries(
-      Object.entries(securePayload(input)).filter(([key, value]) => {
-        if ((key === "cpr_no" || key === "bank_account") && value === null) return false;
-        return true;
-      })
-    ))
+    .update(payload)
     .eq("id", id);
 
-  if (error) return { success: false, error: error.message };
+  if (isMissingGenderColumn(updateResult.error)) {
+    updateResult = await db
+      .from("rettighedshavere")
+      .update(withoutGender(payload))
+      .eq("id", id);
+  }
+
+  if (updateResult.error) return { success: false, error: updateResult.error.message };
   revalidatePath("/admin/rettighedshavere");
   return { success: true };
 }

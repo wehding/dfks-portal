@@ -25,7 +25,7 @@ export default function MineVisningerPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState({ workId: "", broadcasterId: "", date: "", season: "", episode: "", comment: "" });
+  const [draft, setDraft] = useState({ workId: "", broadcasterId: "", date: "", comment: "" });
   const [reply, setReply] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -66,12 +66,10 @@ export default function MineVisningerPage() {
       title: selectedWork.title ?? "Ukendt værk",
       channel: selectedBroadcaster.name ?? "Ukendt kanal",
       screeningDate: draft.date,
-      season: draft.season ? Number(draft.season) : null,
-      episode: draft.episode ? Number(draft.episode) : null,
       initialComment: draft.comment,
     });
     setSaving(false);
-    if (result.success) { setCreateOpen(false); setDraft({ workId: "", broadcasterId: "", date: "", season: "", episode: "", comment: "" }); await load(); }
+    if (result.success) { setCreateOpen(false); setDraft({ workId: "", broadcasterId: "", date: "", comment: "" }); await load(); }
   };
 
   const openClaim = async (claim: Claim) => {
@@ -89,7 +87,6 @@ export default function MineVisningerPage() {
       <div className="relative"><Label>Værk</Label><Input className="mt-1" placeholder="Søg blandt dine værker" value={workQuery} onChange={e => { setWorkQuery(e.target.value); setDraft({ ...draft, workId: "" }); }} />{workQuery && !draft.workId && <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover shadow-md">{filteredWorks.map(work => <button type="button" key={work.id} className="block w-full px-3 py-2 text-left text-sm hover:bg-muted" onClick={() => { setDraft({ ...draft, workId: work.id }); setWorkQuery(work.title ?? ""); }}>{work.title}</button>)}</div>}</div>
       <div><Label>Broadcaster</Label><select className="mt-1 w-full rounded-md border bg-background p-2" value={draft.broadcasterId} onChange={e => setDraft({ ...draft, broadcasterId: e.target.value })}><option value="">Vælg broadcaster</option>{broadcasters.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
       <div><Label>Dato</Label><Input type="date" value={draft.date} onChange={e => setDraft({ ...draft, date: e.target.value })} /></div>
-      <div className="grid grid-cols-2 gap-3"><div><Label>Sæson</Label><Input inputMode="numeric" value={draft.season} onChange={e => setDraft({ ...draft, season: e.target.value })} /></div><div><Label>Afsnit</Label><Input inputMode="numeric" value={draft.episode} onChange={e => setDraft({ ...draft, episode: e.target.value })} /></div></div>
       <div><Label>Besked til admin (valgfri)</Label><Textarea value={draft.comment} onChange={e => setDraft({ ...draft, comment: e.target.value })} /></div>
       <Button className="w-full" onClick={submit} disabled={saving || !draft.workId || !draft.broadcasterId || !draft.date}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Send indberetning</Button>
     </div></DialogContent></Dialog>

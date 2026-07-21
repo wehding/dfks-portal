@@ -58,14 +58,19 @@ const ALL_ADMIN_NAV_ITEMS = [
     { key: "stamdata",           href: "/admin/stamdata",           icon: Database,    labelKey: "nav.masterData"       },
     { key: "gennemsigtighed",    href: "/admin/gennemsigtighed",    icon: ScrollText,  labelKey: "nav.transparency"     },
     { key: "indbetalinger",      href: "/admin/indbetalinger",      icon: Receipt,     labelKey: "nav.producerPayments" },
-    { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
 ]
 
-const ADMIN_KEYS = ALL_ADMIN_NAV_ITEMS.map(i => i.key)
+const SETUP_ADMIN_NAV_ITEMS = [
+    { key: "organisation",       href: "/admin/organisation",       icon: Building2,   labelKey: "nav.organisation"     },
+    { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
+    { key: "organisationer",     href: "/admin/organisationer",     icon: ShieldCheck, labelKey: "nav.organisations"    },
+]
+
+const ADMIN_KEYS = [...ALL_ADMIN_NAV_ITEMS, ...SETUP_ADMIN_NAV_ITEMS].map(i => i.key)
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ADMIN_KEYS,
-    admin:       ADMIN_KEYS,
+    admin:       ADMIN_KEYS.filter(k => k !== "organisationer"),
     "org-admin": ADMIN_KEYS.filter(k => k !== "stamdata" && k !== "brugere"),
     jurist:      ["kontrakter", "kontraktgennemgang"],
     viewer:      ["kontrakter", "statistik"],
@@ -219,6 +224,12 @@ export default function PortalLayout({
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
+    const setupNavItems = SETUP_ADMIN_NAV_ITEMS
+        .filter(item => allowedKeys.includes(item.key))
+        .map(item => ({
+            ...item,
+            label: t(item.labelKey as Parameters<typeof t>[0]),
+        }))
     const currentPageTitle = resolveNavigationTitle(pathname, visiblePortalNavItems, t("nav.portal"))
 
     const handleLogout = async () => {
@@ -326,6 +337,34 @@ export default function PortalLayout({
                                     </SidebarMenu>
                                 </SidebarGroupContent>
                             </SidebarGroup>
+
+                            {setupNavItems.length > 0 && (
+                                <>
+                                    <Separator className="mx-4 my-2 w-auto" />
+                                    <SidebarGroup>
+                                        <SidebarGroupContent>
+                                            <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                                                {t("nav.setupSection")}
+                                            </div>
+                                            <SidebarMenu>
+                                                {setupNavItems.map(item => (
+                                                    <SidebarMenuItem key={item.href}>
+                                                        <SidebarMenuButton
+                                                            asChild
+                                                            isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
+                                                        >
+                                                            <SidebarNavigationLink href={item.href}>
+                                                                <item.icon className="h-4 w-4" />
+                                                                <span>{item.label}</span>
+                                                            </SidebarNavigationLink>
+                                                        </SidebarMenuButton>
+                                                    </SidebarMenuItem>
+                                                ))}
+                                            </SidebarMenu>
+                                        </SidebarGroupContent>
+                                    </SidebarGroup>
+                                </>
+                            )}
                         </>
                     ) : (
                         <SidebarGroup>

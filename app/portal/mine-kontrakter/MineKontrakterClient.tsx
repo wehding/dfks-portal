@@ -3,7 +3,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
-import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { toast } from "sonner";
@@ -23,6 +23,8 @@ import { WORK_TYPES } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
 import { shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
+import { ManualWorkFormFields } from "@/components/works/manual-work-form";
+import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -153,6 +155,7 @@ function contractNextActionTone(contract: Contract): "neutral" | "attention" | "
 }
 
 type MyWork = { id: string; title: string; year: number | null; type: string };
+type ManualWorkMatch = { id: string; title: string; type: string; year: number | null; poster_url: string | null };
 type SortKey = "title" | "employer" | "overenskomst" | "rights" | "status" | "date";
 type SortValue = string | number;
 
@@ -183,6 +186,10 @@ export default function MineKontrakterClient({
   const [isSearching, setIsSearching] = useState(false);
   const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [manualWorkOpen, setManualWorkOpen] = useState(false);
+  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(emptyManualWorkForm());
+  const [manualWorkMatches, setManualWorkMatches] = useState<ManualWorkMatch[]>([]);
+  const [manualLinkRetry, setManualLinkRetry] = useState<{ workId: string; pending: boolean } | null>(null);
 
   // Series fields
   const [addSeason, setAddSeason] = useState("");
@@ -418,6 +425,10 @@ export default function MineKontrakterClient({
     let normalized = normalizeContract(contract);
     setSelectedContract(normalized);
     setWorkSearch(normalized.works ? "" : normalized.working_title ?? "");
+    setManualWorkOpen(false);
+    setManualWork(emptyManualWorkForm({ title: normalized.working_title ?? "" }));
+    setManualWorkMatches([]);
+    setManualLinkRetry(null);
     setViewUrl(null);
     const detail = await fetchMemberContractDetail(contract.id);
     if (detail.success && detail.contract) {
@@ -501,6 +512,127 @@ export default function MineKontrakterClient({
       }
     } catch (e: any) {
       toast.error(e.message || "Der skete en fejl.");
+    } finally {
+      setLinkingSaving(false);
+    }
+  }
+
+  function openManualWork() {
+    if (!selectedContract) return;
+    setManualWork(current => current.title.trim()
+      ? current
+      : { ...current, title: workSearch.trim() || selectedContract.working_title?.trim() || "" });
+    setManualWorkMatches([]);
+    setManualLinkRetry(null);
+    setManualWorkOpen(true);
+  }
+
+  function manualWorkData() {
+    const episodeNumber = Number(manualWork.episode_number) || null;
+    const episodeCount = Number(manualWork.episode_count) || (isManualSeries(manualWork) ? episodeNumber : null);
+    return {
+      title: manualWork.title.trim(),
+      type: manualWork.type,
+      year: Number(manualWork.year),
+      duration_minutes: Number(manualWork.duration_minutes) || null,
+      episode_count: episodeCount,
+      season_number: Number(manualWork.season_number) || 1,
+      episode_number: episodeNumber,
+      selected_episodes: manualWork.selected_episodes,
+      director: manualWork.director.trim() || null,
+      production_companies: manualWork.production_company.trim() ? [manualWork.production_company.trim()] : [],
+      description: null,
+    };
+  }
+
+  function applyLinkedWork(work: { id: string; title: string; year: number | null; type: string | null }) {
+    if (!selectedContract) return;
+    const updatedContract = { ...selectedContract, works: work };
+    setSelectedContract(updatedContract);
+    setContracts(previous => previous.map(contract => contract.id === selectedContract.id ? updatedContract : contract));
+    setPickedUnifiedResult(null);
+    setWorkSearch("");
+  }
+
+  async function handleCreateManualWork(forceCreateDuplicate = false) {
+    if (!selectedContract) return;
+    const validationError = validateManualWork(manualWork, "da");
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
+    setLinkingSaving(true);
+    try {
+      const result = await addManualWorkAndLinkContract({
+        rightsHolderId,
+        role: "Klipper",
+        comment: "",
+        contractId: selectedContract.id,
+        reuseWorkId: manualLinkRetry?.workId,
+        reusePending: manualLinkRetry?.pending,
+        forceCreateDuplicate,
+        workData: manualWorkData(),
+      });
+      if (!result.success) {
+        if ("duplicate" in result && result.duplicate && "matches" in result && Array.isArray(result.matches)) {
+          setManualWorkMatches(result.matches as ManualWorkMatch[]);
+          return;
+        }
+        if (result.workId && result.retryable) {
+          setManualLinkRetry({ workId: result.workId, pending: Boolean(result.pending) });
+        }
+        toast.error(result.error ?? "Kunne ikke oprette og tilknytte værket.");
+        return;
+      }
+      if (!result.workId) {
+        toast.error("Værket blev oprettet uden et gyldigt værk-id. Prøv igen.");
+        return;
+      }
+
+      applyLinkedWork({
+        id: result.workId,
+        title: manualWork.title.trim(),
+        year: Number(manualWork.year),
+        type: manualWork.type,
+      });
+      setManualWorkOpen(false);
+      setManualWorkMatches([]);
+      setManualLinkRetry(null);
+      toast.success(result.pending
+        ? "Værket er tilknyttet og afventer admin-godkendelse."
+        : "Værket er oprettet og tilknyttet kontrakten.");
+    } finally {
+      setLinkingSaving(false);
+    }
+  }
+
+  async function handleUseExistingManualWork(match: ManualWorkMatch) {
+    if (!selectedContract) return;
+    setLinkingSaving(true);
+    try {
+      const selectedEpisodes = manualWork.selected_episodes;
+      const assignment = await linkExistingWorkForMember({
+        rightsHolderId,
+        workId: match.id,
+        role: "Klipper",
+        seasonNumber: isManualSeries(manualWork) ? Number(manualWork.season_number) || 1 : null,
+        episodeNumber: selectedEpisodes.length === 1 ? selectedEpisodes[0] : Number(manualWork.episode_number) || null,
+        selectedEpisodes,
+      });
+      if (!assignment.success) {
+        toast.error(assignment.error ?? "Kunne ikke vælge det eksisterende værk.");
+        return;
+      }
+      const linked = await linkContractToWork(selectedContract.id, match.id);
+      if (!linked.success) {
+        toast.error(linked.error ?? "Kontrakten kunne ikke tilknyttes værket.");
+        return;
+      }
+      applyLinkedWork({ id: match.id, title: match.title, year: match.year, type: match.type });
+      setManualWorkOpen(false);
+      setManualWorkMatches([]);
+      toast.success("Det eksisterende værk er tilknyttet kontrakten.");
     } finally {
       setLinkingSaving(false);
     }
@@ -842,6 +974,10 @@ export default function MineKontrakterClient({
                       />
                     </div>
 
+                    <Button type="button" size="sm" variant="outline" onClick={openManualWork} className="w-full">
+                      Indtast manuelt
+                    </Button>
+
                     {unifiedResults.length > 0 && !pickedUnifiedResult && (
                       <div className="max-h-56 overflow-y-auto flex flex-col gap-1 border rounded-md p-1.5 bg-muted/40">
                         {unifiedResults.map(item => (
@@ -1046,6 +1182,53 @@ export default function MineKontrakterClient({
         topics={MINE_KONTRAKTER_HELP}
         storageKey="dfks-help-mine-kontrakter-v3"
       />
+
+      <Dialog open={manualWorkOpen && Boolean(selectedContract)} onOpenChange={setManualWorkOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Indtast værk manuelt</DialogTitle>
+            <DialogDescription>
+              Opret værket og tilknyt det til kontrakten. Manuelt oprettede værker kan kræve godkendelse fra administrator.
+            </DialogDescription>
+          </DialogHeader>
+          <ManualWorkFormFields
+            value={manualWork}
+            onChange={value => {
+              setManualWork(value);
+              setManualWorkMatches([]);
+              setManualLinkRetry(null);
+            }}
+            locale="da"
+          />
+          {manualWorkMatches.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+              <p className="font-medium">Der findes allerede et værk med samme titel og premiereår.</p>
+              <div className="mt-3 flex flex-col gap-2">
+                {manualWorkMatches.map(match => (
+                  <Button key={match.id} type="button" size="sm" variant="outline" onClick={() => void handleUseExistingManualWork(match)} disabled={linkingSaving}>
+                    Vælg {match.title}{match.year ? ` (${match.year})` : ""}
+                  </Button>
+                ))}
+                <Button type="button" size="sm" onClick={() => void handleCreateManualWork(true)} disabled={linkingSaving}>
+                  Opret nyt alligevel – kræver godkendelse
+                </Button>
+              </div>
+            </div>
+          )}
+          {manualLinkRetry && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+              <p>Værket er oprettet, men kontrakten mangler stadig at blive tilknyttet.</p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setManualWorkOpen(false)} disabled={linkingSaving}>Annuller</Button>
+            <Button type="button" onClick={() => void handleCreateManualWork(false)} disabled={linkingSaving || manualWorkMatches.length > 0}>
+              {linkingSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {manualLinkRetry ? "Prøv at tilknytte igen" : "Opret og tilknyt"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Tilføj allonge-dialog */}
       {isAddingAllonge && selectedContract && (

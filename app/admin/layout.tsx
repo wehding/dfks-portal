@@ -52,9 +52,12 @@ const ADMIN_NAV_ITEMS = [
     { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "statistik",           href: "/admin/statistik",           icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "indbetalinger",       href: "/admin/indbetalinger",       icon: Receipt,     labelKey: "nav.producerPayments" },
+]
+
+const SETUP_NAV_ITEMS = [
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
-    { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
+    { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
 ]
 
 const RETTIGHEDS_NAV_ITEMS = [
@@ -72,7 +75,7 @@ const USER_NAV_ITEMS = [
     { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
 
-const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
+const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
 // amber = afventer godkendelse.
@@ -135,6 +138,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     // Kollaps-tilstand per sektion — åbne som default
     const [brugerOpen, setBrugerOpen] = useState(true)
     const [adminOpen, setAdminOpen] = useState(true)
+    const [setupOpen, setSetupOpen] = useState(true)
     const [rettighedsOpen, setRettighedsOpen] = useState(true)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string }>({ logo_url: null, short_name: "DFKS" })
 
@@ -210,6 +214,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
     const rettighedsItems = RETTIGHEDS_NAV_ITEMS
+        .filter(item => allowedKeys.includes(item.key))
+        .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
+
+    const setupItems = SETUP_NAV_ITEMS
         .filter(item => allowedKeys.includes(item.key))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
@@ -298,6 +306,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     >
                         {adminItems.map(renderItem)}
                     </NavSection>
+
+                    <Separator className="mx-4 my-1 w-auto" />
+
+                    {/* Opsætning-sektion */}
+                    {setupItems.length > 0 && (
+                        <NavSection
+                            title={t("nav.setupSection")}
+                            isOpen={setupOpen}
+                            onToggle={() => setSetupOpen(open => !open)}
+                        >
+                            {setupItems.map(renderItem)}
+                        </NavSection>
+                    )}
 
                     <Separator className="mx-4 my-1 w-auto" />
 

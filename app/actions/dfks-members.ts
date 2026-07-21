@@ -5,26 +5,11 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { encryptValue } from "@/lib/encryption";
 import { resolveForeningLetCredentials } from "@/lib/org-integrations";
+import { normalizeForeningLetMember, parseForeningLetMemberPayload, type NormalizedForeningLetMember } from "@/lib/foreninglet";
 
 import { requireOrgId } from "@/lib/org";
 
-type ForeningLetMember = {
-  id?: string | number;
-  display_id?: string | number | null;
-  first_name?: string | null;
-  last_name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  mobile?: string | null;
-  address?: string | null;
-  zip?: string | null;
-  zipcode?: string | null;
-  city?: string | null;
-  cpr?: string | null;
-  cpr_no?: string | null;
-  social_security_number?: string | null;
-  [key: string]: unknown;
-};
+type ForeningLetMember = NormalizedForeningLetMember & { status: "active" | "resigned" };
 
 type CachedDfksMember = {
   id: string;
@@ -100,7 +85,13 @@ function getMemberCpr(member: ForeningLetMember | CachedDfksMember) {
   return stringValue(raw.cpr_no) ?? stringValue(raw.cpr) ?? stringValue(raw.social_security_number) ?? null;
 }
 
-async function fetchMembers(baseUrl: string, username: string, password: string, path: string, status: "active" | "resigned") {
+async function fetchMembers<TStatus extends "active" | "resigned">(
+  baseUrl: string,
+  username: string,
+  password: string,
+  path: string,
+  status: TStatus
+): Promise<Array<NormalizedForeningLetMember & { status: TStatus }>> {
   const url = new URL(`${baseUrl.replace(/\/$/, "")}${path}`);
   url.searchParams.set("version", "1");
   const res = await fetch(url.toString(), {
@@ -119,8 +110,10 @@ async function fetchMembers(baseUrl: string, username: string, password: string,
   }
 
   const json = await res.json();
-  const members = Array.isArray(json) ? json : Array.isArray(json.members) ? json.members : [];
-  return members.map((member: ForeningLetMember) => ({ ...member, status }));
+  return parseForeningLetMemberPayload(json)
+    .map(normalizeForeningLetMember)
+    .filter((member): member is NormalizedForeningLetMember => member !== null)
+    .map(member => ({ ...member, status }));
 }
 
 function findExistingMemberMatch(
@@ -222,7 +215,6 @@ export async function syncDfksMembers() {
     }
 
     const rows = [...activeMembers, ...resignedMembers]
-      .filter(member => member.id !== undefined && member.id !== null)
       .map(member => {
         const firstName = String(member.first_name ?? "").trim();
         const lastName = String(member.last_name ?? "").trim();
@@ -236,7 +228,7 @@ export async function syncDfksMembers() {
           full_name: fullName,
           email: typeof member.email === "string" ? member.email : null,
           status: member.status,
-          raw: member,
+          raw: member.raw,
           synced_at: now,
           updated_at: now,
         };

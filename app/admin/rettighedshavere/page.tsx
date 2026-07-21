@@ -7,12 +7,11 @@ import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Lin
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
-    getRettighedshavere,
     setMemberStatus,
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
-import { createRettighedshaverSecure, updateRettighedshaverSecure } from "@/app/actions/rettighedshavere"
+import { createRettighedshaverSecure, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
@@ -66,6 +65,31 @@ type ImportCandidate = {
     rights_holder_id: string | null
     match_reason: string | null
 }
+type ImportMatchFilter = "all" | "new" | "existing" | "ambiguous"
+type ImportMembershipFilter = "all" | "active" | "resigned"
+type ImportSortKey = "name" | "member_no" | "email" | "membership" | "match"
+
+function ImportSortHeader({
+    sort,
+    activeSort,
+    direction,
+    onSort,
+    children,
+}: {
+    sort: ImportSortKey
+    activeSort: ImportSortKey
+    direction: "asc" | "desc"
+    onSort: (sort: ImportSortKey) => void
+    children: ReactNode
+}) {
+    return (
+        <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap font-medium" onClick={() => onSort(sort)}>
+            {children}
+            <ArrowUpDown className={`h-3.5 w-3.5 ${activeSort === sort ? "text-foreground" : "text-muted-foreground"}`} />
+            <span className="sr-only">{activeSort === sort ? (direction === "asc" ? "sorteret stigende" : "sorteret faldende") : "sortér kolonne"}</span>
+        </button>
+    )
+}
 
 function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : "Fejl"
@@ -73,6 +97,13 @@ function errorMessage(error: unknown) {
 
 function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
     return rh.org_affiliations?.find(a => a.org_id === orgId) ?? null
+}
+
+function getVisibleAffiliation(rh: RettighedshaverWithAffiliation, orgId: string, canSeeAllOrganisations: boolean) {
+    if (!canSeeAllOrganisations) return getAffiliation(rh, orgId)
+    return rh.org_affiliations?.find(affiliation => affiliation.is_member && !affiliation.valid_to)
+        ?? rh.org_affiliations?.[0]
+        ?? null
 }
 
 function normalizeName(value: string) {
@@ -98,7 +129,8 @@ const EMPTY_FORM = {
 
 export default function RettighedshavereAdminPage() {
     const [orgId, setOrgId] = useState<string | null>(null)
-    const [rows, setRows] = useState<RettighedshaverWithAffiliation[]>([])
+    const [rows, setRows] = useState<AdminRightsHolderListItem[]>([])
+    const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
@@ -124,6 +156,7 @@ export default function RettighedshavereAdminPage() {
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
+    const [memberSyncSummary, setMemberSyncSummary] = useState<{ updated: number; newCount: number; ambiguous: number; source: "org" | "env" | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -139,35 +172,35 @@ export default function RettighedshavereAdminPage() {
     const [importCandidates, setImportCandidates] = useState<ImportCandidate[]>([])
     const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set())
     const [importingMembers, setImportingMembers] = useState(false)
+    const [importSearch, setImportSearch] = useState("")
+    const [importMatchFilter, setImportMatchFilter] = useState<ImportMatchFilter>("all")
+    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("all")
+    const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
+    const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
     useEffect(() => {
-        const supabase = createClient()
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-            if (!user) return
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const oid = roleRow?.org_id
-            if (!oid) {
-                toast.error("Din bruger er ikke knyttet til en organisation.")
-                return
-            }
-            setOrgId(oid)
-            load(oid)
-            loadDfksMembers(oid)
-            loadOverviewCounts(oid)
-            refreshMemberSyncStatus()
+        void load().then(result => {
+            if (!result) return
+            void loadDfksMembers(result.orgId)
+            void refreshMemberSyncStatus()
         })
     }, [])
 
-    async function load(oid: string) {
+    async function load() {
         setLoading(true)
-        const data = await getRettighedshavere(oid)
-        setRows(data)
-        setLoading(false)
+        try {
+            const result = await getAdminRightsHolders()
+            setRows(result.rows)
+            setCountsByRightsHolder(result.countsByRightsHolder)
+            setOrgId(result.orgId)
+            setCanSeeAllOrganisations(result.canSeeAllOrganisations)
+            return result
+        } catch (error) {
+            toast.error(errorMessage(error))
+            return null
+        } finally {
+            setLoading(false)
+        }
     }
 
     async function loadDfksMembers(oid: string) {
@@ -180,41 +213,6 @@ export default function RettighedshavereAdminPage() {
             .order("full_name")
 
         setDfksMembers((data as DfksMemberOption[] | null) ?? [])
-    }
-
-    async function loadOverviewCounts(oid: string) {
-        const supabase = createClient()
-        const [{ data: contracts }, { data: assignments }] = await Promise.all([
-            supabase
-                .from("contracts")
-                .select("rights_holder_id, status")
-                .eq("org_id", oid)
-                .not("rights_holder_id", "is", null),
-            supabase
-                .from("work_assignments")
-                .select("rights_holder_id")
-                .eq("org_id", oid)
-                .not("rights_holder_id", "is", null),
-        ])
-
-        const next: Record<string, RightsHolderCounts> = {}
-        const contractStatuses: Record<string, string[]> = {}
-        for (const row of (contracts ?? []) as Array<{ rights_holder_id: string | null; status?: string | null }>) {
-            if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
-            next[row.rights_holder_id].contracts += 1
-            contractStatuses[row.rights_holder_id] ??= []
-            contractStatuses[row.rights_holder_id].push(row.status ?? "")
-        }
-        for (const row of (assignments ?? []) as Array<{ rights_holder_id: string | null }>) {
-            if (!row.rights_holder_id) continue
-            next[row.rights_holder_id] ??= { contracts: 0, works: 0, allContractsValidated: false }
-            next[row.rights_holder_id].works += 1
-        }
-        for (const [rightsHolderId, statuses] of Object.entries(contractStatuses)) {
-            next[rightsHolderId].allContractsValidated = statuses.length > 0 && statuses.every(status => ["valideret", "validated", "arkiveret"].includes(status))
-        }
-        setCountsByRightsHolder(next)
     }
 
     async function refreshMemberSyncStatus() {
@@ -234,7 +232,14 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.count ?? 0} medlemmer hentet. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret.`)
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        if (orgId) loadDfksMembers(orgId)
+        setMemberSyncSummary({
+            updated: result.updatedExisting ?? 0,
+            newCount: result.newCount ?? 0,
+            ambiguous: result.ambiguousCount ?? 0,
+            source: result.source ?? null,
+        })
+        if (orgId) await loadDfksMembers(orgId)
+        await refreshImportPreview()
     }
 
     async function refreshImportPreview() {
@@ -260,6 +265,12 @@ export default function RettighedshavereAdminPage() {
             return
         }
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+        setMemberSyncSummary({
+            updated: result.updatedExisting ?? 0,
+            newCount: result.newCount ?? 0,
+            ambiguous: result.ambiguousCount ?? 0,
+            source: result.source ?? null,
+        })
         if (orgId) await loadDfksMembers(orgId)
         await refreshImportPreview()
     }
@@ -276,8 +287,8 @@ export default function RettighedshavereAdminPage() {
         toast.success(`${result.created} oprettet, ${result.updated} opdateret, ${result.skipped} sprunget over`)
         setImportOpen(false)
         setSelectedImportIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
+        await refreshMemberSyncStatus()
     }
 
     const createMatchedMemberNo = useMemo(
@@ -299,10 +310,61 @@ export default function RettighedshavereAdminPage() {
         setEditForm(form => ({ ...form, member_no: editMatchedMemberNo, is_member: true }))
     }, [editMatchedMemberNo, editForm.member_no, editMemberNoTouched, editTarget])
 
+    const visibleImportCandidates = useMemo(() => {
+        const query = normalizeName(importSearch)
+        const direction = importSortDirection === "asc" ? 1 : -1
+        const matchRank: Record<ImportCandidate["match"], number> = { new: 0, existing: 1, ambiguous: 2 }
+        const membershipRank: Record<string, number> = { active: 0, resigned: 1 }
+
+        return importCandidates
+            .filter(candidate => {
+                if (importMatchFilter !== "all" && candidate.match !== importMatchFilter) return false
+                if (importMembershipFilter !== "all" && candidate.status !== importMembershipFilter) return false
+                if (!query) return true
+                return [candidate.full_name, candidate.email, candidate.display_id, candidate.phone, candidate.address]
+                    .some(value => normalizeName(value ?? "").includes(query))
+            })
+            .sort((left, right) => {
+                let result = 0
+                if (importSortKey === "name") result = left.full_name.localeCompare(right.full_name, "da")
+                if (importSortKey === "member_no") result = (left.display_id ?? "").localeCompare(right.display_id ?? "", "da", { numeric: true })
+                if (importSortKey === "email") result = (left.email ?? "").localeCompare(right.email ?? "", "da")
+                if (importSortKey === "membership") result = (membershipRank[left.status] ?? 9) - (membershipRank[right.status] ?? 9)
+                if (importSortKey === "match") result = matchRank[left.match] - matchRank[right.match]
+                return result * direction
+            })
+    }, [importCandidates, importMatchFilter, importMembershipFilter, importSearch, importSortDirection, importSortKey])
+
+    const selectableVisibleImportIds = visibleImportCandidates
+        .filter(candidate => candidate.match !== "ambiguous" && candidate.status !== "resigned")
+        .map(candidate => candidate.id)
+    const selectedVisibleImportCount = selectableVisibleImportIds.filter(id => selectedImportIds.has(id)).length
+    const allVisibleImportSelected = selectableVisibleImportIds.length > 0 && selectedVisibleImportCount === selectableVisibleImportIds.length
+
+    function setImportSort(nextSort: ImportSortKey) {
+        if (nextSort === importSortKey) {
+            setImportSortDirection(direction => direction === "asc" ? "desc" : "asc")
+            return
+        }
+        setImportSortKey(nextSort)
+        setImportSortDirection("asc")
+    }
+
+    function toggleAllVisibleImports(checked: boolean) {
+        setSelectedImportIds(current => {
+            const next = new Set(current)
+            for (const id of selectableVisibleImportIds) {
+                if (checked) next.add(id)
+                else next.delete(id)
+            }
+            return next
+        })
+    }
+
     const visible = useMemo(() => {
         const q = search.toLowerCase().trim()
         const list = rows.filter(rh => {
-            const aff = orgId ? getAffiliation(rh, orgId) : null
+            const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const archived = Boolean(rh.archived_at)
             if (filter === "arkiverede") {
@@ -327,8 +389,8 @@ export default function RettighedshavereAdminPage() {
         })
 
         return list.sort((a, b) => {
-            const affA = orgId ? getAffiliation(a, orgId) : null
-            const affB = orgId ? getAffiliation(b, orgId) : null
+            const affA = orgId ? getVisibleAffiliation(a, orgId, canSeeAllOrganisations) : null
+            const affB = orgId ? getVisibleAffiliation(b, orgId, canSeeAllOrganisations) : null
             const countsA = countsByRightsHolder[a.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const countsB = countsByRightsHolder[b.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
             const direction = sortDirection === "asc" ? 1 : -1
@@ -345,7 +407,7 @@ export default function RettighedshavereAdminPage() {
             if (sortKey === "validated") result = Number(countsA.allContractsValidated) - Number(countsB.allContractsValidated)
             return result * direction
         })
-    }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection])
+    }, [rows, orgId, filter, search, countsByRightsHolder, sortKey, sortDirection, canSeeAllOrganisations])
     const visibleIds = visible.map(rh => rh.id)
     const selectedVisibleCount = visibleIds.filter(id => selectedIds.has(id)).length
     const allVisibleSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length
@@ -419,7 +481,7 @@ export default function RettighedshavereAdminPage() {
                 else if (json) toast.warning("Oprettet, men invitationsmailen kunne ikke sendes.")
             }
             setCreateSaving(false)
-            setCreateOpen(false); load(orgId); loadOverviewCounts(orgId)
+            setCreateOpen(false); load()
         } else {
             setCreateSaving(false)
             toast.error(result.error ?? "Kunne ikke oprette rettighedshaver")
@@ -442,7 +504,7 @@ export default function RettighedshavereAdminPage() {
         }
         setBulkSendingInvitations(false)
         toast.success(`${sent} af ${targets.length} invitationer sendt`)
-        load(orgId)
+        load()
     }
 
     async function handleArchiveSelected() {
@@ -461,8 +523,7 @@ export default function RettighedshavereAdminPage() {
             toast.warning(`${result.blocked.length} kunne ikke arkiveres: ${result.blocked.slice(0, 3).map(item => item.name).join(", ")}`)
         }
         setSelectedIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
     }
 
     async function handleRestoreSelected() {
@@ -476,7 +537,7 @@ export default function RettighedshavereAdminPage() {
         }
         toast.success(`${result.restoredCount} rettighedshaver(e) gendannet`)
         setSelectedIds(new Set())
-        await load(orgId)
+        await load()
     }
 
     async function handlePermanentDeleteSelected() {
@@ -492,12 +553,11 @@ export default function RettighedshavereAdminPage() {
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
-        await load(orgId)
-        await loadOverviewCounts(orgId)
+        await load()
     }
 
     function openEdit(rh: RettighedshaverWithAffiliation) {
-        const aff = orgId ? getAffiliation(rh, orgId) : null
+        const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
         setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), send_invite: false })
         setEditMemberNoTouched(false)
@@ -517,18 +577,17 @@ export default function RettighedshavereAdminPage() {
         setEditSaving(false)
         toast.success("Gemt")
         setEditTarget(null)
-        load(orgId)
-        loadOverviewCounts(orgId)
+        load()
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
         if (!orgId) return
-        const aff = getAffiliation(rh, orgId)
+        const aff = getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)
         const next = !aff?.is_member
         await setMemberStatus(rh.id, orgId, next, aff?.member_no ?? undefined)
         if (!next) await setAffiliationEnd(rh.id, orgId, new Date().toISOString().slice(0, 10))
         toast.success(next ? `${rh.full_name} er nu medlem` : `${rh.full_name} er udmeldt`)
-        load(orgId)
+        load()
     }
 
     async function handlePortalAction() {
@@ -581,8 +640,8 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    const memberCount    = rows.filter(rh => orgId && getAffiliation(rh, orgId)?.is_member).length
-    const nonMemberCount = rows.filter(rh => orgId && !getAffiliation(rh, orgId)?.is_member).length
+    const memberCount    = rows.filter(rh => orgId && getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
+    const nonMemberCount = rows.filter(rh => orgId && !getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
     const portalCount    = rows.filter(rh => rh.user_id).length
     const validatedCount = rows.filter(rh => countsByRightsHolder[rh.id]?.allContractsValidated).length
 
@@ -608,7 +667,7 @@ export default function RettighedshavereAdminPage() {
         <div className="space-y-6">
             <PageHeader
                 title="Rettighedshavere"
-                subtitle="Klippere tilknyttet organisationen"
+                subtitle={canSeeAllOrganisations ? "Rettighedshavere på tværs af alle organisationer" : "Rettighedshavere tilknyttet organisationen"}
                 actions={
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
                         {memberSyncStatus && (
@@ -618,7 +677,7 @@ export default function RettighedshavereAdminPage() {
                         )}
                         <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
                             {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Synkroniser med medlemssystem
+                            Hent fra medlemssystem
                         </Button>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
                             <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
@@ -714,7 +773,7 @@ export default function RettighedshavereAdminPage() {
                         <p className="py-6 text-center text-sm text-muted-foreground">Ingen rettighedshavere fundet</p>
                     </MobileDataCard>
                 ) : visible.map(rh => {
-                    const aff = orgId ? getAffiliation(rh, orgId) : null
+                    const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                     const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                     return (
@@ -758,6 +817,7 @@ export default function RettighedshavereAdminPage() {
                                 </DropdownMenu>
                             </div>
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                {canSeeAllOrganisations && <MobileMetaRow label="Organisation">{rh.organisation_names.join(", ") || "Uden tilknytning"}</MobileMetaRow>}
                                 <MobileMetaRow label="Telefon">{rh.phone ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="DFKS nr.">{aff?.member_no ?? "—"}</MobileMetaRow>
                                 <MobileMetaRow label="Kontrakter">{counts.contracts}</MobileMetaRow>
@@ -795,6 +855,7 @@ export default function RettighedshavereAdminPage() {
                                 />
                             </TableHead>
                             <TableHead><SortHeader sort="name">Navn</SortHeader></TableHead>
+                            {canSeeAllOrganisations && <TableHead>Organisation</TableHead>}
                             <TableHead><SortHeader sort="email">Email</SortHeader></TableHead>
                             <TableHead>Telefon</TableHead>
                             <TableHead><SortHeader sort="member_no">DFKS medlemsnr.</SortHeader></TableHead>
@@ -808,11 +869,11 @@ export default function RettighedshavereAdminPage() {
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
                         ) : visible.length === 0 ? (
-                            <TableRow><TableCell colSpan={11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
                         ) : visible.map(rh => {
-                            const aff = orgId ? getAffiliation(rh, orgId) : null
+                            const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                             const hasLogin = !!rh.user_id
                             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
                             return (
@@ -826,6 +887,7 @@ export default function RettighedshavereAdminPage() {
                                         />
                                     </TableCell>
                                     <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
+                                    {canSeeAllOrganisations && <TableCell className="text-sm text-muted-foreground">{rh.organisation_names.join(", ") || "Uden tilknytning"}</TableCell>}
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{aff?.member_no ?? "—"}</TableCell>
@@ -881,7 +943,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -919,7 +981,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await restoreRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver gendannet")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke gendanne")
                                                         }
@@ -931,7 +993,7 @@ export default function RettighedshavereAdminPage() {
                                                         const result = await archiveRightsHolders([rh.id])
                                                         if (result.success) {
                                                             toast.success("Rettighedshaver arkiveret")
-                                                            if (orgId) load(orgId)
+                                                            if (orgId) load()
                                                         } else {
                                                             toast.error(result.error ?? "Kunne ikke arkivere")
                                                         }
@@ -1048,22 +1110,28 @@ export default function RettighedshavereAdminPage() {
 
             {/* Import members dialog */}
             <Dialog open={importOpen} onOpenChange={setImportOpen}>
-                <DialogContent className="w-[min(760px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
+                <DialogContent className="w-[min(1040px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
                     <DialogHeader>
-                        <DialogTitle>Synkroniser med medlemssystem</DialogTitle>
+                        <DialogTitle>Hent og importér medlemmer</DialogTitle>
                         <DialogDescription>
-                            Hentede medlemmer fra medlemslisten kan oprettes som rettighedshavere. Eksisterende matches opdateres med medlemsstatus og medlemsnummer.
+                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-sm text-muted-foreground">
                                 {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                                {memberSyncSummary && (
+                                    <span className="block text-xs">
+                                        {memberSyncSummary.updated} eksisterende opdateret · {memberSyncSummary.ambiguous} kræver afklaring
+                                        {memberSyncSummary.source ? ` · ${memberSyncSummary.source === "org" ? "organisationens login" : "fælles systemlogin"}` : ""}
+                                    </span>
+                                )}
                             </div>
                             <div className="flex gap-2">
                                 <Button type="button" variant="outline" size="sm" onClick={handleSyncDfksMembers} disabled={syncingMembers}>
                                     {syncingMembers && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-                                    Synkronisér
+                                    Hent igen
                                 </Button>
                                 <Button type="button" variant="outline" size="sm" onClick={refreshImportPreview} disabled={importLoading}>
                                     {importLoading && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
@@ -1071,50 +1139,125 @@ export default function RettighedshavereAdminPage() {
                                 </Button>
                             </div>
                         </div>
+                        <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_180px_180px]">
+                            <div className="relative">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    value={importSearch}
+                                    onChange={event => setImportSearch(event.target.value)}
+                                    placeholder="Søg navn, e-mail eller medlemsnr."
+                                    className="pl-8"
+                                />
+                            </div>
+                            <Select value={importMatchFilter} onValueChange={value => setImportMatchFilter(value as ImportMatchFilter)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Alle importstatusser</SelectItem>
+                                    <SelectItem value="new">Ikke importeret</SelectItem>
+                                    <SelectItem value="existing">Allerede importeret</SelectItem>
+                                    <SelectItem value="ambiguous">Kræver afklaring</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <Select value={importMembershipFilter} onValueChange={value => setImportMembershipFilter(value as ImportMembershipFilter)}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">Alle medlemsstatusser</SelectItem>
+                                    <SelectItem value="active">Aktivt medlemskab</SelectItem>
+                                    <SelectItem value="resigned">Udmeldt</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                            <span className="text-muted-foreground">
+                                Viser {visibleImportCandidates.length} af {importCandidates.length}
+                            </span>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => toggleAllVisibleImports(!allVisibleImportSelected)}
+                                disabled={selectableVisibleImportIds.length === 0}
+                            >
+                                {allVisibleImportSelected ? "Fravælg alle viste" : `Vælg alle viste (${selectableVisibleImportIds.length})`}
+                            </Button>
+                        </div>
                         <div className="max-h-[420px] overflow-auto rounded-md border">
                             {importLoading ? (
                                 <div className="flex items-center justify-center py-10 text-sm text-muted-foreground">
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter medlemsliste...
                                 </div>
-                            ) : importCandidates.length === 0 ? (
-                                <p className="py-10 text-center text-sm text-muted-foreground">Ingen medlemmer i importlisten.</p>
-                            ) : importCandidates.map(candidate => {
-                                const disabled = candidate.match === "ambiguous" || candidate.status === "resigned"
-                                return (
-                                    <label key={candidate.id} className="flex cursor-pointer items-start gap-3 border-b px-3 py-3 last:border-b-0">
-                                        <input
-                                            type="checkbox"
-                                            className="mt-1 h-4 w-4"
-                                            checked={selectedImportIds.has(candidate.id)}
-                                            disabled={disabled}
-                                            onChange={event => {
-                                                setSelectedImportIds(current => {
-                                                    const next = new Set(current)
-                                                    if (event.target.checked) next.add(candidate.id)
-                                                    else next.delete(candidate.id)
-                                                    return next
-                                                })
-                                            }}
-                                        />
-                                        <div className="min-w-0 flex-1">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <span className="font-medium">{candidate.full_name}</span>
-                                                {candidate.match === "new" && candidate.status !== "resigned" && <Badge className="text-xs">Ny</Badge>}
-                                                {candidate.match === "existing" && <Badge variant="outline" className="text-xs">Matcher eksisterende</Badge>}
-                                                {candidate.match === "ambiguous" && <Badge variant="destructive" className="text-xs">Kræver manuel afklaring</Badge>}
-                                                {candidate.status === "resigned" && <Badge variant="outline" className="text-xs">Udmeldt</Badge>}
-                                            </div>
-                                            <p className="mt-1 text-xs text-muted-foreground">
-                                                {candidate.email ?? "Ingen email"} · Medlemsnr. {candidate.display_id ?? "—"}
-                                                {candidate.match_reason ? ` · ${candidate.match_reason}` : ""}
-                                            </p>
-                                            {(candidate.phone || candidate.address) && (
-                                                <p className="mt-1 text-xs text-muted-foreground">{[candidate.phone, candidate.address].filter(Boolean).join(" · ")}</p>
-                                            )}
-                                        </div>
-                                    </label>
-                                )
-                            })}
+                            ) : visibleImportCandidates.length === 0 ? (
+                                <p className="py-10 text-center text-sm text-muted-foreground">Ingen medlemmer matcher filtrene.</p>
+                            ) : (
+                                <Table>
+                                    <TableHeader className="sticky top-0 z-10 bg-background">
+                                        <TableRow>
+                                            <TableHead className="w-10">
+                                                <input
+                                                    type="checkbox"
+                                                    aria-label="Vælg alle viste medlemmer"
+                                                    checked={allVisibleImportSelected}
+                                                    onChange={event => toggleAllVisibleImports(event.target.checked)}
+                                                    disabled={selectableVisibleImportIds.length === 0}
+                                                    className="h-4 w-4"
+                                                />
+                                            </TableHead>
+                                            <TableHead><ImportSortHeader sort="name" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Navn</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="member_no" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Medlemsnr.</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="email" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>E-mail</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="membership" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Medlemsstatus</ImportSortHeader></TableHead>
+                                            <TableHead><ImportSortHeader sort="match" activeSort={importSortKey} direction={importSortDirection} onSort={setImportSort}>Importstatus</ImportSortHeader></TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {visibleImportCandidates.map(candidate => {
+                                            const disabled = candidate.match === "ambiguous" || candidate.status === "resigned"
+                                            return (
+                                                <TableRow key={candidate.id} className={disabled ? "text-muted-foreground" : undefined}>
+                                                    <TableCell>
+                                                        <input
+                                                            type="checkbox"
+                                                            aria-label={`Vælg ${candidate.full_name}`}
+                                                            className="h-4 w-4"
+                                                            checked={selectedImportIds.has(candidate.id)}
+                                                            disabled={disabled}
+                                                            onChange={event => {
+                                                                setSelectedImportIds(current => {
+                                                                    const next = new Set(current)
+                                                                    if (event.target.checked) next.add(candidate.id)
+                                                                    else next.delete(candidate.id)
+                                                                    return next
+                                                                })
+                                                            }}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell className="min-w-48 font-medium">
+                                                        {candidate.full_name}
+                                                        {(candidate.phone || candidate.address) && (
+                                                            <span className="mt-1 block max-w-64 truncate text-xs font-normal text-muted-foreground" title={[candidate.phone, candidate.address].filter(Boolean).join(" · ")}>
+                                                                {[candidate.phone, candidate.address].filter(Boolean).join(" · ")}
+                                                            </span>
+                                                        )}
+                                                    </TableCell>
+                                                    <TableCell className="whitespace-nowrap">{candidate.display_id ?? "—"}</TableCell>
+                                                    <TableCell>{candidate.email ?? "—"}</TableCell>
+                                                    <TableCell>
+                                                        {candidate.status === "resigned"
+                                                            ? <Badge variant="outline">Udmeldt</Badge>
+                                                            : <Badge className="bg-emerald-600 text-white">Aktiv</Badge>}
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        {candidate.match === "new" && <Badge>Ikke importeret</Badge>}
+                                                        {candidate.match === "existing" && <Badge variant="outline">Allerede importeret</Badge>}
+                                                        {candidate.match === "ambiguous" && <Badge variant="destructive">Kræver afklaring</Badge>}
+                                                        {candidate.match_reason && <span className="mt-1 block text-xs text-muted-foreground">{candidate.match_reason}</span>}
+                                                    </TableCell>
+                                                </TableRow>
+                                            )
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            )}
                         </div>
                     </div>
                     <DialogFooter>

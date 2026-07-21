@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react"
 import {
     Shield, Mail, Plus, Pencil, Loader2, Clock, MoreHorizontal,
     KeyRound, Link, UserX, UserCheck, Search, Users, Scale, UserCog,
-    Check,
+    Check, CircleAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -52,6 +52,18 @@ type UsersResponse = {
     staff?: Array<Partial<User> & { roles?: string[] }>
     portal?: Array<Partial<User>>
     error?: string
+    callerRole?: string
+    callerUserId?: string
+    unassigned?: UnassignedRecord[]
+}
+
+type UnassignedRecord = {
+    id: string
+    kind: "auth_user" | "rights_holder"
+    full_name: string
+    email: string | null
+    reason: string
+    created_at: string
 }
 
 // ── Rolle-konfiguration ───────────────────────────────────
@@ -65,7 +77,7 @@ const ROLE_CONFIG: Record<string, { label: string; color: string }> = {
     rettighedshaver:  { label: "Rettighedshaver",  color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" },
 }
 
-const STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
+const BASE_STAFF_ROLES: Array<keyof typeof ROLE_CONFIG> = ["admin", "org-admin", "jurist", "viewer"]
 
 const GENDER_LABELS: Record<string, string> = {
     female: "Kvinde",
@@ -138,19 +150,22 @@ function RoleToggle({ role, selected, onToggle }: { role: string; selected: bool
 
 // ── Tabs ──────────────────────────────────────────────────
 
-type Tab = "alle" | "admins" | "jurister" | "rettighedshavere"
+type Tab = "alle" | "admins" | "jurister" | "rettighedshavere" | "unassigned"
 
 const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
     { key: "alle",              label: "Alle",              icon: Users     },
     { key: "admins",            label: "Admins",            icon: UserCog   },
     { key: "jurister",          label: "Jurister",          icon: Scale     },
     { key: "rettighedshavere",  label: "Rettighedshavere",  icon: UserCheck },
+    { key: "unassigned",        label: "Uden tilknytning",  icon: CircleAlert },
 ]
 
 // ── Hovedkomponent ────────────────────────────────────────
 
 export default function AdminBrugerePage() {
     const [users, setUsers] = useState<User[]>([])
+    const [callerRole, setCallerRole] = useState("")
+    const [unassigned, setUnassigned] = useState<UnassignedRecord[]>([])
     const [loading, setLoading] = useState(true)
     const [tab, setTab] = useState<Tab>("alle")
     const [search, setSearch] = useState("")
@@ -190,6 +205,8 @@ export default function AdminBrugerePage() {
         const res = await fetch("/api/admin/users")
         const json = await res.json() as UsersResponse
         if (res.ok) {
+            setCallerRole(json.callerRole ?? "")
+            setUnassigned(json.unassigned ?? [])
             // Brug merged users hvis tilgængeligt, ellers bagudkompatibel sammensætning
             if (json.users) {
                 setUsers(json.users)
@@ -212,6 +229,7 @@ export default function AdminBrugerePage() {
             case "admins":           return users.filter(u => u.org_roles.some(r => ["admin", "org-admin", "superadmin"].includes(r)) && match(u))
             case "jurister":         return users.filter(u => u.org_roles.includes("jurist") && match(u))
             case "rettighedshavere": return users.filter(u => u.is_rettighedshaver && match(u))
+            case "unassigned":       return []
             default:                 return users.filter(match)
         }
     }, [users, tab, search])
@@ -221,7 +239,30 @@ export default function AdminBrugerePage() {
         admins:           users.filter(u => u.org_roles.some(r => ["admin", "org-admin", "superadmin"].includes(r))).length,
         jurister:         users.filter(u => u.org_roles.includes("jurist")).length,
         rettighedshavere: users.filter(u => u.is_rettighedshaver).length,
-    }), [users])
+        unassigned:       unassigned.length,
+    }), [unassigned.length, users])
+    const filteredUnassigned = useMemo(() => {
+        const query = search.toLowerCase().trim()
+        if (!query) return unassigned
+        return unassigned.filter(record =>
+            record.full_name.toLowerCase().includes(query) ||
+            (record.email ?? "").toLowerCase().includes(query) ||
+            record.reason.toLowerCase().includes(query)
+        )
+    }, [search, unassigned])
+    const staffRoles = callerRole === "superadmin"
+        ? (["superadmin", ...BASE_STAFF_ROLES] as Array<keyof typeof ROLE_CONFIG>)
+        : BASE_STAFF_ROLES
+
+    function toggleStaffRole(roles: string[], role: string) {
+        if (role === "superadmin") {
+            const confirmed = window.confirm(roles.includes(role)
+                ? "Vil du fjerne superadmin-adgangen fra denne bruger?"
+                : "Superadmin giver adgang til alle organisationens funktioner og brugerroller. Vil du fortsætte?")
+            if (!confirmed) return roles
+        }
+        return toggleRole(roles, role)
+    }
 
     useEffect(() => {
         if (!inviteIsPortal || inviteRhSearch.length < 2) {
@@ -373,7 +414,7 @@ export default function AdminBrugerePage() {
 
             {/* Tabs */}
             <div className="flex items-center gap-1 overflow-x-auto border-b">
-                {TABS.map(t => {
+                {TABS.filter(t => t.key !== "unassigned" || callerRole === "superadmin").map(t => {
                     const Icon = t.icon
                     const active = tab === t.key
                     return (
@@ -400,7 +441,7 @@ export default function AdminBrugerePage() {
             <div className="relative w-full sm:max-w-xs">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
-                    placeholder="Søg navn eller e-mail…"
+                    placeholder={tab === "unassigned" ? "Søg i poster uden tilknytning…" : "Søg navn eller e-mail…"}
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     className="pl-8 h-8 text-sm"
@@ -408,6 +449,61 @@ export default function AdminBrugerePage() {
             </div>
 
             {/* Tabel */}
+            {tab === "unassigned" && (
+                <>
+                    <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+                        Disse poster mangler en relation, som de normale lister kræver. Listen er kun synlig for superadmins.
+                    </div>
+                    <MobileCardList>
+                        {filteredUnassigned.length === 0 ? (
+                            <MobileDataCard>
+                                <p className="py-6 text-center text-sm text-muted-foreground">Ingen poster uden tilknytning</p>
+                            </MobileDataCard>
+                        ) : filteredUnassigned.map(record => (
+                            <MobileDataCard key={record.id}>
+                                <p className="font-medium">{record.full_name}</p>
+                                <p className="mt-1 text-sm text-muted-foreground">{record.email ?? "Ingen e-mail"}</p>
+                                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                    <MobileMetaRow label="Type">{record.kind === "auth_user" ? "Loginbruger" : "Rettighedshaver"}</MobileMetaRow>
+                                    <MobileMetaRow label="Oprettet">{new Date(record.created_at).toLocaleDateString("da-DK")}</MobileMetaRow>
+                                </div>
+                                <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">{record.reason}</p>
+                            </MobileDataCard>
+                        ))}
+                    </MobileCardList>
+                    <ResponsiveTableFrame className="rounded-md">
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>Navn</TableHead>
+                                    <TableHead>E-mail</TableHead>
+                                    <TableHead>Type</TableHead>
+                                    <TableHead>Årsag</TableHead>
+                                    <TableHead>Oprettet</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {filteredUnassigned.length === 0 ? (
+                                    <TableRow>
+                                        <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">Ingen poster uden tilknytning</TableCell>
+                                    </TableRow>
+                                ) : filteredUnassigned.map(record => (
+                                    <TableRow key={record.id}>
+                                        <TableCell className="font-medium">{record.full_name}</TableCell>
+                                        <TableCell className="text-muted-foreground">{record.email ?? "—"}</TableCell>
+                                        <TableCell>{record.kind === "auth_user" ? "Loginbruger" : "Rettighedshaver"}</TableCell>
+                                        <TableCell className="text-amber-700 dark:text-amber-300">{record.reason}</TableCell>
+                                        <TableCell className="whitespace-nowrap text-muted-foreground">{new Date(record.created_at).toLocaleDateString("da-DK")}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </ResponsiveTableFrame>
+                </>
+            )}
+
+            {tab !== "unassigned" && (
+                <>
             <MobileCardList>
                 {loading ? (
                     <MobileDataCard>
@@ -433,7 +529,7 @@ export default function AdminBrugerePage() {
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                    {u.org_roles.length > 0 && (
+                                    {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
                                         <DropdownMenuItem onClick={() => {
                                             setEditUser(u)
                                             setEditRoles(u.org_roles.slice())
@@ -446,16 +542,20 @@ export default function AdminBrugerePage() {
                                             <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                         </DropdownMenuItem>
                                     )}
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem
-                                        onClick={() => setToggleUser(u)}
-                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                    >
-                                        {u.banned
-                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                        }
-                                    </DropdownMenuItem>
+                                    {callerRole === "superadmin" && (
+                                        <>
+                                            <DropdownMenuSeparator />
+                                            <DropdownMenuItem
+                                                onClick={() => setToggleUser(u)}
+                                                className={u.banned ? "text-emerald-600" : "text-destructive"}
+                                            >
+                                                {u.banned
+                                                    ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
+                                                    : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
+                                                }
+                                            </DropdownMenuItem>
+                                        </>
+                                    )}
                                 </DropdownMenuContent>
                             </DropdownMenu>
                         </div>
@@ -528,7 +628,7 @@ export default function AdminBrugerePage() {
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
-                                            {u.org_roles.length > 0 && (
+                                            {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
                                                 <DropdownMenuItem onClick={() => {
                                                     setEditUser(u)
                                                     setEditRoles(u.org_roles.slice())
@@ -541,16 +641,20 @@ export default function AdminBrugerePage() {
                                                     <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                                 </DropdownMenuItem>
                                             )}
-                                            <DropdownMenuSeparator />
-                                            <DropdownMenuItem
-                                                onClick={() => setToggleUser(u)}
-                                                className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                            >
-                                                {u.banned
-                                                    ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                                    : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                                }
-                                            </DropdownMenuItem>
+                                            {callerRole === "superadmin" && (
+                                                <>
+                                                    <DropdownMenuSeparator />
+                                                    <DropdownMenuItem
+                                                        onClick={() => setToggleUser(u)}
+                                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
+                                                    >
+                                                        {u.banned
+                                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
+                                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
+                                                        }
+                                                    </DropdownMenuItem>
+                                                </>
+                                            )}
                                         </DropdownMenuContent>
                                     </DropdownMenu>
                                 </TableCell>
@@ -559,6 +663,8 @@ export default function AdminBrugerePage() {
                     </TableBody>
                 </Table>
             </ResponsiveTableFrame>
+                </>
+            )}
 
             {/* ── Invite dialog ── */}
             <Dialog open={inviteOpen} onOpenChange={o => { if (!o) setInviteOpen(false) }}>
@@ -674,12 +780,12 @@ export default function AdminBrugerePage() {
                                 <div className="space-y-1.5">
                                     <Label>Rolle(r) *</Label>
                                     <div className="space-y-0.5">
-                                        {STAFF_ROLES.map(r => (
+                                        {staffRoles.map(r => (
                                             <RoleToggle
                                                 key={r}
                                                 role={r}
                                                 selected={inviteRoles.includes(r)}
-                                                onToggle={() => setInviteRoles(prev => toggleRole(prev, r))}
+                                                onToggle={() => setInviteRoles(prev => toggleStaffRole(prev, r))}
                                             />
                                         ))}
                                     </div>
@@ -726,12 +832,12 @@ export default function AdminBrugerePage() {
                         <DialogDescription>{editUser?.full_name}</DialogDescription>
                     </DialogHeader>
                     <div className="space-y-0.5 py-2">
-                        {STAFF_ROLES.map(r => (
+                        {staffRoles.map(r => (
                             <RoleToggle
                                 key={r}
                                 role={r}
                                 selected={editRoles.includes(r)}
-                                onToggle={() => setEditRoles(prev => toggleRole(prev, r))}
+                                onToggle={() => setEditRoles(prev => toggleStaffRole(prev, r))}
                             />
                         ))}
                     </div>

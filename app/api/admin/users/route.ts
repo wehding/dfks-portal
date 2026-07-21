@@ -18,6 +18,9 @@ const ROLE_RANK: Record<string, number> = {
     jurist: 1,
     viewer: 0,
 }
+const ALLOWED_STAFF_ROLES = Object.keys(ROLE_RANK)
+const PRESERVED_SYSTEM_ROLES = ["member"]
+const ALLOWED_ORG_ROLES = new Set([...ALLOWED_STAFF_ROLES, ...PRESERVED_SYSTEM_ROLES])
 
 function primaryRole(roles: string[]): string {
     return roles.reduce((best, r) => (ROLE_RANK[r] ?? -1) > (ROLE_RANK[best] ?? -1) ? r : best, "viewer")
@@ -72,12 +75,14 @@ export async function GET() {
     let rh: Array<{ id: string; full_name: string; email: string | null; user_id: string | null; onboarding_completed: boolean | null; gender?: string | null }> | null = null
     const rhWithGender = await admin
         .from("rettighedshavere")
-        .select("id, full_name, email, user_id, onboarding_completed, gender")
+        .select("id, full_name, email, user_id, onboarding_completed, gender, org_affiliations!inner(org_id)")
+        .eq("org_affiliations.org_id", orgId)
         .not("user_id", "is", null)
     if (rhWithGender.error && rhWithGender.error.message.includes("gender")) {
         const rhWithoutGender = await admin
             .from("rettighedshavere")
-            .select("id, full_name, email, user_id, onboarding_completed")
+            .select("id, full_name, email, user_id, onboarding_completed, org_affiliations!inner(org_id)")
+            .eq("org_affiliations.org_id", orgId)
             .not("user_id", "is", null)
         rh = rhWithoutGender.data ?? []
     } else {
@@ -123,7 +128,50 @@ export async function GET() {
     const staff = users.filter(u => u.org_roles.length > 0)
     const portal = users.filter(u => u.is_rettighedshaver && u.org_roles.length === 0)
 
-    return NextResponse.json({ users, staff, portal })
+    let unassigned: Array<{
+        id: string
+        kind: "auth_user" | "rights_holder"
+        full_name: string
+        email: string | null
+        reason: string
+        created_at: string
+    }> = []
+
+    if (caller.role === "superadmin") {
+        const [{ data: allRoles }, { data: allHolders }, { data: allAffiliations }] = await Promise.all([
+            admin.from("user_org_roles").select("user_id"),
+            admin.from("rettighedshavere").select("id, full_name, email, user_id, created_at"),
+            admin.from("org_affiliations").select("rights_holder_id"),
+        ])
+        const assignedUserIds = new Set((allRoles ?? []).map(row => row.user_id))
+        const linkedUserIds = new Set((allHolders ?? []).map(row => row.user_id).filter(Boolean))
+        const affiliatedHolderIds = new Set((allAffiliations ?? []).map(row => row.rights_holder_id))
+
+        const authWithoutProfile = authData.users
+            .filter(user => !assignedUserIds.has(user.id) && !linkedUserIds.has(user.id))
+            .map(user => ({
+                id: `auth:${user.id}`,
+                kind: "auth_user" as const,
+                full_name: String(user.user_metadata?.full_name ?? user.email ?? "Ukendt bruger"),
+                email: user.email ?? null,
+                reason: "Login mangler både organisationsrolle og rettighedshaverprofil",
+                created_at: user.created_at,
+            }))
+        const holdersWithoutOrganisation = (allHolders ?? [])
+            .filter(holder => !affiliatedHolderIds.has(holder.id))
+            .map(holder => ({
+                id: `rights-holder:${holder.id}`,
+                kind: "rights_holder" as const,
+                full_name: holder.full_name,
+                email: holder.email,
+                reason: "Rettighedshaver mangler organisationstilknytning",
+                created_at: holder.created_at,
+            }))
+        unassigned = [...authWithoutProfile, ...holdersWithoutOrganisation]
+            .sort((left, right) => left.full_name.localeCompare(right.full_name, "da"))
+    }
+
+    return NextResponse.json({ users, staff, portal, unassigned, callerRole: caller.role, callerUserId: caller.userId })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -138,23 +186,51 @@ export async function PATCH(req: NextRequest) {
     // ── Opdater roller ────────────────────────────────────────
     if (body.action === "set-roles") {
         const { userId, roles }: { userId: string; roles: string[] } = body
-        if (!userId || !roles?.length) {
+        if (!userId || !Array.isArray(roles) || !roles.length) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
+        }
+        const nextRoles = Array.from(new Set(roles))
+        const invalidRoles = nextRoles.filter(role => !ALLOWED_ORG_ROLES.has(role))
+        if (invalidRoles.length > 0) {
+            return NextResponse.json({
+                error: `En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`,
+            }, { status: 400 })
         }
         const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
         if (targetError) return targetError
+
+        const { data: currentRoleRows } = await admin
+            .from("user_org_roles")
+            .select("role")
+            .eq("user_id", userId)
+            .eq("org_id", orgId)
+        const targetIsSuperadmin = currentRoleRows?.some(row => row.role === "superadmin") ?? false
+        const targetWillBeSuperadmin = nextRoles.includes("superadmin")
+        if ((targetIsSuperadmin || targetWillBeSuperadmin) && patchCaller.role !== "superadmin") {
+            return NextResponse.json({ error: "Kun superadmin kan ændre superadmin-rollen" }, { status: 403 })
+        }
+        if (targetIsSuperadmin && !targetWillBeSuperadmin) {
+            const { count } = await admin
+                .from("user_org_roles")
+                .select("user_id", { count: "exact", head: true })
+                .eq("org_id", orgId)
+                .eq("role", "superadmin")
+            if ((count ?? 0) <= 1) {
+                return NextResponse.json({ error: "Organisationens sidste superadmin kan ikke fjernes" }, { status: 400 })
+            }
+        }
 
         // Slet eksisterende roller for denne bruger i org
         await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId)
 
         // Indsæt nye roller
         const { error: insertErr } = await admin.from("user_org_roles").insert(
-            roles.map(role => ({ user_id: userId, org_id: orgId, role }))
+            nextRoles.map(role => ({ user_id: userId, org_id: orgId, role }))
         )
         if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
 
         // Opdater user_metadata.role til den højeste rolle (bruges af admin layout)
-        const primary = primaryRole(roles)
+        const primary = primaryRole(nextRoles)
         await admin.auth.admin.updateUserById(userId, { user_metadata: { role: primary } })
 
         return NextResponse.json({ ok: true })
