@@ -46,6 +46,8 @@ type UploadedContract = {
   work_pending?: boolean;
 };
 
+type UploadStage = "checking" | "uploading" | "saving" | "linking" | "finishing";
+
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Ukendt fejl";
 }
@@ -71,6 +73,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [director, setDirector] = useState("");
   const [seriesSeason, setSeriesSeason] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploadStage, setUploadStage] = useState<UploadStage | null>(null);
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualWork, setManualWork] = useState<ManualWorkFormValue>(emptyManualWorkForm());
@@ -308,10 +311,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       const savedContracts: UploadedContract[] = [];
 
       for (const [index, selectedFile] of files.entries()) {
+        setUploadStage("uploading");
         const filePath = `${orgId}/${Date.now()}_${index}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const { error: storageErr } = await supabase.storage.from(BUCKET).upload(filePath, selectedFile, { contentType: selectedFile.type });
         if (storageErr) { toast.error(`Upload fejlede for ${selectedFile.name}: ${storageErr.message}`); return null; }
 
+        setUploadStage("saving");
         const res = await saveUploadedContract({
           filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
           workTitle: isBatchUpload ? title.trim() : selectedWork?.title ?? title.trim(),
@@ -334,6 +339,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       return null;
     } finally {
       setSaving(false);
+      setUploadStage(null);
     }
   };
 
@@ -460,10 +466,19 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (manualMode) {
       const validationError = validateManualWork(manualWork, "da");
       if (validationError) { toast.error(validationError); return; }
+      setSaving(true);
+      setUploadStage("checking");
       if (!forceDuplicate) {
         const duplicateResult = await findManualWorkDuplicates(manualWork.title, Number(manualWork.year));
-        if (!duplicateResult.success) { toast.error(duplicateResult.error ?? "Kunne ikke kontrollere for eksisterende værker."); return; }
+        if (!duplicateResult.success) {
+          setSaving(false);
+          setUploadStage(null);
+          toast.error(duplicateResult.error ?? "Kunne ikke kontrollere for eksisterende værker.");
+          return;
+        }
         if (duplicateResult.matches.length > 0) {
+          setSaving(false);
+          setUploadStage(null);
           setManualDuplicateMatches(duplicateResult.matches);
           return;
         }
@@ -479,6 +494,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     }
 
     setSaving(true);
+    setUploadStage("linking");
     try {
       const attached = await attachSelectedWork(savedContracts[0], forceDuplicate);
       if (!attached.success) {
@@ -486,6 +502,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         if (!("handled" in attached && attached.handled)) toast.error(attached.error ?? "Værket kunne ikke tilknyttes.");
         return;
       }
+      setUploadStage("finishing");
       const queued = await queueUploadedContractAiJob(savedContracts[0].id);
       if (!queued.success) {
         setAttachmentRetry({ contract: savedContracts[0], forceDuplicate, linkedWorkId: attached.workId, pending: attached.pending });
@@ -497,12 +514,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       completeUpload(savedContracts, attached.workId, attached.pending);
     } finally {
       setSaving(false);
+      setUploadStage(null);
     }
   };
 
   const retryManualLink = async () => {
     if (!manualLinkRetry) return;
     setSaving(true);
+    setUploadStage("linking");
     try {
       const result = await addManualWorkAndLinkContract({
         rightsHolderId,
@@ -521,6 +540,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       });
       if (!result.success) { toast.error(result.error ?? "Kontrakten kunne stadig ikke tilknyttes."); return; }
       const contract = manualLinkRetry.contract;
+      setUploadStage("finishing");
       const queued = await queueUploadedContractAiJob(contract.id);
       if (!queued.success) { toast.error(queued.error ?? "Værket blev linket, men den automatiske gennemgang kunne ikke startes."); return; }
       setManualLinkRetry(null);
@@ -528,12 +548,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       completeUpload([contract], result.workId, Boolean(result.pending));
     } finally {
       setSaving(false);
+      setUploadStage(null);
     }
   };
 
   const retryAttachment = async () => {
     if (!attachmentRetry) return;
     setSaving(true);
+    setUploadStage(attachmentRetry.linkedWorkId ? "finishing" : "linking");
     try {
       if (attachmentRetry.linkedWorkId) {
         const queued = await queueUploadedContractAiJob(attachmentRetry.contract.id);
@@ -548,6 +570,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         if (!("handled" in attached && attached.handled)) toast.error(attached.error ?? "Værket kunne stadig ikke tilknyttes.");
         return;
       }
+      setUploadStage("finishing");
       const queued = await queueUploadedContractAiJob(attachmentRetry.contract.id);
       if (!queued.success) { toast.error(queued.error ?? "Den automatiske gennemgang kunne ikke startes."); return; }
       const contract = attachmentRetry.contract;
@@ -556,6 +579,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       completeUpload([contract], attached.workId, attached.pending);
     } finally {
       setSaving(false);
+      setUploadStage(null);
     }
   };
 
@@ -1012,7 +1036,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               {saving && (
                 <div className="space-y-2">
                   <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Uploader og gemmer {files.length === 1 ? "kontrakt" : `${files.length} kontrakter`}...
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {uploadStage === "checking" && "Kontrollerer værkoplysninger..."}
+                    {uploadStage === "uploading" && `Uploader ${files.length === 1 ? "kontrakt" : `${files.length} kontrakter`}...`}
+                    {uploadStage === "saving" && `Gemmer ${files.length === 1 ? "kontrakt" : `${files.length} kontrakter`}...`}
+                    {uploadStage === "linking" && "Tilknytter værk..."}
+                    {uploadStage === "finishing" && "Starter automatisk gennemgang..."}
+                    {!uploadStage && "Forbereder indsendelse..."}
                   </p>
                   <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
                     <div className="h-full bg-primary rounded-full" style={{ animation: "upload-progress 8s ease-out forwards" }} />
@@ -1021,7 +1051,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 </div>
               )}
               <Button onClick={() => void handleSubmit(false)} disabled={!canSubmit} className="w-full gap-2">
-                <Upload className="h-4 w-4" /> {isBatchUpload ? "Indsend kontrakter" : "Indsend til DFKS"}
+                <Upload className="h-4 w-4" /> {isBatchUpload ? "Indsend kontrakter" : "Indsend"}
               </Button>
             </div>
           )}
