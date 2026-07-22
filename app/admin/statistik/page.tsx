@@ -488,7 +488,7 @@ export default function AdminStatistikPage() {
     }
 
     const exportXlsx = async () => {
-        const XLSX = await import("xlsx")
+        const ExcelJS = await import("exceljs")
         const overview = [{
             Periode: selectedYear === "all" ? "Alle år" : selectedYear,
             Kontrakter: filteredContracts.length,
@@ -496,11 +496,24 @@ export default function AdminStatistikPage() {
         }]
         const annual = filteredContributions.map(row => ({ År: row.year, Kontrakter: row.contractCount, Feriepenge: row.totalHolidayPayAmount, BETA: row.totalBetaAmount, BidragIAlt: row.totalHolidayPayAmount + row.totalBetaAmount }))
         const contributions = contributionsByProduction.map((row, index) => ({ Produktion: `Produktion ${index + 1}`, Arbejdsuger: row.weeks, FerieberettigetLøn: row.totalSalary, Feriepenge: row.holidayPay, BETA: row.beta, BidragIAlt: row.holidayPay + row.beta }))
-        const workbook = XLSX.utils.book_new()
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(overview), "Oversigt")
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(annual), "Årsdata")
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(contributions), "Producentbidrag")
-        XLSX.writeFile(workbook, `dfks-statistik-${exportStamp()}.xlsx`)
+        const workbook = new ExcelJS.Workbook()
+        const addSheet = (name: string, rows: Array<Record<string, string | number>>) => {
+            const sheet = workbook.addWorksheet(name)
+            const headers = Object.keys(rows[0] ?? {})
+            sheet.columns = headers.map(header => ({ header, key: header, width: Math.max(14, header.length + 2) }))
+            sheet.addRows(rows)
+            sheet.getRow(1).font = { bold: true }
+        }
+        addSheet("Oversigt", overview)
+        addSheet("Årsdata", annual)
+        addSheet("Producentbidrag", contributions)
+        const buffer = await workbook.xlsx.writeBuffer()
+        const url = URL.createObjectURL(new Blob([buffer as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }))
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `dfks-statistik-${exportStamp()}.xlsx`
+        anchor.click()
+        URL.revokeObjectURL(url)
     }
 
     if (loading) {
