@@ -13,6 +13,7 @@ export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
   member_word: "medlem",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
+  onboarding_keywords: ["klip", "edit"],
 };
 
 export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> | null): Required<OrgBranding> {
@@ -30,6 +31,7 @@ export function resolveTerminology(org: Pick<DbOrganisation, "terminology"> | nu
     member_word: t.member_word ?? DEFAULT_TERMINOLOGY.member_word,
     coeditor_word: t.coeditor_word ?? DEFAULT_TERMINOLOGY.coeditor_word,
     role_labels: t.role_labels && t.role_labels.length ? t.role_labels : DEFAULT_TERMINOLOGY.role_labels,
+    onboarding_keywords: t.onboarding_keywords && t.onboarding_keywords.length ? t.onboarding_keywords : DEFAULT_TERMINOLOGY.onboarding_keywords,
   };
 }
 

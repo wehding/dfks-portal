@@ -19,8 +19,10 @@ type FormState = {
   from_email: string;
   invite_email_text: string;
   invite_reminder_text: string;
+  welcome_message_text: string;
   coeditor_word: string;
   role_labels: string[];
+  onboarding_keywords: string[];
   foreninglet_base_url: string;
   foreninglet_username: string;
   foreninglet_password: string;
@@ -40,8 +42,10 @@ const emptyForm: FormState = {
   from_email: "",
   invite_email_text: "",
   invite_reminder_text: "",
+  welcome_message_text: "",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
+  onboarding_keywords: ["klip", "edit"],
   foreninglet_base_url: "https://foreninglet.dk/api/members",
   foreninglet_username: "",
   foreninglet_password: "",
@@ -74,8 +78,10 @@ export default function OrganisationSettingsPage() {
           from_email: settings.from_email ?? "",
           invite_email_text: settings.invite_email_text ?? "",
           invite_reminder_text: settings.invite_reminder_text ?? "",
+          welcome_message_text: settings.welcome_message_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
+          onboarding_keywords: settings.onboarding_keywords,
           foreninglet_base_url: settings.foreninglet.base_url,
           foreninglet_username: "",
           foreninglet_password: "",
@@ -112,6 +118,20 @@ export default function OrganisationSettingsPage() {
     }));
   }
 
+  function updateKeyword(index: number, value: string) {
+    setForm(current => ({
+      ...current,
+      onboarding_keywords: current.onboarding_keywords.map((keyword, keywordIndex) => keywordIndex === index ? value : keyword),
+    }));
+  }
+
+  function removeKeyword(index: number) {
+    setForm(current => ({
+      ...current,
+      onboarding_keywords: current.onboarding_keywords.filter((_, keywordIndex) => keywordIndex !== index),
+    }));
+  }
+
   function handleSave() {
     if (!canSave) {
       toast.error("Udfyld navn, fagord og mindst én rolle.");
@@ -128,8 +148,10 @@ export default function OrganisationSettingsPage() {
           from_email: form.from_email || null,
           invite_email_text: form.invite_email_text || null,
           invite_reminder_text: form.invite_reminder_text || null,
+          welcome_message_text: form.welcome_message_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
+          onboarding_keywords: form.onboarding_keywords,
           foreninglet_base_url: form.foreninglet_base_url || null,
           foreninglet_username: form.foreninglet_username || null,
           foreninglet_password: form.foreninglet_password || null,
@@ -327,6 +349,19 @@ export default function OrganisationSettingsPage() {
               rows={4}
             />
           </div>
+          <div className="space-y-2">
+            <Label>Velkomstbesked</Label>
+            <p className="text-xs text-muted-foreground">
+              Lægges automatisk som første besked i nye medlemmers indbakke på Overblik.
+              Lades feltet stå tomt, oprettes ingen velkomstbesked.
+            </p>
+            <Textarea
+              value={form.welcome_message_text}
+              onChange={event => setForm(f => ({ ...f, welcome_message_text: event.target.value }))}
+              placeholder="Skriv velkomstbeskeden til nye medlemmer."
+              rows={8}
+            />
+          </div>
         </div>
       </section>
 
@@ -433,6 +468,27 @@ export default function OrganisationSettingsPage() {
             <Button type="button" variant="outline" size="sm" onClick={() => setForm(f => ({ ...f, role_labels: [...f.role_labels, ""] }))}>
               <Plus className="mr-2 h-4 w-4" />
               Tilføj rolle
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Label>Onboarding-søgeord</Label>
+            <p className="text-xs text-muted-foreground">
+              Kun krediteringer, der matcher et af disse søgeord (fx “klip”, “edit”), medtages når nye
+              medlemmer slås op i DFI og TMDb under onboarding.
+            </p>
+            <div className="space-y-2">
+              {form.onboarding_keywords.map((keyword, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input value={keyword} onChange={event => updateKeyword(index, event.target.value)} />
+                  <Button type="button" variant="outline" size="icon" onClick={() => removeKeyword(index)} disabled={form.onboarding_keywords.length <= 1}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => setForm(f => ({ ...f, onboarding_keywords: [...f.onboarding_keywords, ""] }))}>
+              <Plus className="mr-2 h-4 w-4" />
+              Tilføj søgeord
             </Button>
           </div>
         </div>

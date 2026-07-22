@@ -72,7 +72,10 @@ function yearFromTmdbItem(item: TMDBSearchItem) {
 
 export async function searchTMDBPerson(name: string) {
   try {
-    const res = await tmdbFetch(`/search/person?query=${encodeURIComponent(name)}&language=da-DK`);
+    // Ingen language-param: personnavne er sproguafhængige, og API-fejl må aldrig
+    // forveksles med "ingen resultater" — derfor eksplicit res.ok-tjek.
+    const res = await tmdbFetch(`/search/person?query=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error(`TMDB person search status ${res.status}`);
     const data = await res.json();
     return { success: true, results: data.results || [] };
   } catch (err) {

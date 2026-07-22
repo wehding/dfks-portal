@@ -36,6 +36,8 @@ export interface OrgTerminology {
     member_word?: string
     coeditor_word?: string
     role_labels?: string[]
+    /** Søgeord for hvilke krediteringer onboarding-personsøgningen medtager (fx "klip", "edit"). */
+    onboarding_keywords?: string[]
 }
 
 export interface DbUserOrgRole {

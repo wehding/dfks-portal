@@ -4,11 +4,12 @@ import type { PersonCandidate } from "@/app/actions/person-discovery";
 import { Loader2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
-export function PersonIdentityPicker({ candidates, selected, loading, error, onSelect }: {
+export function PersonIdentityPicker({ candidates, selected, loading, error, sourceErrors, onSelect }: {
   candidates: PersonCandidate[];
   selected: Record<string, boolean>;
   loading: boolean;
   error?: string | null;
+  sourceErrors?: { dfi?: boolean; tmdb?: boolean; wikidata?: boolean };
   onSelect: (candidate: PersonCandidate) => void;
 }) {
   const { t } = useI18n();
@@ -19,7 +20,11 @@ export function PersonIdentityPicker({ candidates, selected, loading, error, onS
       const sourceCandidates = candidates.filter(candidate => candidate.source === source);
       return <section key={source} className="space-y-2">
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{source}</h3>
-        {sourceCandidates.length === 0 ? <p className="text-sm text-muted-foreground">{t("works.noLikelyProfiles")}</p> : sourceCandidates.map(candidate => {
+        {sourceCandidates.length === 0 ? (
+          sourceErrors?.[source]
+            ? <p className="text-sm text-destructive">{t("works.sourceSearchFailed")}</p>
+            : <p className="text-sm text-muted-foreground">{t("works.noLikelyProfiles")}</p>
+        ) : sourceCandidates.map(candidate => {
           const checked = Boolean(selected[candidate.key]);
           const reason = candidate.reason === "exact" ? t("works.matchFullName") : candidate.reason === "without-middle-name" ? t("works.matchWithoutMiddleName") : candidate.reason === "initial-variant" ? t("works.matchInitial") : t("works.matchCloseSpelling");
           return <button type="button" aria-pressed={checked} onClick={() => onSelect(candidate)} key={candidate.key} className={`flex w-full cursor-pointer gap-3 rounded-lg border p-3 text-left ${checked ? "border-foreground bg-muted ring-1 ring-foreground" : "hover:bg-muted/50"}`}>

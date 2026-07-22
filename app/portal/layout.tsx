@@ -21,7 +21,6 @@ import {
     BrainCircuit,
     ShieldCheck,
     Home,
-    MessageSquare,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useI18n } from "@/lib/i18n"
@@ -203,11 +202,6 @@ export default function PortalLayout({
             icon: SHARED_NAV_ICONS.contracts,
         },
         {
-            label: t("nav.messages"),
-            href: "/portal/beskeder",
-            icon: MessageSquare,
-        },
-        {
             label: t("nav.economy"),
             href: "/portal/okonomi",
             icon: Wallet,
@@ -310,7 +304,7 @@ export default function PortalLayout({
                                                                 {contractMessageCount}
                                                             </span>
                                                         )}
-                                                        {item.href === "/portal/beskeder" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
+                                                        {item.href === "/portal" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
                                                     </SidebarNavigationLink>
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
@@ -408,7 +402,7 @@ export default function PortalLayout({
                                                             {contractMessageCount}
                                                         </span>
                                                     )}
-                                                    {item.href === "/portal/beskeder" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
+                                                    {item.href === "/portal" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
                                                 </SidebarNavigationLink>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>

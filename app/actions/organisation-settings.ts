@@ -24,8 +24,10 @@ type OrganisationSettingsPayload = {
   from_email: string | null;
   invite_email_text: string | null;
   invite_reminder_text: string | null;
+  welcome_message_text: string | null;
   coeditor_word: string;
   role_labels: string[];
+  onboarding_keywords: string[];
   foreninglet_base_url?: string | null;
   foreninglet_username?: string | null;
   foreninglet_password?: string | null;
@@ -65,7 +67,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, branding, terminology")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology")
     .eq("id", orgId)
     .single();
 
@@ -83,6 +85,7 @@ export async function getOrganisationSettings() {
     from_email: (data.from_email as string | null) ?? null,
     invite_email_text: (data.invite_email_text as string | null) ?? null,
     invite_reminder_text: (data.invite_reminder_text as string | null) ?? null,
+    welcome_message_text: (data.welcome_message_text as string | null) ?? null,
     short_name: branding.short_name ?? data.name,
     long_name: branding.long_name ?? data.name,
     primary_color: branding.primary_color ?? "#111827",
@@ -91,6 +94,9 @@ export async function getOrganisationSettings() {
     role_labels: terminology.role_labels?.length
       ? terminology.role_labels
       : ["Medskaber"],
+    onboarding_keywords: terminology.onboarding_keywords?.length
+      ? terminology.onboarding_keywords
+      : ["klip", "edit"],
     foreninglet,
   };
 }
@@ -103,11 +109,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const longName = cleanString(payload.long_name);
   const coeditorWord = cleanString(payload.coeditor_word);
   const roleLabels = normalizeRoles(payload.role_labels);
+  const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
 
   if (!shortName || !longName) throw new Error("Kort navn og fuldt navn skal udfyldes.");
   if (!coeditorWord) throw new Error("Fagordet skal udfyldes.");
   if (roleLabels.length === 0) throw new Error("Der skal være mindst én rollebetegnelse.");
+  if (onboardingKeywords.length === 0) throw new Error("Der skal være mindst ét onboarding-søgeord.");
   if (replyToEmail) {
     try {
       normalizeSingleEmail(replyToEmail);
@@ -125,6 +133,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     member_word: "medlem",
     coeditor_word: coeditorWord,
     role_labels: roleLabels,
+    onboarding_keywords: onboardingKeywords,
   };
 
   const { error } = await db
@@ -135,6 +144,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       from_email: replyToEmail,
       invite_email_text: cleanOptionalString(payload.invite_email_text),
       invite_reminder_text: cleanOptionalString(payload.invite_reminder_text),
+      welcome_message_text: cleanOptionalString(payload.welcome_message_text),
       branding,
       terminology,
       updated_at: new Date().toISOString(),

@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
@@ -134,7 +135,7 @@ export async function saveUploadedContract(params: {
   orgId: string;
   rhId: string;
   memberName: string;
-  workTitle: string;
+  workTitle?: string;
   workId?: string;
   category: string;
   roles: string[];
@@ -216,6 +217,8 @@ export async function saveUploadedContract(params: {
 
     if (jobError) {
       console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
+    } else {
+      triggerContractAiJobProcessing();
     }
   }
 
@@ -256,7 +259,43 @@ export async function queueUploadedContractAiJob(contractId: string) {
     priority: 0,
   });
   if (error) return { success: false, error: error.message };
+  triggerContractAiJobProcessing();
   return { success: true, alreadyQueued: false };
+}
+
+// Udløs jobkøen med det samme, så auto-kobling af kontrakt→værk ikke venter på
+// det daglige cron-job. Kører direkte i baggrunden via after().
+function triggerContractAiJobProcessing() {
+  after(async () => {
+    try {
+      const { processPendingContractJobs } = await import("@/app/api/contracts/jobs/process/route");
+      await processPendingContractJobs();
+    } catch (e) {
+      console.error("[contract-job] Baggrundsaflæsning fejlede:", e);
+    }
+  });
+}
+
+export async function fetchMemberContractsList() {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", contracts: [] };
+
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet", contracts: [] };
+
+  const { data, error } = await db
+    .from("contracts")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)")
+    .eq("rights_holder_id", rh.id)
+    .order("created_at", { ascending: false });
+
+  if (error) return { success: false, error: error.message, contracts: [] };
+  return { success: true, contracts: data ?? [] };
 }
 
 export async function linkContractToWork(
@@ -320,7 +359,7 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();

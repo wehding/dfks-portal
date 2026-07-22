@@ -816,11 +816,20 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
   if (workError) throw new Error(workError.message);
   if (!work) throw new Error("Værket findes ikke.");
 
-  // Hent alle berørte kontrakter
+  // Hent børneværker ift. serier/afsnit
+  const { data: childWorks } = await db
+    .from("works")
+    .select("id")
+    .eq("parent_work_id", workId)
+    .eq("org_id", orgId);
+
+  const allTargetIds = Array.from(new Set([workId, ...(childWorks?.map(c => c.id) ?? [])]));
+
+  // Hent alle berørte kontrakter (både for hovedværk og børneværker)
   const { data: affectedContracts, error: affectedError } = await db
     .from("contracts")
     .select("id")
-    .eq("work_id", workId)
+    .in("work_id", allTargetIds)
     .eq("org_id", orgId);
   if (affectedError) throw new Error(affectedError.message);
 
@@ -835,19 +844,30 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
     if (validationDeleteError) throw new Error(validationDeleteError.message);
   }
 
+  // Nulstil kontrakterne så de ikke længere er tilknyttet og skifter til Mangler Værk
   const { error: contractUpdateError } = await db
     .from("contracts")
-    .update({ work_id: null, status: "kladde" })
-    .eq("work_id", workId)
+    .update({
+      work_id: null,
+      season_number: null,
+      episode_numbers: null,
+      status: "kladde",
+    })
+    .in("work_id", allTargetIds)
     .eq("org_id", orgId);
   if (contractUpdateError) throw new Error(contractUpdateError.message);
 
   const { error: airingUpdateError } = await db
     .from("work_airings")
     .update({ work_id: null })
-    .eq("work_id", workId)
+    .in("work_id", allTargetIds)
     .eq("org_id", orgId);
   if (airingUpdateError && !isMissingRelationError(airingUpdateError)) throw new Error(airingUpdateError.message);
+
+  // Slet børneværker først og derefter hovedværket
+  if (childWorks && childWorks.length > 0) {
+    await db.from("works").delete().in("id", childWorks.map(c => c.id)).eq("org_id", orgId);
+  }
 
   const { error: deleteError } = await db
     .from("works")
@@ -857,7 +877,9 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
   if (deleteError) throw new Error(deleteError.message);
 
   revalidatePath("/admin/vaerker");
+  revalidatePath("/admin/kontrakter");
   revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/portal/mine-kontrakter");
   return { success: true };
 }
 
@@ -882,9 +904,18 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
   const foundIds = works?.map(w => w.id) ?? [];
   if (foundIds.length === 0) throw new Error("Ingen af de valgte værker blev fundet.");
 
+  // Hent børneværker
+  const { data: childWorks } = await db
+    .from("works")
+    .select("id")
+    .in("parent_work_id", foundIds)
+    .eq("org_id", orgId);
+
+  const allTargetIds = Array.from(new Set([...foundIds, ...(childWorks?.map(c => c.id) ?? [])]));
+
   // Slet i batches så store cascade-sletninger ikke rammer statement-timeout
-  for (let i = 0; i < foundIds.length; i += 50) {
-    const chunk = foundIds.slice(i, i + 50);
+  for (let i = 0; i < allTargetIds.length; i += 50) {
+    const chunk = allTargetIds.slice(i, i + 50);
 
     // Hent alle berørte kontrakter for denne batch
     const { data: affectedContracts, error: affectedError } = await db
@@ -907,7 +938,12 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
 
     const { error: contractUpdateError } = await db
       .from("contracts")
-      .update({ work_id: null, status: "kladde" })
+      .update({
+        work_id: null,
+        season_number: null,
+        episode_numbers: null,
+        status: "kladde",
+      })
       .in("work_id", chunk)
       .eq("org_id", orgId);
     if (contractUpdateError) throw new Error(contractUpdateError.message);
@@ -928,7 +964,9 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
   }
 
   revalidatePath("/admin/vaerker");
+  revalidatePath("/admin/kontrakter");
   revalidatePath("/portal/mine-vaerker");
+  revalidatePath("/portal/mine-kontrakter");
   return { success: true, deletedCount: foundIds.length };
 }
 
@@ -1797,41 +1835,62 @@ export async function createAndLinkWorkForContract(params: {
     }
     const d = detailsRes.details;
 
-    const insertPayload = {
-      title: d.title,
-      type: d.type,
-      year: d.year,
-      org_id: orgId,
-      description: d.description,
-      director: d.director,
-      genre: d.genre,
-      poster_url: d.poster_url,
-      dfi_id: d.dfi_id ? String(d.dfi_id) : null,
-      tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : null,
-      imdb_id: d.imdb_id ?? null,
-      wikidata_id: d.wikidata_id ?? null,
-      dfi_metadata: d.dfi_metadata,
-      status: "godkendt",
-    };
+    // Check if matching work already exists locally before inserting
+    let existingWork: { id: string } | null = null;
+    if (d.dfi_id) {
+      const { data } = await db.from("works").select("id").eq("org_id", orgId).eq("dfi_id", String(d.dfi_id)).maybeSingle();
+      if (data) existingWork = data;
+    }
+    if (!existingWork && d.tmdb_id) {
+      const { data } = await db.from("works").select("id").eq("org_id", orgId).eq("tmdb_id", Number(d.tmdb_id)).maybeSingle();
+      if (data) existingWork = data;
+    }
+    if (!existingWork && d.title) {
+      let query = db.from("works").select("id").eq("org_id", orgId).ilike("title", d.title).eq("type", d.type);
+      if (d.year) query = query.eq("year", d.year);
+      const { data } = await query.limit(1).maybeSingle();
+      if (data) existingWork = data;
+    }
 
-    let { data: newWork, error: insertErr } = await db
-      .from("works")
-      .insert(insertPayload)
-      .select("id")
-      .single();
+    if (existingWork) {
+      parentId = existingWork.id;
+    } else {
+      const insertPayload = {
+        title: d.title,
+        type: d.type,
+        year: d.year,
+        org_id: orgId,
+        description: d.description,
+        director: d.director,
+        genre: d.genre,
+        poster_url: d.poster_url,
+        dfi_id: d.dfi_id ? String(d.dfi_id) : null,
+        tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : null,
+        imdb_id: d.imdb_id ?? null,
+        wikidata_id: d.wikidata_id ?? null,
+        dfi_metadata: d.dfi_metadata,
+        status: "godkendt",
+      };
 
-    if (isMissingWorkMetadataColumnError(insertErr)) {
-      ({ data: newWork, error: insertErr } = await db
+      let { data: newWork, error: insertErr } = await db
         .from("works")
-        .insert(withoutOptionalWorkMetadata(insertPayload))
+        .insert(insertPayload)
         .select("id")
-        .single());
-    }
+        .single();
 
-    if (insertErr || !newWork) {
-      return { success: false, error: `Fejl ved oprettelse af værk: ${insertErr?.message}` };
+      if (isMissingWorkMetadataColumnError(insertErr)) {
+        ({ data: newWork, error: insertErr } = await db
+          .from("works")
+          .insert(withoutOptionalWorkMetadata(insertPayload))
+          .select("id")
+          .single());
+      }
+
+      if (insertErr || !newWork) {
+        return { success: false, error: `Fejl ved oprettelse af værk: ${insertErr?.message}` };
+      }
+      parentId = newWork.id;
     }
-    parentId = newWork.id;
   }
 
   // 2. Handle episodes if it is a series
@@ -1883,10 +1942,14 @@ export async function createAndLinkWorkForContract(params: {
     }, { onConflict: "work_id,rights_holder_id,role" });
   }
 
-  // 3. Link the contract to the work
+  // 3. Link the contract to the work and update status to 'afventer' (Afventer validering)
   const { error: updateErr } = await db
     .from("contracts")
-    .update({ work_id: targetWorkId })
+    .update({
+      work_id: targetWorkId,
+      status: "afventer",
+      ...(isSeries ? { season_number: activeSeason, episode_numbers: activeEpisodes } : {}),
+    })
     .eq("id", contractId);
 
   if (updateErr) {

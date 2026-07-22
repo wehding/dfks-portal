@@ -858,7 +858,7 @@ export default function MineVaerkerClient({
                 </button>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
+                    <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -881,7 +881,9 @@ export default function MineVaerkerClient({
               <div className="text-sm text-muted-foreground">{displayRole(a.role)}</div>
               <div className="text-sm text-muted-foreground">
                 {isSeriesParent ? (
-                  <span>{w.episode_count ?? 0} afsnit</span>
+                  <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
+                    {w.season_number != null ? `S${String(w.season_number).padStart(2, "0")} ` : ""}({w.episode_count ?? 0} afsnit)
+                  </span>
                 ) : w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
                   <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
                     S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}

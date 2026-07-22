@@ -1315,7 +1315,12 @@ export async function addManualWorkAndLinkContract(params: {
 
   const { data: linked, error: linkError } = await db
     .from("contracts")
-    .update({ work_id: scopedWorkId, season_number: scopedSeasonNumber, episode_numbers: scopedEpisodeNumbers })
+    .update({
+      work_id: scopedWorkId,
+      season_number: scopedSeasonNumber,
+      episode_numbers: scopedEpisodeNumbers,
+      status: "afventer",
+    })
     .eq("id", params.contractId)
     .eq("rights_holder_id", params.rightsHolderId)
     .select("id, work_id")
@@ -1511,6 +1516,7 @@ export type UnifiedSearchWorkResult = {
   imdb_id?: string | null;
   wikidata_id?: string | null;
   season_hint?: number | null;
+  season_number?: number | null;
   sources: ("local" | "dfi" | "tmdb")[];
   raw_local?: any;
   raw_dfi?: any;
@@ -1598,9 +1604,24 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const querySeasonHint = parseSeasonNumberFromTitle(q);
 
-  // 1. Add Local works (parents only)
+  // 1. Add Local works (parents only, deduplicated)
   localWorks.forEach(w => {
     if (w.parent_work_id) return;
+    const normTitle = normalize(cleanDfiTitle(w.title));
+    const existingLocal = results.find(r => {
+      if (w.dfi_id && r.dfi_id && String(r.dfi_id) === String(w.dfi_id)) return true;
+      if (w.tmdb_id && r.tmdb_id && Number(r.tmdb_id) === Number(w.tmdb_id)) return true;
+      if (normalize(r.title) === normTitle && r.type === w.type && (!r.year || !w.year || Math.abs(r.year - w.year) <= 1)) return true;
+      return false;
+    });
+
+    if (existingLocal) {
+      if (!existingLocal.local_id) existingLocal.local_id = w.id;
+      if (!existingLocal.dfi_id && w.dfi_id) existingLocal.dfi_id = String(w.dfi_id);
+      if (!existingLocal.tmdb_id && w.tmdb_id) existingLocal.tmdb_id = Number(w.tmdb_id);
+      return;
+    }
+
     results.push({
       id: `local-${w.id}`,
       title: w.title,
@@ -1919,7 +1940,8 @@ export async function updateMemberCoEditors(params: {
   return { success: true };
 }
 
-export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult) {
+export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult, seasonNumber?: number | null) {
+  const detailSeasonNumber = seasonNumber ?? result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
   let dfiMetadata: DfiMetadata | null = null;
   let tmdbId = result.tmdb_id ?? null;
   let imdbId = result.imdb_id ?? null;
@@ -1937,7 +1959,6 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let productionCompanies: string[] = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
   let localChildren: any[] = Array.isArray(result.raw_local?.__local_children) ? result.raw_local.__local_children : [];
-  const detailSeasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
 
   if (result.local_id && isSeriesType(result.type)) {
     try {

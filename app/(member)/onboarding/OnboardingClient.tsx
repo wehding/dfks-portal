@@ -78,13 +78,14 @@ export default function OnboardingClient({
   const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
   const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, boolean>>({});
   const [personSearchError, setPersonSearchError] = useState<string | null>(null);
+  const [personSourceErrors, setPersonSourceErrors] = useState<{ dfi?: boolean; tmdb?: boolean; wikidata?: boolean }>({});
   const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
   const [newAlternativeName, setNewAlternativeName] = useState("");
   const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
   const isOrganisationMember = Boolean(rh?.is_member);
 
-  // Import timer
-  const [importSeconds, setImportSeconds] = useState(0);
+  // Import-fremdrift
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number; title: string } | null>(null);
 
   // Formulardata præ-udfyldt fra rettighedshaveren
   const existingName = rh?.full_name || "";
@@ -141,12 +142,16 @@ export default function OnboardingClient({
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
-    const options = buildCompleteEpisodeOptions({
-      episodeCount: episodeCountForCredit(credit),
-      externalOptions: episodeOptions[credit.id] ?? credit.episode_options ?? [],
-      localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
-      seasonNumber: seriesSeasons[credit.id] ?? 1,
-    });
+    const season = seriesSeasons[credit.id] ?? 1;
+    // Ved sæson > 1 er kun de sæson-specifikt hentede afsnit gyldige — pad aldrig med seriens total.
+    const options = season > 1
+      ? episodeOptions[credit.id] ?? []
+      : buildCompleteEpisodeOptions({
+          episodeCount: episodeCountForCredit(credit),
+          externalOptions: episodeOptions[credit.id] ?? credit.episode_options ?? [],
+          localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
+          seasonNumber: 1,
+        });
     return seriesEpisodes[credit.id] ?? options.map(option => option.number);
   };
 
@@ -157,7 +162,12 @@ export default function OnboardingClient({
     if (result.success) {
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
-    } else setEpisodeErrors(prev => ({ ...prev, [credit.id]: result.error }));
+    } else {
+      // Ryd stale afsnit fra en tidligere sæson, så fejlen ikke kan blandes med gamle valg.
+      setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
+      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
+      setEpisodeErrors(prev => ({ ...prev, [credit.id]: result.error }));
+    }
     setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
   };
 
@@ -193,6 +203,10 @@ export default function OnboardingClient({
     try {
       const result = await discoverPersonCandidates(query.trim());
       const candidates = result.success ? result.candidates : [];
+      const errors: { dfi?: boolean; tmdb?: boolean; wikidata?: boolean } = result.success ? result.sourceErrors ?? {} : {};
+      setPersonSourceErrors(current => merge
+        ? { dfi: Boolean(current.dfi || errors.dfi), tmdb: Boolean(current.tmdb || errors.tmdb), wikidata: Boolean(current.wikidata || errors.wikidata) }
+        : errors);
       setPersonCandidates(current => merge ? Array.from(new Map([...current, ...candidates].map(candidate => [candidate.key, candidate])).values()).sort((a, b) => b.score - a.score) : candidates);
       setSelectedPersonCandidates(current => ({ ...(merge ? current : {}), ...Object.fromEntries(candidates.filter(candidate => candidate.score >= 0.78).map(candidate => [candidate.key, true])) }));
       const portrait = candidates.find(candidate => candidate.imageUrl)?.imageUrl ?? null;
@@ -276,22 +290,32 @@ export default function OnboardingClient({
       if (approved.length > 0) {
         setIsImportingDfi(true);
         setImportError(null);
-        setImportSeconds(0);
-        const timerInterval = setInterval(() => {
-          setImportSeconds((s) => s + 1);
-        }, 1000);
         try {
-          const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, approved);
-          if (!result.success) {
-            setImportError(result.error ?? result.errors?.join("\n") ?? "Værkerne kunne ikke importeres. Prøv igen.");
+          // Importér én titel ad gangen, så brugeren kan se hvad der aktuelt hentes.
+          // Serverens upserts er idempotente, så del-import er sikker.
+          const collectedErrors: string[] = [];
+          let anySuccess = false;
+          for (let index = 0; index < approved.length; index++) {
+            const credit = approved[index];
+            setImportProgress({ current: index + 1, total: approved.length, title: credit.title });
+            const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, [credit]);
+            if (!result.success) {
+              collectedErrors.push(result.error ?? `${credit.title}: import fejlede.`);
+            } else {
+              anySuccess = true;
+              if (result.errors?.length) collectedErrors.push(...result.errors);
+            }
+          }
+          if (!anySuccess) {
+            setImportError(collectedErrors.join("\n") || "Værkerne kunne ikke importeres. Prøv igen.");
             return;
           }
-          if (result.errors?.length) setImportError(`Nogle værker mangler data: ${result.errors.join(" ")}`);
+          if (collectedErrors.length) setImportError(`Nogle værker mangler data: ${collectedErrors.join(" ")}`);
           setStep(5);
         } catch (error: unknown) {
           setImportError(error instanceof Error ? error.message : "Værkerne kunne ikke importeres. Prøv igen.");
         } finally {
-          clearInterval(timerInterval);
+          setImportProgress(null);
           setIsImportingDfi(false);
         }
       } else {
@@ -334,15 +358,11 @@ export default function OnboardingClient({
             <p style={{ fontSize: "14px", color: "var(--on-surface-variant)", margin: 0 }}>
               Vi henter detaljeret metadata for dine {approvedCount} valgte titler fra DFI og TMDb.
             </p>
-          </div>
-
-          <div style={{ padding: "20px", backgroundColor: "var(--surface-container-low)", borderRadius: "8px", border: "1px solid var(--outline-variant)" }}>
-            <div style={{ fontSize: "32px", fontWeight: 800, color: "var(--primary)", fontFamily: "monospace" }}>
-              {Math.floor(importSeconds / 60)}:{(importSeconds % 60).toString().padStart(2, '0')}
-            </div>
-            <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px" }}>
-              Tid gået
-            </div>
+            {importProgress && (
+              <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--on-surface)", margin: 0 }}>
+                Henter: {importProgress.title} ({importProgress.current}/{importProgress.total})
+              </p>
+            )}
           </div>
 
           {approvedCount >= 5 && (
@@ -620,7 +640,7 @@ export default function OnboardingClient({
                   </div>
                 </div>
               )}
-              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
+              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} sourceErrors={personSourceErrors} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
             </div>
           )}
 
@@ -630,9 +650,9 @@ export default function OnboardingClient({
                 🎬 Dine film og serier i DFI & TMDb
               </h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
-                Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
+                Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Gennemgå og bekræft de titler, du har medvirket til at skabe. Hvis der er titler der mangler kan du tilføje dem senere.
               </p>
-              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de serier, hvor du har en kontrakt med streaming- eller Copydan-forbehold indskrevet. Åbn “Vælg afsnit” under serien, og markér de afsnit, kontrakten gælder.</div>
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>For tv- og dokumentarserier skal du vælge de specifikke afsnit, som du har været med til at skabe. Åbn “Vælg afsnit” under serien, og markér afsnittene.</div>
               {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--destructive)", background: "var(--muted)", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (
@@ -715,12 +735,14 @@ export default function OnboardingClient({
                                   <SeriesEpisodeSelector
                                     season={seriesSeasons[c.id] ?? 1}
                                     onSeasonChange={season => { setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodes(c, season); }}
-                                    options={buildCompleteEpisodeOptions({
-                                      episodeCount,
-                                      externalOptions: episodeOptions[c.id]?.length ? episodeOptions[c.id] : c.episode_options ?? [],
-                                      localChildren: Array.isArray(c.raw?.__local_children) ? c.raw.__local_children : [],
-                                      seasonNumber: seriesSeasons[c.id] ?? 1,
-                                    })}
+                                    options={(seriesSeasons[c.id] ?? 1) > 1
+                                      ? buildCompleteEpisodeOptions({ externalOptions: episodeOptions[c.id] ?? [], seasonNumber: seriesSeasons[c.id] ?? 1 })
+                                      : buildCompleteEpisodeOptions({
+                                          episodeCount,
+                                          externalOptions: episodeOptions[c.id]?.length ? episodeOptions[c.id] : c.episode_options ?? [],
+                                          localChildren: Array.isArray(c.raw?.__local_children) ? c.raw.__local_children : [],
+                                          seasonNumber: 1,
+                                        })}
                                     selected={selectedEpisodes}
                                     onSelectedChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))}
                                     loading={Boolean(episodeLoading[c.id])}
