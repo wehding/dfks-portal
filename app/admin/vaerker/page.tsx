@@ -45,6 +45,7 @@ import {
   markWorkRequestCommentsRead,
   mergeAdminWorks,
   reviewWorkDataCorrection,
+  syncAdminSeasonAssignments,
   updateAdminWorkData,
 } from "@/app/actions/work-management";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
@@ -162,6 +163,7 @@ type WorkDistribution = {
   broadcasters?: { name?: string | null; logo_path?: string | null } | null;
 };
 type DistributionDraft = { broadcasterName: string; distributionType: "tv" | "streaming" | "both"; validFromYear: string; validToYear: string };
+type SeasonCreditDraft = { rightsHolderId: string; name: string; role: string; episodes: number[] };
 
 type WorkRow = {
   id: string;
@@ -812,6 +814,9 @@ export default function VaerksadministrationPage() {
   const [seasonEpisodes, setSeasonEpisodes] = useState<Record<string, WorkRow[]>>({});
   const [loadingSeasons, setLoadingSeasons] = useState<Set<string>>(new Set());
   const [seasonErrors, setSeasonErrors] = useState<Record<string, string>>({});
+  const [editingSeasonGroup, setEditingSeasonGroup] = useState<WorkRow | null>(null);
+  const [editingSeasonEpisodes, setEditingSeasonEpisodes] = useState<WorkRow[]>([]);
+  const [seasonCreditDrafts, setSeasonCreditDrafts] = useState<Record<string, SeasonCreditDraft>>({});
   const { activeRh, setActiveRh } = useActiveRightsHolder();
 
   const load = async () => {
@@ -1089,6 +1094,9 @@ export default function VaerksadministrationPage() {
   };
 
   const openEdit = async (work: WorkRow) => {
+    setEditingSeasonGroup(null);
+    setEditingSeasonEpisodes([]);
+    setSeasonCreditDrafts({});
     // Auto-åbn KUN en request med en ulæst besked (så nye beskeder ses).
     // Allerede sete/godkendte rettelser popper ikke op — dem klikker man selv på.
     const requestWithUnread = (work.work_change_requests ?? []).find(request =>
@@ -1138,9 +1146,58 @@ export default function VaerksadministrationPage() {
     setEditLookupQuery(detailedWork.title ?? "");
   };
 
+  const openAdminSeasonEdit = async (group: WorkRow) => {
+    if (!group.is_season_group || !group.parent_work_id || group.season_number == null) return;
+    setSaving(true);
+    try {
+      const [parentResult, episodesResult] = await Promise.all([
+        fetchAdminWorkDetail(group.parent_work_id),
+        fetchAdminSeasonEpisodes({ parentWorkId: group.parent_work_id, seasonNumber: group.season_number }),
+      ]);
+      if (!parentResult.success || !parentResult.work) throw new Error(parentResult.error ?? "Serien blev ikke fundet.");
+      if (!episodesResult.success) throw new Error(episodesResult.error ?? "Sæsonens afsnit kunne ikke hentes.");
+      const parent = parentResult.work as WorkRow;
+      const episodes = episodesResult.works as unknown as WorkRow[];
+      const credits = new Map<string, SeasonCreditDraft>();
+      for (const episode of episodes) {
+        for (const assignment of episode.work_assignments ?? []) {
+          const holderId = assignment.rettighedshavere?.id;
+          if (!holderId || episode.episode_number == null) continue;
+          const existing = credits.get(holderId) ?? {
+            rightsHolderId: holderId,
+            name: assignment.rettighedshavere?.full_name ?? "Ukendt rettighedshaver",
+            role: displayCreditRole(assignment.role),
+            episodes: [],
+          };
+          if (!existing.episodes.includes(episode.episode_number)) existing.episodes.push(episode.episode_number);
+          credits.set(holderId, existing);
+        }
+      }
+      for (const credit of credits.values()) credit.episodes.sort((a, b) => a - b);
+      setEditingSeasonGroup(group);
+      setEditingSeasonEpisodes(episodes);
+      setSeasonCreditDrafts(Object.fromEntries(credits));
+      setEditing(parent);
+      setEditForm(toForm(parent));
+      setEditDistributions(toDistributionDrafts(parent));
+      setAssignmentDrafts({});
+      setNewAssignment({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
+      setActiveRequestId(null);
+      setAdminComment("");
+      setImportPreview(null);
+      setEditLookupQuery(parent.title ?? "");
+      setEditUnifiedResults([]);
+    } catch (error: unknown) {
+      setNotice(errorMessage(error, "Sæsonen kunne ikke åbnes."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSaveWork = async () => {
     if (!editing || !editForm) return;
     const savedWork = editing;
+    const savedSeasonGroup = editingSeasonGroup;
     setSaving(true);
     try {
       await updateAdminWorkData({
@@ -1187,13 +1244,28 @@ export default function VaerksadministrationPage() {
           }] : []),
         ],
       });
+      if (editingSeasonGroup?.parent_work_id && editingSeasonGroup.season_number != null) {
+        await syncAdminSeasonAssignments({
+          parentWorkId: editingSeasonGroup.parent_work_id,
+          seasonNumber: editingSeasonGroup.season_number,
+          credits: Object.values(seasonCreditDrafts).map(credit => ({
+            rightsHolderId: credit.rightsHolderId,
+            role: credit.role,
+            episodes: credit.episodes,
+          })),
+        });
+      }
       setNotice("Værket er gemt.");
       setEditing(null);
       setEditForm(null);
       setActiveRequestId(null);
       setImportPreview(null);
+      setEditingSeasonGroup(null);
+      setEditingSeasonEpisodes([]);
+      setSeasonCreditDrafts({});
       await load();
-      await refreshSeasonContaining(savedWork);
+      if (savedSeasonGroup) await loadAdminSeason(savedSeasonGroup, true);
+      else await refreshSeasonContaining(savedWork);
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke gemme værket."));
@@ -1935,7 +2007,8 @@ export default function VaerksadministrationPage() {
                 <div onClick={event => event.stopPropagation()} className="pt-1">
                   <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
                 </div>
-                <button type="button" onClick={() => isSeason ? toggleAdminSeason(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left" aria-expanded={isSeason ? isExpanded : undefined}>
+                {isSeason && <button type="button" onClick={() => toggleAdminSeason(work)} className="mt-1 shrink-0 text-muted-foreground" aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}>{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>}
+                <button type="button" onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
                   <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
                     {poster ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1948,7 +2021,6 @@ export default function VaerksadministrationPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium leading-snug">{work.title}{isSeason && work.season_number != null ? ` · Sæson ${work.season_number}` : ""}</p>
                       {unreadMemberMessageCount(work) > 0 && <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">Besked</Badge>}
-                      {isSeason && (isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
                     </div>
                     {latestUnreadMemberMessage(work) && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnreadMemberMessage(work)}</p>}
                   </div>
@@ -2045,18 +2117,18 @@ export default function VaerksadministrationPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <div className="flex h-12 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
+                      <button type="button" onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="flex h-12 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-muted" aria-label={`Rediger ${work.title}`}>
                         {poster ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={poster} alt={work.title} className="h-full w-full object-cover" loading="lazy" />
                         ) : (
                           <Film className="h-4 w-4 text-muted-foreground" />
                         )}
-                      </div>
+                      </button>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <button onClick={() => isSeason ? toggleAdminSeason(work) : openEdit(work)} className="inline-flex items-center gap-1 text-left font-medium underline-offset-4 hover:underline" aria-expanded={isSeason ? isExpanded : undefined}>
-                            {isSeason && (isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
+                          {isSeason && <button type="button" onClick={() => toggleAdminSeason(work)} className="text-muted-foreground" aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}>{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>}
+                          <button onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="inline-flex items-center gap-1 text-left font-medium underline-offset-4 hover:underline">
                             {work.title}{isSeason && work.season_number != null ? ` · Sæson ${work.season_number}` : ""}
                           </button>
                           {unreadMemberMessageCount(work) > 0 && (
@@ -2139,9 +2211,9 @@ export default function VaerksadministrationPage() {
         </Table>
       </ResponsiveTableFrame>
 
-      <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); setEditingArchiveOpen(false); } }}>
+      <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); setEditingArchiveOpen(false); setEditingSeasonGroup(null); setEditingSeasonEpisodes([]); setSeasonCreditDrafts({}); } }}>
         <DialogContent className="max-h-[92vh] w-[min(1360px,calc(100vw-2rem))] !max-w-none sm:!max-w-none overflow-y-auto overflow-x-hidden">
-          <DialogHeader><DialogTitle>Rediger værk</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingSeasonGroup ? `Rediger ${editingSeasonGroup.title} · Sæson ${editingSeasonGroup.season_number}` : "Rediger værk"}</DialogTitle></DialogHeader>
           {editing && editForm && (
             (() => {
               const requests = editing.work_change_requests ?? [];
@@ -2151,6 +2223,9 @@ export default function VaerksadministrationPage() {
               const activeDiffMap = activeRequest?.status === "pending" ? requestDiffMap(activeRequest) : {};
               const pendingReviewRequest = requests.find(request => request.status === "pending") ?? null;
               const summary = activeRequest ? requestSummary(activeRequest) : null;
+              const visibleContracts = [...new Map((editingSeasonGroup
+                ? [...(editing.contracts ?? []), ...editingSeasonEpisodes.flatMap(episode => episode.contracts ?? [])]
+                : editing.contracts ?? []).map(contract => [contract.id, contract])).values()];
               return (
             <div className="space-y-5">
               <div className="flex flex-col gap-3 rounded-md border px-3 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2161,12 +2236,16 @@ export default function VaerksadministrationPage() {
                   </Badge>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button type="button" variant="outline" onClick={() => setEditingArchiveOpen(true)} disabled={saving}>
-                    Arkiver værk
-                  </Button>
-                  <Button type="button" variant="destructive" onClick={() => setEditingDeleteOpen(true)} disabled={saving}>
-                    Slet permanent
-                  </Button>
+                  {!editingSeasonGroup && (
+                    <>
+                      <Button type="button" variant="outline" onClick={() => setEditingArchiveOpen(true)} disabled={saving}>
+                        Arkiver værk
+                      </Button>
+                      <Button type="button" variant="destructive" onClick={() => setEditingDeleteOpen(true)} disabled={saving}>
+                        Slet permanent
+                      </Button>
+                    </>
+                  )}
                   {pendingReviewRequest ? (
                     <Button type="button" onClick={() => handleReview("approved", pendingReviewRequest.id)} disabled={saving}>
                       {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -2178,7 +2257,7 @@ export default function VaerksadministrationPage() {
                       Gem værk
                     </Button>
                   )}
-                  <Button type="button" variant="outline" onClick={() => { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); }}>
+                  <Button type="button" variant="outline" onClick={() => { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingSeasonGroup(null); setEditingSeasonEpisodes([]); setSeasonCreditDrafts({}); }}>
                     Annuller
                   </Button>
                 </div>
@@ -2405,7 +2484,62 @@ export default function VaerksadministrationPage() {
                     </div>
                   )}
                 </InfoPanel>
-                <InfoPanel title="Rettighedshavere">
+                {editingSeasonGroup && (
+                  <InfoPanel title="Rettighedshavere og afsnit i sæsonen">
+                    <p className="text-sm text-muted-foreground">
+                      Vælg præcist hvilke afsnit hver klipper eller medklipper er knyttet til. Ændringerne gælder kun sæson {editingSeasonGroup.season_number}.
+                    </p>
+                    <div className="space-y-4">
+                      {Object.values(seasonCreditDrafts).map(credit => (
+                        <div key={credit.rightsHolderId} className="rounded-md border p-3">
+                          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <p className="text-sm font-medium">{credit.name}</p>
+                            <Select value={credit.role} onValueChange={role => setSeasonCreditDrafts(previous => ({ ...previous, [credit.rightsHolderId]: { ...credit, role } }))}>
+                              <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
+                              <SelectContent>{CREDIT_ROLES.map(role => <SelectItem key={role} value={role}>{role}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </div>
+                          <SeriesEpisodeSelector
+                            season={editingSeasonGroup.season_number ?? 1}
+                            onSeasonChange={() => undefined}
+                            options={editingSeasonEpisodes.map(episode => ({ number: episode.episode_number ?? 0, title: episode.title })).filter(option => option.number > 0)}
+                            selected={credit.episodes}
+                            onSelectedChange={episodes => setSeasonCreditDrafts(previous => ({ ...previous, [credit.rightsHolderId]: { ...credit, episodes } }))}
+                            showSeason={false}
+                            compact
+                          />
+                        </div>
+                      ))}
+                      {Object.keys(seasonCreditDrafts).length === 0 && <p className="text-sm text-muted-foreground">Ingen rettighedshavere er knyttet til sæsonen.</p>}
+                    </div>
+                    <div className="grid gap-3 rounded-md border border-dashed p-3 sm:grid-cols-[minmax(220px,1fr)_180px_auto] sm:items-end">
+                      <Field label="Tilføj klipper eller medklipper">
+                        <Select value={newAssignment.rightsHolderId ?? ""} onValueChange={rightsHolderId => setNewAssignment(previous => ({ ...previous, rightsHolderId }))}>
+                          <SelectTrigger><SelectValue placeholder="Vælg rettighedshaver" /></SelectTrigger>
+                          <SelectContent>{rightsHolders.filter(holder => !seasonCreditDrafts[holder.id]).map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </Field>
+                      <Field label="Kreditering">
+                        <Select value={newAssignment.role} onValueChange={role => setNewAssignment(previous => ({ ...previous, role }))}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>{CREDIT_ROLES.map(role => <SelectItem key={role} value={role}>{role}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </Field>
+                      <Button type="button" variant="outline" disabled={!newAssignment.rightsHolderId} onClick={() => {
+                        const holder = rightsHolders.find(item => item.id === newAssignment.rightsHolderId);
+                        if (!holder) return;
+                        setSeasonCreditDrafts(previous => ({ ...previous, [holder.id]: {
+                          rightsHolderId: holder.id,
+                          name: holder.full_name,
+                          role: newAssignment.role,
+                          episodes: editingSeasonEpisodes.map(episode => episode.episode_number).filter((number): number is number => number != null),
+                        } }));
+                        setNewAssignment({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
+                      }}>Tilføj til sæson</Button>
+                    </div>
+                  </InfoPanel>
+                )}
+                {!editingSeasonGroup && <InfoPanel title="Rettighedshavere">
                   {(editing.work_assignments ?? []).length === 0 ? (
                     <p className="text-sm text-muted-foreground">Ingen rettighedshavere er koblet til værket.</p>
                   ) : (
@@ -2468,7 +2602,7 @@ export default function VaerksadministrationPage() {
                       <Input inputMode="numeric" maxLength={3} className="w-20" value={newAssignment.sharePercent} onChange={e => setNewAssignment(prev => ({ ...prev, sharePercent: e.target.value }))} />
                     </Field>
                   </div>
-                </InfoPanel>
+                </InfoPanel>}
               </div>
               <InfoPanel title="Tilknyttede kontrakter">
                 <button
@@ -2476,11 +2610,11 @@ export default function VaerksadministrationPage() {
                   onClick={() => { window.location.href = `/admin/kontrakter?new=1&work=${editing.id}`; }}
                   className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
                 >
-                  {(editing.contracts ?? []).length === 0
+                  {visibleContracts.length === 0
                     ? "Ingen kontrakter tilknyttet — klik for at tilføje en kontrakt i kontraktadmin."
                     : "Klik for at tilføje en kontrakt i kontraktadmin."}
                 </button>
-                {(editing.contracts ?? []).map(contract => (
+                {visibleContracts.map(contract => (
                   <div key={contract.id} className="mt-2 rounded border px-3 py-2 text-sm">
                     <div className="font-medium">{contract.rettighedshavere?.full_name ?? "Ukendt medlem"}</div>
                     <div className="text-xs text-muted-foreground">{contract.type ?? "Kontrakt"} · {contract.status ?? "ukendt status"}</div>

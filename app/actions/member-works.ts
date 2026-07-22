@@ -12,6 +12,7 @@ import type { DbWork } from "@/lib/db/types";
 import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
 import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
+import { contractCoversEpisode } from "@/lib/contract-work-scope";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -252,12 +253,13 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
   const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
   const parentIds = [...new Set(assignments.map(item => item.works?.parent_work_id).filter((id): id is string => Boolean(id)))];
 
+  const contractWorkIds = [...new Set([...workIds, ...parentIds])];
   const [parentsResult, contractsResult, requestsResult, unreadResult] = await Promise.all([
     parentIds.length
       ? db.from("works").select("id,title,type,year,poster_url").in("id", parentIds)
       : Promise.resolve({ data: [], error: null }),
-    workIds.length
-      ? db.from("contracts").select("id,work_id").eq("rights_holder_id", rightsHolder.id).in("work_id", workIds)
+    contractWorkIds.length
+      ? db.from("contracts").select("id,work_id,season_number,episode_numbers").eq("rights_holder_id", rightsHolder.id).in("work_id", contractWorkIds)
       : Promise.resolve({ data: [], error: null }),
     workIds.length
       ? db.from("work_change_requests").select("id,work_id,status").eq("requested_by_rights_holder_id", rightsHolder.id).in("work_id", workIds)
@@ -275,11 +277,7 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
   if (overviewError) return { success: false, error: overviewError.message, items: [] };
 
   const parentMap = new Map((parentsResult.data ?? []).map(parent => [parent.id, parent]));
-  const contractCounts = new Map<string, number>();
-  for (const contract of contractsResult.data ?? []) {
-    if (!contract.work_id) continue;
-    contractCounts.set(contract.work_id, (contractCounts.get(contract.work_id) ?? 0) + 1);
-  }
+  const contracts = contractsResult.data ?? [];
   const pendingCounts = new Map<string, number>();
   for (const request of requestsResult.data ?? []) {
     if (!request.work_id || request.status !== "pending") continue;
@@ -301,7 +299,7 @@ export async function fetchMemberWorkOverview(params: { rightsHolderId: string }
       assignment_id: assignment.id,
       role: assignment.role,
       created_at: assignment.created_at,
-      contract_count: (contractCounts.get(work.id) ?? 0) > 0 ? 1 : 0,
+      contract_count: contracts.some(contract => contractCoversEpisode(contract, work)) ? 1 : 0,
       pending_count: pendingCounts.get(work.id) ?? 0,
       unread_count: unreadCounts.get(work.id) ?? 0,
       parent: work.parent_work_id ? parentMap.get(work.parent_work_id) ?? null : null,
@@ -326,7 +324,7 @@ export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string
   const { rightsHolder } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const { data, error } = await db
     .from("work_assignments")
-    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works!inner(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)), work_change_requests(*, work_change_request_comments(*)))")
+    .select("id, role, rights_holder_id, contract_id, episode_id, created_at, episodes(episode_number,title), works!inner(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)), work_change_requests(*, work_change_request_comments(*)))")
     .eq("rights_holder_id", rightsHolder.id)
     .eq("works.parent_work_id", params.parentWorkId)
     .eq("works.season_number", params.seasonNumber);
@@ -340,14 +338,49 @@ export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string
   const episodeWorkIds = assignments
     .map(item => (item.works as unknown as { id?: string | null } | null)?.id)
     .filter((id): id is string => Boolean(id));
-  const { data: allAssignments, error: allAssignmentsError } = episodeWorkIds.length
-    ? await db
+  const [{ data: allAssignments, error: allAssignmentsError }, { data: contracts, error: contractsError }] = await Promise.all([
+    episodeWorkIds.length ? db
         .from("work_assignments")
         .select("id, work_id, role, rights_holder_id, rettighedshavere(id, full_name)")
-        .in("work_id", episodeWorkIds)
-    : { data: [], error: null };
-  if (allAssignmentsError) return { success: false, error: allAssignmentsError.message, assignments: [], allAssignments: [] };
-  return { success: true, assignments, allAssignments: allAssignments ?? [] };
+        .in("work_id", episodeWorkIds) : Promise.resolve({ data: [], error: null }),
+    db.from("contracts")
+      .select("id,work_id,season_number,episode_numbers")
+      .eq("rights_holder_id", rightsHolder.id)
+      .in("work_id", [...new Set([params.parentWorkId, ...episodeWorkIds])]),
+  ]);
+  if (allAssignmentsError || contractsError) return { success: false, error: allAssignmentsError?.message ?? contractsError?.message, assignments: [], allAssignments: [] };
+  const assignmentsWithContractScope = assignments.map(assignment => {
+    const work = assignment.works as unknown as { id: string; parent_work_id?: string | null; season_number?: number | null; episode_number?: number | null } | null;
+    if (!work) return assignment;
+    const covered = (contracts ?? []).some(contract => contractCoversEpisode(contract, work));
+    return { ...assignment, works: { ...work, overview_contract_count: covered ? 1 : 0 } };
+  });
+  return { success: true, assignments: assignmentsWithContractScope, allAssignments: allAssignments ?? [] };
+}
+
+export async function fetchMemberSeasonEditContext(params: { rightsHolderId: string; parentWorkId: string; seasonNumber: number }) {
+  const db = createServiceClient();
+  const { rightsHolder } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const [{ data: parentWork, error: parentError }, episodesResult] = await Promise.all([
+    db.from("works")
+      .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_change_requests(*, work_change_request_comments(*))")
+      .eq("id", params.parentWorkId)
+      .maybeSingle(),
+    fetchMemberSeasonEpisodes(params),
+  ]);
+  if (parentError || !parentWork) return { success: false as const, error: parentError?.message ?? "Serien blev ikke fundet." };
+  if (!episodesResult.success) return { success: false as const, error: episodesResult.error ?? "Sæsonens afsnit kunne ikke hentes." };
+  const ownAssignments = episodesResult.assignments as Array<{ id: string; role: string | null; rights_holder_id?: string | null; works?: { episode_number?: number | null } | null }>;
+  if (ownAssignments.length === 0) return { success: false as const, error: "Du er ikke tilknyttet afsnit i denne sæson." };
+  const optionsResult = await fetchMemberSeriesEpisodeOptions({ rightsHolderId: rightsHolder.id, workId: ownAssignments[0].id ? ((episodesResult.assignments[0] as { works?: { id?: string } }).works?.id ?? params.parentWorkId) : params.parentWorkId });
+  return {
+    success: true as const,
+    parentWork: { ...parentWork, season_number: params.seasonNumber, episode_number: null, episode_count: optionsResult.success ? optionsResult.episodeCount : ownAssignments.length },
+    representativeAssignment: ownAssignments[0],
+    assignments: episodesResult.assignments,
+    allAssignments: episodesResult.allAssignments,
+    options: optionsResult.success ? optionsResult.options : [],
+  };
 }
 
 export async function fetchMemberWorkDetail(params: { rightsHolderId: string; assignmentId: string }) {
@@ -689,12 +722,14 @@ export async function linkExistingWorkForMember(params: {
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
 
   let targetWorkIds = [params.workId];
+  let seriesParentWorkId: string | null = null;
 
   // Hvis det er en serie, skal medlemmet tilknyttes konkrete afsnit.
   const isSeries = work.type === "tv-serie" || work.type === "dokumentar-serie";
   const selectedEpisodeNumbers = (params.selectedEpisodes ?? []).filter(Number.isFinite);
 
   if (isSeries && work.parent_work_id === null && work.episode_number === null) {
+    seriesParentWorkId = work.id;
     // Ægte serie-parent → generér og tilknyt de valgte afsnit.
     if (!params.seasonNumber) {
       return { success: false, error: "Vælg mindst ét afsnit." };
@@ -751,6 +786,7 @@ export async function linkExistingWorkForMember(params: {
     // Brugeren valgte et enkelt afsnit-værk → tilknyt de valgte afsnitsnumre.
     // Eksisterende søsken-afsnit (samme DFI/TMDB-serie) genbruges; manglende oprettes.
     const seasonNum = params.seasonNumber ?? work.season_number ?? 1;
+    seriesParentWorkId = work.parent_work_id ?? null;
     const wanted = selectedEpisodeNumbers.length > 0
       ? selectedEpisodeNumbers
       : params.episodeNumber
@@ -845,7 +881,7 @@ export async function linkExistingWorkForMember(params: {
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
-    return { success: true, pending: true, alreadyExists, requestId, workId: targetWorkIds[0] ?? params.workId, assignment: fresh };
+    return { success: true, pending: true, alreadyExists, requestId, workId: targetWorkIds[0] ?? params.workId, parentWorkId: seriesParentWorkId, selectedWorkIds: targetWorkIds, assignment: fresh };
   }
 
   // Genbrug af eksisterende værk kræver ikke godkendelse. Men skrev brugeren en
@@ -867,7 +903,7 @@ export async function linkExistingWorkForMember(params: {
 
   const fresh = await fetchMemberAssignment(db, targetWorkIds[0] ?? params.workId, params.rightsHolderId);
 
-  return { success: true, alreadyExists, workId: targetWorkIds[0] ?? params.workId, assignment: fresh };
+  return { success: true, alreadyExists, workId: targetWorkIds[0] ?? params.workId, parentWorkId: seriesParentWorkId, selectedWorkIds: targetWorkIds, assignment: fresh };
 }
 
 export async function addWorkForMemberWithApproval(params: {
@@ -1189,6 +1225,7 @@ export async function addManualWorkAndLinkContract(params: {
   reuseWorkId?: string | null;
   reusePending?: boolean;
   forceCreateDuplicate?: boolean;
+  contractScope?: { seasonNumber: number; episodeNumbers: number[] } | null;
 }) {
   let workId = params.reuseWorkId ?? null;
   let pending = params.reuseWorkId ? Boolean(params.reusePending) : false;
@@ -1242,11 +1279,11 @@ export async function addManualWorkAndLinkContract(params: {
   const [{ data: contract }, { data: work }, { data: ownAssignment }] = await Promise.all([
     db
       .from("contracts")
-      .select("id, org_id, work_id")
+      .select("id, org_id, work_id, season_number, episode_numbers")
       .eq("id", params.contractId)
       .eq("rights_holder_id", params.rightsHolderId)
       .maybeSingle(),
-    db.from("works").select("id, org_id").eq("id", workId).maybeSingle(),
+    db.from("works").select("id, org_id, parent_work_id, season_number").eq("id", workId).maybeSingle(),
     db
       .from("work_assignments")
       .select("id")
@@ -1263,19 +1300,28 @@ export async function addManualWorkAndLinkContract(params: {
     console.error("Afvist link efter manuel værksoprettelse", { contractId: params.contractId, workId, orgId });
     return { success: false, error: "Værket blev oprettet, men kunne ikke godkendes til denne kontrakt.", workId, pending, retryable: false };
   }
-  if (contract.work_id === workId) {
+  const scopedWorkId = params.contractScope && work.parent_work_id ? work.parent_work_id : workId;
+  const scopedSeasonNumber = params.contractScope?.seasonNumber ?? null;
+  const scopedEpisodeNumbers = params.contractScope
+    ? [...new Set(params.contractScope.episodeNumbers.filter(number => Number.isInteger(number) && number > 0))]
+    : null;
+  if (
+    contract.work_id === scopedWorkId
+    && contract.season_number === scopedSeasonNumber
+    && JSON.stringify(contract.episode_numbers ?? null) === JSON.stringify(scopedEpisodeNumbers)
+  ) {
     return { success: true, workId, pending, assignment, retryable: false };
   }
 
   const { data: linked, error: linkError } = await db
     .from("contracts")
-    .update({ work_id: workId })
+    .update({ work_id: scopedWorkId, season_number: scopedSeasonNumber, episode_numbers: scopedEpisodeNumbers })
     .eq("id", params.contractId)
     .eq("rights_holder_id", params.rightsHolderId)
     .select("id, work_id")
     .maybeSingle();
 
-  if (linkError || linked?.work_id !== workId) {
+  if (linkError || linked?.work_id !== scopedWorkId) {
     console.error("Manuelt værk oprettet, men kontraktlink fejlede", {
       contractId: params.contractId,
       workId,
@@ -1757,6 +1803,7 @@ export async function syncMemberEpisodeAssignments(params: {
   workId: string;
   role: string;
   selectedEpisodes: number[];
+  seasonNumber?: number;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
@@ -1766,7 +1813,7 @@ export async function syncMemberEpisodeAssignments(params: {
     .eq("id", params.workId).eq("org_id", orgId).single();
   if (!current) return { success: false, error: "Værket findes ikke." };
   const parentId = current.parent_work_id ?? current.id;
-  const seasonNumber = current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
+  const seasonNumber = params.seasonNumber ?? current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
   const selected = new Set(params.selectedEpisodes.filter(Number.isFinite));
 
   const { data: parentWork } = await db
@@ -1809,31 +1856,40 @@ export async function syncMemberEpisodeAssignments(params: {
   if (error) return { success: false, error: error.message };
   const episodeIds = (episodes ?? []).map(episode => episode.id);
   const { data: existing } = episodeIds.length ? await db.from("work_assignments")
-    .select("id,work_id").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).in("work_id", episodeIds) : { data: [] };
-  const existingByWork = new Map((existing ?? []).map(item => [item.work_id, item.id]));
+    .select("id,work_id,role").eq("org_id", orgId).eq("rights_holder_id", params.rightsHolderId).in("work_id", episodeIds) : { data: [] };
+  const existingByWork = new Map((existing ?? []).map(item => [item.work_id, item]));
   const toAdd = (episodes ?? []).filter(episode => selected.has(episode.episode_number) && !existingByWork.has(episode.id));
+  const toUpdate = (episodes ?? []).filter(episode => selected.has(episode.episode_number) && existingByWork.get(episode.id)?.role !== params.role);
   const toRemove = (episodes ?? []).filter(episode => !selected.has(episode.episode_number) && existingByWork.has(episode.id));
-  const blocked: number[] = [];
-  for (const episode of toRemove) {
-    const [{ count: contractCount }, { count: claimCount }] = await Promise.all([
-      db.from("contracts").select("id", { count: "exact", head: true }).eq("work_id", episode.id),
-      db.from("screening_claims").select("id", { count: "exact", head: true }).eq("work_id", episode.id).eq("profile_id", user.id).eq("status", "approved"),
-    ]);
-    if ((contractCount ?? 0) > 0 || (claimCount ?? 0) > 0) blocked.push(episode.episode_number);
-  }
+  const [{ data: blockingContracts }, { data: blockingClaims }] = await Promise.all([
+    toRemove.length ? db.from("contracts").select("work_id,season_number,episode_numbers").eq("rights_holder_id", params.rightsHolderId).in("work_id", [parentId, ...toRemove.map(item => item.id)]) : Promise.resolve({ data: [] }),
+    toRemove.length ? db.from("screening_claims").select("work_id").in("work_id", toRemove.map(item => item.id)).eq("profile_id", user.id).eq("status", "approved") : Promise.resolve({ data: [] }),
+  ]);
+  const claimWorkIds = new Set((blockingClaims ?? []).map(claim => claim.work_id));
+  const blocked = toRemove.filter(episode =>
+    claimWorkIds.has(episode.id) || (blockingContracts ?? []).some(contract =>
+      contract.work_id === episode.id ||
+      (contract.work_id === parentId && contract.season_number === seasonNumber && (!contract.episode_numbers?.length || contract.episode_numbers.includes(episode.episode_number)))
+    )
+  ).map(episode => episode.episode_number);
   if (blocked.length) return { success: false, error: `Afsnit ${blocked.join(", ")} kan ikke fjernes, fordi det er knyttet til en kontrakt eller godkendt visning.`, blocked };
   if (toAdd.length) {
     const { error: addError } = await db.from("work_assignments").upsert(toAdd.map(episode => ({ org_id: orgId, work_id: episode.id, rights_holder_id: params.rightsHolderId, role: params.role })), { onConflict: "work_id,rights_holder_id,role" });
     if (addError) return { success: false, error: addError.message };
   }
-  const removeIds = toRemove.map(episode => existingByWork.get(episode.id)).filter(Boolean) as string[];
+  const updateIds = toUpdate.map(episode => existingByWork.get(episode.id)?.id).filter(Boolean) as string[];
+  if (updateIds.length) {
+    const { error: updateError } = await db.from("work_assignments").update({ role: params.role }).in("id", updateIds);
+    if (updateError) return { success: false, error: updateError.message };
+  }
+  const removeIds = toRemove.map(episode => existingByWork.get(episode.id)?.id).filter(Boolean) as string[];
   if (removeIds.length) {
     const { error: removeError } = await db.from("work_assignments").delete().in("id", removeIds);
     if (removeError) return { success: false, error: removeError.message };
   }
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
-  return { success: true, added: toAdd.map(item => item.episode_number), removed: toRemove.map(item => item.episode_number), unchanged: params.selectedEpisodes.length - toAdd.length };
+  return { success: true, added: toAdd.map(item => item.episode_number), updated: toUpdate.map(item => item.episode_number), removed: toRemove.map(item => item.episode_number), unchanged: params.selectedEpisodes.length - toAdd.length - toUpdate.length };
 }
 
 export async function updateMemberCoEditors(params: {

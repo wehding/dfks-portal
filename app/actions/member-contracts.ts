@@ -141,6 +141,7 @@ export async function saveUploadedContract(params: {
   premiereDate?: string;
   season?: number;
   episodes?: { number: number; role: string }[];
+  coversWholeSeason?: boolean;
   deferAiJob?: boolean;
 }) {
   const db = createServiceClient();
@@ -169,6 +170,12 @@ export async function saveUploadedContract(params: {
       pdf_url: params.filePath,
       working_title: params.workTitle || null,
       work_id: params.workId ?? null,
+      season_number: params.season ?? null,
+      episode_numbers: params.season
+        ? params.coversWholeSeason
+          ? []
+          : params.episodes?.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0) ?? []
+        : null,
     })
     .select()
     .single();
@@ -251,7 +258,11 @@ export async function queueUploadedContractAiJob(contractId: string) {
   return { success: true, alreadyQueued: false };
 }
 
-export async function linkContractToWork(contractId: string, workId: string | null) {
+export async function linkContractToWork(
+  contractId: string,
+  workId: string | null,
+  scope?: { seasonNumber?: number | null; episodeNumbers?: number[] | null }
+) {
   const supabase = await createClient();
   const db = createServiceClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -279,7 +290,13 @@ export async function linkContractToWork(contractId: string, workId: string | nu
 
   const { error } = await db
     .from("contracts")
-    .update({ work_id: workId })
+    .update({
+      work_id: workId,
+      season_number: workId && scope?.seasonNumber ? scope.seasonNumber : null,
+      episode_numbers: workId && scope?.seasonNumber
+        ? [...new Set((scope.episodeNumbers ?? []).filter(number => Number.isInteger(number) && number > 0))]
+        : null,
+    })
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id);
 
