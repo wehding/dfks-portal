@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { linkApprovedCoEditorSuggestionsForRightsHolder } from "@/app/actions/member-works";
+import { fetchMemberWorkOverview, linkApprovedCoEditorSuggestionsForRightsHolder } from "@/app/actions/member-works";
 import { useRouter } from "next/navigation";
-import MineVaerkerClient from "./MineVaerkerClient";
+import MineVaerkerClient, { memberOverviewItemsToAssignments } from "./MineVaerkerClient";
 import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerkerClient";
 
 type ContractWorkIdRow = { work_id: string | null };
@@ -40,19 +40,17 @@ export default function MineVaerkerPage() {
         if (rhError) throw rhError;
         if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
 
-        const { data: assignments, error: assignmentsError } = await supabase
-          .from("work_assignments")
-          .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
-          .eq("rights_holder_id", rh.id)
-          .order("created_at", { ascending: false });
-        if (assignmentsError) throw assignmentsError;
+        const overview = await fetchMemberWorkOverview({ rightsHolderId: rh.id });
+        if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
 
         const { data: broadcasters } = await supabase
           .from("broadcasters")
           .select("name, logo_path")
           .order("name", { ascending: true });
 
-        const assignmentRows = (assignments ?? []) as unknown as Assignment[];
+        const assignmentRows = memberOverviewItemsToAssignments(
+          overview.items as Parameters<typeof memberOverviewItemsToAssignments>[0]
+        ) as Assignment[];
 
         const { data: contractedWorkIds } = await supabase
           .from("contracts")

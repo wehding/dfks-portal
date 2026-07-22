@@ -8,9 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMemberWorkDetail, removeWorkAssignments } from "@/app/actions/member-works";
+import { fetchMemberSeasonEditContext, fetchMemberSeasonEpisodes, fetchMemberWorkDetail, fetchMemberWorkOverview, removeWorkAssignments } from "@/app/actions/member-works";
 import { markWorkRequestCommentsRead } from "@/app/actions/work-management";
-import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
 import { AddWorkModal } from "./components/AddWorkModal";
@@ -39,14 +38,23 @@ type Work = {
   status: string | null;
   dfi_id: string | null;
   tmdb_id: number | string | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string> | null;
   poster_url: string | null;
   description: string | null;
   work_production_numbers?: WorkProductionNumber[];
   work_distributions?: Array<{ broadcaster_name?: string | null; broadcasters?: { name?: string | null } | null }>;
   work_change_requests?: ChangeRequest[];
+  is_season_group?: boolean;
+  group_key?: string;
+  child_work_ids?: string[];
+  child_assignment_ids?: string[];
+  overview_contract_count?: number;
+  overview_pending_count?: number;
+  overview_unread_count?: number;
 };
-export type Assignment = { id: string; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
-export type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null };
+export type Assignment = { id: string; work_id?: string; rights_holder_id?: string | null; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
+export type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null; works?: Work | null };
 type WorkProductionNumber = { tv_station: string | null; number: string | null };
 export type BroadcasterLogo = { name: string; logo_path: string | null };
 type SortKey = "date" | "title" | "year" | "type" | "role" | "episode" | "coEditors" | "contract";
@@ -71,14 +79,83 @@ type ChangeRequest = {
 };
 
 type SortValue = string | number;
-type EpisodeChild = {
-  id: string;
-  title: string;
-  season_number: number | null;
-  episode_number: number | null;
-  poster_url: string | null;
-};
 
+type MemberOverviewItem =
+  | {
+      kind: "work";
+      work: Work & { assignment: Assignment; contract_count?: number; pending_count?: number; unread_count?: number };
+      contractCount: number;
+      pendingCount: number;
+      unreadCount: number;
+    }
+  | {
+      kind: "season";
+      key: string;
+      parentWorkId: string;
+      seasonNumber: number;
+      title: string;
+      type: string;
+      year: number | null;
+      posterUrl: string | null;
+      episodeCount: number;
+      workIds: string[];
+      assignmentIds: string[];
+      contractCount: number;
+      pendingCount: number;
+      unreadCount: number;
+      roleSummary: string | null;
+      createdAt: string | null;
+    };
+
+export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): Assignment[] {
+  return items.map(item => {
+    if (item.kind === "work") {
+      return {
+        ...item.work.assignment,
+        works: item.work.assignment.works ? {
+          ...item.work.assignment.works,
+          overview_contract_count: item.contractCount,
+          overview_pending_count: item.pendingCount,
+          overview_unread_count: item.unreadCount,
+        } : null,
+      };
+    }
+    return {
+      id: item.key,
+      role: item.roleSummary,
+      contract_id: null,
+      episode_id: null,
+      created_at: item.createdAt,
+      episodes: null,
+      works: {
+        id: item.key,
+        title: item.title,
+        type: item.type,
+        year: item.year,
+        duration_minutes: null,
+        episode_count: item.episodeCount,
+        parent_work_id: item.parentWorkId,
+        season_number: item.seasonNumber,
+        episode_number: null,
+        genre: null,
+        director: null,
+        production_companies: null,
+        status: item.pendingCount > 0 ? "til_godkendelse" : "aktiv",
+        dfi_id: null,
+        tmdb_id: null,
+        poster_url: item.posterUrl,
+        description: null,
+        is_season_group: true,
+        group_key: item.key,
+        child_work_ids: item.workIds,
+        child_assignment_ids: item.assignmentIds,
+        overview_contract_count: item.contractCount,
+        overview_pending_count: item.pendingCount,
+        overview_unread_count: item.unreadCount,
+      },
+    };
+  });
+}
 function typeLabel(t: string, locale: "da" | "en" = "da") {
   const key = t?.toLowerCase();
   const canonical: Record<string, "feature" | "series" | "documentary" | "docSeries" | "docudrama" | "short" | "animation"> = {
@@ -161,7 +238,7 @@ function getWorkBroadcaster(work: Work | null) {
 }
 
 function pendingRequestLabel(work: Work | null) {
-  return (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
+  return (work?.overview_pending_count ?? 0) > 0 || (work?.work_change_requests ?? []).some(request => request.status === "pending") ? "Afventer admin" : null;
 }
 
 function isSeriesType(type: string | null | undefined) {
@@ -214,17 +291,21 @@ export default function MineVaerkerClient({
   const [pageSize, setPageSize] = useState(20);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
-  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, EpisodeChild[]>>({});
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, Assignment[]>>({});
   const [loadingSeries, setLoadingSeries] = useState<Set<string>>(new Set());
+  const [seriesErrors, setSeriesErrors] = useState<Record<string, string>>({});
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
   const [editAssignment, setEditAssignment] = useState<Assignment | null>(null);
+  const [editScope, setEditScope] = useState<"work" | "season" | "episode">("work");
+  const [editSeasonWorkIds, setEditSeasonWorkIds] = useState<string[]>([]);
+  const [editEpisodeOptions, setEditEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
+  const [editContextAssignments, setEditContextAssignments] = useState<OtherAssignment[]>([]);
   const [initialAddQuery, setInitialAddQuery] = useState("");
   const [initialManualWork, setInitialManualWork] = useState<ManualWorkFormSeed | null>(null);
   const addParamHandledRef = React.useRef<string | null>(null);
 
-  const supabase = createClient();
   const router   = useRouter();
   const searchParams = useSearchParams();
 
@@ -259,10 +340,10 @@ export default function MineVaerkerClient({
       if (t && !w.title.toLowerCase().includes(t)) return false;
       if (catFilter !== "all" && w.type !== catFilter) return false;
       const requests = w.work_change_requests ?? [];
-      const hasUnread = requests.some(request => (request.work_change_request_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at));
-      const hasPending = requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
+      const hasUnread = (w.overview_unread_count ?? 0) > 0 || requests.some(request => (request.work_change_request_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at));
+      const hasPending = (w.overview_pending_count ?? 0) > 0 || requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
       const hasRejected = requests.some(request => request.status === "rejected");
-      const hasContract = contractedWorkIds.includes(w.id);
+      const hasContract = (w.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(w.id);
       const missingData = !w.year || !w.type || !w.title?.trim();
       const missingEpisodes = isSeriesType(w.type) && !w.episode_count;
       if (statusFilter === "messages" && !hasUnread) return false;
@@ -304,30 +385,40 @@ export default function MineVaerkerClient({
       return 0;
     });
   const visibleAssignments = filtered.slice(0, pageSize);
-
-  const groupedSeriesEpisodes = (children: EpisodeChild[]) => {
-    const groups = new Map<number, EpisodeChild[]>();
-    for (const child of children) {
-      const season = child.season_number ?? 0;
-      groups.set(season, [...(groups.get(season) ?? []), child]);
-    }
-    return Array.from(groups.entries()).sort(([a], [b]) => a - b);
+  const selectionIdsFor = (assignment: Assignment) => assignment.works?.is_season_group
+    ? assignment.works.child_assignment_ids ?? []
+    : [assignment.id];
+  const filteredSelectionIds = [...new Set(filtered.flatMap(selectionIdsFor))];
+  const allFilteredSelected = filteredSelectionIds.length > 0 && filteredSelectionIds.every(id => selected.includes(id));
+  const toggleAssignmentSelection = (assignment: Assignment) => {
+    const ids = selectionIdsFor(assignment);
+    const allSelected = ids.length > 0 && ids.every(id => selected.includes(id));
+    setSelected(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
   };
 
-  const renderSeriesEpisodes = (workId: string, children: EpisodeChild[], isLoadingChildren: boolean, className = "px-14") => (
+  const renderSeriesEpisodes = (work: Work, children: Assignment[], isLoadingChildren: boolean, className = "px-14") => (
     <div className="border-b bg-muted/40">
       {isLoadingChildren ? (
         <div className={`${className} py-3 text-xs text-muted-foreground`}>Henter afsnit...</div>
+      ) : seriesErrors[work.id] ? (
+        <div className={`${className} py-3 text-xs text-destructive`}>
+          {seriesErrors[work.id]}
+          <Button size="sm" variant="outline" className="ml-2" onClick={() => void loadMemberSeason(work, true)}>Prøv igen</Button>
+        </div>
       ) : children.length === 0 ? (
         <div className={`${className} py-3 text-xs text-muted-foreground`}>Ingen af dine afsnit er registreret endnu</div>
       ) : (
-        groupedSeriesEpisodes(children).map(([season, episodes]) => (
-          <div key={`${workId}-season-${season}`} className="border-t first:border-t-0">
-            <div className={`${className} pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground`}>
-              {season > 0 ? `Sæson ${season}` : "Uden sæson"}
-            </div>
-            {episodes.map(ep => (
-              <div key={ep.id} className={`${className} flex items-center gap-2 py-2 text-sm text-muted-foreground`}>
+        children.map(assignment => {
+          const ep = assignment.works;
+          if (!ep) return null;
+          const coEditors = coEditorMap[ep.id] ?? [];
+          return (
+              <button
+                type="button"
+                key={assignment.id}
+                onClick={() => openEdit(assignment)}
+                className={`${className} flex w-full items-start gap-2 border-t py-3 text-left text-sm text-muted-foreground first:border-t-0 hover:bg-muted/70`}
+              >
                 <span className="inline-flex items-center rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-4 text-foreground">
                   {ep.season_number != null && ep.episode_number != null
                     ? `S${String(ep.season_number).padStart(2, "0")}E${String(ep.episode_number).padStart(2, "0")}`
@@ -335,11 +426,15 @@ export default function MineVaerkerClient({
                       ? `E${String(ep.episode_number).padStart(2, "0")}`
                       : "-"}
                 </span>
-                <span className="min-w-0 truncate">{ep.title}</span>
-              </div>
-            ))}
-          </div>
-        ))
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-foreground">{ep.title}</span>
+                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role)} · Medklippere: {coEditors.length ? coEditors.join(", ") : "–"}</span>
+                  <span className="mt-0.5 block text-xs">{(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? "Kontrakt tilknyttet" : "Mangler kontrakt"}</span>
+                </span>
+                <span className="text-xs font-medium text-foreground">Rediger</span>
+              </button>
+          );
+        })
       )}
     </div>
   );
@@ -350,30 +445,24 @@ export default function MineVaerkerClient({
   };
   const sortArrow = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "";
 
-  const toggleSeries = async (workId: string) => {
-    const isOpen = expandedSeries.has(workId);
-    setExpandedSeries(prev => {
-      const next = new Set(prev);
-      if (isOpen) next.delete(workId);
-      else next.add(workId);
-      return next;
-    });
-
-    if (isOpen || seriesEpisodes[workId] || !rightsHolderId) return;
+  const loadMemberSeason = async (work: Work, force = false) => {
+    const workId = work.id;
+    if ((!force && seriesEpisodes[workId]) || loadingSeries.has(workId) || !rightsHolderId || !work.parent_work_id || work.season_number == null) return;
 
     setLoadingSeries(prev => new Set(prev).add(workId));
-    const { data } = await supabase
-      .from("work_assignments")
-      .select("works!inner(id, title, season_number, episode_number, poster_url)")
-      .eq("rights_holder_id", rightsHolderId)
-      .eq("works.parent_work_id", workId);
-
-    const episodes = ((data ?? []) as unknown as Array<{ works: EpisodeChild | null }>)
-      .map(row => row.works)
-      .filter((work): work is EpisodeChild => Boolean(work))
-      .sort((a, b) => (a.season_number ?? 0) - (b.season_number ?? 0) || (a.episode_number ?? 0) - (b.episode_number ?? 0));
-
-    setSeriesEpisodes(prev => ({ ...prev, [workId]: episodes }));
+    setSeriesErrors(prev => { const next = { ...prev }; delete next[workId]; return next; });
+    const result = await fetchMemberSeasonEpisodes({ rightsHolderId, parentWorkId: work.parent_work_id, seasonNumber: work.season_number });
+    if (result.success) {
+      const episodes = result.assignments as unknown as Assignment[];
+      setSeriesEpisodes(prev => ({ ...prev, [workId]: episodes }));
+      const incoming = result.allAssignments as unknown as OtherAssignment[];
+      const episodeIds = new Set(episodes.map(item => item.works?.id).filter(Boolean));
+      setAllAssignments(prev => [...prev.filter(item => !episodeIds.has(item.work_id)), ...incoming]);
+    } else {
+      const error = result.error ?? "Kunne ikke hente sæsonens afsnit.";
+      setSeriesErrors(prev => ({ ...prev, [workId]: error }));
+      setMsg({ type: "error", text: error });
+    }
     setLoadingSeries(prev => {
       const next = new Set(prev);
       next.delete(workId);
@@ -381,23 +470,39 @@ export default function MineVaerkerClient({
     });
   };
 
-  const totalWorks  = assignments.length;
-  const withContract = assignments.filter(a => contractedWorkIds.includes(a.works?.id ?? "")).length;
+  const toggleSeries = (work: Work) => {
+    const workId = work.id;
+    const isOpen = expandedSeries.has(workId);
+    setExpandedSeries(prev => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(workId); else next.add(workId);
+      return next;
+    });
+    if (!isOpen) void loadMemberSeason(work);
+  };
+
+  const totalWorks = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.episode_count ?? 0 : 1), 0);
+  const withContract = assignments.reduce((sum, assignment) => sum + (assignment.works?.is_season_group ? assignment.works.overview_contract_count ?? 0 : contractedWorkIds.includes(assignment.works?.id ?? "") ? 1 : 0), 0);
   const missingContract = Math.max(totalWorks - withContract, 0);
 
 
 
   const reloadAssignments = async () => {
     if (!rightsHolderId) return;
-    const { data } = await supabase
-      .from("work_assignments")
-      .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)))")
-      .eq("rights_holder_id", rightsHolderId)
-      .order("created_at", { ascending: false });
-    if (data) setAssignments(data as unknown as Assignment[]);
+    const overview = await fetchMemberWorkOverview({ rightsHolderId });
+    if (overview.success) {
+      setAssignments(memberOverviewItemsToAssignments(overview.items as unknown as MemberOverviewItem[]));
+      setSeriesEpisodes({});
+      setSeriesErrors({});
+      setExpandedSeries(new Set());
+    }
   };
 
   const openEdit = async (a: Assignment) => {
+    setEditScope(a.works?.parent_work_id && a.works.episode_number != null ? "episode" : "work");
+    setEditSeasonWorkIds([]);
+    setEditEpisodeOptions([]);
+    setEditContextAssignments([]);
     setEditAssignment(a);
     if (!rightsHolderId) return;
     const res = await fetchMemberWorkDetail({ rightsHolderId, assignmentId: a.id });
@@ -414,6 +519,43 @@ export default function MineVaerkerClient({
     } else {
       setMsg({ type: "error", text: res.error ?? "Kunne ikke hente værkdetaljer." });
     }
+  };
+
+  const openSeasonEdit = async (work: Work) => {
+    if (!rightsHolderId || !work.parent_work_id || work.season_number == null) return;
+    const result = await fetchMemberSeasonEditContext({
+      rightsHolderId,
+      parentWorkId: work.parent_work_id,
+      seasonNumber: work.season_number,
+    });
+    if (!result.success || !result.parentWork || !result.representativeAssignment) {
+      setMsg({ type: "error", text: result.error ?? "Sæsonen kunne ikke åbnes." });
+      return;
+    }
+    const ownAssignments = result.assignments as unknown as Assignment[];
+    const representative = result.representativeAssignment as unknown as Assignment;
+    const parentWork = result.parentWork as unknown as Work;
+    const seasonAssignments = result.allAssignments as unknown as OtherAssignment[];
+    setEditScope("season");
+    setEditSeasonWorkIds([...new Set(seasonAssignments.map(item => item.work_id).filter((id): id is string => Boolean(id)))]);
+    setEditEpisodeOptions((result.options ?? []) as Array<{ number: number; title: string }>);
+    setEditContextAssignments([
+      ...ownAssignments.map(item => ({
+        id: item.id,
+        work_id: item.works?.id ?? "",
+        role: item.role,
+        rights_holder_id: item.rights_holder_id ?? rightsHolderId,
+        rettighedshavere: null,
+        works: item.works,
+      })),
+      ...seasonAssignments,
+    ]);
+    setEditAssignment({
+      ...representative,
+      work_id: representative.works?.id,
+      rights_holder_id: rightsHolderId,
+      works: { ...parentWork, season_number: work.season_number },
+    });
   };
 
   async function markRequestCommentsRead(a: Assignment) {
@@ -452,6 +594,7 @@ export default function MineVaerkerClient({
 
   const closeEdit = () => {
     setEditAssignment(null);
+    setEditContextAssignments([]);
   };
 
   const handleDeleteSelected = async () => {
@@ -600,9 +743,9 @@ export default function MineVaerkerClient({
 	              type="button"
 	              variant="outline"
 	              className="w-full sm:w-auto lg:hidden"
-	              onClick={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))}
+	              onClick={() => setSelected(allFilteredSelected ? [] : filteredSelectionIds)}
 	            >
-	              {selected.length === filtered.length ? "Fravælg alle" : "Vælg alle"}
+	              {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
 	              {selected.length > 0 ? ` (${selected.length})` : ""}
 	            </Button>
 	          )}
@@ -630,8 +773,8 @@ export default function MineVaerkerClient({
         >
           <input
             type="checkbox"
-            checked={selected.length === filtered.length && filtered.length > 0}
-            onChange={() => setSelected(selected.length === filtered.length ? [] : filtered.map(a => a.id))}
+            checked={allFilteredSelected}
+            onChange={() => setSelected(allFilteredSelected ? [] : filteredSelectionIds)}
             className="cursor-pointer w-4 h-4"
           />
           <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-foreground">{t("works.workTitle")}{sortArrow("title")}</div>
@@ -655,24 +798,26 @@ export default function MineVaerkerClient({
           const posterSrc = w.poster_url
             ? (w.poster_url.startsWith("http") || w.poster_url.startsWith("data:image/") ? w.poster_url : `${TMDB_IMG}${w.poster_url}`)
             : null;
-          const hasContract = contractedWorkIds.includes(w.id);
+          const contractCount = w.is_season_group ? w.overview_contract_count ?? 0 : contractedWorkIds.includes(w.id) ? 1 : 0;
+          const hasContract = contractCount > 0;
+          const hasAllContracts = w.is_season_group ? contractCount >= (w.episode_count ?? 0) && (w.episode_count ?? 0) > 0 : hasContract;
           const adminComment = latestAdminComment(w);
           const pendingLabel = pendingRequestLabel(w);
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
-          const isSeriesParent = isSeriesType(w.type) && !w.parent_work_id && w.episode_number == null;
+          const isSeriesParent = Boolean(w.is_season_group);
           const isExpanded = expandedSeries.has(w.id);
           const children = seriesEpisodes[w.id] ?? [];
           const isLoadingChildren = loadingSeries.has(w.id);
           return (
             <React.Fragment key={a.id}>
             <div
-              onClick={() => openEdit(a)}
-              className="hidden items-center px-5 py-3 border-b cursor-pointer hover:bg-muted/50 transition-colors lg:grid"
+              onClick={() => { if (!isSeriesParent) void openEdit(a); }}
+              className="hidden items-center px-5 py-3 border-b hover:bg-muted/50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
-              <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }}>
-                <input type="checkbox" checked={selected.includes(a.id)} onChange={() => {}} className="cursor-pointer w-4 h-4" />
+              <div onClick={e => { e.stopPropagation(); toggleAssignmentSelection(a); }}>
+                <input type="checkbox" checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))} onChange={() => {}} className="cursor-pointer w-4 h-4" />
               </div>
 
               {/* Poster + titel */}
@@ -680,7 +825,7 @@ export default function MineVaerkerClient({
                 {isSeriesParent ? (
                   <button
                     type="button"
-                    onClick={event => { event.stopPropagation(); void toggleSeries(w.id); }}
+                    onClick={event => { event.stopPropagation(); void toggleSeries(w); }}
                     className="shrink-0 text-muted-foreground hover:text-foreground"
                     aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
                   >
@@ -689,7 +834,7 @@ export default function MineVaerkerClient({
                 ) : (
                   <span className="w-4 shrink-0" />
                 )}
-                <div className="w-8 shrink-0 flex items-center justify-center">
+                <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="w-8 shrink-0 flex items-center justify-center" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : undefined}>
                   {posterSrc ? (
                     <div className="w-8 h-11 rounded overflow-hidden shrink-0">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -698,10 +843,10 @@ export default function MineVaerkerClient({
                   ) : (
                     <Film className="h-4 w-4 text-muted-foreground/50" />
                   )}
-                </div>
+                </button>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold text-sm text-foreground leading-snug">{w.title}</p>
+                    <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -723,7 +868,9 @@ export default function MineVaerkerClient({
               <div className="text-sm text-muted-foreground">{typeLabel(w.type, locale)}</div>
               <div className="text-sm text-muted-foreground">{displayRole(a.role)}</div>
               <div className="text-sm text-muted-foreground">
-                {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
+                {isSeriesParent ? (
+                  <span>{w.episode_count ?? 0} afsnit</span>
+                ) : w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
                   <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground">
                     S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                   </span>
@@ -742,10 +889,12 @@ export default function MineVaerkerClient({
               {/* Kontrakt-badge */}
               <div
                 className="flex justify-end"
-                onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                onClick={e => { e.stopPropagation(); router.push(isSeriesParent || hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
               >
-                {hasContract ? (
+                {hasAllContracts ? (
                   <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                ) : isSeriesParent && hasContract ? (
+                  <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                 ) : (
                   <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                 )}
@@ -753,14 +902,14 @@ export default function MineVaerkerClient({
             </div>
             <div
               key={`${a.id}-mobile`}
-              onClick={() => openEdit(a)}
+              onClick={() => { if (!isSeriesParent) void openEdit(a); }}
               className="border-b px-4 py-4 transition-colors active:bg-muted/50 lg:hidden"
             >
               <div className="flex gap-3">
-                <div onClick={e => { e.stopPropagation(); setSelected(prev => prev.includes(a.id) ? prev.filter(i => i !== a.id) : [...prev, a.id]); }} className="pt-1">
-                  <input type="checkbox" checked={selected.includes(a.id)} onChange={() => {}} className="cursor-pointer w-4 h-4" />
+                <div onClick={e => { e.stopPropagation(); toggleAssignmentSelection(a); }} className="pt-1">
+                  <input type="checkbox" checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))} onChange={() => {}} className="cursor-pointer w-4 h-4" />
                 </div>
-                <div className="w-10 shrink-0 flex items-start justify-center">
+                <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="w-10 shrink-0 flex items-start justify-center" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : undefined}>
                   {posterSrc ? (
                     <div className="h-14 w-10 overflow-hidden rounded">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -771,7 +920,7 @@ export default function MineVaerkerClient({
                       <Film className="h-4 w-4 text-muted-foreground" />
                     </div>
                   )}
-                </div>
+                </button>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -779,14 +928,14 @@ export default function MineVaerkerClient({
                         {isSeriesParent && (
                           <button
                             type="button"
-                            onClick={event => { event.stopPropagation(); void toggleSeries(w.id); }}
+                            onClick={event => { event.stopPropagation(); void toggleSeries(w); }}
                             className="shrink-0 text-gray-400 hover:text-gray-700"
                             aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
                           >
                             {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                           </button>
                         )}
-                        <p className="font-semibold text-sm text-foreground leading-snug">{w.title}</p>
+                        <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -804,10 +953,12 @@ export default function MineVaerkerClient({
                     </div>
                     <div
                       className="shrink-0"
-                      onClick={e => { e.stopPropagation(); router.push(hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                      onClick={e => { e.stopPropagation(); router.push(isSeriesParent || hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
                     >
-                      {hasContract ? (
+                      {hasAllContracts ? (
                         <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
+                      ) : isSeriesParent && hasContract ? (
+                        <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-blue-300 text-blue-700`}>Delvis</Badge>
                       ) : (
                         <Badge variant="outline" className={`${TAG_CLASS} cursor-pointer border-amber-300 text-amber-600`}>{t("works.contractMissing")}</Badge>
                       )}
@@ -822,7 +973,9 @@ export default function MineVaerkerClient({
                     <div>
                       <p className="font-medium text-muted-foreground">{t("works.episodes")}</p>
                       <p className="mt-0.5 text-foreground">
-                        {w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
+                        {isSeriesParent ? (
+                          <span>{w.episode_count ?? 0} afsnit</span>
+                        ) : w.season_number !== undefined && w.season_number !== null && w.episode_number !== undefined && w.episode_number !== null ? (
                           <span className="inline-flex items-center rounded bg-muted border px-1.5 py-0.5 text-[10px] font-semibold leading-4 text-foreground font-mono">
                             S{String(w.season_number).padStart(2, "0")}E{String(w.episode_number).padStart(2, "0")}
                           </span>
@@ -849,10 +1002,10 @@ export default function MineVaerkerClient({
             {isSeriesParent && isExpanded && (
               <>
                 <div className="hidden lg:block">
-                  {renderSeriesEpisodes(w.id, children, isLoadingChildren)}
+                  {renderSeriesEpisodes(w, children, isLoadingChildren)}
                 </div>
                 <div className="lg:hidden">
-                  {renderSeriesEpisodes(w.id, children, isLoadingChildren, "px-8")}
+                  {renderSeriesEpisodes(w, children, isLoadingChildren, "px-8")}
                 </div>
               </>
             )}
@@ -884,7 +1037,10 @@ export default function MineVaerkerClient({
           isOpen={!!editAssignment}
           onClose={closeEdit}
           assignment={editAssignment}
-          allAssignments={allAssignments}
+          allAssignments={editScope === "season" ? editContextAssignments : allAssignments}
+          editScope={editScope}
+          seasonWorkIds={editSeasonWorkIds}
+          initialEpisodeOptions={editEpisodeOptions}
           onWorkUpdated={(message, success, updatedRole, targetId) => {
             setMsg({ type: success ? "success" : "error", text: message });
             if (success) {
@@ -893,7 +1049,16 @@ export default function MineVaerkerClient({
               // ændringsanmodningen er pending (bekræftes via toast-beskeden).
               if (updatedRole && targetId) {
                 setAssignments(prev => prev.map(a => a.id === targetId ? { ...a, role: updatedRole } : a));
+                setSeriesEpisodes(prev => Object.fromEntries(Object.entries(prev).map(([key, rows]) => [
+                  key,
+                  rows.map(a => a.id === targetId ? { ...a, role: updatedRole } : a),
+                ])));
               }
+              const editedWork = editAssignment.works;
+              const seasonGroup = editedWork?.parent_work_id && editedWork.season_number != null
+                ? assignments.find(a => a.works?.is_season_group && a.works.parent_work_id === editedWork.parent_work_id && a.works.season_number === editedWork.season_number)?.works
+                : null;
+              if (seasonGroup) void loadMemberSeason(seasonGroup, true);
               closeEdit();
             }
           }}
