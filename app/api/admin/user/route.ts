@@ -15,12 +15,13 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { sendEmail, inviteEmailHtml } from "@/lib/email"
-import { resolveFromEmail, resolveBranding } from "@/lib/branding"
+import { resolveBranding, resolveEmailSenderName, resolveReplyToEmail } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
 import { buildAccountAccessUrl } from "@/lib/auth/account-access"
+import { invitationAccessType, inviteSentAtAfterMail, isNewUserLimitReached } from "@/lib/auth/invitation-policy"
 
 function getAdmin() {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -139,11 +140,10 @@ export async function POST(req: NextRequest) {
                 admin.from("user_org_roles").select("*", { count: "exact", head: true }).eq("org_id", orgId),
                 admin.from("organisations").select("max_users, name, from_email, branding, invite_email_text, invite_reminder_text").eq("id", orgId).single(),
             ])
-            if (org && org.max_users !== -1 && (userCount ?? 0) >= org.max_users) {
+            const existingAuthUser = await findAuthUserByEmail(admin, email)
+            if (org && isNewUserLimitReached({ existingUserId: existingAuthUser?.id, currentUsers: userCount ?? 0, maxUsers: org.max_users })) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
             }
-
-            const existingAuthUser = await findAuthUserByEmail(admin, email)
             if (!isStaff && existingAuthUser) {
                 await linkExistingAuthUserToHolder(admin, existingAuthUser.id, rhId)
             }
@@ -189,17 +189,19 @@ export async function POST(req: NextRequest) {
                 await linkExistingAuthUserToHolder(admin, newUserId, rhId)
             }
 
-            // Send invitationsmail fra foreningens arbejdsmail (branding-styret afsender)
+            // Gmail-afsenderen er serverstyret; organisationen styrer navn og Reply-To.
             const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
             const brand = resolveBranding(orgForMail as never)
+            const accessType = invitationAccessType(existingAuthUser?.id)
             const inviteUrl = buildAccountAccessUrl(
                 siteUrl,
                 linkData.properties.hashed_token,
-                existingAuthUser ? "recovery" : "invite",
+                accessType,
             )
             const mail = await sendEmail({
                 to: email,
-                from: resolveFromEmail(orgForMail as never),
+                fromName: resolveEmailSenderName(orgForMail as never),
+                replyTo: resolveReplyToEmail(orgForMail as never),
                 subject: body.action === "reminder"
                     ? `2. invitation til ${brand.long_name}s portal`
                     : `Invitation til ${brand.long_name}s portal`,
@@ -212,20 +214,24 @@ export async function POST(req: NextRequest) {
                         ? ((org as { invite_reminder_text?: string | null } | null)?.invite_reminder_text ?? null)
                         : ((org as { invite_email_text?: string | null } | null)?.invite_email_text ?? null),
                     variant: body.action === "reminder" ? "reminder" : "invite",
+                    accessType,
                 }),
             })
 
-            if (mail.ok && rhId && rhId !== "__staff__") {
-                await admin
+            const inviteSentAt = inviteSentAtAfterMail(mail.ok, new Date().toISOString())
+            if (inviteSentAt && rhId && rhId !== "__staff__") {
+                const { error: sentAtError } = await admin
                     .from("rettighedshavere")
-                    .update({ invite_sent_at: new Date().toISOString() })
+                    .update({ invite_sent_at: inviteSentAt })
                     .eq("id", rhId)
+                if (sentAtError) console.error("[admin/user] Invitationsmailen blev sendt, men invite_sent_at kunne ikke opdateres.")
             }
 
             return NextResponse.json({
                 ok: true,
                 user_id: newUserId,
                 invite_url: inviteUrl,
+                link_type: accessType,
                 email_sent: mail.ok,
                 email_error: mail.ok ? undefined : mail.error,
             })

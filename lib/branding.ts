@@ -1,4 +1,5 @@
 import type { DbOrganisation, OrgBranding, OrgTerminology } from "@/lib/db/types";
+import { normalizeSingleEmail } from "@/lib/email/mime";
 
 // Standardværdier (DFKS/klipper-domænet) der bruges når en forening ikke selv
 // har sat branding/terminologi. Gør white-label bagud-kompatibel.
@@ -13,12 +14,6 @@ export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
 };
-
-export const DEFAULT_FROM_EMAIL = "Portal <noreply@dfks.dk>";
-
-function isEmail(value: string): boolean {
-  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value);
-}
 
 export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> | null): Required<OrgBranding> {
   const b = org?.branding ?? {};
@@ -38,13 +33,17 @@ export function resolveTerminology(org: Pick<DbOrganisation, "terminology"> | nu
   };
 }
 
-// Afsender til systemmails: foreningens arbejdsmail, ellers standard.
-// Formatteres som "Navn <mail>" hvis vi har et navn.
-export function resolveFromEmail(org: Pick<DbOrganisation, "name" | "from_email" | "branding"> | null): string {
-  const email = org?.from_email?.trim();
-  if (!email) return DEFAULT_FROM_EMAIL;
-  if (email.includes("<") && email.includes(">")) return email;
-  if (!isEmail(email)) return DEFAULT_FROM_EMAIL;
-  const name = resolveBranding(org as DbOrganisation).short_name;
-  return `${name} <${email}>`;
+export function resolveEmailSenderName(org: Pick<DbOrganisation, "name" | "branding"> | null): string {
+  return resolveBranding(org).short_name;
+}
+
+// Organisationen styrer kun svaradressen. Den faktiske From-adresse kommer
+// altid fra den serverbeskyttede GOOGLE_GMAIL_SENDER.
+export function resolveReplyToEmail(org: Pick<DbOrganisation, "from_email"> | null): string | undefined {
+  if (!org?.from_email?.trim()) return undefined;
+  try {
+    return normalizeSingleEmail(org.from_email);
+  } catch {
+    return undefined;
+  }
 }

@@ -7,7 +7,10 @@ type EnvKey =
   | "TMDB_API_KEY"
   | "FORENINGLET_USERNAME"
   | "FORENINGLET_PASSWORD"
-  | "FORENINGLET_BASE_URL";
+  | "FORENINGLET_BASE_URL"
+  | "GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL"
+  | "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+  | "GOOGLE_GMAIL_SENDER";
 
 export function getRequiredEnv(key: EnvKey) {
   const value = process.env[key];

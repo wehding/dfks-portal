@@ -303,11 +303,11 @@ export default function OrganisationSettingsPage() {
 
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Invitationer</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Afsender-mailen skal være verificeret i mailudbyderen. Teksterne bruges i invitationer og rykkere.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Systemmails sendes gennem Google Workspace fra bestyrelsen@danskfilmklipperselskab.dk med organisationens navn som afsendernavn. Svar sendes til adressen nedenfor.</p>
         <div className="mt-4 grid gap-4">
           <div className="space-y-2">
-            <Label>Afsender-mail</Label>
-            <Input value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
+            <Label>Svaradresse (Reply-To)</Label>
+            <Input type="email" value={form.from_email} onChange={event => setForm(f => ({ ...f, from_email: event.target.value }))} placeholder="kontakt@organisation.dk" />
           </div>
           <div className="space-y-2">
             <Label>Invitationstekst</Label>

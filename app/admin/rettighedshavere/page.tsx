@@ -44,6 +44,7 @@ type AdminUserResponse = {
     user_id?: string
     email_sent?: boolean
     email_error?: string
+    link_type?: "invite" | "recovery"
 }
 type DfksMemberOption = {
     display_id: string | null

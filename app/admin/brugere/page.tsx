@@ -311,6 +311,11 @@ export default function AdminBrugerePage() {
             const json = await res.json()
             if (!res.ok) throw new Error(json.error)
             setInviteLink(json.invite_url)
+            if (json.email_sent) {
+                toast.success(`Invitation sendt til ${inviteEmail.trim()}`)
+            } else {
+                toast.warning(`Brugeren og linket blev oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt fejl"}). Kopiér linket manuelt.`)
+            }
             await load()
         } catch (e: unknown) {
             toast.error(errorMessage(e, "Fejl ved invitation"))

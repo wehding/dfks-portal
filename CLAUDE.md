@@ -343,8 +343,10 @@ Sonner (`sonner.tsx`) bruges til toast-notifikationer. Skeleton-komponenter til 
 
 ## Email
 
-- `lib/email.ts`: Resend-integration med abstraktionslag (skift til Brevo: ~30 min)
-- Env var: `RESEND_API_KEY`
+- `lib/email.ts`: Fælles mailfacade og HTML-skabeloner
+- `lib/email/gmail.ts`: Server-only Google Workspace/Gmail API-transport med domain-wide delegation
+- Env vars: `GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_GMAIL_SENDER`
+- Faktisk afsender styres server-side; `organisations.from_email` bruges kun som Reply-To
 
 ---
 
