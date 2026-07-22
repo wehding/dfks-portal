@@ -33,6 +33,7 @@ import {
 import { MoreHorizontal } from "lucide-react"
 import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
 import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
+import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
@@ -134,6 +135,7 @@ export default function RettighedshavereAdminPage() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
+    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [filter, setFilter] = useState<Filter>("alle")
     const [sortKey, setSortKey] = useState<SortKey>("name")
     const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc")
@@ -708,7 +710,7 @@ export default function RettighedshavereAdminPage() {
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
-                    {search && <button className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
+                    {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
                 <Select value={filter} onValueChange={v => setFilter(v as Filter)}>
                     <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
@@ -763,11 +765,7 @@ export default function RettighedshavereAdminPage() {
 
             <MobileCardList>
                 {loading ? (
-                    <MobileDataCard>
-                        <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />Henter...
-                        </div>
-                    </MobileDataCard>
+                    <ListSkeleton items={6} />
                 ) : visible.length === 0 ? (
                     <MobileDataCard>
                         <p className="py-6 text-center text-sm text-muted-foreground">Ingen rettighedshavere fundet</p>
@@ -869,7 +867,7 @@ export default function RettighedshavereAdminPage() {
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11}><TableSkeleton columns={canSeeAllOrganisations ? 12 : 11} rows={6} /></TableCell></TableRow>
                         ) : visible.length === 0 ? (
                             <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="py-10 text-center text-muted-foreground">Ingen rettighedshavere fundet</TableCell></TableRow>
                         ) : visible.map(rh => {

@@ -20,6 +20,7 @@ import {
     BrainCircuit,
     ShieldCheck,
     ChevronRight,
+    MessageSquare,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -41,8 +42,10 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
+import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 
 const ADMIN_NAV_ITEMS = [
+    { key: "beskeder",            href: "/admin/beskeder",            icon: MessageSquare, labelKey: "nav.messages"         },
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
     { key: "vaerker",             href: "/admin/vaerker",             icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
     { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
@@ -87,7 +90,7 @@ const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS.filter(k => k !== "organisationer"),
     "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer"),
-    jurist:      ["kontrakter", "kontraktgennemgang"],
+    jurist:      ["beskeder", "kontrakter", "kontraktgennemgang"],
     viewer:      ["kontrakter", "statistik"],
 }
 
@@ -358,6 +361,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </header>
                 <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
+            <AdminCommandMenu />
         </SidebarProvider>
     )
 }

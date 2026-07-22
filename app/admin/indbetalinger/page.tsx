@@ -4,7 +4,6 @@ import { useState, useMemo } from "react"
 import {
     Search,
     Filter,
-    FileDown,
     CheckCircle2,
     Clock,
     Send,
@@ -274,12 +273,6 @@ export default function AdminIndbetalingerPage() {
         toast.success(`Status opdateret til: ${statusLabels[newStatus]}`)
     }
 
-    const handleDownloadPdf = (form: ProducerPaymentForm) => {
-        toast.success(
-            `PDF genereret for ${form.filmTitle} (${form.fundType === "helligdag" ? "Helligdag" : "BETA"})`
-        )
-    }
-
     const handleViewDetail = (form: ProducerPaymentForm) => {
         setSelectedForm(form)
         setDetailOpen(true)
@@ -482,12 +475,6 @@ export default function AdminIndbetalingerPage() {
                                                 >
                                                     <Eye className="mr-2 h-3.5 w-3.5" />
                                                     Vis detaljer
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem
-                                                    onClick={() => handleDownloadPdf(form)}
-                                                >
-                                                    <FileDown className="mr-2 h-3.5 w-3.5" />
-                                                    Download PDF
                                                 </DropdownMenuItem>
                                                 <DropdownMenuSeparator />
                                                 {form.status !== "verified" && (

@@ -7,6 +7,28 @@ begin;
 do $$
 begin
   if exists (
+    select 1 from (values
+      ('notification_deliveries'),
+      ('message_campaigns'),
+      ('member_message_threads'),
+      ('member_messages'),
+      ('member_message_participants')
+    ) expected(table_name)
+    where not exists (
+      select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = expected.table_name and c.relrowsecurity
+    )
+  ) then
+    raise exception 'RLS regression: a notification or inbox table is missing RLS';
+  end if;
+
+  if not exists (
+    select 1 from pg_indexes where schemaname = 'public' and indexname = 'contract_ai_jobs_one_active_attachment'
+  ) then
+    raise exception 'Schema regression: active allonge-job uniqueness is missing';
+  end if;
+
+  if exists (
     select 1
     from pg_policies
     where schemaname = 'public'
@@ -110,7 +132,12 @@ begin
   limit 1;
 
   if member_user_id is null then
-    raise exception 'RLS fixture missing: no ordinary member exists';
+    member_user_id := gen_random_uuid();
+    insert into auth.users (id, email, aud, role, created_at, updated_at)
+    values (member_user_id, 'rls-fixture-' || member_user_id::text || '@example.invalid', 'authenticated', 'authenticated', now(), now());
+    insert into public.rettighedshavere (user_id, full_name, email)
+    values (member_user_id, 'RLS testmedlem', 'rls-fixture-' || member_user_id::text || '@example.invalid')
+    returning id into member_holder_id;
   end if;
 
   admin_user_id := member_user_id;

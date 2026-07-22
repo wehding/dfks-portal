@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, createAdminEmployer, checkRightsHolderName } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, createAdminEmployer, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { getTMDBWorkDetails } from "@/app/actions/tmdb"
@@ -42,6 +42,7 @@ import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector"
 import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes"
+import { TableSkeleton } from "@/components/ui/data-skeletons"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -67,6 +68,7 @@ type ContractRow = {
     work_title: string | null
     work_poster_url: string | null
     contract_comments: ContractComment[]
+    contract_attachments?: Array<{ id: string; title: string | null; ai_status: string | null; ai_result: Record<string, unknown> | null }>
     validation_data?: Record<string, unknown> | null
     validation_has_credit_clause?: boolean | null
     validation_has_overenskomst_incorporation?: boolean | null
@@ -539,9 +541,10 @@ function AdminKontrakterContent() {
                 if (contractsRes.data) {
                     const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
+                    const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
                     if (rawContracts.length > 0) {
-                        const [commentsRes, jobsRes] = await Promise.all([
+                        const [commentsRes, jobsRes, attachmentsRes] = await Promise.all([
                             supabase
                                 .from("contract_comments")
                                 .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
@@ -553,8 +556,10 @@ function AdminKontrakterContent() {
                                 .from("contract_ai_jobs")
                                 .select("contract_id, status, error_message, created_at")
                                 .in("contract_id", rawContracts.map(r => r.id))
+                                .is("attachment_id", null)
                                 .neq("status", "done")
                                 .order("created_at", { ascending: false }),
+                            supabase.from("contract_attachments").select("id,contract_id,title,ai_status,ai_result").in("contract_id", rawContracts.map(r => r.id)).order("created_at", { ascending: false }),
                         ])
                         if (commentsRes.data) {
                             for (const comment of commentsRes.data as unknown as Array<ContractComment & { contract_id: string }>) {
@@ -566,6 +571,10 @@ function AdminKontrakterContent() {
                             for (const job of jobsRes.data as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
                                 if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job
                             }
+                        }
+                        if (attachmentsRes.data) for (const attachment of attachmentsRes.data as Array<NonNullable<ContractRow["contract_attachments"]>[number] & { contract_id: string }>) {
+                            if (!attachmentsByContract[attachment.contract_id]) attachmentsByContract[attachment.contract_id] = []
+                            attachmentsByContract[attachment.contract_id].push(attachment)
                         }
                     }
                     setContracts(rawContracts.map((r) => {
@@ -589,6 +598,7 @@ function AdminKontrakterContent() {
                         work_title: r.works?.title ?? null,
                         work_poster_url: r.works?.poster_url ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
+                        contract_attachments: attachmentsByContract[r.id] ?? [],
                         validation_data: null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
@@ -872,13 +882,9 @@ function AdminKontrakterContent() {
             return
         }
         setSaving(true)
-        const supabase = createClient()
         try {
-            const { error } = await supabase
-                .from("contracts")
-                .update({ status: "valideret" })
-                .in("id", selectedIds)
-            if (error) throw new Error(error.message)
+            const result = await validateAdminContracts(selectedIds)
+            if (!result.success) throw new Error(result.error)
             setContracts(prev => prev.map(c => selectedIds.includes(c.id) ? { ...c, status: "valideret" } : c))
             toast.success(`${selectedIds.length} kontrakt(er) er valideret`)
             setSelectedIds([])
@@ -1206,7 +1212,8 @@ function AdminKontrakterContent() {
 	        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean; saveOnly?: boolean }
 	    ) => {
         if (!editContract || !editForm) return false
-        const newStatus = statusOverride ?? editForm.status
+        const newStatus: "kladde" | "valideret" | "arkiveret" = statusOverride
+            ?? (editForm.status === "valideret" || editForm.status === "arkiveret" ? editForm.status : "kladde")
         let resolvedWorkId = editForm.work_id
         let selectedWork = works.find(w => w.id === resolvedWorkId)
 
@@ -1288,10 +1295,7 @@ function AdminKontrakterContent() {
                 selectedWork = { id: created.workId, title, year: null, poster_url: null }
                 setWorks(prev => prev.some(w => w.id === created.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
             }
-            const supabase = createClient()
-            const { error } = await supabase
-                .from("contracts")
-                .update({
+            const updateResult = await updateAdminContract(editContract.id, {
                     type: editForm.type,
                     overenskomst: editForm.overenskomst === "ingen" ? null : editForm.overenskomst,
                     status: newStatus,
@@ -1303,8 +1307,7 @@ function AdminKontrakterContent() {
                     work_id: resolvedWorkId || null,
                     working_title: editForm.working_title || null,
                 })
-                .eq("id", editContract.id)
-            if (error) throw new Error(error.message)
+            if (!updateResult.success) throw new Error(updateResult.error)
 
             const emp = employers.find(e => e.id === editForm.employer_id)
             const rh = rightsHolders.find(r => r.id === editForm.rights_holder_id)
@@ -1522,7 +1525,7 @@ function AdminKontrakterContent() {
     )
 
 
-    if (loading) return <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">Henter...</div>
+    if (loading) return <TableSkeleton columns={7} rows={7} />
 
     return (
         <div className="space-y-6">
@@ -2414,6 +2417,7 @@ function AdminKontrakterContent() {
                                     />
                                 )}
                             </div>
+                            {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "AI-læst" : attachment.ai_status === "fejl" ? "AI-fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">AI-læst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}
                             <MessageThread
                                 title="Beskeder"
                                 messages={contractMessages(editContract?.contract_comments ?? [])}

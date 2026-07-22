@@ -31,6 +31,8 @@ interface ProfileData {
     valid_from: string | null
     alternative_names: string[]
     portrait_url: string | null
+    email_transactional_enabled: boolean
+    email_broadcast_enabled: boolean
 }
 
 export default function MinProfilPage() {
@@ -58,6 +60,8 @@ export default function MinProfilPage() {
     const [postalCode, setPostalCode] = useState("")
     const [city, setCity] = useState("")
     const [altNavne, setAltNavne] = useState<string[]>([])
+    const [emailTransactionalEnabled, setEmailTransactionalEnabled] = useState(true)
+    const [emailBroadcastEnabled, setEmailBroadcastEnabled] = useState(false)
 
     // Arvekontakt (stored in user_metadata — ingen DB-tabel endnu)
     const [kinName, setKinName]         = useState("")
@@ -75,7 +79,7 @@ export default function MinProfilPage() {
             // Slå op via user_id
             let { data: rh } = await supabase
                 .from("rettighedshavere")
-                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url")
+                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
                 .eq("user_id", user.id)
                 .single()
 
@@ -83,7 +87,7 @@ export default function MinProfilPage() {
             if (!rh && user.email) {
                 const res = await supabase
                     .from("rettighedshavere")
-                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url")
+                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
                     .eq("email", user.email)
                     .single()
                 rh = res.data
@@ -116,6 +120,8 @@ export default function MinProfilPage() {
                 setPostalCode(parsedAddress.postalCode)
                 setCity(parsedAddress.city)
                 setAltNavne(rh.alternative_names ?? [])
+                setEmailTransactionalEnabled(rh.email_transactional_enabled ?? true)
+                setEmailBroadcastEnabled(rh.email_broadcast_enabled ?? false)
             }
 
             // Arvekontakt fra user_metadata
@@ -139,7 +145,7 @@ export default function MinProfilPage() {
             // Opdater rettighedshaver
             const { error } = await supabase
                 .from("rettighedshavere")
-                .update({ full_name: name, email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne })
+                .update({ full_name: name, email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
 
@@ -396,6 +402,14 @@ export default function MinProfilPage() {
                         <Label>{t("profile.notesOptional")}</Label>
                         <Input value={kinNotes} onChange={e => setKinNotes(e.target.value)} placeholder={t("profile.notesPlaceholder")} />
                     </div>
+                </div>
+            </section>
+
+            <section className="rounded-lg border">
+                <div className="border-b px-5 py-4"><h2 className="font-medium">E-mailnotifikationer</h2></div>
+                <div className="space-y-4 p-5">
+                    <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={emailTransactionalEnabled} onChange={event => setEmailTransactionalEnabled(event.target.checked)} /><span><span className="block font-medium">Svar og statusændringer</span><span className="text-sm text-muted-foreground">Modtag e-mail, når DFKS svarer eller validerer en kontrakt.</span></span></label>
+                    <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={emailBroadcastEnabled} onChange={event => setEmailBroadcastEnabled(event.target.checked)} /><span><span className="block font-medium">Fællesmeddelelser</span><span className="text-sm text-muted-foreground">Modtag e-mail ved fælles beskeder fra din organisation.</span></span></label>
                 </div>
             </section>
 

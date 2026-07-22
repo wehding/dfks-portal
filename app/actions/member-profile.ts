@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { encryptValue } from "@/lib/encryption";
 import { revalidatePath } from "next/cache";
+import { normalizeBankAccount, normalizeCpr, validateOnboardingField } from "@/lib/onboarding-validation";
 
 export async function completeOnboarding(formData: FormData) {
   const supabase = await createClient();
@@ -16,6 +17,18 @@ export async function completeOnboarding(formData: FormData) {
   const firstName = (formData.get("first_name") as string)?.trim() ?? "";
   const lastName = (formData.get("last_name") as string)?.trim() ?? "";
   const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  const loginEmail = user.email?.trim() ?? "";
+  const phone = ((formData.get("phone") as string) ?? "").trim();
+  const cpr = ((formData.get("cpr") as string) ?? "").trim();
+  const bankAccount = ((formData.get("bank_account") as string) ?? "").trim();
+  const validationError = [
+    validateOnboardingField("name", fullName),
+    validateOnboardingField("email", loginEmail),
+    validateOnboardingField("phone", phone),
+    validateOnboardingField("cpr", cpr),
+    validateOnboardingField("bank_account", bankAccount),
+  ].find(Boolean);
+  if (validationError) return { success: false, error: validationError };
   const street = ((formData.get("address") as string) ?? "").trim();
   const zip = ((formData.get("zip") as string) ?? "").trim();
   const city = ((formData.get("city") as string) ?? "").trim();
@@ -25,11 +38,11 @@ export async function completeOnboarding(formData: FormData) {
     .from("rettighedshavere")
     .update({
       full_name: fullName || undefined,
-      email: (formData.get("email") as string) || undefined,
-      phone: (formData.get("phone") as string) || null,
+      email: loginEmail,
+      phone: phone || null,
       address,
-      cpr_no: encryptValue(formData.get("cpr")),
-      bank_account: encryptValue(formData.get("bank_account")),
+      cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
+      bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
       gender: (formData.get("gender") as string) || null,
       opt_out_statistics: formData.get("opt_out_statistics") === "true",
       onboarding_completed: true,
@@ -42,11 +55,11 @@ export async function completeOnboarding(formData: FormData) {
       .from("rettighedshavere")
       .update({
         full_name: fullName || undefined,
-        email: (formData.get("email") as string) || undefined,
-        phone: (formData.get("phone") as string) || null,
+        email: loginEmail,
+        phone: phone || null,
         address,
-        cpr_no: encryptValue(formData.get("cpr")),
-        bank_account: encryptValue(formData.get("bank_account")),
+        cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
+        bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
         opt_out_statistics: formData.get("opt_out_statistics") === "true",
         onboarding_completed: true,
       })

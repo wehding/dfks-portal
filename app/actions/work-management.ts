@@ -10,6 +10,7 @@ import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from 
 import type { DfiMetadata } from "@/lib/dfi-metadata";
 import { groupWorksBySeason, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
+import { sendMemberNotification } from "@/lib/member-notifications";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -1719,6 +1720,13 @@ export async function addAdminWorkRequestComment(params: { requestId: string; me
   if (!message) throw new Error("Skriv en besked.");
 
   const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  const { data: request } = await db.from("work_change_requests")
+    .select("id,org_id,requested_by_rights_holder_id")
+    .eq("id", params.requestId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (!request) throw new Error("Anmodningen findes ikke i din organisation.");
   const { data: comment, error } = await db
     .from("work_change_request_comments")
     .insert({
@@ -1731,6 +1739,13 @@ export async function addAdminWorkRequestComment(params: { requestId: string; me
     .select("id, author_role, message, created_at, member_read_at, admin_read_at")
     .single();
   if (error) throw new Error(error.message);
+  if (request.requested_by_rights_holder_id) {
+    try {
+      await sendMemberNotification({ eventKey: `work-comment:${comment.id}`, eventType: "work_admin_reply", orgId, rightsHolderId: request.requested_by_rights_holder_id, category: "transactional", subject: "DFKS har svaret på dit værk", bodyText: "Der er kommet et nyt svar til din værksanmodning i portalen.", path: `/portal/mine-vaerker?request=${request.id}`, entityType: "work_request", entityId: request.id });
+    } catch (notificationError) {
+      console.error("[notification] værksvar kunne ikke sendes", notificationError);
+    }
+  }
 
   revalidatePath("/admin/vaerker");
   revalidatePath("/portal/mine-vaerker");
