@@ -29,6 +29,62 @@ function getAdmin() {
     return createAdminClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
 }
 
+async function findAuthUserByEmail(admin: ReturnType<typeof getAdmin>, email: string) {
+    const normalizedEmail = email.trim().toLowerCase()
+    for (let page = 1; page <= 20; page += 1) {
+        const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+        if (error) throw new Error(error.message)
+        const match = data.users.find(user => user.email?.trim().toLowerCase() === normalizedEmail)
+        if (match) return match
+        if (data.users.length < 1000) return null
+    }
+    throw new Error("Brugerlisten er for stor til at kontrollere e-mailen sikkert.")
+}
+
+async function linkExistingAuthUserToHolder(
+    admin: ReturnType<typeof getAdmin>,
+    userId: string,
+    holderId: string,
+) {
+    const { data: target, error: targetError } = await admin
+        .from("rettighedshavere")
+        .select("id, user_id")
+        .eq("id", holderId)
+        .single()
+    if (targetError) throw new Error(targetError.message)
+    if (target.user_id && target.user_id !== userId) throw new Error("Rettighedshaveren er allerede knyttet til en anden loginbruger.")
+
+    const { data: currentProfile, error: currentProfileError } = await admin
+        .from("rettighedshavere")
+        .select("id")
+        .eq("user_id", userId)
+        .maybeSingle()
+    if (currentProfileError) throw new Error(currentProfileError.message)
+
+    if (currentProfile && currentProfile.id !== holderId) {
+        const [{ count: affiliations }, { count: contracts }, { count: assignments }] = await Promise.all([
+            admin.from("org_affiliations").select("id", { count: "exact", head: true }).eq("rights_holder_id", currentProfile.id),
+            admin.from("contracts").select("id", { count: "exact", head: true }).eq("rights_holder_id", currentProfile.id),
+            admin.from("work_assignments").select("id", { count: "exact", head: true }).eq("rights_holder_id", currentProfile.id),
+        ])
+        if ((affiliations ?? 0) > 0 || (contracts ?? 0) > 0 || (assignments ?? 0) > 0) {
+            throw new Error("Der findes allerede en anden aktiv rettighedshaverprofil med denne loginbruger. Sammenflet profilerne manuelt.")
+        }
+        const { error: detachError } = await admin.from("rettighedshavere").update({ user_id: null }).eq("id", currentProfile.id)
+        if (detachError) throw new Error(detachError.message)
+        const { error: linkError } = await admin.from("rettighedshavere").update({ user_id: userId }).eq("id", holderId).is("user_id", null)
+        if (linkError) throw new Error(linkError.message)
+        const { error: deleteDuplicateError } = await admin.from("rettighedshavere").delete().eq("id", currentProfile.id)
+        if (deleteDuplicateError) throw new Error(deleteDuplicateError.message)
+        return
+    }
+
+    if (!target.user_id) {
+        const { error: linkError } = await admin.from("rettighedshavere").update({ user_id: userId }).eq("id", holderId).is("user_id", null)
+        if (linkError) throw new Error(linkError.message)
+    }
+}
+
 export async function POST(req: NextRequest) {
     try {
         // Kun admins må kalde denne route — tjek user_org_roles, ikke user_metadata
@@ -87,45 +143,60 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ error: `Brugerlimit nået (max ${org.max_users})` }, { status: 403 })
             }
 
-            // Generer invite-link
-            const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
-                type: "invite",
-                email,
-                options: {
-                    data: {
-                        full_name: name || email,
-                        role: userRole,
-                        ...(phone ? { phone } : {}),
-                        ...(title ? { title } : {}),
+            const existingAuthUser = await findAuthUserByEmail(admin, email)
+            if (!isStaff && existingAuthUser) {
+                await linkExistingAuthUserToHolder(admin, existingAuthUser.id, rhId)
+            }
+
+            // Nye brugere får et invitationslink. Eksisterende Auth-brugere får
+            // et recovery-link, så invitationen hverken opretter en dublet eller fejler.
+            const linkRequest = existingAuthUser
+                ? {
+                    type: "recovery" as const,
+                    email,
+                }
+                : {
+                    type: "invite" as const,
+                    email,
+                    options: {
+                        data: {
+                            full_name: name || email,
+                            role: userRole,
+                            profile_mode: isStaff ? "staff" : "rights_holder",
+                            ...(phone ? { phone } : {}),
+                            ...(title ? { title } : {}),
+                        },
                     },
-                },
-            })
+                }
+            const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink(linkRequest)
             if (linkErr) throw new Error(linkErr.message)
             if (!linkData.properties?.hashed_token) throw new Error("Invitationslink kunne ikke genereres")
 
-            const newUserId = linkData.user.id
+            const newUserId = existingAuthUser?.id ?? linkData.user.id
             const rolesToAssign = requestedRoles as string[]
 
             // Tildel staff-roller i user_org_roles
             if (rolesToAssign.length > 0 && rhId === "__staff__") {
-                await admin.from("user_org_roles").insert(
-                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: orgId, role: r }))
+                const { error: roleError } = await admin.from("user_org_roles").upsert(
+                    rolesToAssign.map((r: string) => ({ user_id: newUserId, org_id: orgId, role: r })),
+                    { onConflict: "user_id,org_id,role", ignoreDuplicates: true },
                 )
+                if (roleError) throw new Error(roleError.message)
             }
 
             // Link user_id på rettighedshaver. invite_sent_at sættes kun hvis mailen faktisk sendes.
             if (rhId && rhId !== "__staff__") {
-                const { error: rhErr } = await admin
-                    .from("rettighedshavere")
-                    .update({ user_id: newUserId })
-                    .eq("id", rhId)
-                if (rhErr) throw new Error(`Kunne ikke linke bruger: ${rhErr.message}`)
+                await linkExistingAuthUserToHolder(admin, newUserId, rhId)
             }
 
             // Send invitationsmail fra foreningens arbejdsmail (branding-styret afsender)
             const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
             const brand = resolveBranding(orgForMail as never)
-            const inviteUrl = buildAccountAccessUrl(siteUrl, linkData.properties.hashed_token, "invite")
+            const inviteUrl = buildAccountAccessUrl(
+                siteUrl,
+                linkData.properties.hashed_token,
+                existingAuthUser ? "recovery" : "invite",
+            )
             const mail = await sendEmail({
                 to: email,
                 from: resolveFromEmail(orgForMail as never),

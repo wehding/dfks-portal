@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react"
 import {
     Shield, Mail, Plus, Pencil, Loader2, Clock, MoreHorizontal,
     KeyRound, Link, UserX, UserCheck, Search, Users, Scale, UserCog,
-    Check, CircleAlert,
+    Check, CircleAlert, Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -31,6 +31,7 @@ type User = {
     full_name: string
     roles: string[]
     org_roles: string[]
+    organisations: Array<{ id: string; name: string }>
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
     gender: string | null
@@ -197,6 +198,7 @@ export default function AdminBrugerePage() {
     // Deaktiver / genaktiver
     const [toggleUser, setToggleUser] = useState<User | null>(null)
     const [toggleLoading, setToggleLoading] = useState(false)
+    const [deletingUnassignedId, setDeletingUnassignedId] = useState<string | null>(null)
 
     useEffect(() => { load() }, [])
 
@@ -211,8 +213,8 @@ export default function AdminBrugerePage() {
             if (json.users) {
                 setUsers(json.users)
             } else {
-                const staff = (json.staff ?? []).map(u => ({ ...u, org_roles: u.roles ?? [], is_rettighedshaver: false, rh_id: null, onboarding_completed: null, gender: null }) as User)
-                const portal = (json.portal ?? []).map(u => ({ ...u, org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }) as User)
+                const staff = (json.staff ?? []).map(u => ({ ...u, organisations: u.organisations ?? [], org_roles: u.roles ?? [], is_rettighedshaver: false, rh_id: null, onboarding_completed: null, gender: null }) as User)
+                const portal = (json.portal ?? []).map(u => ({ ...u, organisations: u.organisations ?? [], org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }) as User)
                 setUsers([...staff, ...portal])
             }
         } else {
@@ -381,6 +383,27 @@ export default function AdminBrugerePage() {
         }
     }
 
+    async function handleDeleteUnassigned(record: UnassignedRecord) {
+        if (!window.confirm(`Slet ${record.full_name} permanent? Posten er ikke knyttet til en organisation, og handlingen kan ikke fortrydes.`)) return
+        setDeletingUnassignedId(record.id)
+        try {
+            const res = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "delete-unassigned", recordId: record.id, kind: record.kind }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            toast.success(json.deletedUser ? "Rettighedshaver og loginbruger slettet permanent" : "Posten er slettet permanent")
+            if (json.warning) toast.warning(json.warning)
+            await load()
+        } catch (error: unknown) {
+            toast.error(errorMessage(error, "Posten kunne ikke slettes"))
+        } finally {
+            setDeletingUnassignedId(null)
+        }
+    }
+
     function openInvite(forPortal = false) {
         setInviteEmail("")
         setInviteName("")
@@ -468,6 +491,17 @@ export default function AdminBrugerePage() {
                                     <MobileMetaRow label="Oprettet">{new Date(record.created_at).toLocaleDateString("da-DK")}</MobileMetaRow>
                                 </div>
                                 <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">{record.reason}</p>
+                                <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                    className="mt-4 w-full"
+                                    disabled={deletingUnassignedId === record.id}
+                                    onClick={() => void handleDeleteUnassigned(record)}
+                                >
+                                    {deletingUnassignedId === record.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                    Slet permanent
+                                </Button>
                             </MobileDataCard>
                         ))}
                     </MobileCardList>
@@ -480,12 +514,13 @@ export default function AdminBrugerePage() {
                                     <TableHead>Type</TableHead>
                                     <TableHead>Årsag</TableHead>
                                     <TableHead>Oprettet</TableHead>
+                                    <TableHead className="w-12" />
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredUnassigned.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">Ingen poster uden tilknytning</TableCell>
+                                        <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Ingen poster uden tilknytning</TableCell>
                                     </TableRow>
                                 ) : filteredUnassigned.map(record => (
                                     <TableRow key={record.id}>
@@ -494,6 +529,19 @@ export default function AdminBrugerePage() {
                                         <TableCell>{record.kind === "auth_user" ? "Loginbruger" : "Rettighedshaver"}</TableCell>
                                         <TableCell className="text-amber-700 dark:text-amber-300">{record.reason}</TableCell>
                                         <TableCell className="whitespace-nowrap text-muted-foreground">{new Date(record.created_at).toLocaleDateString("da-DK")}</TableCell>
+                                        <TableCell>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="text-destructive"
+                                                aria-label={`Slet ${record.full_name} permanent`}
+                                                disabled={deletingUnassignedId === record.id}
+                                                onClick={() => void handleDeleteUnassigned(record)}
+                                            >
+                                                {deletingUnassignedId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                            </Button>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -563,6 +611,9 @@ export default function AdminBrugerePage() {
                             <MobileMetaRow label="Telefon">{u.phone ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Titel">{u.title ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Status"><StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} /></MobileMetaRow>
+                            {callerRole === "superadmin" && (
+                                <MobileMetaRow label="Organisation">{u.organisations.map(org => org.name).join(", ") || "Ingen organisation"}</MobileMetaRow>
+                            )}
                             <MobileMetaRow label="Sidst logget ind">
                                 {u.last_sign_in
                                     ? new Date(u.last_sign_in).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })
@@ -586,6 +637,7 @@ export default function AdminBrugerePage() {
                             <TableHead>Køn</TableHead>
                             <TableHead>Titel</TableHead>
                             <TableHead>Rolle(r)</TableHead>
+                            {callerRole === "superadmin" && <TableHead>Organisation</TableHead>}
                             <TableHead>Status</TableHead>
                             <TableHead>Sidst logget ind</TableHead>
                             <TableHead className="w-12" />
@@ -594,13 +646,13 @@ export default function AdminBrugerePage() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
                                     <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
                                 </TableCell>
                             </TableRow>
                         ) : filtered.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
                                     Ingen brugere fundet
                                 </TableCell>
                             </TableRow>
@@ -612,6 +664,11 @@ export default function AdminBrugerePage() {
                                 <TableCell className="text-sm text-muted-foreground">{u.gender ? GENDER_LABELS[u.gender] ?? u.gender : "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.title ?? "—"}</TableCell>
                                 <TableCell><RoleChips roles={u.roles} /></TableCell>
+                                {callerRole === "superadmin" && (
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {u.organisations.map(org => org.name).join(", ") || "Ingen organisation"}
+                                    </TableCell>
+                                )}
                                 <TableCell>
                                     <StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} />
                                 </TableCell>
@@ -785,7 +842,7 @@ export default function AdminBrugerePage() {
                                                 key={r}
                                                 role={r}
                                                 selected={inviteRoles.includes(r)}
-                                                onToggle={() => setInviteRoles(prev => toggleStaffRole(prev, r))}
+                                                onToggle={() => setInviteRoles(toggleStaffRole(inviteRoles, r))}
                                             />
                                         ))}
                                     </div>
@@ -837,7 +894,7 @@ export default function AdminBrugerePage() {
                                 key={r}
                                 role={r}
                                 selected={editRoles.includes(r)}
-                                onToggle={() => setEditRoles(prev => toggleStaffRole(prev, r))}
+                                onToggle={() => setEditRoles(toggleStaffRole(editRoles, r))}
                             />
                         ))}
                     </div>

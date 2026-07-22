@@ -9,6 +9,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
+import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
 const ROLE_RANK: Record<string, number> = {
@@ -97,6 +98,46 @@ export async function GET() {
         ...(rh ?? []).map(r => r.user_id!),
     ])
 
+    // Superadmin får et samlet, skrivebeskyttet overblik over alle de
+    // organisationer, som de viste brugere er knyttet til. Dette holdes
+    // adskilt fra org_roles, der fortsat kun redigerer den aktuelle org.
+    const organisationsByUser = new Map<string, Map<string, string>>()
+    if (caller.role === "superadmin" && allUserIds.size > 0) {
+        const userIds = Array.from(allUserIds)
+        const [{ data: allUserRoleRows, error: allUserRoleError }, { data: allUserHolders, error: allUserHolderError }] = await Promise.all([
+            admin.from("user_org_roles").select("user_id, org_id").in("user_id", userIds),
+            admin.from("rettighedshavere").select("id, user_id").in("user_id", userIds),
+        ])
+        if (allUserRoleError || allUserHolderError) {
+            return NextResponse.json({ error: allUserRoleError?.message ?? allUserHolderError?.message }, { status: 500 })
+        }
+        const holderIds = (allUserHolders ?? []).map(holder => holder.id)
+        const { data: allHolderAffiliations, error: allHolderAffiliationError } = holderIds.length
+            ? await admin.from("org_affiliations").select("rights_holder_id, org_id").in("rights_holder_id", holderIds)
+            : { data: [], error: null }
+        if (allHolderAffiliationError) return NextResponse.json({ error: allHolderAffiliationError.message }, { status: 500 })
+
+        const holderUserIds = new Map((allUserHolders ?? []).map(holder => [holder.id, holder.user_id]))
+        const membershipRows = [
+            ...(allUserRoleRows ?? []).map(row => ({ userId: row.user_id, orgId: row.org_id })),
+            ...(allHolderAffiliations ?? []).flatMap(row => {
+                const userId = holderUserIds.get(row.rights_holder_id)
+                return userId ? [{ userId, orgId: row.org_id }] : []
+            }),
+        ]
+        const organisationIds = [...new Set(membershipRows.map(row => row.orgId))]
+        const { data: organisationRows, error: organisationError } = organisationIds.length
+            ? await admin.from("organisations").select("id, name").in("id", organisationIds)
+            : { data: [], error: null }
+        if (organisationError) return NextResponse.json({ error: organisationError.message }, { status: 500 })
+        const organisationNames = new Map((organisationRows ?? []).map(org => [org.id, org.name]))
+        for (const membership of membershipRows) {
+            const organisations = organisationsByUser.get(membership.userId) ?? new Map<string, string>()
+            organisations.set(membership.orgId, organisationNames.get(membership.orgId) ?? "Ukendt organisation")
+            organisationsByUser.set(membership.userId, organisations)
+        }
+    }
+
     // Én post per bruger — kombiner roller fra user_org_roles og rettighedshavere
     const users = Array.from(allUserIds).map(userId => {
         const u = authMap.get(userId)
@@ -113,6 +154,7 @@ export async function GET() {
             full_name: rhEntry?.full_name ?? u?.user_metadata?.full_name ?? u?.email ?? "—",
             roles,
             org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
+            organisations: Array.from(organisationsByUser.get(userId) ?? []).map(([id, name]) => ({ id, name })),
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
             gender: rhEntry?.gender ?? null,
@@ -182,6 +224,67 @@ export async function PATCH(req: NextRequest) {
 
     const body = await req.json()
     const admin = getAdmin()
+
+    // ── Slet post uden organisationstilknytning ─────────────
+    if (body.action === "delete-unassigned") {
+        if (patchCaller.role !== "superadmin") {
+            return NextResponse.json({ error: "Kun superadmin kan slette poster uden tilknytning" }, { status: 403 })
+        }
+        const kind = body.kind as UnassignedRecordKind | undefined
+        const recordId = kind ? parseUnassignedRecordId(body.recordId, kind) : ""
+        if (!recordId || !kind) return NextResponse.json({ error: "Post og type er påkrævet" }, { status: 400 })
+
+        if (kind === "auth_user") {
+            if (recordId === patchCaller.userId) return NextResponse.json({ error: "Du kan ikke slette din egen loginbruger" }, { status: 400 })
+            const [{ count: roles }, { count: profiles }] = await Promise.all([
+                admin.from("user_org_roles").select("user_id", { count: "exact", head: true }).eq("user_id", recordId),
+                admin.from("rettighedshavere").select("id", { count: "exact", head: true }).eq("user_id", recordId),
+            ])
+            if (!isStillUnassigned({ roles, profiles })) {
+                return NextResponse.json({ error: "Brugeren har fået en tilknytning og kan ikke længere slettes herfra" }, { status: 409 })
+            }
+            const { error } = await admin.auth.admin.deleteUser(recordId)
+            if (error) return NextResponse.json({ error: `Loginbrugeren kunne ikke slettes: ${error.message}` }, { status: 409 })
+            return NextResponse.json({ ok: true, deletedUser: true })
+        }
+
+        const { data: holder, error: holderError } = await admin
+            .from("rettighedshavere")
+            .select("id, user_id")
+            .eq("id", recordId)
+            .maybeSingle()
+        if (holderError) return NextResponse.json({ error: holderError.message }, { status: 500 })
+        if (!holder) return NextResponse.json({ error: "Rettighedshaveren findes ikke" }, { status: 404 })
+        const { count: affiliations } = await admin
+            .from("org_affiliations")
+            .select("id", { count: "exact", head: true })
+            .eq("rights_holder_id", recordId)
+        if (!isStillUnassigned({ affiliations })) {
+            return NextResponse.json({ error: "Rettighedshaveren har fået en organisationstilknytning og skal slettes fra Rettighedshavere" }, { status: 409 })
+        }
+
+        const { error: contractError } = await admin.from("contracts").update({ rights_holder_id: null }).eq("rights_holder_id", recordId)
+        if (contractError) return NextResponse.json({ error: contractError.message }, { status: 500 })
+        const { error: assignmentError } = await admin.from("work_assignments").delete().eq("rights_holder_id", recordId)
+        if (assignmentError) return NextResponse.json({ error: assignmentError.message }, { status: 500 })
+        const { error: deleteHolderError } = await admin.from("rettighedshavere").delete().eq("id", recordId)
+        if (deleteHolderError) return NextResponse.json({ error: deleteHolderError.message }, { status: 500 })
+
+        let deletedUser = false
+        let warning: string | null = null
+        if (holder.user_id && holder.user_id !== patchCaller.userId) {
+            const [{ count: roles }, { count: profiles }] = await Promise.all([
+                admin.from("user_org_roles").select("user_id", { count: "exact", head: true }).eq("user_id", holder.user_id),
+                admin.from("rettighedshavere").select("id", { count: "exact", head: true }).eq("user_id", holder.user_id),
+            ])
+            if ((roles ?? 0) === 0 && (profiles ?? 0) === 0) {
+                const { error: authError } = await admin.auth.admin.deleteUser(holder.user_id)
+                if (authError) warning = `Rettighedshaveren blev slettet, men loginbrugeren kunne ikke slettes: ${authError.message}`
+                else deletedUser = true
+            }
+        }
+        return NextResponse.json({ ok: true, deletedUser, warning })
+    }
 
     // ── Opdater roller ────────────────────────────────────────
     if (body.action === "set-roles") {

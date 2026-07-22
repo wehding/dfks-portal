@@ -48,6 +48,9 @@ export async function assertUserInOrg(
       .select("user_id")
       .eq("user_id", userId)
       .eq("org_id", orgId)
+      // En bruger kan have flere roller i samme organisation. Vi skal kun
+      // bevise medlemskabet, ikke kræve at forespørgslen giver præcis én række.
+      .limit(1)
       .maybeSingle(),
     db
       .from("rettighedshavere")
