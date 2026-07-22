@@ -67,6 +67,7 @@ export default function ProducenterPage() {
     const [employers, setEmployers] = useState<Employer[]>([])
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState("")
+    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [expanded, setExpanded] = useState<string | null>(null)
 
     useEffect(() => {

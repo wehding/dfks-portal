@@ -51,9 +51,18 @@ export const MINE_VAERKER_HELP: HelpTopic[] = [
     ],
   },
   {
-    title: "Rediger værksoplysninger",
-    body: "Klik på et værk for at rette din rolle, vælge afsnit eller foreslå ændringer til værkets oplysninger. Ændringer til titel, type, premiereår og andre fælles værksdata sendes til administrator til gennemgang.",
-    tips: ["De nuværende værksoplysninger bliver stående, mens dit forslag behandles."],
+    title: "Rediger serier og sæsoner",
+    body: "En serie vises som én linje for hver sæson. Klik på sæsonens titel eller billede for at redigere sæsonens fælles oplysninger, medklippere og vælge præcist hvilke afsnit du har klippet.",
+    tips: [
+      "Brug pilen ved sæsonen til at folde de enkelte afsnit ud eller sammen.",
+      "Klik på et udfoldet afsnit for at ændre oplysninger eller medklippere, der kun gælder det afsnit.",
+      "Boksen Dine afsnit findes kun i sæsonredigeringen, så afsnit vælges ét samlet sted.",
+      "De nuværende fælles værksoplysninger bliver stående, mens et rettelsesforslag behandles.",
+    ],
+  },
+  {
+    title: "Kontrakter på serier",
+    body: "En kontrakt kan gælde hele sæsonen eller bestemte afsnit. I listen vises Tilknyttet på de afsnit, der er dækket af enten en sæsonkontrakt eller en afsnitskontrakt.",
   },
   {
     title: "Godkendelse og beskeder",

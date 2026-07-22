@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
+import { sendMemberNotification } from "@/lib/member-notifications";
 
 import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -141,6 +142,7 @@ export async function saveUploadedContract(params: {
   premiereDate?: string;
   season?: number;
   episodes?: { number: number; role: string }[];
+  coversWholeSeason?: boolean;
   deferAiJob?: boolean;
 }) {
   const db = createServiceClient();
@@ -169,6 +171,12 @@ export async function saveUploadedContract(params: {
       pdf_url: params.filePath,
       working_title: params.workTitle || null,
       work_id: params.workId ?? null,
+      season_number: params.season ?? null,
+      episode_numbers: params.season
+        ? params.coversWholeSeason
+          ? []
+          : params.episodes?.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0) ?? []
+        : null,
     })
     .select()
     .single();
@@ -251,7 +259,11 @@ export async function queueUploadedContractAiJob(contractId: string) {
   return { success: true, alreadyQueued: false };
 }
 
-export async function linkContractToWork(contractId: string, workId: string | null) {
+export async function linkContractToWork(
+  contractId: string,
+  workId: string | null,
+  scope?: { seasonNumber?: number | null; episodeNumbers?: number[] | null }
+) {
   const supabase = await createClient();
   const db = createServiceClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -263,7 +275,7 @@ export async function linkContractToWork(contractId: string, workId: string | nu
   // Kontrakten skal tilhøre medlemmet
   const { data: contract } = await db
     .from("contracts")
-    .select("id, org_id")
+    .select("id, org_id, rights_holder_id")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
@@ -279,7 +291,13 @@ export async function linkContractToWork(contractId: string, workId: string | nu
 
   const { error } = await db
     .from("contracts")
-    .update({ work_id: workId })
+    .update({
+      work_id: workId,
+      season_number: workId && scope?.seasonNumber ? scope.seasonNumber : null,
+      episode_numbers: workId && scope?.seasonNumber
+        ? [...new Set((scope.episodeNumbers ?? []).filter(number => Number.isInteger(number) && number > 0))]
+        : null,
+    })
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id);
 
@@ -302,7 +320,7 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
@@ -705,7 +723,7 @@ export async function addAdminContractComment(contractId: string, message: strin
   const db = createServiceClient();
   const { data: contract } = await db
     .from("contracts")
-    .select("id, org_id")
+    .select("id, org_id, rights_holder_id")
     .eq("id", contractId)
     .single();
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
@@ -726,9 +744,91 @@ export async function addAdminContractComment(contractId: string, message: strin
     .single();
 
   if (error || !comment) return { success: false, error: error?.message ?? "Kunne ikke gemme svaret" };
+  if (contract.rights_holder_id) {
+    try {
+      await sendMemberNotification({
+        eventKey: `contract-comment:${comment.id}`,
+        eventType: "contract_admin_reply",
+        orgId: contract.org_id,
+        rightsHolderId: contract.rights_holder_id,
+        category: "transactional",
+        subject: "DFKS har svaret på din kontrakt",
+        bodyText: "Der er kommet et nyt svar til din kontrakt i portalen.",
+        path: `/portal/mine-kontrakter?contract=${contract.id}`,
+        entityType: "contract",
+        entityId: contract.id,
+      });
+    } catch (notificationError) {
+      console.error("[notification] kontraktsvar kunne ikke sendes", notificationError);
+    }
+  }
   revalidatePath("/portal/mine-kontrakter");
   revalidatePath("/admin/kontrakter");
   return { success: true, comment };
+}
+
+type AdminContractUpdate = {
+  type: string;
+  overenskomst: string | null;
+  status: "kladde" | "valideret" | "arkiveret";
+  contract_date: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  employer_id: string | null;
+  rights_holder_id: string | null;
+  work_id: string | null;
+  working_title: string | null;
+};
+
+export async function updateAdminContract(contractId: string, values: AdminContractUpdate) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const { data: existing } = await db.from("contracts").select("id,status,org_id").eq("id", contractId).eq("org_id", orgId).maybeSingle();
+  if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
+  const { error } = await db.from("contracts").update(values).eq("id", contractId).eq("org_id", orgId);
+  if (error) return { success: false, error: error.message };
+  if (existing.status !== "valideret" && values.status === "valideret" && values.rights_holder_id) {
+    try {
+      await sendMemberNotification({ eventKey: `contract-validated:${contractId}`, eventType: "contract_validated", orgId, rightsHolderId: values.rights_holder_id, category: "transactional", subject: "Din kontrakt er valideret", bodyText: "DFKS har valideret din kontrakt. Du kan se resultatet i portalen.", path: `/portal/mine-kontrakter?contract=${contractId}`, entityType: "contract", entityId: contractId });
+    } catch (notificationError) {
+      console.error("[notification] valideringsmail kunne ikke sendes", notificationError);
+    }
+  }
+  revalidatePath("/admin/kontrakter");
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true };
+}
+
+export async function validateAdminContracts(contractIds: string[]) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const ids = [...new Set(contractIds)].slice(0, 200);
+  if (!ids.length) return { success: true, count: 0 };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+  const { data: contracts, error: fetchError } = await db.from("contracts").select("id,status,work_id,rights_holder_id").eq("org_id", orgId).in("id", ids);
+  if (fetchError) return { success: false, error: fetchError.message };
+  if ((contracts ?? []).some(contract => !contract.work_id)) return { success: false, error: "Alle valgte kontrakter skal have et tilknyttet værk." };
+  const toValidate = (contracts ?? []).filter(contract => contract.status !== "valideret");
+  if (toValidate.length) {
+    const { error } = await db.from("contracts").update({ status: "valideret" }).eq("org_id", orgId).in("id", toValidate.map(contract => contract.id));
+    if (error) return { success: false, error: error.message };
+  }
+  for (const contract of toValidate) {
+    if (!contract.rights_holder_id) continue;
+    try {
+      await sendMemberNotification({ eventKey: `contract-validated:${contract.id}`, eventType: "contract_validated", orgId, rightsHolderId: contract.rights_holder_id, category: "transactional", subject: "Din kontrakt er valideret", bodyText: "DFKS har valideret din kontrakt. Du kan se resultatet i portalen.", path: `/portal/mine-kontrakter?contract=${contract.id}`, entityType: "contract", entityId: contract.id });
+    } catch (notificationError) {
+      console.error("[notification] bulk-valideringsmail kunne ikke sendes", notificationError);
+    }
+  }
+  revalidatePath("/admin/kontrakter");
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true, count: toValidate.length };
 }
 
 export async function markContractCommentsRead(contractId: string, viewerRole: "admin" | "member" = "member") {

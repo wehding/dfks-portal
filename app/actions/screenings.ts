@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { sendMemberNotification } from "@/lib/member-notifications";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
@@ -221,7 +222,8 @@ export async function addScreeningClaimComment(params: {
 
   const { data: claim } = await db.from("screening_claims").select("profile_id,org_id").eq("id", params.claimId).single();
   if (!claim) return { success: false, error: "Indberetningen findes ikke" };
-  const admin = params.authorRole === "admin" && await isUserAdmin(user.id);
+  const adminOrgId = params.authorRole === "admin" ? await userOrgId(user.id) : null;
+  const admin = params.authorRole === "admin" && await isUserAdmin(user.id) && adminOrgId === claim.org_id;
   const member = params.authorRole === "member" && claim.profile_id === user.id;
   if (!admin && !member) return { success: false, error: "Ikke autoriseret til dette krav" };
   if (!params.message.trim()) return { success: false, error: "Skriv en besked" };
@@ -242,6 +244,17 @@ export async function addScreeningClaimComment(params: {
   if (error) {
     console.error("Fejl ved tilføjelse af kommentar:", error);
     return { success: false, error: error.message };
+  }
+
+  if (params.authorRole === "admin") {
+    const { data: holder } = await db.from("rettighedshavere").select("id,org_affiliations!inner(org_id)").eq("user_id", claim.profile_id).eq("org_affiliations.org_id", claim.org_id).maybeSingle();
+    if (holder) {
+      try {
+        await sendMemberNotification({ eventKey: `screening-comment:${comment.id}`, eventType: "screening_admin_reply", orgId: claim.org_id, rightsHolderId: holder.id, category: "transactional", subject: "DFKS har svaret på din visningsindberetning", bodyText: "Der er kommet et nyt svar til din visningsindberetning i portalen.", path: `/portal/mine-visninger?claim=${params.claimId}`, entityType: "screening_claim", entityId: params.claimId });
+      } catch (notificationError) {
+        console.error("[notification] visningssvar kunne ikke sendes", notificationError);
+      }
+    }
   }
 
   revalidatePath("/portal/mine-visninger");

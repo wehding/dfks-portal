@@ -5,6 +5,7 @@ import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus } from "l
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
+import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
 import { getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
@@ -22,14 +23,14 @@ import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
-import { shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
+import { hasLinkedWork, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
 import { ManualWorkFormFields } from "@/components/works/manual-work-form";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null; extracted_data?: Record<string, unknown> | null; validated_at?: string | null } | null;
-type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string };
+type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string; ai_status?: "analyserer" | "klar" | "fejl" | null; ai_result?: Record<string, unknown> | null };
 type ContractComment = { id: string; author_role: "member" | "admin"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
 export type Contract = {
   id: string;
@@ -40,6 +41,7 @@ export type Contract = {
   start_date: string | null;
   end_date: string | null;
   pdf_url: string | null;
+  work_id: string | null;
   working_title: string | null;
   created_at: string | null;
   works: { id: string; title: string; year: number | null; type: string | null } | null;
@@ -120,10 +122,6 @@ function normalizeContract(contract: Contract): Contract {
     contract_attachments: contract.contract_attachments ?? [],
     contract_comments: contract.contract_comments ?? [],
   };
-}
-
-function hasWorkLink(contract: Contract) {
-  return Boolean(contract.works) || contract.status === "valideret";
 }
 
 function contractMessages(comments: ContractComment[]): MessageThreadMessage[] {
@@ -320,13 +318,13 @@ export default function MineKontrakterClient({
   }).filter(c => {
     if (typeFilter !== "all" && c.works?.type !== typeFilter) return false;
     if (statusFilter === "all") return true;
-    if (statusFilter === "linked") return hasWorkLink(c);
-    if (statusFilter === "missingWork") return !hasWorkLink(c);
+    if (statusFilter === "linked") return hasLinkedWork(c.work_id);
+    if (statusFilter === "missingWork") return !hasLinkedWork(c.work_id);
     if (statusFilter === "messages") return c.contract_comments.some(comment => comment.author_role === "admin" && !comment.member_read_at);
     if (statusFilter === "missingDocument") return !c.pdf_url;
     if (statusFilter === "actionRequired") {
       const latest = c.contract_comments.at(-1);
-      return !hasWorkLink(c) || !c.pdf_url || c.status === "kladde" || Boolean(latest?.author_role === "admin" && !latest.member_read_at);
+      return !hasLinkedWork(c.work_id) || !c.pdf_url || c.status === "kladde" || Boolean(latest?.author_role === "admin" && !latest.member_read_at);
     }
     return c.status === statusFilter;
   }).sort((a, b) => {
@@ -335,7 +333,7 @@ export default function MineKontrakterClient({
       const val = getValidation(contract);
       return Number(Boolean(val?.has_overenskomst_incorporation)) + Number(Boolean(val?.has_credit_clause));
     };
-    const statusValue = (contract: Contract) => !hasWorkLink(contract) ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
+    const statusValue = (contract: Contract) => !hasLinkedWork(contract.work_id) ? "Mangler værk" : STATUS_MAP[contract.status]?.label ?? contract.status;
     const values: Record<SortKey, [SortValue, SortValue]> = {
       title: [contractDisplayTitle(a), contractDisplayTitle(b)],
       employer: [a.employers?.name ?? "", b.employers?.name ?? ""],
@@ -444,6 +442,15 @@ export default function MineKontrakterClient({
     setViewUrl(res.url ?? null);
     setViewLoading(false);
   }
+
+  useEffect(() => {
+    const contractId = searchParams?.get("contract");
+    if (!contractId || selectedContract?.id === contractId) return;
+    const contract = contracts.find(item => item.id === contractId);
+    if (contract) void openContract(contract);
+    // openContract intentionally reads the current contract state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contracts, searchParams, selectedContract?.id]);
 
   async function markCommentsRead(contract: Contract) {
     const hasUnread = (contract.contract_comments ?? []).some(
@@ -829,7 +836,7 @@ export default function MineKontrakterClient({
                 ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
               </div>
               <div className="space-y-1">
-                {shouldShowWorkLinkBadge(Boolean(c.works), c.status) && <WorkLinkBadge linked={hasWorkLink(c)} />}
+                {shouldShowWorkLinkBadge(hasLinkedWork(c.work_id), c.status) && <WorkLinkBadge linked={hasLinkedWork(c.work_id)} />}
                 {c.works && <StatusBadge status={c.status} />}
                 {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
               </div>
@@ -852,6 +859,7 @@ export default function MineKontrakterClient({
               const linkedWork = linkedWorkId ? myWorks.find(w => w.id === linkedWorkId) ?? null : null;
               return {
                 id: saved.id,
+                work_id: linkedWorkId,
                 type: saved.type,
                 overenskomst: null,
                 status: saved.status,
@@ -924,7 +932,7 @@ export default function MineKontrakterClient({
               )}
 
               <StatusBadge status={selectedContract.status} />
-              {shouldShowWorkLinkBadge(Boolean(selectedContract.works), selectedContract.status) && <WorkLinkBadge linked={hasWorkLink(selectedContract)} />}
+              {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
               {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
 
               {/* Metadata-rækker */}
@@ -1108,6 +1116,7 @@ export default function MineKontrakterClient({
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-medium text-muted-foreground">Allonger</p>
                   <button
+                    type="button"
                     onClick={() => setIsAddingAllonge(true)}
                     className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-md border hover:bg-muted"
                   >
@@ -1119,11 +1128,12 @@ export default function MineKontrakterClient({
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {(selectedContract.contract_attachments ?? []).map(a => (
+                      <div key={a.id} className="rounded-md border bg-muted/40 p-2">
                       <button
-                        key={a.id}
                         onClick={() => openAttachment(a)}
+                        type="button"
                         disabled={openingAttachmentId === a.id}
-                        className="flex items-center justify-between text-left text-sm px-3 py-2 rounded-md border bg-muted/40 hover:bg-muted transition-colors"
+                        className="flex w-full items-center justify-between rounded px-1 text-left text-sm hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                       >
                         <span className="flex items-center gap-1.5 min-w-0">
                           <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -1132,9 +1142,12 @@ export default function MineKontrakterClient({
                         <span className="text-xs text-muted-foreground shrink-0 ml-2">
                           {openingAttachmentId === a.id
                             ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : a.created_at.substring(0, 10)}
+                            : a.ai_status === "klar" ? "AI-læst" : a.ai_status === "fejl" ? "AI-fejl" : "Analyserer"}
                         </span>
                       </button>
+                      <p className="mt-1 px-1 text-xs text-muted-foreground">AI-læst, men ikke medregnet i rettighedsbetaling eller statistik.</p>
+                      {a.ai_status === "fejl" && <button type="button" className="mt-1 px-1 text-xs font-medium text-primary underline focus-visible:ring-2 focus-visible:ring-ring" onClick={async () => { const result = await retryMemberAttachmentAnalysis(a.id); result.success ? toast.success("Analysen er sat i gang igen") : toast.error(result.error); }}>Prøv igen</button>}
+                      </div>
                     ))}
                   </div>
                 )}

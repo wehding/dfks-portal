@@ -10,7 +10,7 @@ import { MessageThread, type MessageThreadMessage } from "@/components/messages/
 import { Modal } from "./Modal";
 import { submitWorkDataCorrection } from "@/app/actions/work-management";
 import { useI18n } from "@/lib/i18n";
-import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { fetchMemberSeriesEpisodeOptions, resolveUnifiedSearchResultDetails, searchRightsHoldersForMember, searchWorksUnified, syncMemberEpisodeAssignments, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions, inferSeriesWorkFields, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
@@ -119,6 +119,9 @@ interface EditWorkModalProps {
   allAssignments: Assignment[];
   onWorkUpdated: (message: string, success: boolean, updatedRole?: string, targetId?: string) => void;
   locale: string;
+  editScope?: "work" | "season" | "episode";
+  seasonWorkIds?: string[];
+  initialEpisodeOptions?: SeriesEpisodeOption[];
 }
 
 function emptyCoEditor(): CoEditorDraft {
@@ -220,6 +223,9 @@ export function EditWorkModal({
   allAssignments,
   onWorkUpdated,
   locale,
+  editScope = "work",
+  seasonWorkIds = [],
+  initialEpisodeOptions = [],
 }: EditWorkModalProps) {
   const { t } = useI18n();
 
@@ -252,10 +258,10 @@ export function EditWorkModal({
       const season = assignment.works?.season_number ?? 1;
       setSelectedEpisodes(Object.fromEntries((allAssignments ?? []).filter(other => {
         const work = other.works;
-        return work && (work.parent_work_id ?? work.id) === seriesKey && (work.season_number ?? 1) === season && work.episode_number;
+        return other.rights_holder_id === assignment.rights_holder_id && work && (work.parent_work_id ?? work.id) === seriesKey && (work.season_number ?? 1) === season && work.episode_number;
       }).map(other => [other.works!.episode_number!, true])));
       setCoEditorSuggestions({});
-      setDirectEpisodeOptions([]);
+      setDirectEpisodeOptions(initialEpisodeOptions);
       const inferredSeries = inferSeriesWorkFields({
         title: assignment.works?.title,
         seasonCount: assignment.works?.season_count,
@@ -264,9 +270,13 @@ export function EditWorkModal({
         episodeCount: assignment.works?.episode_count,
       });
       setDirectEpisodeSeason(inferredSeries.seasonNumber ?? 1);
+      const coEditorRows = (allAssignments ?? [])
+          .filter(other => other.rights_holder_id !== assignment.rights_holder_id && (
+            editScope === "season" ? seasonWorkIds.includes(other.work_id ?? "") : other.work_id === assignment.works?.id
+          ));
+      const uniqueCoEditors = [...new Map(coEditorRows.map(other => [`${other.rights_holder_id ?? other.rettighedshavere?.id}:${displayRole(other.role)}`, other])).values()];
       setEditCoEditors(
-        (allAssignments ?? [])
-          .filter(other => other.work_id === assignment.works?.id)
+        uniqueCoEditors
           .map(other => ({
             id: other.id,
             name: other.rettighedshavere?.full_name ?? "Ukendt medklipper",
@@ -277,13 +287,13 @@ export function EditWorkModal({
           }))
       );
     }
-  }, [isOpen, assignment, allAssignments]);
+  }, [isOpen, assignment, allAssignments, editScope, initialEpisodeOptions, seasonWorkIds]);
 
   useEffect(() => {
     const loadSeriesEpisodes = async () => {
       const work = assignment.works;
       const rightsHolderId = assignment.rights_holder_id;
-      if (!isOpen || !work || !rightsHolderId || !isSeriesType(work.type ?? "")) return;
+      if (!isOpen || !work || !rightsHolderId || editScope !== "work" || !isSeriesType(work.type ?? "")) return;
       setDirectEpisodesLoading(true);
       try {
         const result = await fetchMemberSeriesEpisodeOptions({ rightsHolderId, workId: work.id });
@@ -314,7 +324,7 @@ export function EditWorkModal({
       }
     };
     void loadSeriesEpisodes();
-  }, [assignment.rights_holder_id, assignment.works, isOpen]);
+  }, [assignment.rights_holder_id, assignment.works, editScope, isOpen]);
 
   const searchCoEditors = async (editorId: string, query: string) => {
     const q = query.trim();
@@ -383,44 +393,60 @@ export function EditWorkModal({
 
   const handleSendWorkCorrection = async () => {
     if (!assignment.works || !workCorrection) return;
-    if (!workCorrectionComment.trim()) { setCommentError(true); return; }
-    setIsSendingCorrection(true);
-
     const myEpisodes = Object.entries(selectedEpisodes)
       .filter(([, checked]) => checked)
       .map(([num]) => parseInt(num, 10))
       .sort((a, b) => a - b);
+    const initialCorrection = workToCorrectionForm(assignment.works);
+    const hasWorkDataChanges = JSON.stringify(workCorrection) !== JSON.stringify(initialCorrection);
+    const hasCoEditorChanges = editCoEditors.some(editor => !editor.locked || editor.action === "remove" || editor.action === "change");
+    const roleChanged = editRole !== displayRole(assignment.role);
+    const hasAdminCorrection = hasWorkDataChanges || hasCoEditorChanges || (editScope !== "season" && roleChanged);
+    if (hasAdminCorrection && !workCorrectionComment.trim()) { setCommentError(true); return; }
+    setIsSendingCorrection(true);
 
     try {
-      const res = await submitWorkDataCorrection({
-        assignmentId: assignment.id,
-        workId: assignment.works.id,
-        data: {
-          title: workCorrection.title,
-          type: workCorrection.type,
-          year: numberOrNull(workCorrection.year),
-          duration_minutes: numberOrNull(workCorrection.duration_minutes),
-          season_count: numberOrNull(workCorrection.season_count),
-          season_number: numberOrNull(workCorrection.season_number),
-          episode_number: numberOrNull(workCorrection.episode_number),
-          episode_count: numberOrNull(workCorrection.episode_count),
-          genre: workCorrection.genre || null,
-          director: workCorrection.director || null,
-          description: workCorrection.description || null,
-          dfi_id: workCorrection.dfi_id || null,
-          tmdb_id: numberOrNull(workCorrection.tmdb_id),
-          imdb_id: workCorrection.imdb_id || null,
-          field_sources: workCorrection.field_sources,
-        },
-        comment: workCorrectionComment,
-        coEditors: editCoEditors.filter(
-          editor => !editor.locked || editor.action === "remove" || editor.action === "change"
-        ),
-        myEpisodes,
-        memberRole: editRole,
-      });
-      if (!res.success) throw new Error(t("works.createFailed"));
-      onWorkUpdated(t("works.correctionSent"), true);
+      if (editScope === "season" && assignment.rights_holder_id) {
+        const syncResult = await syncMemberEpisodeAssignments({
+          rightsHolderId: assignment.rights_holder_id,
+          workId: assignment.works.id,
+          role: editRole,
+          selectedEpisodes: myEpisodes,
+          seasonNumber: directEpisodeSeason,
+        });
+        if (!syncResult.success) throw new Error(syncResult.error ?? "Afsnitstilknytningerne kunne ikke gemmes.");
+      }
+      if (hasAdminCorrection) {
+        const res = await submitWorkDataCorrection({
+          assignmentId: assignment.id,
+          workId: assignment.works.id,
+          editScope,
+          seasonNumber: editScope === "season" ? directEpisodeSeason : undefined,
+          data: {
+            title: workCorrection.title,
+            type: workCorrection.type,
+            year: numberOrNull(workCorrection.year),
+            duration_minutes: numberOrNull(workCorrection.duration_minutes),
+            season_count: numberOrNull(workCorrection.season_count),
+            season_number: editScope === "episode" ? numberOrNull(workCorrection.season_number) : null,
+            episode_number: editScope === "episode" ? numberOrNull(workCorrection.episode_number) : null,
+            episode_count: numberOrNull(workCorrection.episode_count),
+            genre: workCorrection.genre || null,
+            director: workCorrection.director || null,
+            description: workCorrection.description || null,
+            dfi_id: workCorrection.dfi_id || null,
+            tmdb_id: numberOrNull(workCorrection.tmdb_id),
+            imdb_id: workCorrection.imdb_id || null,
+            field_sources: workCorrection.field_sources,
+          },
+          comment: workCorrectionComment,
+          coEditors: editCoEditors.filter(editor => !editor.locked || editor.action === "remove" || editor.action === "change"),
+          myEpisodes: editScope === "season" ? myEpisodes : [],
+          memberRole: editRole,
+        });
+        if (!res.success) throw new Error(t("works.createFailed"));
+      }
+      onWorkUpdated(hasAdminCorrection ? t("works.correctionSent") : "Sæsonens afsnit er gemt.", true, editScope === "season" ? editRole : undefined, assignment.id);
     } catch (err: unknown) {
       onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
     } finally {
@@ -493,7 +519,7 @@ export function EditWorkModal({
         </select>
       </div>
 
-      {directSeriesEpisodeCount > 0 && (
+      {editScope === "season" && directSeriesEpisodeCount > 0 && (
         <div className="mb-6 rounded-lg border p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -737,7 +763,7 @@ export function EditWorkModal({
                   inputMode="numeric"
                 />
               </div>
-              {isSeriesType(workCorrection.type) && (
+              {isSeriesType(workCorrection.type) && editScope === "episode" && (
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-muted-foreground">Sæson</Label>
                   <Input
@@ -750,7 +776,7 @@ export function EditWorkModal({
                   />
                 </div>
               )}
-              {isSeriesType(workCorrection.type) && (
+              {isSeriesType(workCorrection.type) && editScope === "episode" && (
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium text-muted-foreground">Afsnit</Label>
                   <Input
@@ -779,27 +805,6 @@ export function EditWorkModal({
                     inputMode="numeric"
                   />
                 </div>
-              )}
-              {isSeriesType(workCorrection.type) && (
-                (() => {
-                  const epCount = parseInt(workCorrection.episode_count || "0", 10) || 0;
-                  if (epCount <= 0) return null;
-                  return (
-                    <div className="col-span-1 sm:col-span-2 space-y-2 rounded-lg border bg-muted/30 p-4">
-                      <SeriesEpisodeSelector
-                        season={directEpisodeSeason}
-                        onSeasonChange={() => undefined}
-                        options={directEpisodeOptions.length ? directEpisodeOptions : buildCompleteEpisodeOptions({ episodeCount: epCount })}
-                        selected={directSelectedEpisodeNumbers}
-                        onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
-                        label="Vælg afsnit du har klippet"
-                        loading={directEpisodesLoading}
-                        showSeason={false}
-                        compact
-                      />
-                    </div>
-                  );
-                })()
               )}
             </div>
             <div className="space-y-1.5">

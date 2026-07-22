@@ -99,9 +99,33 @@ export function inviteEmailHtml(params: {
   <p style="margin: 24px 0;">
     <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Opret min adgang</a>
   </p>
-  <p style="font-size: 13px; color: #6b7280;">Linket er gyldigt i 24 timer. Virker knappen ikke, kan du kopiere denne adresse ind i din browser:<br>
+  <p style="font-size: 13px; color: #6b7280;">Linket er tidsbegrænset og kan kun bruges én gang. Virker knappen ikke, kan du kopiere denne adresse ind i din browser:<br>
     <span style="word-break: break-all;">${safeInviteUrl}</span>
   </p>
+</div>`.trim()
+}
+
+export function memberNotificationEmailHtml(params: {
+    recipientName: string
+    orgName: string
+    subject: string
+    bodyText: string
+    link: string
+    primaryColor?: string
+}): string {
+    const color = safeColor(params.primaryColor)
+    const safeName = escapeHtml(params.recipientName?.trim() || "der")
+    const safeOrgName = escapeHtml(params.orgName)
+    const safeSubject = escapeHtml(params.subject)
+    const safeLink = escapeHtml(params.link)
+    const bodyHtml = escapeHtml(params.bodyText).replace(/\n/g, "<br>")
+    return `
+<div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 520px; margin: 0 auto; color: #111827;">
+  <h2 style="color: ${color}; font-size: 20px;">${safeSubject}</h2>
+  <p>Hej ${safeName},</p>
+  <p>${bodyHtml}</p>
+  <p style="margin: 24px 0;"><a href="${safeLink}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Åbn ${safeOrgName}s portal</a></p>
+  <p style="font-size: 13px; color: #6b7280;">Virker knappen ikke, kan du kopiere adressen:<br><span style="word-break: break-all;">${safeLink}</span></p>
 </div>`.trim()
 }
 

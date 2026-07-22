@@ -10,6 +10,8 @@ import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
+import { toast } from "sonner";
+import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -56,6 +58,7 @@ export default function OnboardingClient({
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<OnboardingField, string>>>({});
 
   // DFI & TMDB-tilstand
   const [dfiPersonId, setDfiPersonId] = useState<number | null>(null);
@@ -90,7 +93,7 @@ export default function OnboardingClient({
   const [formData, setFormData] = useState({
     first_name: nameParts[0] || "",
     last_name: nameParts.slice(1).join(" ") || "",
-    email: rh?.email || user?.email || "",
+    email: user?.email || rh?.email || "",
     phone: rh?.phone || "",
     address: parsedInitialAddress.street,
     zip: parsedInitialAddress.postalCode,
@@ -100,8 +103,18 @@ export default function OnboardingClient({
     gender: rh?.gender || "prefer_not_to_say",
   });
 
-  const handleField = (field: string, value: string) =>
+  const handleField = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    if (field === "phone" || field === "cpr" || field === "bank_account") {
+      setFieldErrors(current => ({ ...current, [field]: undefined }));
+    }
+  };
+
+  const validateField = (field: OnboardingField, value: string) => {
+    const error = validateOnboardingField(field, value);
+    setFieldErrors(current => ({ ...current, [field]: error ?? undefined }));
+    return !error;
+  };
 
   // Ét samlet "Dit navn"-felt: gem hele navnet, men bevar for-/efternavn i datamodellen
   // ved at splitte ved sidste mellemrum (sidste ord = efternavn, resten = fornavn).
@@ -111,6 +124,7 @@ export default function OnboardingClient({
     const last = parts.length > 1 ? parts.pop()! : "";
     const first = parts.join(" ");
     setFormData((prev) => ({ ...prev, first_name: value.trim() ? first || value.trim() : "", last_name: last }));
+    setFieldErrors(current => ({ ...current, name: undefined }));
   };
 
   const isSeriesCredit = (credit: OnboardingCredit) => {
@@ -164,10 +178,10 @@ export default function OnboardingClient({
 
     const result = await completeOnboarding(payload);
     if (result.success) {
-      router.push("/portal/mine-vaerker");
+      router.push("/portal");
       router.refresh();
     } else {
-      alert(result.error || "Der opstod en fejl. Prøv igen.");
+      toast.error(result.error || "Der opstod en fejl. Prøv igen.");
       setIsSaving(false);
     }
   };
@@ -203,8 +217,14 @@ export default function OnboardingClient({
     if (step === 2) {
       // Krav 1: Validering af navn og e-mail (navnet er nu ét samlet felt)
       const fullName = `${formData.first_name} ${formData.last_name}`.trim();
-      if (!fullName || !formData.email.trim()) {
-        alert("Venligst udfyld dit navn og e-mailadresse for at gå videre.");
+      const valid = [
+        validateField("name", fullName),
+        validateField("email", formData.email),
+        validateField("phone", formData.phone),
+        validateField("cpr", formData.cpr),
+        validateField("bank_account", formData.bank_account),
+      ].every(Boolean);
+      if (!valid) {
         return;
       }
 
@@ -250,7 +270,7 @@ export default function OnboardingClient({
         );
       const missingSeriesEpisodes = approved.some((c) => isSeriesCredit(c) && (!c.selected_episodes || c.selected_episodes.length === 0));
       if (missingSeriesEpisodes) {
-        alert("Vælg mindst ét afsnit for hver serie, du vil importere.");
+        setImportError("Vælg mindst ét afsnit for hver serie, du vil importere.");
         return;
       }
       if (approved.length > 0) {
@@ -326,7 +346,7 @@ export default function OnboardingClient({
           </div>
 
           {approvedCount >= 5 && (
-            <p style={{ fontSize: "13px", color: "#B45309", fontWeight: 600, margin: 0, lineHeight: 1.6 }}>
+            <p style={{ fontSize: "13px", color: "var(--foreground)", fontWeight: 600, margin: 0, lineHeight: 1.6 }}>
               ⚠️ Vær tålmodig. Du har klippet mange film! Dette kan tage lidt tid.
             </p>
           )}
@@ -361,8 +381,8 @@ export default function OnboardingClient({
                   width: "36px", height: "36px", borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: "16px",
-                  backgroundColor: step > s.id ? "#374151" : step === s.id ? "#111827" : "#F3F4F6",
-                  color: step >= s.id ? "#FFFFFF" : "#9CA3AF",
+                  backgroundColor: step > s.id ? "var(--foreground)" : step === s.id ? "var(--foreground)" : "var(--muted)",
+                  color: step >= s.id ? "var(--card)" : "var(--border)",
                   transition: "all 0.3s ease", fontWeight: 700,
                 }}>
                   {step > s.id ? <CheckCircle size={18} color="white" /> : s.icon}
@@ -373,8 +393,8 @@ export default function OnboardingClient({
               </div>
             ))}
           </div>
-          <div style={{ height: "4px", backgroundColor: "#E5E7EB", borderRadius: "2px", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progress}%`, backgroundColor: "#111827", borderRadius: "2px", transition: "width 0.4s ease" }} />
+          <div style={{ height: "4px", backgroundColor: "var(--border)", borderRadius: "2px", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progress}%`, backgroundColor: "var(--foreground)", borderRadius: "2px", transition: "width 0.4s ease" }} />
           </div>
         </div>
 
@@ -439,11 +459,16 @@ export default function OnboardingClient({
                     {t("onboarding.yourName")}
                   </label>
                   <input
+                    className="focus-visible:ring-2 focus-visible:ring-ring"
                     value={fullNameValue}
                     onChange={(e) => handleFullName(e.target.value)}
+                    onBlur={() => validateField("name", fullNameValue)}
                     placeholder={t("onboarding.fullNamePlaceholder")}
-                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                    aria-invalid={Boolean(fieldErrors.name)}
+                    aria-describedby={fieldErrors.name ? "onboarding-name-error" : undefined}
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors.name ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)" }}
                   />
+                  {fieldErrors.name && <p id="onboarding-name-error" role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors.name}</p>}
                 </div>
                 <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
                   {t("onboarding.nameHint")}
@@ -459,11 +484,17 @@ export default function OnboardingClient({
                       {f.label}
                     </label>
                     <input
+                      className="focus-visible:ring-2 focus-visible:ring-ring"
                       value={formData[f.key]}
                       onChange={(e) => handleField(f.key, e.target.value)}
+                      onBlur={() => f.key === "phone" && validateField("phone", formData.phone)}
+                      inputMode={f.key === "phone" || f.key === "zip" ? "numeric" : undefined}
                       placeholder={f.placeholder}
-                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                      aria-invalid={f.key === "phone" ? Boolean(fieldErrors.phone) : undefined}
+                      aria-describedby={f.key === "phone" && fieldErrors.phone ? "onboarding-phone-error" : undefined}
+                      style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${f.key === "phone" && fieldErrors.phone ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)" }}
                     />
+                    {f.key === "phone" && fieldErrors.phone && <p id="onboarding-phone-error" role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors.phone}</p>}
                   </div>
                 ))}
                 <div style={{ gridColumn: "1 / -1" }}>
@@ -471,15 +502,22 @@ export default function OnboardingClient({
                     {t("profile.email")}
                   </label>
                   <input
+                    className="focus-visible:ring-2 focus-visible:ring-ring"
                     value={formData.email}
-                    onChange={(e) => handleField("email", e.target.value)}
+                    readOnly
+                    aria-readonly="true"
+                    type="email"
+                    onBlur={() => validateField("email", formData.email)}
                     placeholder="din.email@eksempel.dk"
-                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", color: "var(--on-surface)" }}
+                    aria-invalid={Boolean(fieldErrors.email)}
+                    aria-describedby={fieldErrors.email ? "onboarding-email-error" : undefined}
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors.email ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)", background: "var(--muted)" }}
                   />
+                  {fieldErrors.email && <p id="onboarding-email-error" role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors.email}</p>}
                 </div>
               </div>
 
-              <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "#F9FAFB", borderRadius: "8px", border: "1px solid #E5E7EB" }}>
+              <div style={{ marginTop: "24px", padding: "16px", backgroundColor: "var(--muted)", borderRadius: "8px", border: "1px solid var(--border)" }}>
                 <div style={{ fontWeight: 600, fontSize: "14px", marginBottom: "8px", color: "var(--on-surface)" }}>{t("onboarding.bankInfo")}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                   {([
@@ -491,18 +529,24 @@ export default function OnboardingClient({
                         {f.label}
                       </label>
                       <input
+                        className="focus-visible:ring-2 focus-visible:ring-ring"
                         value={formData[f.key]}
                         onChange={(e) => handleField(f.key, e.target.value)}
+                        onBlur={() => validateField(f.key === "cpr" ? "cpr" : "bank_account", formData[f.key])}
+                        inputMode="numeric"
                         placeholder={f.placeholder}
-                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", outline: "none", backgroundColor: "#F9FAFB", color: "var(--on-surface)" }}
+                        aria-invalid={Boolean(fieldErrors[f.key === "cpr" ? "cpr" : "bank_account"])}
+                        aria-describedby={fieldErrors[f.key === "cpr" ? "cpr" : "bank_account"] ? `onboarding-${f.key}-error` : undefined}
+                        style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors[f.key === "cpr" ? "cpr" : "bank_account"] ? "var(--destructive)" : "var(--input)"}`, outline: "none", backgroundColor: "var(--muted)", color: "var(--on-surface)" }}
                       />
+                      {fieldErrors[f.key === "cpr" ? "cpr" : "bank_account"] && <p id={`onboarding-${f.key}-error`} role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors[f.key === "cpr" ? "cpr" : "bank_account"]}</p>}
                     </div>
                   ))}
                 </div>
 
-                <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: "6px" }}>
+                <div style={{ marginTop: "16px", display: "flex", gap: "10px", padding: "12px 14px", backgroundColor: "var(--muted)", border: "1px solid var(--border)", borderRadius: "6px" }}>
                   <span style={{ fontSize: "16px" }}>🔒</span>
-                  <p style={{ fontSize: "12px", color: "#065F46", margin: 0, lineHeight: 1.5 }}>
+                  <p style={{ fontSize: "12px", color: "var(--foreground)", margin: 0, lineHeight: 1.5 }}>
                     <strong>{t("onboarding.securityTitle")}</strong> {t("onboarding.securityText")}
                   </p>
                 </div>
@@ -519,13 +563,13 @@ export default function OnboardingClient({
                   {t("onboarding.chooseProfilesIntro")}
                 </p>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#F9FAFB" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", padding: "14px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--muted)" }}>
                 <p style={{ margin: 0, fontSize: "12px", lineHeight: 1.5, color: "var(--on-surface-variant)" }}>
                   {t("onboarding.searchCreditName")}
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                   <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--on-surface-variant)" }}>{t("onboarding.nameFromInfo")}</span>
-                  <div style={{ padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", color: "#111827", fontWeight: 600 }}>
+                  <div style={{ padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", background: "var(--card)", color: "var(--foreground)", fontWeight: 600 }}>
                     {dfiSearchQuery || fullNameValue || t("onboarding.missingName")}
                   </div>
                 </div>
@@ -537,7 +581,7 @@ export default function OnboardingClient({
                         type="button"
                         onClick={() => setAlternativeNames(current => current.filter(item => item !== name))}
                         title={t("onboarding.removeNameVariant")}
-                        style={{ border: "1px solid #D1D5DB", borderRadius: "999px", padding: "5px 9px", background: "#FFFFFF", fontSize: "12px", cursor: "pointer", color: "#111827" }}
+                        style={{ border: "1px solid var(--input)", borderRadius: "999px", padding: "5px 9px", background: "var(--card)", fontSize: "12px", cursor: "pointer", color: "var(--foreground)" }}
                       >
                         {name} ×
                       </button>
@@ -550,13 +594,13 @@ export default function OnboardingClient({
                     onChange={event => setNewAlternativeName(event.target.value)}
                     onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void addAlternativeName(); } }}
                     placeholder={t("onboarding.addNameVariant")}
-                    style={{ flex: "1 1 220px", minWidth: 0, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid #D1D5DB", color: "#111827" }}
+                    style={{ flex: "1 1 220px", minWidth: 0, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--input)", color: "var(--foreground)" }}
                   />
-                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #D1D5DB", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}>{t("onboarding.addVariant")}</button>
+                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--input)", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}>{t("onboarding.addVariant")}</button>
                 </div>
               </div>
               {isOrganisationMember && portraitOptions.length > 0 && (
-                <div style={{ padding: "14px", border: "1px solid #E5E7EB", borderRadius: "8px", background: "#FFFFFF", display: "flex", flexDirection: "column", gap: "10px" }}>
+                <div style={{ padding: "14px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--card)", display: "flex", flexDirection: "column", gap: "10px" }}>
                   <div>
                     <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--on-surface)" }}>{t("onboarding.choosePortrait")}</div>
                     <p style={{ fontSize: "12px", color: "var(--on-surface-variant)", lineHeight: 1.5, margin: "4px 0 0" }}>{t("profile.portraitText")}</p>
@@ -567,7 +611,7 @@ export default function OnboardingClient({
                         key={url}
                         type="button"
                         onClick={() => setSelectedPortraitUrl(url)}
-                        style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid #111827" : "1px solid #D1D5DB", borderRadius: "8px", padding: "6px 8px", background: "#FFFFFF", cursor: "pointer", color: "#111827" }}
+                        style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid var(--foreground)" : "1px solid var(--input)", borderRadius: "8px", padding: "6px 8px", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}
                       >
                         <img src={url} alt="" style={{ width: "36px", height: "44px", borderRadius: "6px", objectFit: "cover" }} />
                         <span style={{ fontSize: "12px", fontWeight: 600 }}>{candidate.source.toUpperCase()}</span>
@@ -588,8 +632,8 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Bekræft de titler, du har medvirket til at skabe.
               </p>
-              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1E3A8A", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de serier, hvor du har en kontrakt med streaming- eller Copydan-forbehold indskrevet. Åbn “Vælg afsnit” under serien, og markér de afsnit, kontrakten gælder.</div>
-              {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid #FCA5A5", background: "#FEF2F2", color: "#991B1B", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>For tv-serier og dokumentarserier skal du vælge de serier, hvor du har en kontrakt med streaming- eller Copydan-forbehold indskrevet. Åbn “Vælg afsnit” under serien, og markér de afsnit, kontrakten gælder.</div>
+              {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--destructive)", background: "var(--muted)", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", padding: "40px 0" }}>
@@ -612,14 +656,14 @@ export default function OnboardingClient({
                         dfiCredits.forEach((c) => { next[c.id] = !allSelected; });
                         setSelectedDfiCredits(next);
                       }}
-                      style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: "pointer" }}
+                      style={{ padding: "4px 10px", fontSize: "12px", borderRadius: "4px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: "pointer" }}
                     >
                       {Object.values(selectedDfiCredits).every((v) => v) ? "Fravælg alle" : "Vælg alle"}
                     </button>
                   </div>
                   <div style={{
                     maxHeight: "350px", overflowY: "auto",
-                    border: "2px solid #9CA3AF",
+                    border: "2px solid var(--border)",
                     borderRadius: "8px",
                     backgroundColor: "var(--surface-container-low)",
                     display: "flex", flexDirection: "column",
@@ -632,7 +676,7 @@ export default function OnboardingClient({
                       return (
                         <div key={`${c.id}-${i}`} style={{
                           padding: "14px 16px",
-                          borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid #D1D5DB",
+                          borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid var(--input)",
                           backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                           transition: "background-color 0.2s ease",
                         }}>
@@ -658,11 +702,11 @@ export default function OnboardingClient({
                             </div>
                           </label>
                           {isSeries && selectedDfiCredits[c.id] && (
-                            <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid #D1D5DB", borderRadius: "6px", backgroundColor: "#FFFFFF" }}>
+                            <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid var(--input)", borderRadius: "6px", backgroundColor: "var(--card)" }}>
                               <button
                                 type="button"
                                 onClick={() => { const opening = !expandedSeries[c.id]; setExpandedSeries(prev => ({ ...prev, [c.id]: opening })); if (opening && !(episodeOptions[c.id]?.length)) void loadEpisodes(c); }}
-                                style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "#111827" }}
+                                style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "var(--foreground)" }}
                               >
                                 {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
                               </button>
@@ -778,7 +822,7 @@ export default function OnboardingClient({
                       <select
                         value={formData.gender}
                         onChange={(e) => handleField("gender", e.target.value)}
-                        style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)", outline: "none" }}
+                        style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)", outline: "none" }}
                       >
                         <option value="prefer_not_to_say">Vil ikke oplyse</option>
                         <option value="female">Kvinde</option>
@@ -837,7 +881,7 @@ export default function OnboardingClient({
             <button
               onClick={() => setStep((s) => Math.max(1, s - 1))}
               disabled={step === 1}
-              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid #D1D5DB", backgroundColor: "transparent", color: "#374151", cursor: step === 1 ? "default" : "pointer", opacity: step === 1 ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
+              style={{ padding: "10px 20px", fontSize: "14px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "transparent", color: "var(--foreground)", cursor: step === 1 ? "default" : "pointer", opacity: step === 1 ? 0.3 : 1, display: "flex", alignItems: "center", gap: "6px" }}
             >
               <ArrowLeft size={16} /> Tilbage
             </button>
@@ -846,7 +890,7 @@ export default function OnboardingClient({
               <button
                 onClick={handleNextStep}
                 disabled={isSearchingDfi || isImportingDfi}
-                style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
+                style={{ padding: "10px 24px", fontSize: "14px", borderRadius: "6px", border: "none", backgroundColor: "var(--foreground)", color: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSearchingDfi || isImportingDfi ? 0.6 : 1 }}
               >
                 Fortsæt <ArrowRight size={16} />
               </button>
@@ -854,7 +898,7 @@ export default function OnboardingClient({
               <button
                 onClick={handleComplete}
                 disabled={isSaving}
-                style={{ padding: "12px 28px", fontSize: "15px", borderRadius: "6px", border: "none", backgroundColor: "#111827", color: "#FFFFFF", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSaving ? 0.6 : 1 }}
+                style={{ padding: "12px 28px", fontSize: "15px", borderRadius: "6px", border: "none", backgroundColor: "var(--foreground)", color: "var(--card)", cursor: "pointer", display: "flex", alignItems: "center", gap: "8px", opacity: isSaving ? 0.6 : 1 }}
               >
                 {isSaving ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle size={16} />}
                 {isSaving ? "Gemmer..." : "Kom i gang!"}

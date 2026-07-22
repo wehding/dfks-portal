@@ -20,6 +20,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
+import { buildAccountAccessUrl } from "@/lib/auth/account-access"
 
 function getAdmin() {
     const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -128,9 +129,7 @@ export async function POST(req: NextRequest) {
             }
 
             const userRole = isStaff ? (inviteRole ?? "admin") : "member"
-            const redirectTo = isStaff
-                ? `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/admin`
-                : `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`
+            const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
 
             const orgId = caller.orgId
             if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
@@ -155,7 +154,6 @@ export async function POST(req: NextRequest) {
                 ? {
                     type: "recovery" as const,
                     email,
-                    options: { redirectTo },
                 }
                 : {
                     type: "invite" as const,
@@ -168,11 +166,11 @@ export async function POST(req: NextRequest) {
                             ...(phone ? { phone } : {}),
                             ...(title ? { title } : {}),
                         },
-                        redirectTo,
                     },
                 }
             const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink(linkRequest)
             if (linkErr) throw new Error(linkErr.message)
+            if (!linkData.properties?.hashed_token) throw new Error("Invitationslink kunne ikke genereres")
 
             const newUserId = existingAuthUser?.id ?? linkData.user.id
             const rolesToAssign = requestedRoles as string[]
@@ -194,7 +192,11 @@ export async function POST(req: NextRequest) {
             // Send invitationsmail fra foreningens arbejdsmail (branding-styret afsender)
             const orgForMail = org as { name?: string | null; from_email?: string | null; branding?: Record<string, unknown> | null } | null
             const brand = resolveBranding(orgForMail as never)
-            const inviteUrl = linkData.properties.action_link
+            const inviteUrl = buildAccountAccessUrl(
+                siteUrl,
+                linkData.properties.hashed_token,
+                existingAuthUser ? "recovery" : "invite",
+            )
             const mail = await sendEmail({
                 to: email,
                 from: resolveFromEmail(orgForMail as never),
@@ -251,15 +253,19 @@ export async function POST(req: NextRequest) {
             const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
                 type: "recovery",
                 email,
-                options: {
-                    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/portal/mine-kontrakter`,
-                },
             })
             if (linkErr) throw new Error(linkErr.message)
+            if (!linkData.properties?.hashed_token) throw new Error("Nulstillingslink kunne ikke genereres")
+
+            const resetUrl = buildAccountAccessUrl(
+                process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+                linkData.properties.hashed_token,
+                "recovery"
+            )
 
             return NextResponse.json({
                 ok: true,
-                reset_url: linkData.properties.action_link,
+                reset_url: resetUrl,
             })
         }
 

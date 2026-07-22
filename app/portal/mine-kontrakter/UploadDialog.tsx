@@ -72,6 +72,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [productionCompany, setProductionCompany] = useState("");
   const [director, setDirector] = useState("");
   const [seriesSeason, setSeriesSeason] = useState("");
+  const [contractSeriesScope, setContractSeriesScope] = useState<"season" | "episodes">("episodes");
   const [saving, setSaving] = useState(false);
   const [uploadStage, setUploadStage] = useState<UploadStage | null>(null);
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
@@ -326,6 +327,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           premiereDate: premiereDate || undefined,
           season: isSeries && seriesSeason ? Number(seriesSeason) : undefined,
           episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
+          coversWholeSeason: isSeries && contractSeriesScope === "season",
           deferAiJob: !isBatchUpload && Boolean(manualMode || pickedUnifiedResult),
         });
 
@@ -357,6 +359,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         comment: "",
         contractId: contract.id,
         forceCreateDuplicate: forceDuplicate,
+        contractScope: isManualSeries(manualWork) ? {
+          seasonNumber: Number(manualWork.season_number) || 1,
+          episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodeNumbers(),
+        } : null,
         workData: {
           title: manualWork.title.trim(),
           type: manualWork.type,
@@ -401,9 +407,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       });
       if (!linked.success) return { success: false as const, error: linked.error ?? "Kunne ikke vælge værket." };
       const workIdToLink = linked.workId ?? pickedUnifiedResult.local_id;
-      const contractLink = await linkContractToWork(contract.id, workIdToLink);
+      const contractWorkId = linked.parentWorkId ?? workIdToLink;
+      const contractLink = await linkContractToWork(contract.id, contractWorkId, linked.parentWorkId ? {
+        seasonNumber,
+        episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodes,
+      } : undefined);
       if (!contractLink.success) return { success: false as const, error: contractLink.error ?? "Kontrakten kunne ikke tilknyttes værket." };
-      return { success: true as const, workId: workIdToLink, pending: Boolean(linked.pending) };
+      return { success: true as const, workId: contractWorkId, pending: Boolean(linked.pending) };
     }
 
     const detailsResult = await resolveUnifiedSearchResultDetails(pickedUnifiedResult);
@@ -530,6 +540,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         contractId: manualLinkRetry.contract.id,
         reuseWorkId: manualLinkRetry.workId,
         reusePending: manualLinkRetry.pending,
+        contractScope: isManualSeries(manualWork) ? {
+          seasonNumber: Number(manualWork.season_number) || 1,
+          episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodeNumbers(),
+        } : null,
         workData: {
           title: manualWork.title,
           type: manualWork.type,
@@ -934,6 +948,17 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     >
                       <Plus className="h-3 w-3" /> Tilføj afsnit
                     </button>
+                  </div>
+                  <div className="rounded-md border bg-muted/20 p-3">
+                    <Label className="text-sm font-medium text-foreground">Kontraktens omfang</Label>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <button type="button" onClick={() => setContractSeriesScope("season")} className={`rounded-md border px-3 py-2 text-left text-sm ${contractSeriesScope === "season" ? "border-foreground bg-background" : "text-muted-foreground"}`}>
+                        Hele sæsonen
+                      </button>
+                      <button type="button" onClick={() => setContractSeriesScope("episodes")} className={`rounded-md border px-3 py-2 text-left text-sm ${contractSeriesScope === "episodes" ? "border-foreground bg-background" : "text-muted-foreground"}`}>
+                        Kun de angivne afsnit
+                      </button>
+                    </div>
                   </div>
                   {episodeCredits.map((ec, idx) => (
                     <div key={idx} className="grid gap-1.5 mb-1.5 items-center" style={{ gridTemplateColumns: "52px 1fr 32px" }}>
