@@ -264,24 +264,38 @@ export async function queueUploadedContractAiJob(contractId: string) {
 }
 
 // Udløs jobkøen med det samme, så auto-kobling af kontrakt→værk ikke venter på
-// det daglige cron-job. Fire-and-forget efter svaret er sendt; cron samler op
-// hvis kaldet fejler eller secret ikke er sat.
+// det daglige cron-job. Kører direkte i baggrunden via after().
 function triggerContractAiJobProcessing() {
-  const secret = process.env.INTERNAL_API_SECRET ?? process.env.CONTRACT_AI_JOB_SECRET ?? process.env.CRON_SECRET;
-  if (!secret) return;
-  const base = process.env.NEXT_PUBLIC_SITE_URL
-    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
   after(async () => {
     try {
-      await fetch(`${base}/api/contracts/jobs/process`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
-        body: JSON.stringify({}),
-      });
-    } catch {
-      // Ignorér — cron-jobbet behandler køen senere.
+      const { processPendingContractJobs } = await import("@/app/api/contracts/jobs/process/route");
+      await processPendingContractJobs();
+    } catch (e) {
+      console.error("[contract-job] Baggrundsaflæsning fejlede:", e);
     }
   });
+}
+
+export async function fetchMemberContractsList() {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind", contracts: [] };
+
+  const db = createServiceClient();
+  const { data: rh } = await db
+    .from("rettighedshavere")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (!rh) return { success: false, error: "Ingen rettighedshaver-profil fundet", contracts: [] };
+
+  const { data, error } = await db
+    .from("contracts")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at)")
+    .eq("rights_holder_id", rh.id)
+    .order("created_at", { ascending: false });
+
+  if (error) return { success: false, error: error.message, contracts: [] };
+  return { success: true, contracts: data ?? [] };
 }
 
 export async function linkContractToWork(
@@ -345,7 +359,7 @@ export async function fetchMemberContractDetail(contractId: string) {
 
   const { data, error } = await db
     .from("contracts")
-    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
+    .select("id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, extracted_data, validated_at), contract_attachments(id, type, title, pdf_url, created_at, ai_status, ai_result), contract_comments(id, author_role, message, created_at, member_read_at, admin_read_at)")
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();

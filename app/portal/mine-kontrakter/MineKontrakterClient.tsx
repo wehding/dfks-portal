@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus } from "lucide-react";
-import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus, HelpCircle, Sparkles, Link as LinkIcon } from "lucide-react";
+import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
@@ -14,6 +14,7 @@ import AddAlongeDialog from "./AddAlongeDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageStatusBadge, MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
@@ -44,6 +45,8 @@ export type Contract = {
   work_id: string | null;
   working_title: string | null;
   created_at: string | null;
+  season_number?: number | null;
+  episode_numbers?: number[] | null;
   works: { id: string; title: string; year: number | null; type: string | null } | null;
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
@@ -81,7 +84,25 @@ function WorkLinkBadge({ linked }: { linked: boolean }) {
 }
 
 function contractDisplayTitle(contract: Contract) {
-  return contract.works?.title ?? contract.working_title ?? "Kontrakt";
+  if (contract.works?.title) return contract.works.title;
+  if (contract.working_title && contract.working_title !== "Kontrakt") return contract.working_title;
+  if (contract.status === "afventer" || !contract.working_title || contract.working_title === "Kontrakt") {
+    return "Afventer aflæsning...";
+  }
+  return "Kontrakt";
+}
+
+function formatContractWorkTitle(contract: Contract) {
+  const base = contractDisplayTitle(contract);
+  if (base === "Afventer aflæsning...") return base;
+  const s = contract.season_number;
+  const eps = contract.episode_numbers;
+  if (!s && (!eps || eps.length === 0)) return base;
+
+  const sStr = s ? `S${String(s).padStart(2, "0")}` : "";
+  const epsStr = eps && eps.length > 0 ? eps.map(n => `E${String(n).padStart(2, "0")}`).join(", ") : "";
+  const tag = [sStr, epsStr].filter(Boolean).join(" ");
+  return `${base} - ${tag}`;
 }
 
 function aiValue(data: Record<string, unknown> | null | undefined, keys: string[]) {
@@ -188,7 +209,7 @@ export default function MineKontrakterClient({
   const [manualWork, setManualWork] = useState<ManualWorkFormValue>(emptyManualWorkForm());
   const [manualWorkMatches, setManualWorkMatches] = useState<ManualWorkMatch[]>([]);
   const [manualLinkRetry, setManualLinkRetry] = useState<{ workId: string; pending: boolean } | null>(null);
-
+  const [manualWorkNote, setManualWorkNote] = useState("");
   // Series fields
   const [addSeason, setAddSeason] = useState("");
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
@@ -196,6 +217,42 @@ export default function MineKontrakterClient({
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
+
+  // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
+  useEffect(() => {
+    const needsReading = contracts.some(c => (!c.working_title || c.working_title === "Kontrakt" || c.status === "afventer") && !c.works);
+    if (!needsReading) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetchMemberContractsList();
+        if (res.success && res.contracts?.length) {
+          setContracts(prev => {
+            const updatedMap = new Map((res.contracts as any[]).map(c => [c.id, c]));
+            return prev.map(old => {
+              const fresh = updatedMap.get(old.id);
+              if (!fresh) return old;
+              const worksRel = Array.isArray(fresh.works) ? fresh.works[0] : fresh.works;
+              const employersRel = Array.isArray(fresh.employers) ? fresh.employers[0] : fresh.employers;
+              return {
+                ...old,
+                ...fresh,
+                works: worksRel ?? old.works ?? null,
+                employers: employersRel ?? old.employers ?? null,
+                working_title: fresh.working_title ?? old.working_title ?? null,
+                status: fresh.status ?? old.status,
+                contract_validations: fresh.contract_validations ?? old.contract_validations,
+              };
+            });
+          });
+        }
+      } catch (e) {
+        console.error("Live polling error:", e);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [contracts]);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
@@ -221,38 +278,59 @@ export default function MineKontrakterClient({
   }, [workSearch]);
 
   useEffect(() => {
-    const updateTmdbEpisodes = async () => {
-      if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
+    const updateSeasonEpisodes = async () => {
+      if (!pickedUnifiedResult || (pickedUnifiedResult.type !== "tv-serie" && pickedUnifiedResult.type !== "dokumentar-serie")) {
+        return;
+      }
+      setEpisodesLoading(true);
+      try {
+        const sNum = parseInt(addSeason) || 1;
         const tmdbId = pickedUnifiedResult.tmdb_id;
+
         if (tmdbId) {
-          setEpisodesLoading(true);
-          try {
-            const sNum = parseInt(addSeason) || 1;
-            const season = await getTMDBSeasonEpisodes(tmdbId, sNum);
-            const seasonOptions = (season.success ? season.episodes ?? [] : [])
-              .map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` }))
-              .filter(option => Number.isFinite(option.number) && option.number > 0);
-            if (seasonOptions.length) {
-              setDetectedEpisodeCount(seasonOptions.length);
-              setEpisodeOptions(seasonOptions);
-              setSelectedEpisodes(prev => prev.filter(x => seasonOptions.some(option => option.number === x)));
-              setEpisodesError(null);
-            } else {
-              // Sæsonen findes ikke — vis fejl i stedet for stale afsnit fra en anden sæson.
-              setDetectedEpisodeCount(null);
-              setEpisodeOptions([]);
-              setSelectedEpisodes([]);
-              setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
-            }
-          } catch (e) {
-            console.error(e);
-          } finally {
+          const season = await getTMDBSeasonEpisodes(tmdbId, sNum);
+          const seasonOptions = (season.success ? season.episodes ?? [] : [])
+            .map((episode: { episode_number?: number; name?: string }) => ({
+              number: Number(episode.episode_number),
+              title: episode.name || `Afsnit ${episode.episode_number ?? ""}`
+            }))
+            .filter(option => Number.isFinite(option.number) && option.number > 0);
+
+          if (seasonOptions.length > 0) {
+            setDetectedEpisodeCount(seasonOptions.length);
+            setEpisodeOptions(seasonOptions);
+            setSelectedEpisodes(prev => prev.filter(x => seasonOptions.some(option => option.number === x)));
+            setEpisodesError(null);
             setEpisodesLoading(false);
+            return;
           }
         }
+
+        // Fallback to resolveUnifiedSearchResultDetails for DFI/Local series or missing TMDB seasons
+        const detRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
+        if (detRes.success && detRes.details) {
+          const d = detRes.details;
+          const options = d.episode_options || [];
+          const count = Math.max(d.episode_count || 0, options.length);
+          if (count > 0) {
+            setDetectedEpisodeCount(count);
+            setEpisodeOptions(options);
+            setSelectedEpisodes(prev => prev.filter(x => x <= count));
+            setEpisodesError(null);
+          } else {
+            setDetectedEpisodeCount(null);
+            setEpisodeOptions([]);
+            setSelectedEpisodes([]);
+            setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+          }
+        }
+      } catch (e) {
+        console.error("Fejl ved hentning af sæsonafsnit:", e);
+      } finally {
+        setEpisodesLoading(false);
       }
     };
-    updateTmdbEpisodes();
+    updateSeasonEpisodes();
   }, [addSeason, pickedUnifiedResult]);
 
   const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
@@ -260,7 +338,7 @@ export default function MineKontrakterClient({
     setDetectedEpisodeCount(null);
     setSelectedEpisodes([]);
     setEpisodeOptions([]);
-    setAddSeason(result.season_hint ? String(result.season_hint) : "");
+    setAddSeason(result.season_hint ? String(result.season_hint) : result.season_number ? String(result.season_number) : "1");
     setDetailsLoading(true);
 
     try {
@@ -271,22 +349,21 @@ export default function MineKontrakterClient({
           const d = detRes.details;
           const options = d.episode_options || [];
           const count = Math.max(d.episode_count || 0, options.length);
-          const hintedSeason = d.season_hint ?? result.season_hint ?? null;
-          if (hintedSeason) setAddSeason(String(hintedSeason));
+          const hintedSeason = d.season_hint ?? result.season_hint ?? result.season_number ?? 1;
+          setAddSeason(String(hintedSeason));
 
           if (count) {
             setDetectedEpisodeCount(count);
             setEpisodeOptions(buildCompleteEpisodeOptions({
               episodeCount: count,
               externalOptions: options,
-              seasonNumber: Number(hintedSeason ?? result.season_hint ?? 1),
+              seasonNumber: Number(hintedSeason) || 1,
             }));
-            setSelectedEpisodes([]);
           }
         }
       }
     } catch (e) {
-      console.error(e);
+      console.error("Fejl ved hentning af værksdetaljer", e);
     } finally {
       setDetailsLoading(false);
     }
@@ -505,16 +582,21 @@ export default function MineKontrakterClient({
       });
       if (res.success && res.workId) {
         toast.success("Værket er nu tilknyttet kontrakten.");
-        const updatedContract = {
+        const isSeries = pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie";
+        const updatedContract: Contract = {
           ...selectedContract,
+          work_id: res.workId,
+          season_number: isSeries ? activeSeason : null,
+          episode_numbers: isSeries && selectedEpisodes.length ? selectedEpisodes : null,
           works: {
             id: res.workId,
             title: pickedUnifiedResult.title,
-            year: pickedUnifiedResult.year
+            year: pickedUnifiedResult.year,
+            type: pickedUnifiedResult.type,
           }
         };
-        setSelectedContract(updatedContract as Contract);
-        setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract as Contract : c));
+        setSelectedContract(updatedContract);
+        setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract : c));
         setPickedUnifiedResult(null);
         setWorkSearch("");
       } else {
@@ -555,9 +637,20 @@ export default function MineKontrakterClient({
     };
   }
 
-  function applyLinkedWork(work: { id: string; title: string; year: number | null; type: string | null }) {
+  function applyLinkedWork(
+    work: { id: string; title: string; year: number | null; type: string | null },
+    seasonNumber?: number | null,
+    episodeNumbers?: number[] | null
+  ) {
     if (!selectedContract) return;
-    const updatedContract = { ...selectedContract, works: work };
+    const updatedContract = {
+      ...selectedContract,
+      work_id: work.id,
+      works: work,
+      status: "afventer",
+      ...(seasonNumber != null ? { season_number: seasonNumber } : {}),
+      ...(episodeNumbers != null ? { episode_numbers: episodeNumbers } : {}),
+    };
     setSelectedContract(updatedContract);
     setContracts(previous => previous.map(contract => contract.id === selectedContract.id ? updatedContract : contract));
     setPickedUnifiedResult(null);
@@ -574,10 +667,11 @@ export default function MineKontrakterClient({
 
     setLinkingSaving(true);
     try {
+      const note = manualWorkNote.trim();
       const result = await addManualWorkAndLinkContract({
         rightsHolderId,
         role: "Klipper",
-        comment: "",
+        comment: note,
         contractId: selectedContract.id,
         reuseWorkId: manualLinkRetry?.workId,
         reusePending: manualLinkRetry?.pending,
@@ -600,6 +694,19 @@ export default function MineKontrakterClient({
         return;
       }
 
+      if (note && selectedContract) {
+        const commentRes = await addMemberContractComment(selectedContract.id, `[Manuel Værksindtastning]: ${note}`);
+        if (commentRes.success && "comment" in commentRes && commentRes.comment) {
+          const comment = commentRes.comment as ContractComment;
+          const patchComment = (c: Contract): Contract => ({
+            ...c,
+            contract_comments: [...(c.contract_comments ?? []), comment],
+          });
+          setSelectedContract(prev => prev ? patchComment(prev) : prev);
+          setContracts(prev => prev.map(c => c.id === selectedContract.id ? patchComment(c) : c));
+        }
+      }
+
       applyLinkedWork({
         id: result.workId,
         title: manualWork.title.trim(),
@@ -609,6 +716,7 @@ export default function MineKontrakterClient({
       setManualWorkOpen(false);
       setManualWorkMatches([]);
       setManualLinkRetry(null);
+      setManualWorkNote("");
       toast.success(result.pending
         ? "Værket er tilknyttet og afventer admin-godkendelse."
         : "Værket er oprettet og tilknyttet kontrakten.");
@@ -788,9 +896,11 @@ export default function MineKontrakterClient({
 	        </div>
 
 	        {/* Kolonnehoveder */}
-	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]">
+	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]">
           <input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} className="h-4 w-4 cursor-pointer" />
           <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground">{t("contracts.work")}{sortArrow("title")}</button>
+          <button type="button" onClick={() => handleSort("date")} className="text-left hover:text-foreground">Kontraktdato{sortArrow("date")}</button>
+          <span className="text-left">Uploaddato</span>
           <button type="button" onClick={() => handleSort("employer")} className="text-left hover:text-foreground">{t("contracts.producer")}{sortArrow("employer")}</button>
           <button type="button" onClick={() => handleSort("overenskomst")} className="text-left hover:text-foreground">{t("contracts.agreement")}{sortArrow("overenskomst")}</button>
           <button type="button" onClick={() => handleSort("rights")} className="text-left hover:text-foreground">{t("contracts.rights")}{sortArrow("rights")}</button>
@@ -805,45 +915,85 @@ export default function MineKontrakterClient({
           </div>
         ) : visibleContracts.map(c => {
           const val = getValidation(c);
-          const title = contractDisplayTitle(c);
+          const title = formatContractWorkTitle(c);
           const unreadMessages = unreadAdminMessageCount(c.contract_comments);
           return (
-            <div
-              key={c.id}
-              onClick={() => openContract(c)}
-              className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.5fr_1fr_1fr_0.9fr]"
-            >
-              <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
-                <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
-              </div>
-              <div className="min-w-0">
-                <div className="font-semibold text-foreground">{title}</div>
-                {c.contract_date && <div className="text-xs text-muted-foreground mt-0.5">{c.contract_date.substring(0, 10)}</div>}
-                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground md:hidden">
-                  <span className="truncate">Producent: {c.employers?.name ?? "–"}</span>
-                  <span>{overenskomstLabel(c.overenskomst)}</span>
+            <React.Fragment key={c.id}>
+              <div
+                onClick={() => openContract(c)}
+                className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]"
+              >
+                <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
+                  <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
+                </div>
+                <div className="min-w-0">
+                  <div className="font-semibold text-foreground flex items-center gap-2">
+                    {title === "Afventer aflæsning..." && <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600 shrink-0" />}
+                    <span className={title === "Afventer aflæsning..." ? "text-amber-900 italic font-medium" : ""}>{title}</span>
+                  </div>
+                  {title === "Afventer aflæsning..." && (
+                    <div className="mt-1 flex items-center gap-1 text-xs font-medium text-amber-800">
+                      <Loader2 className="h-3 w-3 animate-spin text-amber-700" /> Afventer aflæsning...
+                    </div>
+                  )}
+                  {c.contract_date && <div className="text-xs text-muted-foreground mt-0.5 md:hidden">{c.contract_date.substring(0, 10)}</div>}
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground md:hidden">
+                    <span className="truncate">Producent: {c.employers?.name ?? "–"}</span>
+                    <span>{overenskomstLabel(c.overenskomst)}</span>
+                  </div>
+                </div>
+                <div className="hidden text-muted-foreground md:block">{c.contract_date ? c.contract_date.substring(0, 10) : "–"}</div>
+                <div className="hidden text-muted-foreground md:block">{c.created_at ? c.created_at.substring(0, 10) : "–"}</div>
+                <div className="hidden text-muted-foreground truncate md:block">{c.employers?.name ?? "–"}</div>
+                <div className="hidden text-muted-foreground md:block">{overenskomstLabel(c.overenskomst)}</div>
+                <div className="hidden gap-1 flex-wrap md:flex">
+                  {val?.validated_at ? (
+                    <>
+                      <span className={TAG_CLASS} style={{ backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>
+                        Overenskomst {val.has_overenskomst_incorporation ? "✓" : "✗"}
+                      </span>
+                      <span className={TAG_CLASS} style={{ backgroundColor: val.has_credit_clause ? "#18181b" : "#f4f4f5", color: val.has_credit_clause ? "white" : "#71717a" }}>
+                        Kreditering {val.has_credit_clause ? "✓" : "✗"}
+                      </span>
+                    </>
+                  ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
+                </div>
+                <div className="space-y-1">
+                  {shouldShowWorkLinkBadge(hasLinkedWork(c.work_id), c.status) && <WorkLinkBadge linked={hasLinkedWork(c.work_id)} />}
+                  {c.works && <StatusBadge status={c.status} />}
+                  {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
                 </div>
               </div>
-              <div className="hidden text-muted-foreground truncate md:block">{c.employers?.name ?? "–"}</div>
-              <div className="hidden text-muted-foreground md:block">{overenskomstLabel(c.overenskomst)}</div>
-              <div className="hidden gap-1 flex-wrap md:flex">
-                {val?.validated_at ? (
-                  <>
-                    <span className={TAG_CLASS} style={{ backgroundColor: val.has_overenskomst_incorporation ? "#18181b" : "#f4f4f5", color: val.has_overenskomst_incorporation ? "white" : "#71717a" }}>
-                      Overenskomst {val.has_overenskomst_incorporation ? "✓" : "✗"}
-                    </span>
-                    <span className={TAG_CLASS} style={{ backgroundColor: val.has_credit_clause ? "#18181b" : "#f4f4f5", color: val.has_credit_clause ? "white" : "#71717a" }}>
-                      Kreditering {val.has_credit_clause ? "✓" : "✗"}
-                    </span>
-                  </>
-                ) : <span className="text-xs text-muted-foreground italic">Afventer</span>}
-              </div>
-              <div className="space-y-1">
-                {shouldShowWorkLinkBadge(hasLinkedWork(c.work_id), c.status) && <WorkLinkBadge linked={hasLinkedWork(c.work_id)} />}
-                {c.works && <StatusBadge status={c.status} />}
-                {unreadMessages > 0 && <MessageStatusBadge count={unreadMessages} label="Ny besked" tone="attention" />}
-              </div>
-            </div>
+              {(() => {
+                const suggested = (val?.extracted_data as any)?.suggested_work_match;
+                if (!suggested || c.work_id) return null;
+                return (
+                  <div className="mx-4 my-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50/90 px-3.5 py-2 text-xs text-amber-900 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-amber-600 shrink-0" />
+                      <span>Fundet muligt matchende værk: <strong>{suggested.title}</strong> {suggested.year ? `(${suggested.year})` : ""}</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs gap-1 border-amber-400 bg-amber-100 hover:bg-amber-200 text-amber-950 font-medium"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const res = await linkContractToWork(c.id, suggested.id);
+                        if (res.success) {
+                          toast.success("Værket er tilknyttet kontrakten med 1 klik!");
+                          setContracts(prev => prev.map(item => item.id === c.id ? { ...item, work_id: suggested.id, works: { id: suggested.id, title: suggested.title, year: suggested.year, type: suggested.type } } : item));
+                        } else {
+                          toast.error(res.error ?? "Kunne ikke tilknytte værket.");
+                        }
+                      }}
+                    >
+                      <LinkIcon className="h-3 w-3" /> Tilknyt værk med 1 klik
+                    </Button>
+                  </div>
+                );
+              })()}
+            </React.Fragment>
           );
         })}
       </div>
@@ -933,36 +1083,13 @@ export default function MineKontrakterClient({
                   Åbn PDF
                 </Button>
               )}
-
-              <StatusBadge status={selectedContract.status} />
-              {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
-              {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
-
-              {/* Metadata-rækker */}
-              <div className="flex flex-col gap-2">
-                {[
-                  { label: "Producent",    value: selectedContract.employers?.name },
-                  { label: "Arbejdstitel",  value: selectedContract.working_title },
-                  { label: "Overenskomst", value: overenskomstLabel(selectedContract.overenskomst) },
-                  { label: "Kontrakttype", value: selectedContract.type },
-                  { label: "Kontraktdato",value: selectedContract.contract_date?.substring(0, 10) },
-                  { label: "Startdato",   value: selectedContract.start_date?.substring(0, 10) },
-                  { label: "Slutdato",    value: selectedContract.end_date?.substring(0, 10) },
-                ].filter(r => r.value).map(row => (
-                  <div key={row.label} className="flex justify-between text-sm bg-muted rounded-md px-3 py-2">
-                    <span className="text-muted-foreground">{row.label}</span>
-                    <span className="font-medium text-foreground">{row.value}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Werk-kobling */}
-              <div>
-                <p className="text-xs font-medium text-gray-500 mb-2">Forbind med værk</p>
+              {/* Værkskobling */}
+              <div className="pt-2 border-t border-b pb-4">
+                <p className="text-sm font-bold text-foreground mb-2">Forbind med værk</p>
                 {selectedContract.works ? (
                   <div className="flex items-center justify-between bg-muted rounded-lg border px-3 py-2.5">
                     <div>
-                      <p className="text-sm font-medium text-foreground">{selectedContract.works.title}</p>
+                      <p className="text-sm font-medium text-foreground">{formatContractWorkTitle(selectedContract)}</p>
                       {selectedContract.works.year && <p className="text-xs text-muted-foreground">{selectedContract.works.year}</p>}
                     </div>
                     <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} className="text-gray-400 hover:text-gray-600 p-1">
@@ -978,7 +1105,7 @@ export default function MineKontrakterClient({
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
                       )}
                       <Input
-                        placeholder="Søg i alle databaser (onboarding)..."
+                        placeholder="Søg i alle databaser..."
                         value={workSearch}
                         onChange={e => setWorkSearch(e.target.value)}
                         className="pl-8.5 h-9 text-sm"
@@ -998,13 +1125,15 @@ export default function MineKontrakterClient({
                             className="flex flex-col text-left text-xs px-2.5 py-1.5 rounded bg-background hover:bg-muted border transition-colors w-full"
                           >
                             <div className="flex items-center justify-between gap-1 w-full">
-                              <span className="font-semibold text-foreground truncate">{item.title}</span>
+                              <span className="font-semibold text-foreground truncate">
+                                {item.title} {item.season_number ? `- Sæson ${item.season_number}` : ""}
+                              </span>
                               <span className="text-[9px] uppercase font-bold text-gray-400 shrink-0">
                                 {item.sources.join("·")}
                               </span>
                             </div>
                             <span className="text-[10px] text-gray-500 mt-0.5">
-                              {item.year ?? "-"} · {item.type}
+                              {item.year ?? "-"} · {item.type} {item.season_number ? `(Sæson ${item.season_number})` : ""}
                             </span>
                           </button>
                         ))}
@@ -1044,7 +1173,7 @@ export default function MineKontrakterClient({
                                 min="1"
                                 className="h-8 text-xs"
                                 placeholder="1"
-                                value={addSeason}
+                                value={addSeason || "1"}
                                 onChange={e => setAddSeason(e.target.value)}
                               />
                             </div>
@@ -1076,20 +1205,52 @@ export default function MineKontrakterClient({
                         <Button
                           type="button"
                           className="w-full h-8 text-xs font-semibold"
-                          disabled={linkingSaving || (detailsLoading) || (episodesLoading)}
+                          disabled={linkingSaving || detailsLoading || episodesLoading}
                           onClick={handleLinkUnifiedWork}
                         >
                           {linkingSaving ? (
                             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                           ) : (
-                            <Plus className="mr-1.5 h-3.5 w-3.5" />
+                            "Tilknyt værk"
                           )}
-                          Tilknyt værk
                         </Button>
                       </div>
                     )}
                   </div>
                 )}
+              </div>
+
+              {viewLoading && (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Henter dokument...
+                </div>
+              )}
+              {viewUrl && (
+                <Button type="button" variant="outline" className="md:hidden" onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}>
+                  Åbn PDF
+                </Button>
+              )}
+
+              <StatusBadge status={selectedContract.status} />
+              {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
+              {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
+
+              {/* Metadata-rækker */}
+              <div className="flex flex-col gap-2">
+                {[
+                  { label: "Producent",    value: selectedContract.employers?.name },
+                  { label: "Arbejdstitel",  value: selectedContract.working_title },
+                  { label: "Overenskomst", value: overenskomstLabel(selectedContract.overenskomst) },
+                  { label: "Kontrakttype", value: selectedContract.type },
+                  { label: "Kontraktdato",value: selectedContract.contract_date?.substring(0, 10) },
+                  { label: "Startdato",   value: selectedContract.start_date?.substring(0, 10) },
+                  { label: "Slutdato",    value: selectedContract.end_date?.substring(0, 10) },
+                ].filter(r => r.value).map(row => (
+                  <div key={row.label} className="flex justify-between text-sm bg-muted rounded-md px-3 py-2">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <span className="font-medium text-foreground">{row.value}</span>
+                  </div>
+                ))}
               </div>
 
               {/* Rettigheder */}
@@ -1147,10 +1308,10 @@ export default function MineKontrakterClient({
                         <span className="text-xs text-muted-foreground shrink-0 ml-2">
                           {openingAttachmentId === a.id
                             ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : a.ai_status === "klar" ? "AI-læst" : a.ai_status === "fejl" ? "AI-fejl" : "Analyserer"}
+                            : a.ai_status === "klar" ? "Automatisk aflæst" : a.ai_status === "fejl" ? "Aflæsningsfejl" : "Analyserer"}
                         </span>
                       </button>
-                      <p className="mt-1 px-1 text-xs text-muted-foreground">AI-læst, men ikke medregnet i rettighedsbetaling eller statistik.</p>
+                      <p className="mt-1 px-1 text-xs text-muted-foreground">Automatisk aflæst, men ikke medregnet i rettighedsbetaling eller statistik.</p>
                       {a.ai_status === "fejl" && <button type="button" className="mt-1 px-1 text-xs font-medium text-primary underline focus-visible:ring-2 focus-visible:ring-ring" onClick={async () => { const result = await retryMemberAttachmentAnalysis(a.id); result.success ? toast.success("Analysen er sat i gang igen") : toast.error(result.error); }}>Prøv igen</button>}
                       </div>
                     ))}
@@ -1218,6 +1379,15 @@ export default function MineKontrakterClient({
             }}
             locale="da"
           />
+          <div className="space-y-1.5 pt-2 border-t">
+            <Label className="text-xs font-medium text-muted-foreground">Besked til DFKS (valgfri)</Label>
+            <Textarea
+              placeholder="Skriv en kommentar eller bemærkning til DFKS administrationen angående dette værk..."
+              value={manualWorkNote}
+              onChange={e => setManualWorkNote(e.target.value)}
+              className="h-20 text-xs"
+            />
+          </div>
           {manualWorkMatches.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
               <p className="font-medium">Der findes allerede et værk med samme titel og premiereår.</p>

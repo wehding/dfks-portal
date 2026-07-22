@@ -1041,7 +1041,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               )}
 
               {/* Varighed / premieredato */}
-              {!isSeries && (
+              {!isSeries && !manualMode && (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
@@ -1068,32 +1068,34 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   </div>
                 </div>
               )}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                    Produktionsselskab
-                    {aiFields.has("productionCompany") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                  </Label>
-                  <Input
-                    value={productionCompany}
-                    onChange={e => setProductionCompany(e.target.value)}
-                    placeholder="Produktionsselskab"
-                    className={aiFields.has("productionCompany") ? "bg-purple-50" : ""}
-                  />
+              {!manualMode && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                      Produktionsselskab
+                      {aiFields.has("productionCompany") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                    </Label>
+                    <Input
+                      value={productionCompany}
+                      onChange={e => setProductionCompany(e.target.value)}
+                      placeholder="Produktionsselskab"
+                      className={aiFields.has("productionCompany") ? "bg-purple-50" : ""}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                      Instruktør
+                      {aiFields.has("director") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                    </Label>
+                    <Input
+                      value={director}
+                      onChange={e => setDirector(e.target.value)}
+                      placeholder="Instruktør"
+                      className={aiFields.has("director") ? "bg-purple-50" : ""}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                    Instruktør
-                    {aiFields.has("director") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                  </Label>
-                  <Input
-                    value={director}
-                    onChange={e => setDirector(e.target.value)}
-                    placeholder="Instruktør"
-                    className={aiFields.has("director") ? "bg-purple-50" : ""}
-                  />
-                </div>
-              </div>
+              )}
             </div>
           )}
 

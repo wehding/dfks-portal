@@ -300,10 +300,30 @@ async function markJobError(admin: ReturnType<typeof createServiceClient>, jobId
     if (attachmentId) await admin.from("contract_attachments").update({ ai_status: "fejl", ai_result: { error: message } }).eq("id", attachmentId)
 }
 
-// Hvor mange jobs én kø-dræn-kørsel behandler, og hvor længe den må køre.
-// Holdes under Vercel-serverless-timeout så kørslen altid afsluttes rent.
 const MAX_JOBS_PER_RUN = 10
 const RUN_TIME_BUDGET_MS = 50_000
+
+export async function processPendingContractJobs(orgId?: string | null) {
+    const admin = createServiceClient()
+    const deadline = Date.now() + RUN_TIME_BUDGET_MS
+    const processedContractIds: string[] = []
+    const errors: { jobId: string; error: string }[] = []
+    while (processedContractIds.length + errors.length < MAX_JOBS_PER_RUN && Date.now() < deadline) {
+        const { data: jobs, error: jobErr } = await admin.rpc("claim_next_contract_ai_job", { p_job_id: null, p_org_id: orgId ?? null })
+        if (jobErr) break
+        const job = ((jobs?.[0] ?? null) as unknown as ContractJob | null)
+        if (!job) break
+        try {
+            await runContractJob(admin, job)
+            processedContractIds.push(job.contract_id)
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : "Ukendt fejl"
+            await markJobError(admin, job.id, message, job.attachment_id)
+            errors.push({ jobId: job.id, error: message })
+        }
+    }
+    return { ok: true, processed: processedContractIds.length, processedContractIds, errors }
+}
 
 export async function POST(req: NextRequest) {
     const admin = createServiceClient()
@@ -352,27 +372,9 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // Kø-dræn (cron / uden specifikt job): behandl flere jobs pr. kald indtil
-        // køen er tom, loftet er nået, eller tidsbudgettet er brugt. Ét fejl-job
-        // stopper ikke resten.
-        const deadline = Date.now() + RUN_TIME_BUDGET_MS
-        const processedContractIds: string[] = []
-        const errors: { jobId: string; error: string }[] = []
-        while (processedContractIds.length + errors.length < MAX_JOBS_PER_RUN && Date.now() < deadline) {
-            const { data: jobs, error: jobErr } = await admin.rpc("claim_next_contract_ai_job", { p_job_id: null, p_org_id: orgId })
-            if (jobErr) throw new Error(jobErr.message)
-            const job = ((jobs?.[0] ?? null) as unknown as ContractJob | null)
-            if (!job) break
-            try {
-                await runContractJob(admin, job)
-                processedContractIds.push(job.contract_id)
-            } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : "Ukendt fejl"
-                await markJobError(admin, job.id, message, job.attachment_id)
-                errors.push({ jobId: job.id, error: message })
-            }
-        }
-        return NextResponse.json({ ok: true, processed: processedContractIds.length, processedContractIds, errors })
+        // Kø-dræn
+        const result = await processPendingContractJobs(orgId)
+        return NextResponse.json(result)
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Ukendt fejl"
         return NextResponse.json({ ok: false, error: message }, { status: 500 })
