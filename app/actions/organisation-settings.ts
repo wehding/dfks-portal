@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
+import { normalizeSingleEmail } from "@/lib/email/mime";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 
 const LOGO_BUCKET = "organisation-logos";
@@ -102,10 +103,18 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const longName = cleanString(payload.long_name);
   const coeditorWord = cleanString(payload.coeditor_word);
   const roleLabels = normalizeRoles(payload.role_labels);
+  const replyToEmail = cleanOptionalString(payload.from_email);
 
   if (!shortName || !longName) throw new Error("Kort navn og fuldt navn skal udfyldes.");
   if (!coeditorWord) throw new Error("Fagordet skal udfyldes.");
   if (roleLabels.length === 0) throw new Error("Der skal være mindst én rollebetegnelse.");
+  if (replyToEmail) {
+    try {
+      normalizeSingleEmail(replyToEmail);
+    } catch {
+      throw new Error("Svaradressen skal være én gyldig e-mailadresse uden afsendernavn.");
+    }
+  }
 
   const branding: OrgBranding = {
     short_name: shortName,
@@ -123,7 +132,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     .update({
       name: longName,
       logo_url: cleanOptionalString(payload.logo_url),
-      from_email: cleanOptionalString(payload.from_email),
+      from_email: replyToEmail,
       invite_email_text: cleanOptionalString(payload.invite_email_text),
       invite_reminder_text: cleanOptionalString(payload.invite_reminder_text),
       branding,

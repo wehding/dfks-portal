@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { memberNotificationEmailHtml } from "../lib/email";
+import { memberNotificationEmailHtml } from "../lib/email/templates";
 
 test("member notification HTML escapes every dynamic value", () => {
   const html = memberNotificationEmailHtml({ recipientName: "<Steen>", orgName: "DFKS & Co", subject: "<Status>", bodyText: "Klik <script>alert(1)</script>", link: "https://example.test/?a=1&b=2", primaryColor: "not-a-color" });

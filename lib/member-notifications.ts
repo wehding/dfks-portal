@@ -2,7 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { memberNotificationEmailHtml, sendEmail } from "@/lib/email";
-import { resolveBranding, resolveFromEmail } from "@/lib/branding";
+import { resolveBranding, resolveEmailSenderName, resolveReplyToEmail } from "@/lib/branding";
 
 type NotificationCategory = "transactional" | "broadcast";
 
@@ -50,13 +50,14 @@ export async function sendMemberNotification(params: {
   const result = await sendEmail({
     to: holder.email,
     subject: params.subject,
-    from: resolveFromEmail(org as never),
+    fromName: resolveEmailSenderName(org as never),
+    replyTo: resolveReplyToEmail(org as never),
     html: memberNotificationEmailHtml({ recipientName: holder.full_name, orgName: branding.short_name, subject: params.subject, bodyText: params.bodyText, link, primaryColor: branding.primary_color }),
   });
   await db.from("notification_deliveries").update({
     status: result.ok ? "sent" : "failed",
     attempts: 1,
-    last_error: result.error ?? null,
+    last_error: result.ok ? null : result.error,
     sent_at: result.ok ? new Date().toISOString() : null,
     updated_at: new Date().toISOString(),
   }).eq("id", delivery.id);

@@ -33,6 +33,11 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# lokale credentials må aldrig committes
+/secrets/
+*service-account-key*.json
+google-service-account*.json
+
 # vercel
 .vercel
 
