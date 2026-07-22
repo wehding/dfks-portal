@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
-
-const INVITE_COOKIE = "dfks_invite"
+import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
 
 // Stier der altid er tilgængelige uden session
 const PUBLIC_PATHS = [
@@ -9,6 +8,7 @@ const PUBLIC_PATHS = [
     "/api/auth/invite",
     "/api/auth/callback",
     "/auth/confirm",
+    "/auth/opret-adgang",
     "/_next",
     "/favicon",
 ]

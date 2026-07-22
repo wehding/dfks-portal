@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-
-const INVITE_COOKIE = "dfks_invite"
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 dage
+import { INVITE_COOKIE, INVITE_COOKIE_MAX_AGE } from "@/lib/auth/invite-gate"
 
 export async function POST(req: NextRequest) {
     const { code } = await req.json()
@@ -19,7 +17,7 @@ export async function POST(req: NextRequest) {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: COOKIE_MAX_AGE,
+        maxAge: INVITE_COOKIE_MAX_AGE,
         path: "/",
     })
     return res
