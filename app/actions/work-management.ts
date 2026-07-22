@@ -8,6 +8,7 @@ import { findTMDBPoster } from "@/app/actions/tmdb";
 import { ensureOnboardingEpisodes } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import type { DfiMetadata } from "@/lib/dfi-metadata";
+import { groupWorksBySeason, type SeasonGroupingRow } from "@/lib/work-season-groups";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -469,20 +470,12 @@ export async function fetchAdminWorksForReview() {
 
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
-  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, alternative_titles, production_countries, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, description, poster_url, dfi_title, dfi_danish_title, dfi_original_title, dfi_category, dfi_type, created_at";
-  const withSharePercent = await db
+  const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
+  const { data, error } = await db
     .from("works")
-    .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
+    .select(`${workListFields}, work_change_requests(id, status), contracts(id), work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
-  const { data, error } = await retryWithoutSharePercent(
-    withSharePercent,
-    async () => await db
-      .from("works")
-      .select(`${workListFields}, work_change_requests(id, status, source, created_at, rettighedshavere(full_name)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
-      .eq("org_id", orgId)
-      .order("created_at", { ascending: false })
-  );
 
   if (error) throw new Error(error.message);
   const rows = data ?? [];
@@ -494,24 +487,18 @@ export async function fetchAdminWorksForReview() {
     .eq("work_change_requests.org_id", orgId);
   if (unreadError) throw new Error(unreadError.message);
 
-  const commentsByRequest = new Map<string, typeof unreadComments>();
+  const unreadByWork = new Map<string, number>();
   for (const comment of unreadComments ?? []) {
-    commentsByRequest.set(comment.request_id, [...(commentsByRequest.get(comment.request_id) ?? []), comment]);
+    const relation = comment.work_change_requests as unknown as { work_id?: string | null } | Array<{ work_id?: string | null }> | null;
+    const workId = Array.isArray(relation) ? relation[0]?.work_id : relation?.work_id;
+    if (!workId) continue;
+    unreadByWork.set(workId, (unreadByWork.get(workId) ?? 0) + 1);
   }
-  const rowsWithUnread = rows.map(work => ({
-    ...work,
-    work_change_requests: (work.work_change_requests ?? []).map(request => ({
-      ...request,
-      work_change_request_comments: commentsByRequest.get(request.id) ?? [],
-    })),
-  }));
-  // Skjul KUN tekniske serie-parents der faktisk har afsnit (children). Et childless
-  // serie-værk (fx ældre data hvor brugeren er tildelt direkte på serien) er et rigtigt
-  // værk og skal vises — ellers bliver det usynligt i admin selvom det har tildelinger/beskeder.
   const parentIdsWithChildren = new Set(
-    rowsWithUnread.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
+    rows.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
   );
-  const visibleWorks = rowsWithUnread.filter(work => {
+  const parentMap = new Map(rows.map(work => [work.id, work]));
+  const visibleWorks = rows.filter(work => {
     const isTechnicalSeriesParent =
       (work.type === "tv-serie" || work.type === "dokumentar-serie") &&
       work.parent_work_id === null &&
@@ -519,7 +506,100 @@ export async function fetchAdminWorksForReview() {
       parentIdsWithChildren.has(work.id);
     return !isTechnicalSeriesParent;
   });
-  return { success: true, works: visibleWorks };
+  const groupingRows = visibleWorks.map(work => ({
+    ...work,
+    contract_count: (work.contracts?.length ?? 0) > 0 ? 1 : 0,
+    pending_count: work.work_change_requests?.filter(request => request.status === "pending").length ?? 0,
+    unread_count: unreadByWork.get(work.id) ?? 0,
+    assigned_user_count: work.work_assignments?.length ?? 0,
+    parent: work.parent_work_id ? parentMap.get(work.parent_work_id) ?? null : null,
+  } satisfies SeasonGroupingRow & typeof work));
+
+  const works = groupWorksBySeason(groupingRows).map(group => {
+    if (group.kind === "work") {
+      return {
+        ...group.work,
+        is_season_group: false,
+        group_key: group.key,
+        child_work_ids: group.workIds,
+        overview_pending_count: group.work.pending_count ?? 0,
+        overview_unread_count: group.work.unread_count ?? 0,
+        overview_contract_count: group.work.contract_count ?? 0,
+      };
+    }
+    const assignments = new Map<string, unknown>();
+    const contractIds = new Set<string>();
+    for (const episode of group.episodes) {
+      for (const assignment of episode.work_assignments ?? []) {
+        const relatedHolder = Array.isArray(assignment.rettighedshavere) ? assignment.rettighedshavere[0] : assignment.rettighedshavere;
+        const assignmentSummaryKey = `${assignment.rights_holder_id ?? relatedHolder?.id ?? assignment.id}:${assignment.role ?? ""}`;
+        assignments.set(assignmentSummaryKey, assignment);
+      }
+      for (const contract of episode.contracts ?? []) contractIds.add(contract.id);
+    }
+    return {
+      id: group.key,
+      org_id: orgId,
+      title: group.title,
+      type: group.type,
+      year: group.year,
+      duration_minutes: null,
+      season_count: null,
+      episode_count: group.episodeCount,
+      parent_work_id: group.parentWorkId,
+      season_number: group.seasonNumber,
+      episode_number: null,
+      genre: null,
+      director: null,
+      status: group.pendingCount > 0 ? "til_godkendelse" : "aktiv",
+      dfi_id: null,
+      tmdb_id: null,
+      imdb_id: null,
+      description: null,
+      poster_url: group.posterUrl,
+      created_at: group.createdAt,
+      work_assignments: [...assignments.values()],
+      contracts: [...contractIds].map(id => ({ id })),
+      work_change_requests: [],
+      work_production_numbers: [],
+      work_distributions: [],
+      is_season_group: true,
+      group_key: group.key,
+      child_work_ids: group.workIds,
+      overview_pending_count: group.pendingCount,
+      overview_unread_count: group.unreadCount,
+      overview_contract_count: group.contractCount,
+      overview_assigned_user_count: group.assignedUserCount,
+    };
+  });
+  return { success: true, works };
+}
+
+export async function fetchAdminSeasonEpisodes(params: { parentWorkId: string; seasonNumber: number }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const withSharePercent = await db
+    .from("works")
+    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+    .eq("org_id", orgId)
+    .eq("parent_work_id", params.parentWorkId)
+    .eq("season_number", params.seasonNumber)
+    .order("episode_number", { ascending: true });
+  const { data, error } = await retryWithoutSharePercent(
+    withSharePercent,
+    async () => await db
+      .from("works")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+      .eq("org_id", orgId)
+      .eq("parent_work_id", params.parentWorkId)
+      .eq("season_number", params.seasonNumber)
+      .order("episode_number", { ascending: true })
+  );
+  if (error) return { success: false, error: error.message, works: [] };
+  return { success: true, works: data ?? [] };
 }
 
 export async function fetchAdminWorkDetail(workId: string) {
@@ -1407,6 +1487,38 @@ export async function markWorkRequestCommentsRead(requestId: string, viewerRole:
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
   return { success: true };
+}
+
+export async function markAdminWorkMessagesReadByWorkIds(params: { workIds: string[] }) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) return { success: false, error: "Ikke autoriseret", updated: 0 };
+
+  const workIds = [...new Set(params.workIds.map(cleanText).filter(Boolean))];
+  if (workIds.length === 0) return { success: true, updated: 0 };
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const { data: requests, error: requestError } = await db
+    .from("work_change_requests")
+    .select("id")
+    .eq("org_id", orgId)
+    .in("work_id", workIds);
+  if (requestError) return { success: false, error: requestError.message, updated: 0 };
+
+  const requestIds = (requests ?? []).map(request => request.id);
+  if (requestIds.length === 0) return { success: true, updated: 0 };
+  const { data: comments, error } = await db
+    .from("work_change_request_comments")
+    .update({ admin_read_at: new Date().toISOString() })
+    .in("request_id", requestIds)
+    .eq("author_role", "member")
+    .is("admin_read_at", null)
+    .select("id");
+  if (error) return { success: false, error: error.message, updated: 0 };
+
+  revalidatePath("/admin/vaerker");
+  return { success: true, updated: comments?.length ?? 0 };
 }
 
 // Admin-svar på en værk-request UDEN at ændre status (kan bruges på enhver request,

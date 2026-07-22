@@ -11,6 +11,7 @@ import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
 import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
+import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -213,6 +214,140 @@ async function ensureOwnRightsHolder(db: ReturnType<typeof createServiceClient>,
 
   if (error || !data || data.user_id !== user.id) throw new Error("Du kan kun ændre dine egne værker.");
   return { user, rightsHolder: data };
+}
+
+type MemberOverviewAssignmentRow = {
+  id: string;
+  role: string | null;
+  contract_id: string | null;
+  episode_id: string | null;
+  created_at: string | null;
+  works: {
+    id: string;
+    title: string;
+    type: string;
+    year: number | null;
+    duration_minutes: number | null;
+    episode_count: number | null;
+    parent_work_id: string | null;
+    season_number: number | null;
+    episode_number: number | null;
+    status: string | null;
+    poster_url: string | null;
+    description: string | null;
+  } | null;
+};
+
+export async function fetchMemberWorkOverview(params: { rightsHolderId: string }) {
+  const db = createServiceClient();
+  const { rightsHolder } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const { data, error } = await db
+    .from("work_assignments")
+    .select("id, role, contract_id, episode_id, created_at, works!inner(id, title, type, year, duration_minutes, episode_count, parent_work_id, season_number, episode_number, status, poster_url, description)")
+    .eq("rights_holder_id", rightsHolder.id)
+    .order("created_at", { ascending: false });
+  if (error) return { success: false, error: error.message, items: [] };
+
+  const assignments = (data ?? []) as unknown as MemberOverviewAssignmentRow[];
+  const workIds = assignments.map(item => item.works?.id).filter((id): id is string => Boolean(id));
+  const parentIds = [...new Set(assignments.map(item => item.works?.parent_work_id).filter((id): id is string => Boolean(id)))];
+
+  const [parentsResult, contractsResult, requestsResult, unreadResult] = await Promise.all([
+    parentIds.length
+      ? db.from("works").select("id,title,type,year,poster_url").in("id", parentIds)
+      : Promise.resolve({ data: [], error: null }),
+    workIds.length
+      ? db.from("contracts").select("id,work_id").eq("rights_holder_id", rightsHolder.id).in("work_id", workIds)
+      : Promise.resolve({ data: [], error: null }),
+    workIds.length
+      ? db.from("work_change_requests").select("id,work_id,status").eq("requested_by_rights_holder_id", rightsHolder.id).in("work_id", workIds)
+      : Promise.resolve({ data: [], error: null }),
+    workIds.length
+      ? db.from("work_change_request_comments")
+          .select("id,work_change_requests!inner(work_id)")
+          .eq("author_role", "admin")
+          .is("member_read_at", null)
+          .eq("work_change_requests.requested_by_rights_holder_id", rightsHolder.id)
+          .in("work_change_requests.work_id", workIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  const overviewError = parentsResult.error ?? contractsResult.error ?? requestsResult.error ?? unreadResult.error;
+  if (overviewError) return { success: false, error: overviewError.message, items: [] };
+
+  const parentMap = new Map((parentsResult.data ?? []).map(parent => [parent.id, parent]));
+  const contractCounts = new Map<string, number>();
+  for (const contract of contractsResult.data ?? []) {
+    if (!contract.work_id) continue;
+    contractCounts.set(contract.work_id, (contractCounts.get(contract.work_id) ?? 0) + 1);
+  }
+  const pendingCounts = new Map<string, number>();
+  for (const request of requestsResult.data ?? []) {
+    if (!request.work_id || request.status !== "pending") continue;
+    pendingCounts.set(request.work_id, (pendingCounts.get(request.work_id) ?? 0) + 1);
+  }
+  const unreadCounts = new Map<string, number>();
+  for (const comment of unreadResult.data ?? []) {
+    const relation = comment.work_change_requests as unknown as { work_id?: string | null } | Array<{ work_id?: string | null }> | null;
+    const workId = Array.isArray(relation) ? relation[0]?.work_id : relation?.work_id;
+    if (!workId) continue;
+    unreadCounts.set(workId, (unreadCounts.get(workId) ?? 0) + 1);
+  }
+
+  const rows = assignments.flatMap(assignment => {
+    const work = assignment.works;
+    if (!work) return [];
+    return [{
+      ...work,
+      assignment_id: assignment.id,
+      role: assignment.role,
+      created_at: assignment.created_at,
+      contract_count: (contractCounts.get(work.id) ?? 0) > 0 ? 1 : 0,
+      pending_count: pendingCounts.get(work.id) ?? 0,
+      unread_count: unreadCounts.get(work.id) ?? 0,
+      parent: work.parent_work_id ? parentMap.get(work.parent_work_id) ?? null : null,
+      assignment,
+    } satisfies SeasonGroupingRow & { assignment: MemberOverviewAssignmentRow }];
+  });
+
+  const items = groupWorksBySeason(rows).map(group => {
+    if (group.kind === "season") return stripSeasonEpisodes(group);
+    return {
+      ...group,
+      contractCount: group.work.contract_count ?? 0,
+      pendingCount: group.work.pending_count ?? 0,
+      unreadCount: group.work.unread_count ?? 0,
+    };
+  });
+  return { success: true, items };
+}
+
+export async function fetchMemberSeasonEpisodes(params: { rightsHolderId: string; parentWorkId: string; seasonNumber: number }) {
+  const db = createServiceClient();
+  const { rightsHolder } = await ensureOwnRightsHolder(db, params.rightsHolderId);
+  const { data, error } = await db
+    .from("work_assignments")
+    .select("id, role, contract_id, episode_id, created_at, episodes(episode_number,title), works!inner(id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, work_production_numbers(tv_station, number), work_distributions(broadcaster_name, broadcasters(name)), work_change_requests(*, work_change_request_comments(*)))")
+    .eq("rights_holder_id", rightsHolder.id)
+    .eq("works.parent_work_id", params.parentWorkId)
+    .eq("works.season_number", params.seasonNumber);
+  if (error) return { success: false, error: error.message, assignments: [], allAssignments: [] };
+
+  const assignments = [...(data ?? [])].sort((left, right) => {
+    const leftWork = left.works as unknown as { episode_number?: number | null } | null;
+    const rightWork = right.works as unknown as { episode_number?: number | null } | null;
+    return (leftWork?.episode_number ?? 0) - (rightWork?.episode_number ?? 0);
+  });
+  const episodeWorkIds = assignments
+    .map(item => (item.works as unknown as { id?: string | null } | null)?.id)
+    .filter((id): id is string => Boolean(id));
+  const { data: allAssignments, error: allAssignmentsError } = episodeWorkIds.length
+    ? await db
+        .from("work_assignments")
+        .select("id, work_id, role, rights_holder_id, rettighedshavere(id, full_name)")
+        .in("work_id", episodeWorkIds)
+    : { data: [], error: null };
+  if (allAssignmentsError) return { success: false, error: allAssignmentsError.message, assignments: [], allAssignments: [] };
+  return { success: true, assignments, allAssignments: allAssignments ?? [] };
 }
 
 export async function fetchMemberWorkDetail(params: { rightsHolderId: string; assignmentId: string }) {

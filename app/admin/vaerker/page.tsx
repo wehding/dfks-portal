@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock,
   Film,
   GitMerge,
@@ -35,9 +37,11 @@ import {
   deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
   fetchAdminWorkDetail,
+  fetchAdminSeasonEpisodes,
   fetchAdminRightsHolders,
   addAdminWorkRequestComment,
   fetchAdminWorksForReview,
+  markAdminWorkMessagesReadByWorkIds,
   markWorkRequestCommentsRead,
   mergeAdminWorks,
   reviewWorkDataCorrection,
@@ -193,6 +197,13 @@ type WorkRow = {
   work_assignments?: WorkAssignment[];
   work_production_numbers?: WorkProductionNumber[];
   work_distributions?: WorkDistribution[];
+  is_season_group?: boolean;
+  group_key?: string;
+  child_work_ids?: string[];
+  overview_pending_count?: number;
+  overview_unread_count?: number;
+  overview_contract_count?: number;
+  overview_assigned_user_count?: number;
 };
 
 type WorkForm = {
@@ -315,11 +326,11 @@ function errorMessage(err: unknown, fallback: string) {
 }
 
 function hasPendingRequest(work: WorkRow) {
-  return (work.work_change_requests ?? []).some(request => request.status === "pending");
+  return (work.overview_pending_count ?? 0) > 0 || (work.work_change_requests ?? []).some(request => request.status === "pending");
 }
 
 function unreadMemberMessageCount(work: WorkRow) {
-  return (work.work_change_requests ?? []).reduce((sum, request) =>
+  return work.overview_unread_count ?? (work.work_change_requests ?? []).reduce((sum, request) =>
     sum + (request.work_change_request_comments ?? []).filter(
       comment => comment.author_role === "member" && !comment.admin_read_at
     ).length, 0);
@@ -797,6 +808,10 @@ export default function VaerksadministrationPage() {
   const [masterId, setMasterId] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
+  const [seasonEpisodes, setSeasonEpisodes] = useState<Record<string, WorkRow[]>>({});
+  const [loadingSeasons, setLoadingSeasons] = useState<Set<string>>(new Set());
+  const [seasonErrors, setSeasonErrors] = useState<Record<string, string>>({});
   const { activeRh, setActiveRh } = useActiveRightsHolder();
 
   const load = async () => {
@@ -839,11 +854,17 @@ export default function VaerksadministrationPage() {
     const editId = new URLSearchParams(window.location.search).get("edit");
     if (!editId) return;
     const work = works.find(w => w.id === editId);
+    editParamHandled.current = true;
     if (work) {
-      editParamHandled.current = true;
       openEdit(work);
       window.history.replaceState(null, "", "/admin/vaerker");
+      return;
     }
+    void fetchAdminWorkDetail(editId).then(result => {
+      if (result.success && result.work) openEdit(result.work as WorkRow);
+      else setNotice(result.error ?? "Værket blev ikke fundet.");
+      window.history.replaceState(null, "", "/admin/vaerker");
+    });
   }, [works]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -922,18 +943,21 @@ export default function VaerksadministrationPage() {
 
   const stats = useMemo(() => {
     const activeWorks = works.filter(work => displayStatus(work) !== "arkiveret");
-    const withContract = activeWorks.filter(work => (work.contracts ?? []).length > 0).length;
+    const total = activeWorks.reduce((sum, work) => sum + (work.is_season_group ? work.episode_count ?? 0 : 1), 0);
+    const withContract = activeWorks.reduce((sum, work) => sum + (work.is_season_group ? work.overview_contract_count ?? 0 : (work.contracts ?? []).length > 0 ? 1 : 0), 0);
     return {
-      total: activeWorks.length,
+      total,
       withContract,
-      missingContract: Math.max(activeWorks.length - withContract, 0),
+      missingContract: Math.max(total - withContract, 0),
     };
   }, [works]);
 
+  const selectionIdsForWork = (work: WorkRow) => work.is_season_group ? work.child_work_ids ?? [] : [work.id];
   const selectedWorks = useMemo(
-    () => works.filter(work => selectedIds.includes(work.id)),
+    () => works.filter(work => selectionIdsForWork(work).some(id => selectedIds.includes(id))),
     [works, selectedIds]
   );
+  const hasSelectedSeason = selectedWorks.some(work => work.is_season_group);
 
   const selectedContracts = useMemo(
     () => selectedWorks.flatMap(work => (work.contracts ?? []).map(contract => ({ work, contract }))),
@@ -982,14 +1006,50 @@ export default function VaerksadministrationPage() {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(existing => existing !== id) : [...prev, id]);
   };
 
-  const allFilteredSelected = filtered.length > 0 && filtered.every(work => selectedIds.includes(work.id));
+  const toggleWorkSelection = (work: WorkRow) => {
+    const ids = selectionIdsForWork(work);
+    const allSelected = ids.length > 0 && ids.every(id => selectedIds.includes(id));
+    setSelectedIds(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+  };
+
+  const filteredIds = [...new Set(filtered.flatMap(selectionIdsForWork))];
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every(id => selectedIds.includes(id));
 
   const toggleAllFiltered = () => {
-    const filteredIds = filtered.map(work => work.id);
     setSelectedIds(prev => allFilteredSelected
       ? prev.filter(id => !filteredIds.includes(id))
       : [...new Set([...prev, ...filteredIds])]
     );
+  };
+
+  const loadAdminSeason = async (work: WorkRow, force = false) => {
+    if (!work.is_season_group || !work.parent_work_id || work.season_number == null) return;
+    const key = work.group_key ?? work.id;
+    if ((!force && seasonEpisodes[key]) || loadingSeasons.has(key)) return;
+    setLoadingSeasons(prev => new Set(prev).add(key));
+    setSeasonErrors(prev => { const next = { ...prev }; delete next[key]; return next; });
+    const result = await fetchAdminSeasonEpisodes({ parentWorkId: work.parent_work_id, seasonNumber: work.season_number });
+    if (result.success) setSeasonEpisodes(prev => ({ ...prev, [key]: result.works as unknown as WorkRow[] }));
+    else setSeasonErrors(prev => ({ ...prev, [key]: result.error ?? "Kunne ikke hente sæsonens afsnit." }));
+    setLoadingSeasons(prev => { const next = new Set(prev); next.delete(key); return next; });
+  };
+
+  const toggleAdminSeason = (work: WorkRow) => {
+    if (!work.is_season_group) return;
+    const key = work.group_key ?? work.id;
+    const isOpen = expandedSeasons.has(key);
+    setExpandedSeasons(prev => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(key); else next.add(key);
+      return next;
+    });
+    if (!isOpen) void loadAdminSeason(work);
+  };
+
+  const refreshSeasonContaining = async (work: WorkRow | null | undefined) => {
+    if (!work?.parent_work_id || work.season_number == null) return;
+    const group = works.find(item => item.is_season_group && item.parent_work_id === work.parent_work_id && item.season_number === work.season_number);
+    if (group && expandedSeasons.has(group.group_key ?? group.id)) await loadAdminSeason(group, true);
   };
 
   const handleSort = (key: SortKey) => {
@@ -1080,6 +1140,7 @@ export default function VaerksadministrationPage() {
 
   const handleSaveWork = async () => {
     if (!editing || !editForm) return;
+    const savedWork = editing;
     setSaving(true);
     try {
       await updateAdminWorkData({
@@ -1132,6 +1193,7 @@ export default function VaerksadministrationPage() {
       setActiveRequestId(null);
       setImportPreview(null);
       await load();
+      await refreshSeasonContaining(savedWork);
       notifyWorksUpdated();
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke gemme værket."));
@@ -1246,15 +1308,11 @@ export default function VaerksadministrationPage() {
   };
 
   const handleMarkSelectedMessagesRead = async () => {
-    const selected = works.filter(w => selectedIds.includes(w.id));
-    const requestIds = selected.flatMap(w => (w.work_change_requests ?? [])
-      .filter(r => (r.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
-      .map(r => r.id));
-    if (requestIds.length === 0) { setNotice("Ingen ulæste beskeder blandt de valgte."); return; }
     setSaving(true);
     try {
-      await Promise.all(requestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
-      setNotice(`Beskeder markeret som læst på ${selected.length} værk(er).`);
+      const result = await markAdminWorkMessagesReadByWorkIds({ workIds: selectedIds });
+      if (!result.success) throw new Error(result.error);
+      setNotice(result.updated > 0 ? `${result.updated} besked(er) markeret som læst.` : "Ingen ulæste beskeder blandt de valgte.");
       setSelectedIds([]);
       await load();
       notifyWorksUpdated();
@@ -1839,7 +1897,7 @@ export default function VaerksadministrationPage() {
             <Trash2 className="h-4 w-4" />
             Arkiver
           </Button>
-          <Button size="sm" variant="outline" className="gap-2" onClick={() => { setMasterId(selectedIds[0] ?? ""); setMergeOpen(true); }} disabled={selectedIds.length < 2}>
+          <Button size="sm" variant="outline" className="gap-2" onClick={() => { setMasterId(selectedIds[0] ?? ""); setMergeOpen(true); }} disabled={selectedIds.length < 2 || hasSelectedSeason} title={hasSelectedSeason ? "Fold sæsonen ud og vælg konkrete værker, før de flettes." : undefined}>
             <GitMerge className="h-4 w-4" />
             Flet dubletter
           </Button>
@@ -1857,20 +1915,27 @@ export default function VaerksadministrationPage() {
           </MobileDataCard>
         ) : visibleWorks.map(work => {
           const status = displayStatus(work);
+          const isSeason = Boolean(work.is_season_group);
+          const groupKey = work.group_key ?? work.id;
+          const isExpanded = expandedSeasons.has(groupKey);
+          const episodes = seasonEpisodes[groupKey] ?? [];
           const broadcaster = getWorkBroadcaster(work);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
           const poster = posterSrc(work.poster_url);
-          const pendingCount = (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
-          const coEditors = (work.work_assignments ?? [])
+          const pendingCount = work.overview_pending_count ?? (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
+          const coEditors = [...new Set((work.work_assignments ?? [])
             .map(a => a.rettighedshavere?.full_name)
-            .filter((name): name is string => Boolean(name));
+            .filter((name): name is string => Boolean(name)))];
+          const workSelectionIds = selectionIdsForWork(work);
+          const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
           return (
-            <MobileDataCard key={work.id} className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
+            <div key={work.id} className="space-y-2">
+            <MobileDataCard className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
               <div className="flex gap-3">
                 <div onClick={event => event.stopPropagation()} className="pt-1">
-                  <input type="checkbox" checked={selectedIds.includes(work.id)} onChange={() => toggleSelected(work.id)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
+                  <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
                 </div>
-                <button type="button" onClick={() => openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
+                <button type="button" onClick={() => isSeason ? toggleAdminSeason(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left" aria-expanded={isSeason ? isExpanded : undefined}>
                   <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
                     {poster ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -1881,8 +1946,9 @@ export default function VaerksadministrationPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium leading-snug">{work.title}</p>
+                      <p className="font-medium leading-snug">{work.title}{isSeason && work.season_number != null ? ` · Sæson ${work.season_number}` : ""}</p>
                       {unreadMemberMessageCount(work) > 0 && <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">Besked</Badge>}
+                      {isSeason && (isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
                     </div>
                     {latestUnreadMemberMessage(work) && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnreadMemberMessage(work)}</p>}
                   </div>
@@ -1908,10 +1974,35 @@ export default function VaerksadministrationPage() {
                 </MobileMetaRow>
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
-                DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"} · Kontrakter: {work.contracts?.length ?? 0}
+                {isSeason ? `${work.episode_count ?? 0} afsnit · Afsnit med kontrakt: ${work.overview_contract_count ?? 0}` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"} · Kontrakter: ${work.contracts?.length ?? 0}`}
                 {coEditors.length > 0 && <div className="mt-1 line-clamp-2">Medklippere: {coEditors.join(", ")}</div>}
               </div>
             </MobileDataCard>
+            {isSeason && isExpanded && (
+              <div className="ml-4 space-y-2 border-l pl-3">
+                {loadingSeasons.has(groupKey) && <p className="py-3 text-sm text-muted-foreground">Henter afsnit…</p>}
+                {seasonErrors[groupKey] && (
+                  <div className="rounded-md border border-destructive/30 p-3 text-sm">
+                    <p>{seasonErrors[groupKey]}</p>
+                    <Button size="sm" variant="outline" className="mt-2" onClick={() => void loadAdminSeason(work, true)}>Prøv igen</Button>
+                  </div>
+                )}
+                {episodes.map(episode => {
+                  const names = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${displayCreditRole(a.role)})`);
+                  return (
+                    <button key={episode.id} type="button" onClick={() => openEdit(episode)} className="block w-full rounded-lg border bg-background p-3 text-left hover:bg-muted/50">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium">S{String(episode.season_number ?? work.season_number ?? 0).padStart(2, "0")}E{String(episode.episode_number ?? 0).padStart(2, "0")} · {episode.title}</span>
+                        <ChevronRight className="h-4 w-4 shrink-0" />
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">{names.length ? names.join(", ") : "Ingen tilknyttede brugere"} · Kontrakter: {episode.contracts?.length ?? 0}</p>
+                    </button>
+                  );
+                })}
+                {!loadingSeasons.has(groupKey) && !seasonErrors[groupKey] && episodes.length === 0 && <p className="py-3 text-sm text-muted-foreground">Ingen afsnit i sæsonen.</p>}
+              </div>
+            )}
+            </div>
           );
         })}
       </MobileCardList>
@@ -1936,14 +2027,21 @@ export default function VaerksadministrationPage() {
               <TableRow><TableCell colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Ingen værker matcher søgningen</TableCell></TableRow>
             ) : visibleWorks.map(work => {
               const status = displayStatus(work);
+              const isSeason = Boolean(work.is_season_group);
+              const groupKey = work.group_key ?? work.id;
+              const isExpanded = expandedSeasons.has(groupKey);
+              const episodes = seasonEpisodes[groupKey] ?? [];
               const broadcaster = getWorkBroadcaster(work);
               const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
               const poster = posterSrc(work.poster_url);
-              const pendingCount = (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
+              const pendingCount = work.overview_pending_count ?? (work.work_change_requests ?? []).filter(request => request.status === "pending").length;
+              const workSelectionIds = selectionIdsForWork(work);
+              const isSelected = workSelectionIds.length > 0 && workSelectionIds.every(id => selectedIds.includes(id));
               return (
-                <TableRow key={work.id} className={pendingCount ? "bg-amber-50/45" : undefined}>
+                <Fragment key={work.id}>
+                <TableRow className={pendingCount ? "bg-amber-50/45" : undefined}>
                   <TableCell>
-                    <input type="checkbox" checked={selectedIds.includes(work.id)} onChange={() => toggleSelected(work.id)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
+                    <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-3">
@@ -1957,7 +2055,10 @@ export default function VaerksadministrationPage() {
                       </div>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <button onClick={() => openEdit(work)} className="text-left font-medium underline-offset-4 hover:underline">{work.title}</button>
+                          <button onClick={() => isSeason ? toggleAdminSeason(work) : openEdit(work)} className="inline-flex items-center gap-1 text-left font-medium underline-offset-4 hover:underline" aria-expanded={isSeason ? isExpanded : undefined}>
+                            {isSeason && (isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
+                            {work.title}{isSeason && work.season_number != null ? ` · Sæson ${work.season_number}` : ""}
+                          </button>
                           {unreadMemberMessageCount(work) > 0 && (
                             <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                               {unreadMemberMessageCount(work) > 1 ? `${unreadMemberMessageCount(work)} beskeder` : "Besked"}
@@ -1975,16 +2076,16 @@ export default function VaerksadministrationPage() {
                   <TableCell className="text-sm">{workTypeLabel(work.type)}</TableCell>
                   <TableCell className="text-sm tabular-nums text-muted-foreground">{work.year ?? "-"}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">
-                    <div>DFI: {work.dfi_id ?? "-"} · TMDB: {work.tmdb_id ?? "-"}</div>
+                    <div>{isSeason ? `${work.episode_count ?? 0} afsnit` : `DFI: ${work.dfi_id ?? "-"} · TMDB: ${work.tmdb_id ?? "-"}`}</div>
                     <div>
                       Varighed: {work.duration_minutes ?? "-"}
                       {isSeriesType(work.type) && <> · Sæson: {work.season_count ?? "-"} · Afsnit: {work.episode_count ?? "-"}</>}
                     </div>
-                    <div>Kontrakter: {work.contracts?.length ?? 0}</div>
+                    <div>{isSeason ? `Afsnit med kontrakt: ${work.overview_contract_count ?? 0}` : `Kontrakter: ${work.contracts?.length ?? 0}`}</div>
                     {(() => {
-                      const coEditors = (work.work_assignments ?? [])
+                      const coEditors = [...new Set((work.work_assignments ?? [])
                         .map(a => a.rettighedshavere?.full_name)
-                        .filter((name): name is string => Boolean(name));
+                        .filter((name): name is string => Boolean(name)))];
                       return coEditors.length > 0 ? <div>Medklippere: {coEditors.join(", ")}</div> : null;
                     })()}
                   </TableCell>
@@ -2007,6 +2108,31 @@ export default function VaerksadministrationPage() {
                     </Badge>
                   </TableCell>
                 </TableRow>
+                {isSeason && isExpanded && loadingSeasons.has(groupKey) && (
+                  <TableRow key={`${groupKey}-loading`}><TableCell colSpan={7} className="pl-16 text-sm text-muted-foreground">Henter afsnit…</TableCell></TableRow>
+                )}
+                {isSeason && isExpanded && seasonErrors[groupKey] && (
+                  <TableRow key={`${groupKey}-error`}><TableCell colSpan={7} className="pl-16 text-sm text-destructive">{seasonErrors[groupKey]} <Button size="sm" variant="outline" className="ml-2" onClick={() => void loadAdminSeason(work, true)}>Prøv igen</Button></TableCell></TableRow>
+                )}
+                {isSeason && isExpanded && episodes.map(episode => {
+                  const episodeStatus = displayStatus(episode);
+                  const episodeNames = (episode.work_assignments ?? []).map(a => `${a.rettighedshavere?.full_name ?? "Ukendt"} (${displayCreditRole(a.role)})`);
+                  return (
+                    <TableRow key={episode.id} className="bg-muted/20">
+                      <TableCell className="pl-8"><input type="checkbox" checked={selectedIds.includes(episode.id)} onChange={() => toggleSelected(episode.id)} className="h-4 w-4" aria-label={`Vælg ${episode.title}`} /></TableCell>
+                      <TableCell className="pl-12"><button type="button" onClick={() => openEdit(episode)} className="text-left text-sm font-medium underline-offset-4 hover:underline">S{String(episode.season_number ?? work.season_number ?? 0).padStart(2, "0")}E{String(episode.episode_number ?? 0).padStart(2, "0")} · {episode.title}</button></TableCell>
+                      <TableCell className="text-sm">Afsnit</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{episode.year ?? "-"}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{episodeNames.length ? episodeNames.join(", ") : "Ingen tilknyttede brugere"}<div>Kontrakter: {episode.contracts?.length ?? 0}</div></TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{getWorkBroadcaster(episode) ?? "-"}</TableCell>
+                      <TableCell><Badge variant="outline" className={STATUS_CLASS[episodeStatus] ?? ""}>{STATUS_LABELS[episodeStatus] ?? episodeStatus}</Badge></TableCell>
+                    </TableRow>
+                  );
+                })}
+                {isSeason && isExpanded && !loadingSeasons.has(groupKey) && !seasonErrors[groupKey] && episodes.length === 0 && (
+                  <TableRow key={`${groupKey}-empty`}><TableCell colSpan={7} className="pl-16 text-sm text-muted-foreground">Ingen afsnit i sæsonen.</TableCell></TableRow>
+                )}
+                </Fragment>
               );
             })}
           </TableBody>
