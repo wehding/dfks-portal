@@ -20,6 +20,8 @@ import {
     UserCheck,
     BrainCircuit,
     ShieldCheck,
+    Home,
+    MessageSquare,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useI18n } from "@/lib/i18n"
@@ -84,6 +86,7 @@ type ContractCommentCounterRow = {
     author_role: string
     member_read_at: string | null
 }
+type InboxParticipantCounterRow = { last_read_at: string | null; member_message_threads: { member_messages: Array<{ author_role: string; created_at: string }> } | null }
 
 export default function PortalLayout({
     children,
@@ -99,6 +102,7 @@ export default function PortalLayout({
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [workMessageCount, setWorkMessageCount] = useState<number>(0)
     const [contractMessageCount, setContractMessageCount] = useState<number>(0)
+    const [inboxMessageCount, setInboxMessageCount] = useState<number>(0)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string; long_name: string }>({ logo_url: null, short_name: "DFKS", long_name: "DFKS" })
     const [isAssociationMember, setIsAssociationMember] = useState(false)
 
@@ -126,9 +130,9 @@ export default function PortalLayout({
 
             const { data: memberRow } = await supabase
                 .from("rettighedshavere")
-                .select("id")
+                .select("id,org_affiliations!inner(org_id)")
                 .eq("user_id", user.id)
-                .eq("org_id", orgId)
+                .eq("org_affiliations.org_id", orgId)
                 .maybeSingle()
             setIsAssociationMember(Boolean(memberRow?.id))
 
@@ -162,6 +166,10 @@ export default function PortalLayout({
                     .eq("contracts.rights_holder_id", rh.id)
                 setContractMessageCount(((comments ?? []) as ContractCommentCounterRow[]).filter(comment => comment.author_role === "admin" && !comment.member_read_at).length)
             }
+            const { data: inboxParticipants } = await supabase.from("member_message_participants")
+                .select("last_read_at,member_message_threads!inner(member_messages(author_role,created_at))")
+                .eq("user_id", user.id)
+            setInboxMessageCount(((inboxParticipants ?? []) as unknown as InboxParticipantCounterRow[]).reduce((sum, participant) => sum + (participant.member_message_threads?.member_messages ?? []).filter(message => message.author_role === "admin" && message.created_at > (participant.last_read_at ?? "")).length, 0))
         }
 
         supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -180,6 +188,11 @@ export default function PortalLayout({
 
     const portalNavItems = [
         {
+            label: t("nav.dashboard"),
+            href: "/portal",
+            icon: Home,
+        },
+        {
             label: t("nav.myWorks"),
             href: "/portal/mine-vaerker",
             icon: SHARED_NAV_ICONS.works,
@@ -188,6 +201,11 @@ export default function PortalLayout({
             label: t("nav.myContracts"),
             href: "/portal/mine-kontrakter",
             icon: SHARED_NAV_ICONS.contracts,
+        },
+        {
+            label: t("nav.messages"),
+            href: "/portal/beskeder",
+            icon: MessageSquare,
         },
         {
             label: t("nav.economy"),
@@ -244,7 +262,7 @@ export default function PortalLayout({
             <SidebarCloseOnNavigation />
             <Sidebar variant="inset">
                 <SidebarHeader className="p-4">
-                    <SidebarNavigationLink href="/portal/mine-vaerker" className="block">
+                    <SidebarNavigationLink href="/portal" className="block">
                         {brand.logo_url ? (
                             // Foreningens eget logo (kan være ekstern URL/data-URI) — plain img undgår next/image domæne-config
                             // eslint-disable-next-line @next/next/no-img-element
@@ -276,7 +294,7 @@ export default function PortalLayout({
                                                     asChild
                                                     isActive={
                                                         pathname === item.href ||
-                                                        (pathname?.startsWith(`${item.href}/`) ?? false)
+                                                        (item.href !== "/portal" && (pathname?.startsWith(`${item.href}/`) ?? false))
                                                     }
                                                 >
                                                     <SidebarNavigationLink href={item.href}>
@@ -292,6 +310,7 @@ export default function PortalLayout({
                                                                 {contractMessageCount}
                                                             </span>
                                                         )}
+                                                        {item.href === "/portal/beskeder" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
                                                     </SidebarNavigationLink>
                                                 </SidebarMenuButton>
                                             </SidebarMenuItem>
@@ -314,7 +333,7 @@ export default function PortalLayout({
                                                     asChild
                                                     isActive={
                                                         pathname === item.href ||
-                                                        (pathname?.startsWith(`${item.href}/`) ?? false)
+                                                        (item.href !== "/portal" && (pathname?.startsWith(`${item.href}/`) ?? false))
                                                     }
                                                 >
                                                     <SidebarNavigationLink href={item.href}>
@@ -351,7 +370,7 @@ export default function PortalLayout({
                                                     <SidebarMenuItem key={item.href}>
                                                         <SidebarMenuButton
                                                             asChild
-                                                            isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
+                                                            isActive={pathname === item.href || (item.href !== "/portal" && (pathname?.startsWith(`${item.href}/`) ?? false))}
                                                         >
                                                             <SidebarNavigationLink href={item.href}>
                                                                 <item.icon className="h-4 w-4" />
@@ -389,6 +408,7 @@ export default function PortalLayout({
                                                             {contractMessageCount}
                                                         </span>
                                                     )}
+                                                    {item.href === "/portal/beskeder" && inboxMessageCount > 0 && <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">{inboxMessageCount}</span>}
                                                 </SidebarNavigationLink>
                                             </SidebarMenuButton>
                                         </SidebarMenuItem>

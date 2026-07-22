@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldShowWorkLinkBadge, unreadAdminMessageCount } from "../lib/contract-list-status";
+import { hasLinkedWork, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "../lib/contract-list-status";
 
 test("an unread admin message produces a contract message tag", () => {
   assert.equal(unreadAdminMessageCount([
@@ -11,7 +11,20 @@ test("an unread admin message produces a contract message tag", () => {
 });
 
 test("validated contracts with a linked work hide the redundant work tag", () => {
-  assert.equal(shouldShowWorkLinkBadge(true, "valideret"), false);
-  assert.equal(shouldShowWorkLinkBadge(true, "kladde"), true);
-  assert.equal(shouldShowWorkLinkBadge(false, "valideret"), true);
+  const cases = [
+    { status: "kladde", workId: null, visible: true },
+    { status: "kladde", workId: "work-1", visible: true },
+    { status: "valideret", workId: null, visible: true },
+    { status: "valideret", workId: "work-1", visible: false },
+    { status: "arkiveret", workId: null, visible: true },
+    { status: "arkiveret", workId: "work-1", visible: true },
+  ];
+  for (const item of cases) assert.equal(shouldShowWorkLinkBadge(hasLinkedWork(item.workId), item.status), item.visible);
+});
+
+test("work linkage depends only on contracts.work_id", () => {
+  assert.equal(hasLinkedWork("48f1fe07-3335-43ae-b6c5-a9dc5f7ae57c"), true);
+  assert.equal(hasLinkedWork(null), false);
+  assert.equal(hasLinkedWork(undefined), false);
+  assert.equal(hasLinkedWork(""), false);
 });

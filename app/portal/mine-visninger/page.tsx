@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowUpDown, Loader2, Plus, Search } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { MessageThread } from "@/components/messages/message-thread";
@@ -13,11 +13,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { addScreeningClaimComment, createScreeningClaim, fetchMemberScreeningClaims, fetchMemberScreeningOptions, markScreeningClaimCommentsRead } from "@/app/actions/screenings";
 import { WORK_TYPES } from "@/lib/work-types";
+import { useSearchParams } from "next/navigation";
 
 type Claim = Record<string, any>;
 type Option = { id: string; title?: string; name?: string };
 
 export default function MineVisningerPage() {
+  return <Suspense fallback={<Loader2 className="h-5 w-5 animate-spin" />}><MineVisningerContent /></Suspense>;
+}
+
+function MineVisningerContent() {
   const [claims, setClaims] = useState<Claim[]>([]);
   const [works, setWorks] = useState<Option[]>([]);
   const [broadcasters, setBroadcasters] = useState<Option[]>([]);
@@ -33,6 +38,7 @@ export default function MineVisningerPage() {
   const [query, setQuery] = useState("");
   const [workQuery, setWorkQuery] = useState("");
   const [sort, setSort] = useState<{ key: "title" | "date" | "channel" | "status"; direction: 1 | -1 }>({ key: "date", direction: -1 });
+  const searchParams = useSearchParams();
 
   const load = async () => {
     setLoading(true);
@@ -77,6 +83,14 @@ export default function MineVisningerPage() {
     await markScreeningClaimCommentsRead(claim.id, "member");
     setClaims(prev => prev.map(item => item.id === claim.id ? { ...item, screening_claim_comments: (item.screening_claim_comments ?? []).map((comment: Claim) => comment.author_role === "admin" ? { ...comment, member_read_at: new Date().toISOString() } : comment) } : item));
   };
+  useEffect(() => {
+    const claimId = searchParams?.get("claim");
+    if (!claimId || selected?.id === claimId) return;
+    const claim = claims.find(item => item.id === claimId);
+    if (claim) void openClaim(claim);
+    // openClaim intentionally uses current local state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claims, searchParams, selected?.id]);
 
   return <div className="space-y-6">
     <PageHeader hideTitleOnMobile title="Mine visninger" subtitle="Indberet manuelle visninger og følg dialogen med DFKS" actions={<Button onClick={() => setCreateOpen(true)}><Plus className="mr-2 h-4 w-4" />Indberet visning</Button>} />

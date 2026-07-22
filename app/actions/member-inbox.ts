@@ -1,0 +1,128 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { requireOrgId } from "@/lib/org";
+import { sendMemberNotification } from "@/lib/member-notifications";
+
+async function signedInUser() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  return { supabase, user };
+}
+
+export async function fetchMemberInbox() {
+  const { user } = await signedInUser();
+  if (!user) return { success: false, error: "Ikke logget ind", threads: [] };
+  const db = createServiceClient();
+  const { data: holder } = await db.from("rettighedshavere").select("id,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+  if (!holder) return { success: false, error: "Medlemsprofilen findes ikke", threads: [] };
+  const orgId = (Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations)?.org_id;
+  if (!orgId) return { success: false, error: "Medlemsprofilen er ikke knyttet til en organisation", threads: [] };
+  const { data, error } = await db.from("member_message_threads")
+    .select("id,subject,updated_at,created_at,member_messages(id,author_user_id,author_role,body,created_at),member_message_participants(user_id,last_read_at)")
+    .eq("org_id", orgId).eq("rights_holder_id", holder.id).order("updated_at", { ascending: false });
+  return error ? { success: false, error: error.message, threads: [] } : { success: true, threads: data ?? [] };
+}
+
+export async function fetchAdminInbox() {
+  const { supabase, user } = await signedInUser();
+  if (!user || !(await assertAdminRole(supabase))) return { success: false, error: "Mangler adminrettigheder", threads: [] };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  const { data, error } = await db.from("member_message_threads")
+    .select("id,subject,updated_at,created_at,rights_holder_id,rettighedshavere(full_name,email),member_messages(id,author_user_id,author_role,body,created_at),member_message_participants(user_id,last_read_at)")
+    .eq("org_id", orgId).order("updated_at", { ascending: false });
+  return error ? { success: false, error: error.message, threads: [] } : { success: true, threads: data ?? [] };
+}
+
+export async function fetchAdminInboxRecipients() {
+  const { supabase, user } = await signedInUser();
+  if (!user || !(await assertAdminRole(supabase))) return { success: false, error: "Mangler adminrettigheder", recipients: [] };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  const { data, error } = await db.from("rettighedshavere")
+    .select("id,full_name,email,user_id,org_affiliations!inner(org_id)")
+    .eq("org_affiliations.org_id", orgId)
+    .not("user_id", "is", null)
+    .order("full_name");
+  return error ? { success: false, error: error.message, recipients: [] } : { success: true, recipients: data ?? [] };
+}
+
+export async function createAdminInboxMessage(params: { rightsHolderIds: string[]; subject: string; body: string }) {
+  const { supabase, user } = await signedInUser();
+  if (!user || !(await assertAdminRole(supabase))) return { success: false, error: "Mangler adminrettigheder" };
+  const subject = params.subject.trim().slice(0, 200);
+  const body = params.body.trim().slice(0, 10000);
+  const ids = [...new Set(params.rightsHolderIds)].slice(0, 500);
+  if (!subject || !body || !ids.length) return { success: false, error: "Vælg modtagere og udfyld emne og besked." };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  const { data: holders, error: holderError } = await db.from("rettighedshavere").select("id,user_id,org_affiliations!inner(org_id)").eq("org_affiliations.org_id", orgId).in("id", ids);
+  if (holderError || !holders?.length) return { success: false, error: holderError?.message ?? "Ingen gyldige modtagere" };
+  const eligibleHolders = holders.filter(holder => holder.user_id);
+  const skippedWithoutPortalUser = holders.length - eligibleHolders.length;
+  if (!eligibleHolders.length) return { success: false, error: "Ingen af de valgte medlemmer har en portalbruger" };
+  const isBroadcast = eligibleHolders.length > 1;
+  let campaignId: string | null = null;
+  if (isBroadcast) {
+    const { data: campaign, error } = await db.from("message_campaigns").insert({ org_id: orgId, subject, body, created_by: user.id, recipient_count: eligibleHolders.length }).select("id").single();
+    if (error || !campaign) return { success: false, error: error?.message ?? "Kampagnen kunne ikke oprettes" };
+    campaignId = campaign.id;
+  }
+  let created = 0;
+  for (const holder of eligibleHolders) {
+    const { data: thread, error: threadError } = await db.from("member_message_threads").insert({ org_id: orgId, rights_holder_id: holder.id, subject, campaign_id: campaignId, created_by: user.id }).select("id").single();
+    if (threadError || !thread) continue;
+    const { data: message, error: messageError } = await db.from("member_messages").insert({ thread_id: thread.id, author_user_id: user.id, author_role: "admin", body }).select("id").single();
+    if (messageError || !message) { await db.from("member_message_threads").delete().eq("id", thread.id); continue; }
+    const participants = [{ thread_id: thread.id, user_id: user.id, last_read_at: new Date().toISOString() }, ...(holder.user_id ? [{ thread_id: thread.id, user_id: holder.user_id, last_read_at: null }] : [])];
+    await db.from("member_message_participants").insert(participants);
+    created += 1;
+    try {
+      await sendMemberNotification({ eventKey: `inbox-message:${message.id}`, eventType: isBroadcast ? "broadcast_message" : "direct_message", orgId, rightsHolderId: holder.id, category: isBroadcast ? "broadcast" : "transactional", subject, bodyText: body, path: `/portal/beskeder?thread=${thread.id}`, entityType: "message_thread", entityId: thread.id });
+    } catch (notificationError) {
+      console.error("[notification] indbakkemail kunne ikke sendes", notificationError);
+    }
+  }
+  revalidatePath("/admin/beskeder");
+  revalidatePath("/portal/beskeder");
+  return { success: created > 0, count: created, skippedWithoutPortalUser, error: created ? undefined : "Ingen beskeder blev oprettet" };
+}
+
+export async function sendInboxReply(threadId: string, bodyValue: string) {
+  const { supabase, user } = await signedInUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const body = bodyValue.trim().slice(0, 10000);
+  if (!body) return { success: false, error: "Skriv en besked." };
+  const db = createServiceClient();
+  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", threadId).maybeSingle();
+  if (!thread) return { success: false, error: "Tråden findes ikke" };
+  const { data: holder } = await db.from("rettighedshavere").select("id,user_id").eq("id", thread.rights_holder_id).maybeSingle();
+  const admin = await assertAdminRole(supabase);
+  if ((!admin && holder?.user_id !== user.id) || (admin && await requireOrgId(db, user.id) !== thread.org_id)) return { success: false, error: "Ikke autoriseret" };
+  const role = admin ? "admin" : "member";
+  const { data: message, error } = await db.from("member_messages").insert({ thread_id: threadId, author_user_id: user.id, author_role: role, body }).select("id,author_user_id,author_role,body,created_at").single();
+  if (error || !message) return { success: false, error: error?.message ?? "Beskeden kunne ikke gemmes" };
+  await Promise.all([
+    db.from("member_message_threads").update({ updated_at: new Date().toISOString() }).eq("id", threadId),
+    db.from("member_message_participants").upsert({ thread_id: threadId, user_id: user.id, last_read_at: new Date().toISOString() }),
+  ]);
+  revalidatePath("/admin/beskeder"); revalidatePath("/portal/beskeder");
+  return { success: true, message };
+}
+
+export async function markInboxThreadRead(threadId: string) {
+  const { user } = await signedInUser();
+  if (!user) return { success: false };
+  const db = createServiceClient();
+  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", threadId).maybeSingle();
+  if (!thread) return { success: false };
+  const { data: holder } = await db.from("rettighedshavere").select("user_id").eq("id", thread.rights_holder_id).maybeSingle();
+  const { data: role } = await db.from("user_org_roles").select("id").eq("user_id", user.id).eq("org_id", thread.org_id).limit(1).maybeSingle();
+  if (holder?.user_id !== user.id && !role) return { success: false };
+  await db.from("member_message_participants").upsert({ thread_id: threadId, user_id: user.id, last_read_at: new Date().toISOString() });
+  return { success: true };
+}

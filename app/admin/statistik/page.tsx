@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useMemo, useEffect } from "react"
-import { CalendarDays, Loader2 } from "lucide-react"
+import { CalendarDays, Download, Loader2 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
@@ -9,6 +9,7 @@ import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-c
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
     Select,
     SelectContent,
@@ -38,6 +39,7 @@ import {    LineChart,
     Cell,
     ReferenceLine,
 } from "recharts"
+import { aggregateContributionsByYear, contributionForContract, salaryToMonthly } from "@/lib/statistics-calculations"
 
 function formatKr(n: number) {
     return n.toLocaleString("da-DK") + " kr."
@@ -103,13 +105,6 @@ function getWeeksInYear(
     return Math.round((totalWeeks * (overlapDays / totalDays)) * 10) / 10
 }
 
-function toMonthly(salary: number, unit: string): number {
-    if (unit === "monthly") return salary
-    if (unit === "weekly")  return Math.round(salary * 52 / 12)
-    if (unit === "daily")   return Math.round(salary * 5 * 52 / 12)
-    return salary
-}
-
 function prodTypeLabel(type: string): string {
     const map: Record<string, string> = {
         feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentar",
@@ -123,6 +118,8 @@ export default function AdminStatistikPage() {
     const { t } = useI18n()
     const [selectedYear, setSelectedYear] = useState<string>("all")
     const [selectedGender, setSelectedGender] = useState<string>("all")
+    const [selectedCategory, setSelectedCategory] = useState<string>("all")
+    const [selectedContractType, setSelectedContractType] = useState<string>("all")
     const [dbContracts, setDbContracts] = useState<DbContractRow[]>([])
     const [loading, setLoading] = useState(true)
 
@@ -162,16 +159,6 @@ export default function AdminStatistikPage() {
                 const year = dateStr ? new Date(dateStr).getFullYear() : new Date().getFullYear()
                 return { id: c.id, type: c.type, overenskomst: c.overenskomst, contract_date: c.contract_date, start_date: c.start_date, premiereYear: year, extractedData: ed, rhName: (c as any).rettighedshavere?.full_name ?? null }
             })
-            rows.forEach(r => console.log("[statistik]", {
-                title: r.id.slice(0,8),
-                rhName: r.rhName,
-                year: r.premiereYear,
-                salary: r.extractedData?.salary,
-                salaryUnit: r.extractedData?.salaryUnit,
-                weeks: r.extractedData?.workingWeeks,
-                startDate: r.extractedData?.startDate,
-                cStartDate: r.start_date,
-            }))
             setDbContracts(rows)
             setLoading(false)
         }
@@ -187,6 +174,8 @@ export default function AdminStatistikPage() {
 
     const filteredContracts = useMemo(() => {
         let cs = yearNum ? dbContracts.filter(c => c.premiereYear === yearNum) : dbContracts
+        if (selectedCategory !== "all") cs = cs.filter(c => c.extractedData?.productionType === selectedCategory)
+        if (selectedContractType !== "all") cs = cs.filter(c => c.type === selectedContractType)
         if (selectedGender !== "all") {
             cs = cs.filter(c => {
                 const g = c.extractedData?.gender
@@ -195,40 +184,39 @@ export default function AdminStatistikPage() {
             })
         }
         return cs
-    }, [yearNum, selectedGender, dbContracts])
+    }, [yearNum, selectedGender, selectedCategory, selectedContractType, dbContracts])
 
     // Beregn lønstatistik per år
     const filteredSalary = useMemo(() => {
-        const years = yearNum ? [yearNum] : [...new Set(dbContracts.map(c => c.premiereYear))].sort()
+        const years = [...new Set(filteredContracts.map(c => c.premiereYear))].sort()
         return years.map(y => {
-            const cs = dbContracts.filter(c => c.premiereYear === y && c.extractedData?.salary)
-            const monthly = cs.filter(c => c.type !== "leverandør").map(c => toMonthly(c.extractedData!.salary, c.extractedData!.salaryUnit ?? "monthly"))
-            const daily = cs.map(c => c.extractedData!.salary && c.extractedData!.salaryUnit === "daily" ? c.extractedData!.salary : toMonthly(c.extractedData!.salary, c.extractedData!.salaryUnit ?? "monthly") / (52/12*5))
+            const cs = filteredContracts.filter(c => c.premiereYear === y && c.extractedData?.salary)
+            const monthly = cs.filter(c => c.type !== "leverandør").map(c => salaryToMonthly(c.extractedData!.salary, c.extractedData!.salaryUnit ?? "monthly"))
+            const daily = cs.map(c => c.extractedData!.salary && c.extractedData!.salaryUnit === "daily" ? c.extractedData!.salary : salaryToMonthly(c.extractedData!.salary, c.extractedData!.salaryUnit ?? "monthly") / (52/12*5))
             return {
                 year: y,
                 monthlyRate: monthly.length ? Math.round(monthly.reduce((a,b)=>a+b,0)/monthly.length) : 0,
                 dailyRate: daily.length ? Math.round(daily.reduce((a,b)=>a+b,0)/daily.length) : 0,
             }
         }).filter(d => d.monthlyRate > 0 || d.dailyRate > 0)
-    }, [yearNum, dbContracts])
+    }, [filteredContracts])
 
     // Pension per år
     const filteredPension = useMemo(() => {
-        const years = yearNum ? [yearNum] : [...new Set(dbContracts.map(c => c.premiereYear))].sort()
+        const years = [...new Set(filteredContracts.map(c => c.premiereYear))].sort()
         return years.map(y => {
-            const cs = dbContracts.filter(c => c.premiereYear === y && c.extractedData?.pensionPercent)
+            const cs = filteredContracts.filter(c => c.premiereYear === y && c.extractedData?.pensionPercent)
             const avg = cs.length ? cs.reduce((a, c) => a + (c.extractedData!.pensionPercent ?? 0), 0) / cs.length : 0
             const avgSupp = cs.length ? cs.reduce((a, c) => a + (c.extractedData!.personalSupplement ?? 0), 0) / cs.length : 0
             return { year: y, avgPensionPercent: Math.round(avg * 10) / 10, avgPersonalSupplement: Math.round(avgSupp) }
         }).filter(d => d.avgPensionPercent > 0)
-    }, [yearNum, dbContracts])
+    }, [filteredContracts])
 
     // Arbejdsuger per år — fordelt præcist på kalenderår via getWeeksInYear
     const filteredWeeks = useMemo(() => {
-        const allYearsSet = [...new Set(dbContracts.map(c => c.premiereYear))].sort()
-        const years = yearNum ? [yearNum] : allYearsSet
+        const years = [...new Set(filteredContracts.map(c => c.premiereYear))].sort()
         return years.map(y => {
-            const weeksInYear = dbContracts
+            const weeksInYear = filteredContracts
                 .filter(c => c.extractedData?.workingWeeks)
                 .map(c => {
                     const ed = c.extractedData!
@@ -244,18 +232,12 @@ export default function AdminStatistikPage() {
             const median = sorted[Math.floor(sorted.length / 2)]
             return { year: y, avgWeeks: Math.round(avg * 10) / 10, medianWeeks: Math.round(median * 10) / 10 }
         }).filter(Boolean) as { year: number; avgWeeks: number; medianWeeks: number }[]
-    }, [yearNum, dbContracts])
+    }, [filteredContracts])
 
     // Producentbidrag per år
     const filteredContributions = useMemo(() => {
-        const years = yearNum ? [yearNum] : [...new Set(dbContracts.map(c => c.premiereYear))].sort()
-        return years.map(y => {
-            const cs = dbContracts.filter(c => c.premiereYear === y)
-            const avgH = cs.filter(c => c.extractedData?.holidayPayRate).reduce((a,c) => a + (c.extractedData!.holidayPayRate ?? 0), 0) / (cs.filter(c => c.extractedData?.holidayPayRate).length || 1)
-            const avgB = cs.filter(c => c.extractedData?.betaRate).reduce((a,c) => a + (c.extractedData!.betaRate ?? 0), 0) / (cs.filter(c => c.extractedData?.betaRate).length || 1)
-            return { year: y, avgHolidayPayRate: Math.round(avgH*10)/10, avgBetaRate: Math.round(avgB*100)/100, totalHolidayPayAmount: 0, totalBetaAmount: 0, contractCount: cs.length }
-        }).filter(d => d.contractCount > 0)
-    }, [yearNum, dbContracts])
+        return aggregateContributionsByYear(filteredContracts)
+    }, [filteredContracts])
 
     // Årsindkomst fordelt på køn — gennemsnit per unik PERSON (ikke per kontrakt)
     const incomeByGender = useMemo(() => {
@@ -336,7 +318,6 @@ export default function AdminStatistikPage() {
             map[name].contracts.push({ year: c.premiereYear, weeklyRate, baseWeekly, weeks, total, isFreelance: c.type === "leverandør" || !!c.extractedData?.isFreelanceContract } as any)
         }
 
-        const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         return Object.values(map)
             .map(e => {
                 const totalWeeks = e.contracts.reduce((s, c) => s + c.weeks, 0)
@@ -357,7 +338,7 @@ export default function AdminStatistikPage() {
             .sort((a, b) => b.totalEarnings - a.totalEarnings)
             .map((e, i) => ({
                 ...e,
-                displayName: `Klipper ${letters[i] ?? i + 1}`,  // anonymiseret
+                displayName: `Klipper ${i + 1}`,
             }))
             .filter(e => e.totalEarnings > 0)
             .sort((a, b) => b.avgWeekly - a.avgWeekly)
@@ -369,26 +350,11 @@ export default function AdminStatistikPage() {
             .filter(c => c.extractedData?.salary)
             .map(c => {
                 const ed = c.extractedData!
-                const baseWeekly = ed.salaryUnit === "weekly" ? ed.salary
-                    : ed.salaryUnit === "daily" ? ed.salary * 5
-                    : ed.salaryUnit === "monthly" ? Math.round(ed.salary * 12 / 52)
-                    : ed.salary
-                const weeks = ed.workingWeeks ?? 0
-                const totalSalary = Math.round(baseWeekly * weeks)
-                const holidayRate = ed.holidayPayRate ?? 1        // 1% standard
-                const betaRate    = ed.betaRate    ?? 0.5         // 0.5% standard
-                const isFreelance = c.type === "leverandør" || !!ed.isFreelanceContract
+                const contribution = contributionForContract(c)!
                 return {
                     title: ed.workTitle ?? c.extractedData?.producerName ?? "Ukendt produktion",
                     employer: null as string | null,
-                    weeks,
-                    weeklyRate: baseWeekly,
-                    totalSalary,
-                    holidayPay: isFreelance ? 0 : Math.round(totalSalary * (holidayRate / 100)),
-                    beta:       isFreelance ? 0 : Math.round(totalSalary * (betaRate    / 100)),
-                    holidayRate,
-                    betaRate,
-                    isFreelance,
+                    ...contribution,
                     contractId: c.id,
                 }
             })
@@ -404,20 +370,12 @@ export default function AdminStatistikPage() {
         }
 
         const yearsSet = new Set<number>()
-        dbContracts.forEach(c => { const y = getStartYear(c); if (y) yearsSet.add(y) })
+        filteredContracts.forEach(c => { const y = getStartYear(c); if (y) yearsSet.add(y) })
         const allYears = [...yearsSet].sort()
         const years = yearNum ? [yearNum] : allYears
 
         return years.map(y => {
-            let cs = dbContracts.filter(c => getStartYear(c) === y)
-            // Anvend kønsfilter
-            if (selectedGender !== "all") {
-                cs = cs.filter(c => {
-                    const g = c.extractedData?.gender
-                    if (selectedGender === "other") return g && g !== "male" && g !== "female"
-                    return g === selectedGender
-                })
-            }
+            const cs = filteredContracts.filter(c => getStartYear(c) === y)
             const uniquePersons = new Set(cs.map(c => c.rhName ?? c.extractedData?.rightsHolderName).filter(Boolean)).size || 1
             return {
                 year: y,
@@ -428,7 +386,7 @@ export default function AdminStatistikPage() {
                 avgPerPerson: Math.round((cs.length / uniquePersons) * 10) / 10,
             }
         }).filter(d => d.total > 0)
-    }, [yearNum, selectedGender, dbContracts])
+    }, [yearNum, filteredContracts])
 
     // Rettighedsstatistik per produktionstype
     const rightsStats = useMemo(() => {
@@ -505,6 +463,59 @@ export default function AdminStatistikPage() {
         return { salary, pension, weeks }
     }, [filteredSalary, filteredPension, filteredWeeks])
 
+    const exportStamp = () => {
+        const now = new Date()
+        const period = selectedYear === "all" ? "alle-aar" : selectedYear
+        return `${period}-${now.toISOString().replace(/[:.]/g, "-")}`
+    }
+
+    const exportCsv = () => {
+        const rows = filteredContributions.map(row => ({
+            År: row.year,
+            Kontrakter: row.contractCount,
+            Feriepenge: row.totalHolidayPayAmount,
+            BETA: row.totalBetaAmount,
+            BidragIAlt: row.totalHolidayPayAmount + row.totalBetaAmount,
+        }))
+        const headers = Object.keys(rows[0] ?? { År: "", Kontrakter: "", Feriepenge: "", BETA: "", BidragIAlt: "" })
+        const csv = [headers.join(";"), ...rows.map(row => headers.map(header => String(row[header as keyof typeof row] ?? "").replaceAll(";", ",")).join(";"))].join("\n")
+        const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }))
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `dfks-statistik-${exportStamp()}.csv`
+        anchor.click()
+        URL.revokeObjectURL(url)
+    }
+
+    const exportXlsx = async () => {
+        const ExcelJS = await import("exceljs")
+        const overview = [{
+            Periode: selectedYear === "all" ? "Alle år" : selectedYear,
+            Kontrakter: filteredContracts.length,
+            SamletBidrag: filteredContributions.reduce((sum, row) => sum + row.totalHolidayPayAmount + row.totalBetaAmount, 0),
+        }]
+        const annual = filteredContributions.map(row => ({ År: row.year, Kontrakter: row.contractCount, Feriepenge: row.totalHolidayPayAmount, BETA: row.totalBetaAmount, BidragIAlt: row.totalHolidayPayAmount + row.totalBetaAmount }))
+        const contributions = contributionsByProduction.map((row, index) => ({ Produktion: `Produktion ${index + 1}`, Arbejdsuger: row.weeks, FerieberettigetLøn: row.totalSalary, Feriepenge: row.holidayPay, BETA: row.beta, BidragIAlt: row.holidayPay + row.beta }))
+        const workbook = new ExcelJS.Workbook()
+        const addSheet = (name: string, rows: Array<Record<string, string | number>>) => {
+            const sheet = workbook.addWorksheet(name)
+            const headers = Object.keys(rows[0] ?? {})
+            sheet.columns = headers.map(header => ({ header, key: header, width: Math.max(14, header.length + 2) }))
+            sheet.addRows(rows)
+            sheet.getRow(1).font = { bold: true }
+        }
+        addSheet("Oversigt", overview)
+        addSheet("Årsdata", annual)
+        addSheet("Producentbidrag", contributions)
+        const buffer = await workbook.xlsx.writeBuffer()
+        const url = URL.createObjectURL(new Blob([buffer as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }))
+        const anchor = document.createElement("a")
+        anchor.href = url
+        anchor.download = `dfks-statistik-${exportStamp()}.xlsx`
+        anchor.click()
+        URL.revokeObjectURL(url)
+    }
+
     if (loading) {
         return (
             <div className="flex items-center justify-center py-20">
@@ -535,6 +546,11 @@ export default function AdminStatistikPage() {
                 subtitle={`${dbContracts.length} kontrakt${dbContracts.length !== 1 ? "er" : ""} · data fra AI-udtræk`}
             />
 
+            <div className="flex flex-wrap justify-end gap-2">
+                <Button type="button" variant="outline" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>
+                <Button type="button" variant="outline" onClick={() => void exportXlsx()}><Download className="mr-2 h-4 w-4" />XLSX</Button>
+            </div>
+
             {/* Filters */}
             <div className="grid gap-3 sm:flex sm:flex-wrap">
                 {/* YEAR SELECTOR — primary filter */}
@@ -553,7 +569,7 @@ export default function AdminStatistikPage() {
                     </SelectContent>
                 </Select>
 
-                <Select defaultValue="all">
+                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
                     <SelectTrigger className="w-full sm:w-[160px]">
                         <SelectValue placeholder={t("admin.stats.filterCategory")} />
                     </SelectTrigger>
@@ -564,14 +580,14 @@ export default function AdminStatistikPage() {
                         <SelectItem value="documentary">{t("cat.documentary")}</SelectItem>
                     </SelectContent>
                 </Select>
-                <Select defaultValue="all">
+                <Select value={selectedContractType} onValueChange={setSelectedContractType}>
                     <SelectTrigger className="w-full sm:w-[160px]">
-                        <SelectValue placeholder={t("admin.stats.filterRole")} />
+                        <SelectValue placeholder={t("admin.stats.filterContractType")} />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="all">Alle roller</SelectItem>
-                        <SelectItem value="klipper">Klipper</SelectItem>
-                        <SelectItem value="instruktor">Instruktør</SelectItem>
+                        <SelectItem value="all">Alle kontrakttyper</SelectItem>
+                        <SelectItem value="a-løn">A-løn</SelectItem>
+                        <SelectItem value="leverandør">Leverandør</SelectItem>
                     </SelectContent>
                 </Select>
                 <Select value={selectedGender} onValueChange={setSelectedGender}>

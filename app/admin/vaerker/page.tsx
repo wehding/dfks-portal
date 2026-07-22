@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableSkeleton } from "@/components/ui/data-skeletons";
 import {
   archiveAdminWorks,
   approveAdminWorks,
@@ -1819,7 +1820,7 @@ export default function VaerksadministrationPage() {
     }
   };
 
-  if (loading) return <div className="flex h-40 items-center justify-center text-sm text-muted-foreground">Henter værker...</div>;
+  if (loading) return <TableSkeleton columns={7} rows={7} />;
 
   const addRequiresEpisodeSelection =
     addAssignments.some(assignment => Boolean(assignment.rightsHolderId)) &&

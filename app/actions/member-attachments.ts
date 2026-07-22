@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 
 const BUCKET = "kontrakter"; // samme bucket som kontrakter og admin-validering
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 export async function uploadMemberAttachment(contractId: string, formData: FormData) {
   const supabase = await createClient();
@@ -33,6 +34,7 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
 
   const file = formData.get("file") as File | null;
   if (!file) return { success: false, error: "Ingen fil modtaget" };
+  if (file.size > MAX_ATTACHMENT_BYTES) return { success: false, error: "Filen må højst fylde 25 MB" };
 
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (!["pdf", "docx", "txt"].includes(ext)) {
@@ -63,7 +65,7 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
       pdf_url: pdfUrl,
       created_by: user.id,
     })
-    .select("id, type, title, pdf_url, created_at")
+    .select("id, type, title, pdf_url, created_at, ai_status, ai_result")
     .single();
 
   if (dbErr || !attachment) {
@@ -72,8 +74,42 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
     return { success: false, error: "Kunne ikke gemme allongen" };
   }
 
+  const { error: jobError } = await db.from("contract_ai_jobs").insert({
+    contract_id: contractId,
+    attachment_id: attachment.id,
+    org_id: contract.org_id,
+    created_by: user.id,
+    status: "queued",
+    priority: 50,
+  });
+  if (jobError) {
+    console.error("Joboprettelse fejl (allonge):", jobError);
+    await db.from("contract_attachments").delete().eq("id", attachment.id);
+    await db.storage.from(BUCKET).remove([pdfUrl]);
+    return { success: false, error: "Allongen blev ikke gemt, fordi AI-jobbet ikke kunne oprettes" };
+  }
+
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, attachment };
+}
+
+export async function retryMemberAttachmentAnalysis(attachmentId: string) {
+  const supabase = await createClient();
+  const db = createServiceClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const { data: attachment } = await db.from("contract_attachments")
+    .select("id,contract_id,org_id,created_by")
+    .eq("id", attachmentId).maybeSingle();
+  if (!attachment || attachment.created_by !== user.id) return { success: false, error: "Ikke tilladt" };
+  const { data: failedJob } = await db.from("contract_ai_jobs").select("id").eq("attachment_id", attachmentId).eq("status", "error").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const { error } = failedJob
+    ? await db.from("contract_ai_jobs").update({ status: "queued", attempts: 0, error_message: null, priority: 25 }).eq("id", failedJob.id)
+    : await db.from("contract_ai_jobs").insert({ contract_id: attachment.contract_id, attachment_id: attachment.id, org_id: attachment.org_id, created_by: user.id, status: "queued", priority: 25 });
+  if (error) return { success: false, error: "Kunne ikke starte analysen igen" };
+  await db.from("contract_attachments").update({ ai_status: "analyserer" }).eq("id", attachmentId);
+  revalidatePath("/portal/mine-kontrakter");
+  return { success: true };
 }
 
 export async function deleteMemberAttachment(attachmentId: string) {

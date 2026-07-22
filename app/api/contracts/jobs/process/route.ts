@@ -8,6 +8,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
+import { attachmentChanges } from "@/lib/attachment-ai"
 
 type ContractJob = {
     id: string
@@ -15,6 +16,20 @@ type ContractJob = {
     org_id: string
     attempts: number
     pdf_url: string | null
+    attachment_id: string | null
+}
+
+async function runAttachmentJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob) {
+    if (!job.attachment_id || !job.pdf_url) throw new Error("Allongen mangler fil eller reference")
+    const maskedText = maskPersonalData(await textFromStoragePath(job.pdf_url))
+    const extractResult = await runContractExtraction(maskedText)
+    if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning af allonge fejlede")
+    const { data: validation } = await admin.from("contract_validations").select("extracted_data").eq("contract_id", job.contract_id).maybeSingle()
+    const { extracted, changes } = attachmentChanges((validation?.extracted_data ?? {}) as Record<string, unknown>, (extractResult.data ?? {}) as Record<string, unknown>)
+    const { error } = await admin.from("contract_attachments").update({ ai_status: "klar", ai_result: { extracted, changes, analyzedAt: new Date().toISOString(), includedInPayments: false } }).eq("id", job.attachment_id)
+    if (error) throw new Error(error.message)
+    await admin.from("contract_ai_jobs").update({ status: "done", masked_text: maskedText, completed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", job.id)
+    return { jobId: job.id, contractId: job.contract_id, attachmentId: job.attachment_id }
 }
 
 type DirectContractJob = ContractJob & { id: "__direct__" }
@@ -152,6 +167,7 @@ async function textFromStoragePath(path: string): Promise<string> {
 // Behandler ét enkelt job: henter fil, kører AI-udtræk, opdaterer validering +
 // kontrakt, og markerer jobbet done. Kaster ved fejl (kalderen markerer 'error').
 async function runContractJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob) {
+    if (job.attachment_id) return runAttachmentJob(admin, job)
     const storagePath = job.pdf_url
     if (!storagePath) throw new Error("Kontrakten mangler filsti")
 
@@ -273,13 +289,14 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
     return { jobId: job.id, contractId: job.contract_id }
 }
 
-async function markJobError(admin: ReturnType<typeof createServiceClient>, jobId: string, message: string) {
+async function markJobError(admin: ReturnType<typeof createServiceClient>, jobId: string, message: string, attachmentId?: string | null) {
     if (jobId === "__direct__") return
     await admin.from("contract_ai_jobs").update({
         status: "error",
         error_message: message,
         updated_at: new Date().toISOString(),
     }).eq("id", jobId)
+    if (attachmentId) await admin.from("contract_attachments").update({ ai_status: "fejl", ai_result: { error: message } }).eq("id", attachmentId)
 }
 
 // Hvor mange jobs én kø-dræn-kørsel behandler, og hvor længe den må køre.
@@ -319,7 +336,7 @@ export async function POST(req: NextRequest) {
             if (contractErr) throw new Error(contractErr.message)
             if (!contract) throw new Error("Kontrakt ikke fundet")
             const result = await runContractJob(admin, {
-                id: "__direct__", contract_id: contract.id, org_id: contract.org_id, attempts: 0, pdf_url: contract.pdf_url,
+                id: "__direct__", contract_id: contract.id, org_id: contract.org_id, attempts: 0, pdf_url: contract.pdf_url, attachment_id: null,
             } satisfies DirectContractJob)
             return NextResponse.json({ ok: true, processed: true, ...result })
         }
@@ -335,7 +352,7 @@ export async function POST(req: NextRequest) {
                 return NextResponse.json({ ok: true, processed: true, ...result })
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "Ukendt fejl"
-                await markJobError(admin, job.id, message)
+                await markJobError(admin, job.id, message, job.attachment_id)
                 return NextResponse.json({ ok: false, error: message }, { status: 500 })
             }
         }
@@ -356,7 +373,7 @@ export async function POST(req: NextRequest) {
                 processedContractIds.push(job.contract_id)
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "Ukendt fejl"
-                await markJobError(admin, job.id, message)
+                await markJobError(admin, job.id, message, job.attachment_id)
                 errors.push({ jobId: job.id, error: message })
             }
         }

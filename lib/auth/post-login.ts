@@ -22,5 +22,5 @@ export async function resolvePostLoginDestination(
     .limit(1)
     .maybeSingle();
 
-  return rightsHolder?.onboarding_completed ? "/portal/mine-vaerker" : "/onboarding";
+  return rightsHolder?.onboarding_completed ? "/portal" : "/onboarding";
 }

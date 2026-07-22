@@ -305,6 +305,7 @@ export default function MineVaerkerClient({
   const [initialAddQuery, setInitialAddQuery] = useState("");
   const [initialManualWork, setInitialManualWork] = useState<ManualWorkFormSeed | null>(null);
   const addParamHandledRef = React.useRef<string | null>(null);
+  const requestParamHandledRef = React.useRef<string | null>(null);
 
   const router   = useRouter();
   const searchParams = useSearchParams();
@@ -520,6 +521,17 @@ export default function MineVaerkerClient({
       setMsg({ type: "error", text: res.error ?? "Kunne ikke hente værkdetaljer." });
     }
   };
+
+  React.useEffect(() => {
+    const requestId = searchParams?.get("request");
+    if (!requestId || requestParamHandledRef.current === requestId) return;
+    const assignment = assignments.find(item => (item.works?.work_change_requests ?? []).some(request => request.id === requestId));
+    if (!assignment) return;
+    requestParamHandledRef.current = requestId;
+    void openEdit(assignment);
+    // openEdit intentionally uses the current assignment state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, searchParams]);
 
   const openSeasonEdit = async (work: Work) => {
     if (!rightsHolderId || !work.parent_work_id || work.season_number == null) return;
@@ -777,13 +789,13 @@ export default function MineVaerkerClient({
             onChange={() => setSelected(allFilteredSelected ? [] : filteredSelectionIds)}
             className="cursor-pointer w-4 h-4"
           />
-          <div onClick={() => handleSort("title")} className="cursor-pointer hover:text-foreground">{t("works.workTitle")}{sortArrow("title")}</div>
-          <div onClick={() => handleSort("year")}  className="cursor-pointer hover:text-foreground">{t("works.year")}{sortArrow("year")}</div>
-          <div onClick={() => handleSort("type")}  className="cursor-pointer hover:text-foreground">{t("works.type")}{sortArrow("type")}</div>
-          <div onClick={() => handleSort("role")} className="cursor-pointer hover:text-foreground">{t("works.role")}{sortArrow("role")}</div>
-          <div onClick={() => handleSort("episode")} className="cursor-pointer hover:text-foreground">{t("works.episodes")}{sortArrow("episode")}</div>
-          <div onClick={() => handleSort("coEditors")} className="cursor-pointer hover:text-foreground">{t("works.coEditors")}{sortArrow("coEditors")}</div>
-          <div onClick={() => handleSort("contract")} className="text-right cursor-pointer hover:text-foreground">{t("works.contract")}{sortArrow("contract")}</div>
+          <button type="button" onClick={() => handleSort("title")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.workTitle")}{sortArrow("title")}</button>
+          <button type="button" onClick={() => handleSort("year")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.year")}{sortArrow("year")}</button>
+          <button type="button" onClick={() => handleSort("type")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.type")}{sortArrow("type")}</button>
+          <button type="button" onClick={() => handleSort("role")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.role")}{sortArrow("role")}</button>
+          <button type="button" onClick={() => handleSort("episode")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.episodes")}{sortArrow("episode")}</button>
+          <button type="button" onClick={() => handleSort("coEditors")} className="text-left hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.coEditors")}{sortArrow("coEditors")}</button>
+          <button type="button" onClick={() => handleSort("contract")} className="text-right hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">{t("works.contract")}{sortArrow("contract")}</button>
         </div>
 
         {/* Rækker */}
