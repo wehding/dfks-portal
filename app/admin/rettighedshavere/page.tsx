@@ -144,6 +144,8 @@ export default function RettighedshavereAdminPage() {
     const [createOpen, setCreateOpen] = useState(false)
     const [createSaving, setCreateSaving] = useState(false)
     const [bulkSendingInvitations, setBulkSendingInvitations] = useState(false)
+    const [inviteConfirmOpen, setInviteConfirmOpen] = useState(false)
+    const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false)
     const [createForm, setCreateForm] = useState({ ...EMPTY_FORM })
     const [createMemberNoTouched, setCreateMemberNoTouched] = useState(false)
 
@@ -492,12 +494,20 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleBulkSendInvitation() {
+    function inviteTargets() {
+        return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed)
+    }
+
+    function handleBulkSendInvitation() {
         if (!orgId) return
         if (selectedIds.size === 0) return
-        const targets = visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed)
-        if (targets.length === 0) { toast.info("Ingen at invitere — de valgte er enten registreret eller mangler email."); return }
-        if (!confirm(`Send invitation til ${targets.length} valgt(e) person(er)? Personer der allerede har fået en invitation får en 2. invitation.`)) return
+        if (inviteTargets().length === 0) { toast.info("Ingen at invitere — de valgte er enten registreret eller mangler email."); return }
+        setInviteConfirmOpen(true)
+    }
+
+    async function confirmBulkSendInvitation() {
+        const targets = inviteTargets()
+        if (targets.length === 0) { setInviteConfirmOpen(false); return }
         setBulkSendingInvitations(true)
         let sent = 0
         const emailErrors: string[] = []
@@ -509,6 +519,7 @@ export default function RettighedshavereAdminPage() {
             else if (json?.email_error) emailErrors.push(json.email_error)
         }
         setBulkSendingInvitations(false)
+        setInviteConfirmOpen(false)
         if (sent > 0) toast.success(`${sent} af ${targets.length} invitationer sendt`)
         if (sent < targets.length) {
             toast.warning(`${targets.length - sent} invitation(er) blev ikke sendt${emailErrors[0] ? `: ${emailErrors[0]}` : "."}`)
@@ -516,13 +527,16 @@ export default function RettighedshavereAdminPage() {
         load()
     }
 
-    async function handleArchiveSelected() {
+    function handleArchiveSelected() {
         if (!orgId || selectedIds.size === 0) return
-        const names = visible.filter(rh => selectedIds.has(rh.id)).map(rh => rh.full_name)
-        if (!confirm(`Arkivér ${selectedIds.size} rettighedshaver(e)? De skjules i listen, men kan gendannes.\n\n${names.slice(0, 8).join("\n")}${names.length > 8 ? "\n..." : ""}`)) return
+        setArchiveConfirmOpen(true)
+    }
+
+    async function confirmArchiveSelected() {
         setArchivingSelected(true)
         const result = await archiveRightsHolders(Array.from(selectedIds))
         setArchivingSelected(false)
+        setArchiveConfirmOpen(false)
         if (!result.success) {
             toast.error(result.error ?? "Rettighedshavere kunne ikke arkiveres")
             return
@@ -1274,6 +1288,51 @@ export default function RettighedshavereAdminPage() {
                         <Button onClick={handleImportSelectedMembers} disabled={importingMembers || selectedImportIds.size === 0}>
                             {importingMembers && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                             Importer {selectedImportIds.size} valgte
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Send invitation dialog */}
+            <Dialog open={inviteConfirmOpen} onOpenChange={open => { if (!bulkSendingInvitations) setInviteConfirmOpen(open) }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Send invitationer</DialogTitle>
+                        <DialogDescription>
+                            Send invitation til {inviteTargets().length} valgt(e) person(er)?
+                            Personer der allerede har fået en invitation, får en påmindelse i stedet.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setInviteConfirmOpen(false)} disabled={bulkSendingInvitations}>Annuller</Button>
+                        <Button onClick={confirmBulkSendInvitation} disabled={bulkSendingInvitations}>
+                            {bulkSendingInvitations && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Send invitationer
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Arkivér dialog */}
+            <Dialog open={archiveConfirmOpen} onOpenChange={open => { if (!archivingSelected) setArchiveConfirmOpen(open) }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Arkivér rettighedshavere</DialogTitle>
+                        <DialogDescription>
+                            Arkivér {selectedIds.size} rettighedshaver(e)? De skjules i listen, men kan gendannes.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm">
+                        {visible.filter(rh => selectedIds.has(rh.id)).slice(0, 12).map(rh => (
+                            <div key={rh.id}>{rh.full_name}</div>
+                        ))}
+                        {selectedIds.size > 12 && <div className="text-muted-foreground">…og {selectedIds.size - 12} flere</div>}
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setArchiveConfirmOpen(false)} disabled={archivingSelected}>Annuller</Button>
+                        <Button variant="destructive" onClick={confirmArchiveSelected} disabled={archivingSelected}>
+                            {archivingSelected && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            Arkivér
                         </Button>
                     </DialogFooter>
                 </DialogContent>

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
 import { PageHeader } from "@/components/page-header"
+import { AdminInboxPanel } from "@/components/admin/admin-inbox-panel"
+import { MessageSquare } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -223,6 +225,16 @@ export default function AdminDashboardPage() {
                     </Button>
                 </div>
             )}
+
+            {/* Medlemsbeskeder — integreret fra den tidligere beskedside */}
+            <section className="space-y-3">
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                    <MessageSquare className="h-5 w-5 text-blue-500" />
+                    Medlemsbeskeder
+                </h2>
+                <p className="text-sm text-muted-foreground">Send direkte beskeder eller fællesmeddelelser. Svar forbliver private.</p>
+                <AdminInboxPanel />
+            </section>
         </div>
     )
 }

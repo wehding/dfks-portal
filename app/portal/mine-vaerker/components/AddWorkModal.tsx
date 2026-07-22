@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
 import { linkContractToWork } from "@/app/actions/member-contracts";
 import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
-import { searchTMDB, getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { searchTMDB, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
@@ -356,6 +356,7 @@ export function AddWorkModal({
   const [addEpisode, setAddEpisode]           = useState("");
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesError, setEpisodesError] = useState<string | null>(null);
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
   const [episodeOptions, setEpisodeOptions] = useState<EpisodeOption[]>([]);
   const [addComment, setAddComment]           = useState("");
@@ -378,21 +379,23 @@ export function AddWorkModal({
         const tmdbId = pickedUnifiedResult.tmdb_id;
         if (tmdbId) {
           setEpisodesLoading(true);
+          setEpisodesError(null);
           try {
-            const det = await getTMDBWorkDetails(tmdbId, "tv");
-            if (det.success && det.details) {
-              const d = det.details as any;
-              const sNum = parseInt(addSeason) || 1;
-              const season = d.seasons?.find((s: any) => s.season_number === sNum);
-              const count = season ? season.episode_count : null;
-              if (count) {
-                setDetectedEpisodeCount(count);
-                setEpisodeOptions(buildCompleteEpisodeOptions({
-                  episodeCount: count,
-                  seasonNumber: sNum,
-                }));
-                setSelectedEpisodes(prev => prev.filter(x => x <= count));
-              }
+            const sNum = parseInt(addSeason) || 1;
+            const season = await getTMDBSeasonEpisodes(tmdbId, sNum);
+            const seasonOptions = (season.success ? season.episodes ?? [] : [])
+              .map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` }))
+              .filter(option => Number.isFinite(option.number) && option.number > 0);
+            if (seasonOptions.length) {
+              setDetectedEpisodeCount(seasonOptions.length);
+              setEpisodeOptions(seasonOptions);
+              setSelectedEpisodes(prev => prev.filter(x => seasonOptions.some(option => option.number === x)));
+            } else {
+              // Sæsonen findes ikke — vis fejl i stedet for stale afsnit fra en anden sæson.
+              setDetectedEpisodeCount(null);
+              setEpisodeOptions([]);
+              setSelectedEpisodes([]);
+              setEpisodesError(locale === "da" ? `Kan ikke finde sæson ${sNum}.` : `Season ${sNum} not found.`);
             }
           } catch (e) {
             console.error(e);
@@ -404,7 +407,7 @@ export function AddWorkModal({
       }
     };
     updateTmdbEpisodes();
-  }, [addSeason, pickedUnifiedResult]);
+  }, [addSeason, pickedUnifiedResult, locale]);
 
   const resetAddState = React.useCallback(() => {
     const nextManualWork = emptyManualWorkForm(initialManualWork ?? {});
@@ -702,6 +705,10 @@ export function AddWorkModal({
           <Loader2 className="h-4 w-4 animate-spin" />
           {locale === "da" ? "Henter afsnit…" : "Loading episodes…"}
         </div>
+      )}
+
+      {!episodesLoading && episodesError && (
+        <p className="text-xs text-destructive">{episodesError}</p>
       )}
 
       {!episodesLoading && detectedEpisodeCount !== null && (

@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
@@ -134,7 +135,7 @@ export async function saveUploadedContract(params: {
   orgId: string;
   rhId: string;
   memberName: string;
-  workTitle: string;
+  workTitle?: string;
   workId?: string;
   category: string;
   roles: string[];
@@ -216,6 +217,8 @@ export async function saveUploadedContract(params: {
 
     if (jobError) {
       console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
+    } else {
+      triggerContractAiJobProcessing();
     }
   }
 
@@ -256,7 +259,29 @@ export async function queueUploadedContractAiJob(contractId: string) {
     priority: 0,
   });
   if (error) return { success: false, error: error.message };
+  triggerContractAiJobProcessing();
   return { success: true, alreadyQueued: false };
+}
+
+// Udløs jobkøen med det samme, så auto-kobling af kontrakt→værk ikke venter på
+// det daglige cron-job. Fire-and-forget efter svaret er sendt; cron samler op
+// hvis kaldet fejler eller secret ikke er sat.
+function triggerContractAiJobProcessing() {
+  const secret = process.env.INTERNAL_API_SECRET ?? process.env.CONTRACT_AI_JOB_SECRET ?? process.env.CRON_SECRET;
+  if (!secret) return;
+  const base = process.env.NEXT_PUBLIC_SITE_URL
+    ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  after(async () => {
+    try {
+      await fetch(`${base}/api/contracts/jobs/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
+        body: JSON.stringify({}),
+      });
+    } catch {
+      // Ignorér — cron-jobbet behandler køen senere.
+    }
+  });
 }
 
 export async function linkContractToWork(

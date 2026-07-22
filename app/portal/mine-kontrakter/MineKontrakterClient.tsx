@@ -6,7 +6,7 @@ import { addMemberContractComment, deleteMemberContract, fetchMemberContractDeta
 import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
-import { getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
 import UploadDialog from "./UploadDialog";
@@ -195,6 +195,7 @@ export default function MineKontrakterClient({
   const [episodeOptions, setEpisodeOptions] = useState<any[]>([]);
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
+  const [episodesError, setEpisodesError] = useState<string | null>(null);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
@@ -226,20 +227,22 @@ export default function MineKontrakterClient({
         if (tmdbId) {
           setEpisodesLoading(true);
           try {
-            const det = await getTMDBWorkDetails(tmdbId, "tv");
-            if (det.success && det.details) {
-              const d = det.details as any;
-              const sNum = parseInt(addSeason) || 1;
-              const season = d.seasons?.find((s: any) => s.season_number === sNum);
-              const count = season ? season.episode_count : null;
-              if (count) {
-                setDetectedEpisodeCount(count);
-                setEpisodeOptions(buildCompleteEpisodeOptions({
-                  episodeCount: count,
-                  seasonNumber: sNum,
-                }));
-                setSelectedEpisodes(prev => prev.filter(x => x <= count));
-              }
+            const sNum = parseInt(addSeason) || 1;
+            const season = await getTMDBSeasonEpisodes(tmdbId, sNum);
+            const seasonOptions = (season.success ? season.episodes ?? [] : [])
+              .map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` }))
+              .filter(option => Number.isFinite(option.number) && option.number > 0);
+            if (seasonOptions.length) {
+              setDetectedEpisodeCount(seasonOptions.length);
+              setEpisodeOptions(seasonOptions);
+              setSelectedEpisodes(prev => prev.filter(x => seasonOptions.some(option => option.number === x)));
+              setEpisodesError(null);
+            } else {
+              // Sæsonen findes ikke — vis fejl i stedet for stale afsnit fra en anden sæson.
+              setDetectedEpisodeCount(null);
+              setEpisodeOptions([]);
+              setSelectedEpisodes([]);
+              setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
             }
           } catch (e) {
             console.error(e);
@@ -1064,6 +1067,8 @@ export default function MineKontrakterClient({
                                 showSeason={false}
                                 compact
                               />
+                            ) : episodesError ? (
+                              <p className="text-xs text-destructive">{episodesError}</p>
                             ) : null}
                           </div>
                         )}

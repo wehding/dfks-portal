@@ -13,6 +13,51 @@ async function signedInUser() {
   return { supabase, user };
 }
 
+// Sørger for at medlemmet har organisationens velkomstbesked liggende som første
+// tråd i indbakken. Kører idempotent (kolonne-lås på welcome_message_sent_at).
+async function ensureWelcomeThread(db: ReturnType<typeof createServiceClient>, params: { holderId: string; memberUserId: string; orgId: string }) {
+  try {
+    const { data: holder } = await db.from("rettighedshavere")
+      .select("welcome_message_sent_at").eq("id", params.holderId).maybeSingle();
+    if (!holder || holder.welcome_message_sent_at) return;
+
+    const { data: org } = await db.from("organisations")
+      .select("welcome_message_text, branding").eq("id", params.orgId).maybeSingle();
+    const welcomeText = (org?.welcome_message_text ?? "").trim();
+    if (!welcomeText) return;
+
+    // Lås rækken, så parallelle kald ikke opretter dubletter.
+    const { data: claimed } = await db.from("rettighedshavere")
+      .update({ welcome_message_sent_at: new Date().toISOString() })
+      .eq("id", params.holderId)
+      .is("welcome_message_sent_at", null)
+      .select("id");
+    if (!claimed?.length) return;
+
+    // Afsender: en admin i organisationen — fallback: medlemmet selv (vises altid som organisationen).
+    const { data: adminRole } = await db.from("user_org_roles")
+      .select("user_id").eq("org_id", params.orgId)
+      .in("role", ["superadmin", "admin", "org-admin"]).limit(1).maybeSingle();
+    const senderId = adminRole?.user_id ?? params.memberUserId;
+
+    const shortName = ((org?.branding as { short_name?: string } | null)?.short_name ?? "DFKS").trim() || "DFKS";
+    const { data: thread } = await db.from("member_message_threads")
+      .insert({ org_id: params.orgId, rights_holder_id: params.holderId, subject: `Velkommen til ${shortName}-portalen`, created_by: senderId })
+      .select("id").single();
+    if (!thread) return;
+    const { data: message } = await db.from("member_messages")
+      .insert({ thread_id: thread.id, author_user_id: senderId, author_role: "admin", body: welcomeText })
+      .select("id").single();
+    if (!message) { await db.from("member_message_threads").delete().eq("id", thread.id); return; }
+    await db.from("member_message_participants").insert([
+      { thread_id: thread.id, user_id: senderId, last_read_at: new Date().toISOString() },
+      ...(senderId !== params.memberUserId ? [{ thread_id: thread.id, user_id: params.memberUserId, last_read_at: null }] : []),
+    ]);
+  } catch (error) {
+    console.error("[inbox] Velkomstbesked kunne ikke oprettes:", error);
+  }
+}
+
 export async function fetchMemberInbox() {
   const { user } = await signedInUser();
   if (!user) return { success: false, error: "Ikke logget ind", threads: [] };
@@ -21,6 +66,7 @@ export async function fetchMemberInbox() {
   if (!holder) return { success: false, error: "Medlemsprofilen findes ikke", threads: [] };
   const orgId = (Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations)?.org_id;
   if (!orgId) return { success: false, error: "Medlemsprofilen er ikke knyttet til en organisation", threads: [] };
+  await ensureWelcomeThread(db, { holderId: holder.id, memberUserId: user.id, orgId });
   const { data, error } = await db.from("member_message_threads")
     .select("id,subject,updated_at,created_at,member_messages(id,author_user_id,author_role,body,created_at),member_message_participants(user_id,last_read_at)")
     .eq("org_id", orgId).eq("rights_holder_id", holder.id).order("updated_at", { ascending: false });
@@ -82,13 +128,13 @@ export async function createAdminInboxMessage(params: { rightsHolderIds: string[
     await db.from("member_message_participants").insert(participants);
     created += 1;
     try {
-      await sendMemberNotification({ eventKey: `inbox-message:${message.id}`, eventType: isBroadcast ? "broadcast_message" : "direct_message", orgId, rightsHolderId: holder.id, category: isBroadcast ? "broadcast" : "transactional", subject, bodyText: body, path: `/portal/beskeder?thread=${thread.id}`, entityType: "message_thread", entityId: thread.id });
+      await sendMemberNotification({ eventKey: `inbox-message:${message.id}`, eventType: isBroadcast ? "broadcast_message" : "direct_message", orgId, rightsHolderId: holder.id, category: isBroadcast ? "broadcast" : "transactional", subject, bodyText: body, path: `/portal?thread=${thread.id}`, entityType: "message_thread", entityId: thread.id });
     } catch (notificationError) {
       console.error("[notification] indbakkemail kunne ikke sendes", notificationError);
     }
   }
   revalidatePath("/admin/beskeder");
-  revalidatePath("/portal/beskeder");
+  revalidatePath("/portal");
   return { success: created > 0, count: created, skippedWithoutPortalUser, error: created ? undefined : "Ingen beskeder blev oprettet" };
 }
 
@@ -110,7 +156,7 @@ export async function sendInboxReply(threadId: string, bodyValue: string) {
     db.from("member_message_threads").update({ updated_at: new Date().toISOString() }).eq("id", threadId),
     db.from("member_message_participants").upsert({ thread_id: threadId, user_id: user.id, last_read_at: new Date().toISOString() }),
   ]);
-  revalidatePath("/admin/beskeder"); revalidatePath("/portal/beskeder");
+  revalidatePath("/admin/beskeder"); revalidatePath("/portal");
   return { success: true, message };
 }
 

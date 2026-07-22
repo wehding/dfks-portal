@@ -736,6 +736,30 @@ export type OnboardingCredit = {
   raw: any;
 };
 
+// Org-konfigurerbare søgeord for hvilke krediteringer onboarding-søgningen medtager
+// (fx "klip"/"edit" for DFKS' klippere). Gemmes i organisations.terminology.onboarding_keywords.
+const DEFAULT_ONBOARDING_KEYWORDS = ["klip", "edit"];
+
+async function getOrgOnboardingKeywords(db: ReturnType<typeof createServiceClient>, orgId: string | null): Promise<string[]> {
+  if (!orgId) return DEFAULT_ONBOARDING_KEYWORDS;
+  try {
+    const { data } = await db.from("organisations").select("terminology").eq("id", orgId).maybeSingle();
+    const keywords = (data?.terminology as { onboarding_keywords?: string[] } | null)?.onboarding_keywords ?? [];
+    const cleaned = keywords.map(keyword => String(keyword).trim().toLowerCase()).filter(Boolean);
+    return cleaned.length ? cleaned : DEFAULT_ONBOARDING_KEYWORDS;
+  } catch {
+    return DEFAULT_ONBOARDING_KEYWORDS;
+  }
+}
+
+function matchesOnboardingKeywords(roleText: string | null | undefined, keywords: string[]) {
+  const text = String(roleText ?? "").toLowerCase();
+  if (!text.trim()) return false;
+  // Assistenter/elever medtages ikke, uanset søgeord (fx "Assistant Editor", "klippeassistent").
+  if (/assist|elev|trainee|prakt/.test(text)) return false;
+  return keywords.some(keyword => text.includes(keyword));
+}
+
 function isRightBearingRole(role: string | null | undefined): boolean {
   if (!role) return true;
   const r = role.toLowerCase().trim();
@@ -841,12 +865,14 @@ export async function searchOnboardingCredits(
 
   const db = createServiceClient();
   let rightsHolderId: string | null = null;
+  let searchOrgId: string | null = null;
   let savedIdentity: { dfi_person_id?: number | null; tmdb_person_id?: number | null } | null = null;
   let savedDfiPersonIds: number[] = [];
   let savedTmdbPersonIds: number[] = [];
   try {
     const context = await currentRightsHolderAndOrg();
     rightsHolderId = context.rightsHolderId;
+    searchOrgId = context.orgId;
     const { data } = await db.from("rettighedshavere").select("dfi_person_id, tmdb_person_id").eq("id", rightsHolderId).maybeSingle();
     savedIdentity = data;
     const { data: identities } = await db.from("rights_holder_external_identities").select("source,external_id").eq("rights_holder_id", rightsHolderId).in("source", ["dfi", "tmdb"]);
@@ -855,6 +881,8 @@ export async function searchOnboardingCredits(
   } catch {
     // Fortsæt uden rightsHolderId i tilfælde af test-kørsler
   }
+
+  const onboardingKeywords = await getOrgOnboardingKeywords(db, searchOrgId);
 
   let dfiPersonId: number | null = null;
   let tmdbPersonId: number | null = null;
@@ -873,7 +901,7 @@ export async function searchOnboardingCredits(
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
-          .filter((c: any) => isRightBearingRole(c.Description || c.Type));
+          .filter((c: any) => matchesOnboardingKeywords(c.Description || c.Type, onboardingKeywords) && isRightBearingRole(c.Description || c.Type));
         rawDfiCredits.push(...filteredDfi);
       }
     }
@@ -893,7 +921,7 @@ export async function searchOnboardingCredits(
       const tmdbCreditsRes = await getTMDBPersonCombinedCredits(resolvedTmdbPersonId);
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
-        const editors = tmdbCrew.filter(c => c.job === "Editor" || c.job === "Edit" || c.job?.toLowerCase().includes("klipp"));
+        const editors = tmdbCrew.filter(c => matchesOnboardingKeywords(c.job, onboardingKeywords));
         const filteredTmdb = editors.filter(c => isRightBearingRole(c.job));
         rawTmdbCredits.push(...filteredTmdb);
       }
@@ -1166,6 +1194,43 @@ export async function searchOnboardingCredits(
 }
 
 export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, seasonNumber = 1) {
+  // Ved eksplicit valgt sæson > 1 er TMDB's sæsonopslag autoritativt: enten findes
+  // sæsonen (så bruges dens afsnit), eller også returneres en tydelig fejl.
+  // Vi må aldrig falde tilbage til sæson 1's afsnitsliste for en anden sæson.
+  if (seasonNumber > 1) {
+    let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
+    if (!tmdbId) {
+      for (const candidate of seriesLookupTitleVariants(credit.title)) {
+        const match = await findTMDBMatch(candidate, credit.year);
+        if (match.tmdb_id && match.media_type === "tv") {
+          tmdbId = Number(match.tmdb_id);
+          break;
+        }
+      }
+    }
+    if (tmdbId) {
+      const season = await getTMDBSeasonEpisodes(tmdbId, seasonNumber);
+      if (season.success) {
+        const seasonOptions = (season.episodes ?? [])
+          .map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` }))
+          .filter(option => Number.isFinite(option.number) && option.number > 0);
+        if (seasonOptions.length) {
+          return {
+            success: true,
+            options: buildCompleteEpisodeOptions({
+              episodeCount: seasonOptions.length,
+              externalOptions: seasonOptions,
+              localChildren: credit.raw?.__local_children,
+              seasonNumber,
+            }),
+            error: null,
+          };
+        }
+      }
+    }
+    return { success: false, options: [], error: `Kan ikke finde sæson ${seasonNumber}.` };
+  }
+
   let options = credit.episode_options ?? [];
   if (credit.source === "lokal" && Array.isArray(credit.raw?.__local_children)) {
     options = buildCompleteEpisodeOptions({

@@ -147,6 +147,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
 
     setFiles(limited);
+    batchAutoSubmittedRef.current = false;
     setEpisodesTouched(false);
     setWorkPickerOpen(false);
     setManualMode(false);
@@ -161,12 +162,31 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     manualSeededRef.current = false;
     autoSearchKeyRef.current = "";
     const first = limited[0];
-    if (first.type === "application/pdf" || /\.pdf$/i.test(first.name)) setPdfUrl(URL.createObjectURL(first));
+    if (limited.length === 1 && (first.type === "application/pdf" || /\.pdf$/i.test(first.name))) setPdfUrl(URL.createObjectURL(first));
     else setPdfUrl(null);
   }, []);
 
+  // Batch-upload indsendes automatisk ved filvalg — uden formular-trin.
+  const batchAutoSubmittedRef = React.useRef(false);
+  const [batchSeconds, setBatchSeconds] = useState(0);
   useEffect(() => {
-    if (!file) return;
+    if (!isBatchUpload) return;
+    setBatchSeconds(0);
+    const interval = setInterval(() => setBatchSeconds(s => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [isBatchUpload]);
+  useEffect(() => {
+    if (files.length > 1 && !batchAutoSubmittedRef.current && !saving) {
+      batchAutoSubmittedRef.current = true;
+      void handleSubmit(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files.length]);
+
+  useEffect(() => {
+    // Batch-upload: ingen screening/preview af første fil — filerne uploades blot,
+    // og AI-jobbet udtrækker titel m.m. pr. kontrakt bagefter.
+    if (!file || files.length > 1) return;
     let cancelled = false;
     setScreening(true);
     setAiFields(new Set());
@@ -209,10 +229,12 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       }
     })();
     return () => { cancelled = true; };
-  }, [file, workTitle]);
+  }, [file, files.length, workTitle]);
 
-  const canSubmit = files.length > 0 && !!title && !screening && !saving &&
-    (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean));
+  const canSubmit = isBatchUpload
+    ? files.length > 0 && !saving
+    : files.length > 0 && !!title && !screening && !saving &&
+      (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean));
 
   const buildManualSeed = useCallback((contractId?: string | null) => contractDataToManualWorkSeed({
     title: title.trim() || workSearch.trim(),
@@ -291,7 +313,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   };
 
   const saveContracts = async () => {
-    if (files.length === 0 || !title) return null;
+    if (files.length === 0 || (!isBatchUpload && !title)) return null;
     setSaving(true);
     try {
       const supabase = createClient();
@@ -299,7 +321,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       if (!user) { toast.error("Ikke logget ind"); return null; }
 
       const { data: orgRole } = await supabase.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-      const orgId = orgRole?.org_id;
+      let orgId = orgRole?.org_id as string | undefined;
+      if (!orgId) {
+        // Fallback: nyinviterede medlemmer kan mangle user_org_roles — brug rettighedshaverens org-tilknytning.
+        const { data: rhOrg } = await supabase.from("rettighedshavere").select("org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+        const affiliation = Array.isArray(rhOrg?.org_affiliations) ? rhOrg?.org_affiliations[0] : rhOrg?.org_affiliations;
+        orgId = (affiliation as { org_id?: string } | null | undefined)?.org_id;
+      }
       if (!orgId) { toast.error("Din bruger er ikke knyttet til en organisation"); return null; }
 
       const { data: rhRow } = await supabase.from("rettighedshavere").select("id, full_name").eq("user_id", user.id).single();
@@ -320,7 +348,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         setUploadStage("saving");
         const res = await saveUploadedContract({
           filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
-          workTitle: isBatchUpload ? title.trim() : selectedWork?.title ?? title.trim(),
+          // Batch: ingen fælles titel — AI-jobbet udtrækker titlen pr. kontrakt.
+          workTitle: isBatchUpload ? undefined : selectedWork?.title ?? title.trim(),
           workId: isBatchUpload ? undefined : selectedWorkId || undefined,
           category, roles,
           duration: duration ? Number(duration) : undefined,
@@ -620,8 +649,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           {/* Header */}
           <div className="flex items-start justify-between">
             <div>
-              <h2 className="text-lg font-semibold text-foreground">Upload kontrakt</h2>
-              <p className="text-sm text-muted-foreground mt-1">Du kan godt uploade flere kontrakter ad gangen.</p>
+              <h2 className="text-lg font-semibold text-foreground">{isBatchUpload ? "Uploader kontrakter" : "Upload kontrakt"}</h2>
+              {!isBatchUpload && <p className="text-sm text-muted-foreground mt-1">Du kan godt uploade flere kontrakter ad gangen.</p>}
               {workTitle && (
                 <p className="text-sm text-muted-foreground mt-0.5">
                   til <strong className="text-foreground">{workTitle}</strong>
@@ -638,7 +667,25 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             </Button>
           )}
 
+          {/* Batch: kun status + timer — ingen forhåndsvisning eller formular */}
+          {isBatchUpload && (
+            <div className="flex flex-col items-center gap-4 py-10 text-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              <div>
+                <p className="text-base font-semibold text-foreground">Uploader {files.length} kontrakter…</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Kontrakterne lægges i kø til automatisk analyse og kobles til dine værker.
+                  Vinduet lukker selv, når upload er færdig.
+                </p>
+              </div>
+              <div className="font-mono text-2xl font-bold text-primary">
+                {Math.floor(batchSeconds / 60)}:{String(batchSeconds % 60).padStart(2, "0")}
+              </div>
+            </div>
+          )}
+
           {/* Drop zone */}
+          {!isBatchUpload && (
           <div
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
@@ -655,9 +702,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             </label>
             <p className="text-xs text-muted-foreground mt-2">PDF eller DOCX. Maks. {MAX_FILES} filer.</p>
           </div>
+          )}
 
           {/* Fil + screening-status */}
-          {files.length > 0 && (
+          {!isBatchUpload && files.length > 0 && (
             <div className="rounded-lg border bg-muted/40 px-3.5 py-3">
               <div className="flex items-center gap-3">
                 {screening
@@ -723,14 +771,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           )}
 
           {/* Formularfelter */}
-          {file && !screening && (
+          {file && !screening && !isBatchUpload && (
             <div className="flex flex-col gap-4">
-
-              {isBatchUpload && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
-                  Systemet forsøger automatisk at koble kontrakterne til dine eksisterende værker. Du skal selv kontrollere, at hver kontrakt er knyttet til det rigtige værk. Kontrakter uden korrekt værktilknytning kan ikke bruges til rettighedsfordeling og udløser derfor ikke rettighedspenge.
-                </div>
-              )}
 
               {/* Titel */}
               <div className="space-y-1.5">
@@ -1056,7 +1098,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           )}
 
           {/* Upload-knap */}
-          {file && !screening && (
+          {!isBatchUpload && file && !screening && (
             <div className="flex flex-col gap-2.5">
               {saving && (
                 <div className="space-y-2">

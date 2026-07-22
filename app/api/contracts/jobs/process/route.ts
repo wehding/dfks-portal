@@ -9,6 +9,7 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { attachmentChanges } from "@/lib/attachment-ai"
+import { requireInternalSecretApi } from "@/lib/api-auth"
 
 type ContractJob = {
     id: string
@@ -308,13 +309,7 @@ export async function POST(req: NextRequest) {
     const admin = createServiceClient()
 
     try {
-        const configuredSecret = process.env.CONTRACT_AI_JOB_SECRET
-        const cronSecret = process.env.CRON_SECRET
-        const authHeader = req.headers.get("authorization") ?? ""
-        const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null
-        const hasValidSecret = Boolean(
-            bearer && ((configuredSecret && bearer === configuredSecret) || (cronSecret && bearer === cronSecret))
-        )
+        const hasValidSecret = requireInternalSecretApi(req)
         if (!hasValidSecret) {
             const sessionClient = await createSessionClient()
             const caller = await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"])

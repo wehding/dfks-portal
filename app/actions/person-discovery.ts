@@ -24,8 +24,12 @@ function candidateName(value: Record<string, unknown>) {
   return String(value.FullName ?? value.Name ?? value.name ?? [value.FirstName, value.LastName].filter(Boolean).join(" ") ?? "").trim();
 }
 
-function includeCandidate(query: string, name: string) {
-  const match = scorePersonName(query, name);
+function includeCandidate(query: string, name: string, variant?: string) {
+  // Scor mod både den oprindelige query og den variant, der gav hittet —
+  // ellers kan en korrekt profil fundet via en stavevariant falde under tærsklen.
+  const primary = scorePersonName(query, name);
+  const secondary = variant && variant.trim() && variant !== query ? scorePersonName(variant, name) : null;
+  const match = secondary && secondary.score > primary.score ? secondary : primary;
   const threshold = query.trim().split(/\s+/).length === 1 ? 0.8 : 0.62;
   return { ...match, include: match.score >= threshold };
 }
@@ -59,18 +63,21 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
   if (!query) return { success: false, error: "Skriv dit navn.", candidates: [] as PersonCandidate[] };
   const variants = personSearchVariants(query, alternativeNames);
   const candidates = new Map<string, PersonCandidate>();
+  const sourceErrors = { dfi: false, tmdb: false, wikidata: false };
 
   await Promise.all(variants.map(async variant => {
     const [dfi, tmdb, wikidata] = await Promise.all([
       searchDFIPerson(undefined, undefined, variant).catch(() => ({ success: false, results: [] })),
       searchTMDBPerson(variant).catch(() => ({ success: false, results: [] })),
-      searchWikidataPeople(variant),
+      searchWikidataPeople(variant).catch(() => { sourceErrors.wikidata = true; return []; }),
     ]);
+    if (!dfi.success) sourceErrors.dfi = true;
+    if (!tmdb.success) sourceErrors.tmdb = true;
 
     for (const row of dfi.success ? dfi.results ?? [] : []) {
       const sourceId = String(row.Id ?? "");
       const name = candidateName(row);
-      const match = includeCandidate(query, name);
+      const match = includeCandidate(query, name, variant);
       if (!sourceId || !name || !match.include) continue;
       const key = `dfi:${sourceId}`;
       const previous = candidates.get(key);
@@ -97,7 +104,7 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
     for (const row of tmdb.success ? tmdb.results ?? [] : []) {
       const sourceId = String(row.id ?? "");
       const name = String(row.name ?? "").trim();
-      const match = includeCandidate(query, name);
+      const match = includeCandidate(query, name, variant);
       if (!sourceId || !name || !match.include) continue;
       const knownFor = Array.isArray(row.known_for) ? row.known_for.map((item: Record<string, unknown>) => String(item.title ?? item.name ?? "")).filter(Boolean).slice(0, 4) : [];
       const key = `tmdb:${sourceId}`;
@@ -107,7 +114,7 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
     }
 
     for (const row of wikidata) {
-      const match = includeCandidate(query, row.name);
+      const match = includeCandidate(query, row.name, variant);
       if (!match.include) continue;
       const key = `wikidata:${row.qid}`;
       const previous = candidates.get(key);
@@ -116,7 +123,7 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
   }));
 
   const result = Array.from(candidates.values()).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "da-DK"));
-  return { success: true, candidates: result };
+  return { success: true, candidates: result, sourceErrors };
 }
 
 export async function enrichPersonCandidate(candidate: PersonCandidate) {

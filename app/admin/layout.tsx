@@ -20,7 +20,7 @@ import {
     BrainCircuit,
     ShieldCheck,
     ChevronRight,
-    MessageSquare,
+    Home,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -45,7 +45,7 @@ import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/na
 import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 
 const ADMIN_NAV_ITEMS = [
-    { key: "beskeder",            href: "/admin/beskeder",            icon: MessageSquare, labelKey: "nav.messages"         },
+    { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
     { key: "kontrakter",          href: "/admin/kontrakter",          icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"        },
     { key: "vaerker",             href: "/admin/vaerker",             icon: SHARED_NAV_ICONS.works,       labelKey: "nav.works"            },
     { key: "aftalelicens",        href: "/admin/aftalelicens",        icon: SHARED_NAV_ICONS.screenings,  labelKey: "nav.visningsadmin"    },
@@ -71,6 +71,7 @@ const RETTIGHEDS_NAV_ITEMS = [
 ]
 
 const USER_NAV_ITEMS = [
+    { key: "portal-overblik",     href: "/portal",                    icon: Home,     labelKey: "nav.dashboard"      },
     { key: "mine-vaerker",        href: "/portal/mine-vaerker",       icon: SHARED_NAV_ICONS.works,     labelKey: "nav.myWorks"        },
     { key: "mine-kontrakter",     href: "/portal/mine-kontrakter",    icon: SHARED_NAV_ICONS.contracts, labelKey: "nav.myContracts"    },
     { key: "okonomi",             href: "/portal/okonomi",            icon: Wallet,   labelKey: "nav.economy"        },
@@ -90,8 +91,8 @@ const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS.filter(k => k !== "organisationer"),
     "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer"),
-    jurist:      ["beskeder", "kontrakter", "kontraktgennemgang"],
-    viewer:      ["kontrakter", "statistik"],
+    jurist:      ["overblik", "kontrakter", "kontraktgennemgang"],
+    viewer:      ["overblik", "kontrakter", "statistik"],
 }
 
 // ── Kollapsibel sektion ───────────────────────────────────────
@@ -235,7 +236,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <SidebarMenuItem key={item.href}>
             <SidebarMenuButton
                 asChild
-                isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
+                isActive={item.href === "/admin" || item.href === "/portal"
+                    ? pathname === item.href
+                    : pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}
             >
                 <SidebarNavigationLink href={item.href}>
                     <item.icon className="h-4 w-4 shrink-0" />

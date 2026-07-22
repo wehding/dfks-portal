@@ -108,7 +108,11 @@ export async function POST(req: NextRequest) {
             if (isStaff && inviteRole === "superadmin" && caller.role !== "superadmin") {
                 return NextResponse.json({ error: "Kun superadmin kan invitere en superadmin" }, { status: 403 })
             }
-            const holder = isStaff ? null : await getRightsHolderInOrg(admin, rhId, caller.orgId)
+            // Superadmin uden org-tilknytning hører til DFKS.
+            const orgId = caller.orgId ?? (caller.role === "superadmin" ? "3dfcad23-03ce-4de0-82f2-6566dfcd88a5" : null)
+            if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
+
+            const holder = isStaff ? null : await getRightsHolderInOrg(admin, rhId, orgId)
             if (!isStaff && !holder) {
                 return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
             }
@@ -131,9 +135,6 @@ export async function POST(req: NextRequest) {
 
             const userRole = isStaff ? (inviteRole ?? "admin") : "member"
             const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
-
-            const orgId = caller.orgId
-            if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
 
             // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
@@ -187,6 +188,13 @@ export async function POST(req: NextRequest) {
             // Link user_id på rettighedshaver. invite_sent_at sættes kun hvis mailen faktisk sendes.
             if (rhId && rhId !== "__staff__") {
                 await linkExistingAuthUserToHolder(admin, newUserId, rhId)
+                // Medlemmet tilknyttes automatisk den inviterende admins organisation,
+                // så portalens org-opslag (user_org_roles) virker fra første login.
+                const { error: memberRoleError } = await admin.from("user_org_roles").upsert(
+                    [{ user_id: newUserId, org_id: orgId, role: "member" }],
+                    { onConflict: "user_id,org_id,role", ignoreDuplicates: true },
+                )
+                if (memberRoleError) console.error("[admin/user] Medlemmets organisationstilknytning kunne ikke oprettes:", memberRoleError.message)
             }
 
             // Gmail-afsenderen er serverstyret; organisationen styrer navn og Reply-To.
