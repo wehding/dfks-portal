@@ -1449,6 +1449,12 @@ function AdminKontrakterContent() {
         }
         list.sort((a, b) => {
             const direction = sortDir === "asc" ? 1 : -1
+            if (sortKey === "status") {
+                const statusPriority = (s: string) => (s === "afventer" ? 0 : s === "mangler_vaerk" ? 1 : s === "kladde" ? 2 : 3)
+                const prioA = statusPriority(a.status)
+                const prioB = statusPriority(b.status)
+                if (prioA !== prioB) return (prioA - prioB) * direction
+            }
             const period = (c: ContractRow) => c.start_date ?? c.contract_date ?? c.created_at ?? ""
             const values: Record<SortKey, [string, string]> = {
                 production: [a.work_title ?? a.working_title ?? "", b.work_title ?? b.working_title ?? ""],

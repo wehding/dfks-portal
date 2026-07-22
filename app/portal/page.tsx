@@ -20,9 +20,17 @@ export default async function PortalDashboardPage() {
   if (!user) redirect("/");
   const db = createServiceClient();
   const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
-  if (!holder) redirect("/onboarding");
+  if (!holder) {
+    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (staffRole) redirect("/admin");
+    redirect("/onboarding");
+  }
   const orgId = (Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations)?.org_id;
-  if (!orgId) redirect("/onboarding");
+  if (!orgId) {
+    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (staffRole) redirect("/admin");
+    redirect("/onboarding");
+  }
   const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),

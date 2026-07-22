@@ -929,9 +929,8 @@ export async function addWorkForMemberWithApproval(params: {
   }) ?? null;
   const coEditors = normalizeCoEditors(params.coEditors);
   const forceManualDuplicate = params.source === "manual" && Boolean(params.overrideLocalMatch);
-  // Manuelle værker kræver kun godkendelse ved et eksakt titel/år-match, som brugeren
-  // eksplicit har valgt at oprette på trods af. Eksterne kilder beholder den bredere kontrol.
-  const requiresApproval = params.source === "manual" ? forceManualDuplicate : similarWorks.length > 0;
+  // Manuelle værker kræver godkendelse hvis der findes et eksisterende match/duplet i databasen/DFI/TMDB
+  const requiresApproval = params.source === "manual" ? (forceManualDuplicate || similarWorks.length > 0) : similarWorks.length > 0;
   let dfiMetadata = params.workData.dfi_metadata ?? null;
   let posterUrl = params.workData.poster_url ?? null;
   let tmdbId = params.workData.tmdb_id ?? null;
