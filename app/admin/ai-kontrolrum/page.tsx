@@ -48,6 +48,7 @@ import {
     type DbEmployerWithGroup,
     type EmployerInput,
 } from "@/lib/db/employers"
+import { readFirstWorksheetRows } from "@/lib/excel/read-workbook"
 
 // ── Shared types ───────────────────────────────────────────────
 
@@ -1914,11 +1915,12 @@ function ProducenterTab() {
     }
 
     const parseExcel = async (file: File): Promise<EmployerInput[]> => {
-        const XLSX = await import("xlsx")
         const buf = await file.arrayBuffer()
-        const wb = XLSX.read(buf, { type: "array" })
-        const ws = wb.Sheets[wb.SheetNames[0]]
-        const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" })
+        const [headerRow = [], ...dataRows] = await readFirstWorksheetRows(buf)
+        const headers = headerRow.map(value => String(value ?? ""))
+        const rows: Record<string, unknown>[] = dataRows
+            .filter(row => row.some(value => value !== ""))
+            .map(row => Object.fromEntries(headers.map((header, index) => [header, row[index] ?? ""])))
         const NAME_HDRS    = ["selskab", "producent", "name", "navn", "firma", "company", "virksomhed"]
         const CONTACT_HDRS = ["kontaktperson", "contact name", "kontakt", "contact", "ejere", "ceo", "direktor"]
         const WEB_HDRS     = ["hjemmeside", "website", "url", "web"]

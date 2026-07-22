@@ -37,6 +37,7 @@ import { addScreeningClaimComment, fetchAdminScreeningClaims, importScreeningSou
 import { MessageThread } from "@/components/messages/message-thread"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { WORK_TYPES } from "@/lib/work-types"
+import { readFirstWorksheetRows } from "@/lib/excel/read-workbook"
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -210,11 +211,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
         setStep("parsing")
         setParseError(null)
         try {
-            const XLSX = await import("xlsx")
             const buffer = await file.arrayBuffer()
-            const wb = XLSX.read(buffer, { type: "array", cellDates: true })
-            const ws = wb.Sheets[wb.SheetNames[0]]
-            const raw: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][]
+            const raw = await readFirstWorksheetRows(buffer)
 
             if (raw.length < 2) {
                 setParseError("Filen ser tom ud eller mangler data")
