@@ -5,14 +5,14 @@ import { normalizeSingleEmail } from "@/lib/email/mime";
 // har sat branding/terminologi. Gør white-label bagud-kompatibel.
 export const DEFAULT_BRANDING: Required<OrgBranding> = {
   primary_color: "#111827",
-  short_name: "DFKS",
-  long_name: "Dansk Filmklipperselskab",
+  short_name: "Portal",
+  long_name: "Medlemsportal",
 };
 
 export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
-  member_word: "klipper",
-  coeditor_word: "medklipper",
-  role_labels: ["Klipper", "B-klipper", "Konceptuerende klipper"],
+  member_word: "medlem",
+  coeditor_word: "medskaber",
+  role_labels: ["Medskaber"],
   onboarding_keywords: ["klip", "edit"],
 };
 
