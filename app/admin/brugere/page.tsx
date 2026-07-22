@@ -832,7 +832,7 @@ export default function AdminBrugerePage() {
                                                 key={r}
                                                 role={r}
                                                 selected={inviteRoles.includes(r)}
-                                                onToggle={() => setInviteRoles(prev => toggleStaffRole(prev, r))}
+                                                onToggle={() => setInviteRoles(toggleStaffRole(inviteRoles, r))}
                                             />
                                         ))}
                                     </div>
@@ -884,7 +884,7 @@ export default function AdminBrugerePage() {
                                 key={r}
                                 role={r}
                                 selected={editRoles.includes(r)}
-                                onToggle={() => setEditRoles(prev => toggleStaffRole(prev, r))}
+                                onToggle={() => setEditRoles(toggleStaffRole(editRoles, r))}
                             />
                         ))}
                     </div>
