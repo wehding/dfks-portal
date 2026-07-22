@@ -31,6 +31,7 @@ type User = {
     full_name: string
     roles: string[]
     org_roles: string[]
+    organisations: Array<{ id: string; name: string }>
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
     gender: string | null
@@ -212,8 +213,8 @@ export default function AdminBrugerePage() {
             if (json.users) {
                 setUsers(json.users)
             } else {
-                const staff = (json.staff ?? []).map(u => ({ ...u, org_roles: u.roles ?? [], is_rettighedshaver: false, rh_id: null, onboarding_completed: null, gender: null }) as User)
-                const portal = (json.portal ?? []).map(u => ({ ...u, org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }) as User)
+                const staff = (json.staff ?? []).map(u => ({ ...u, organisations: u.organisations ?? [], org_roles: u.roles ?? [], is_rettighedshaver: false, rh_id: null, onboarding_completed: null, gender: null }) as User)
+                const portal = (json.portal ?? []).map(u => ({ ...u, organisations: u.organisations ?? [], org_roles: [], is_rettighedshaver: true, roles: ["rettighedshaver"] }) as User)
                 setUsers([...staff, ...portal])
             }
         } else {
@@ -610,6 +611,9 @@ export default function AdminBrugerePage() {
                             <MobileMetaRow label="Telefon">{u.phone ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Titel">{u.title ?? "—"}</MobileMetaRow>
                             <MobileMetaRow label="Status"><StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} /></MobileMetaRow>
+                            {callerRole === "superadmin" && (
+                                <MobileMetaRow label="Organisation">{u.organisations.map(org => org.name).join(", ") || "Ingen organisation"}</MobileMetaRow>
+                            )}
                             <MobileMetaRow label="Sidst logget ind">
                                 {u.last_sign_in
                                     ? new Date(u.last_sign_in).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })
@@ -633,6 +637,7 @@ export default function AdminBrugerePage() {
                             <TableHead>Køn</TableHead>
                             <TableHead>Titel</TableHead>
                             <TableHead>Rolle(r)</TableHead>
+                            {callerRole === "superadmin" && <TableHead>Organisation</TableHead>}
                             <TableHead>Status</TableHead>
                             <TableHead>Sidst logget ind</TableHead>
                             <TableHead className="w-12" />
@@ -641,13 +646,13 @@ export default function AdminBrugerePage() {
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
                                     <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
                                 </TableCell>
                             </TableRow>
                         ) : filtered.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
                                     Ingen brugere fundet
                                 </TableCell>
                             </TableRow>
@@ -659,6 +664,11 @@ export default function AdminBrugerePage() {
                                 <TableCell className="text-sm text-muted-foreground">{u.gender ? GENDER_LABELS[u.gender] ?? u.gender : "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.title ?? "—"}</TableCell>
                                 <TableCell><RoleChips roles={u.roles} /></TableCell>
+                                {callerRole === "superadmin" && (
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {u.organisations.map(org => org.name).join(", ") || "Ingen organisation"}
+                                    </TableCell>
+                                )}
                                 <TableCell>
                                     <StatusBadge lastSignIn={u.last_sign_in} banned={u.banned} />
                                 </TableCell>

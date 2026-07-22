@@ -98,6 +98,46 @@ export async function GET() {
         ...(rh ?? []).map(r => r.user_id!),
     ])
 
+    // Superadmin får et samlet, skrivebeskyttet overblik over alle de
+    // organisationer, som de viste brugere er knyttet til. Dette holdes
+    // adskilt fra org_roles, der fortsat kun redigerer den aktuelle org.
+    const organisationsByUser = new Map<string, Map<string, string>>()
+    if (caller.role === "superadmin" && allUserIds.size > 0) {
+        const userIds = Array.from(allUserIds)
+        const [{ data: allUserRoleRows, error: allUserRoleError }, { data: allUserHolders, error: allUserHolderError }] = await Promise.all([
+            admin.from("user_org_roles").select("user_id, org_id").in("user_id", userIds),
+            admin.from("rettighedshavere").select("id, user_id").in("user_id", userIds),
+        ])
+        if (allUserRoleError || allUserHolderError) {
+            return NextResponse.json({ error: allUserRoleError?.message ?? allUserHolderError?.message }, { status: 500 })
+        }
+        const holderIds = (allUserHolders ?? []).map(holder => holder.id)
+        const { data: allHolderAffiliations, error: allHolderAffiliationError } = holderIds.length
+            ? await admin.from("org_affiliations").select("rights_holder_id, org_id").in("rights_holder_id", holderIds)
+            : { data: [], error: null }
+        if (allHolderAffiliationError) return NextResponse.json({ error: allHolderAffiliationError.message }, { status: 500 })
+
+        const holderUserIds = new Map((allUserHolders ?? []).map(holder => [holder.id, holder.user_id]))
+        const membershipRows = [
+            ...(allUserRoleRows ?? []).map(row => ({ userId: row.user_id, orgId: row.org_id })),
+            ...(allHolderAffiliations ?? []).flatMap(row => {
+                const userId = holderUserIds.get(row.rights_holder_id)
+                return userId ? [{ userId, orgId: row.org_id }] : []
+            }),
+        ]
+        const organisationIds = [...new Set(membershipRows.map(row => row.orgId))]
+        const { data: organisationRows, error: organisationError } = organisationIds.length
+            ? await admin.from("organisations").select("id, name").in("id", organisationIds)
+            : { data: [], error: null }
+        if (organisationError) return NextResponse.json({ error: organisationError.message }, { status: 500 })
+        const organisationNames = new Map((organisationRows ?? []).map(org => [org.id, org.name]))
+        for (const membership of membershipRows) {
+            const organisations = organisationsByUser.get(membership.userId) ?? new Map<string, string>()
+            organisations.set(membership.orgId, organisationNames.get(membership.orgId) ?? "Ukendt organisation")
+            organisationsByUser.set(membership.userId, organisations)
+        }
+    }
+
     // Én post per bruger — kombiner roller fra user_org_roles og rettighedshavere
     const users = Array.from(allUserIds).map(userId => {
         const u = authMap.get(userId)
@@ -114,6 +154,7 @@ export async function GET() {
             full_name: rhEntry?.full_name ?? u?.user_metadata?.full_name ?? u?.email ?? "—",
             roles,
             org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
+            organisations: Array.from(organisationsByUser.get(userId) ?? []).map(([id, name]) => ({ id, name })),
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
             gender: rhEntry?.gender ?? null,
