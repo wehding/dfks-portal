@@ -99,7 +99,7 @@ export function inviteEmailHtml(params: {
   <p style="margin: 24px 0;">
     <a href="${safeInviteUrl}" style="background: ${color}; color: #fff; padding: 12px 20px; border-radius: 6px; text-decoration: none; font-weight: 600; display: inline-block;">Opret min adgang</a>
   </p>
-  <p style="font-size: 13px; color: #6b7280;">Linket er gyldigt i 24 timer. Virker knappen ikke, kan du kopiere denne adresse ind i din browser:<br>
+  <p style="font-size: 13px; color: #6b7280;">Linket er tidsbegrænset og kan kun bruges én gang. Virker knappen ikke, kan du kopiere denne adresse ind i din browser:<br>
     <span style="word-break: break-all;">${safeInviteUrl}</span>
   </p>
 </div>`.trim()
