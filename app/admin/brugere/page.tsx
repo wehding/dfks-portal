@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react"
 import {
     Shield, Mail, Plus, Pencil, Loader2, Clock, MoreHorizontal,
     KeyRound, Link, UserX, UserCheck, Search, Users, Scale, UserCog,
-    Check, CircleAlert,
+    Check, CircleAlert, Trash2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { PageHeader } from "@/components/page-header"
@@ -197,6 +197,7 @@ export default function AdminBrugerePage() {
     // Deaktiver / genaktiver
     const [toggleUser, setToggleUser] = useState<User | null>(null)
     const [toggleLoading, setToggleLoading] = useState(false)
+    const [deletingUnassignedId, setDeletingUnassignedId] = useState<string | null>(null)
 
     useEffect(() => { load() }, [])
 
@@ -381,6 +382,27 @@ export default function AdminBrugerePage() {
         }
     }
 
+    async function handleDeleteUnassigned(record: UnassignedRecord) {
+        if (!window.confirm(`Slet ${record.full_name} permanent? Posten er ikke knyttet til en organisation, og handlingen kan ikke fortrydes.`)) return
+        setDeletingUnassignedId(record.id)
+        try {
+            const res = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "delete-unassigned", recordId: record.id, kind: record.kind }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            toast.success(json.deletedUser ? "Rettighedshaver og loginbruger slettet permanent" : "Posten er slettet permanent")
+            if (json.warning) toast.warning(json.warning)
+            await load()
+        } catch (error: unknown) {
+            toast.error(errorMessage(error, "Posten kunne ikke slettes"))
+        } finally {
+            setDeletingUnassignedId(null)
+        }
+    }
+
     function openInvite(forPortal = false) {
         setInviteEmail("")
         setInviteName("")
@@ -468,6 +490,17 @@ export default function AdminBrugerePage() {
                                     <MobileMetaRow label="Oprettet">{new Date(record.created_at).toLocaleDateString("da-DK")}</MobileMetaRow>
                                 </div>
                                 <p className="mt-3 text-sm text-amber-700 dark:text-amber-300">{record.reason}</p>
+                                <Button
+                                    type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                    className="mt-4 w-full"
+                                    disabled={deletingUnassignedId === record.id}
+                                    onClick={() => void handleDeleteUnassigned(record)}
+                                >
+                                    {deletingUnassignedId === record.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                    Slet permanent
+                                </Button>
                             </MobileDataCard>
                         ))}
                     </MobileCardList>
@@ -480,12 +513,13 @@ export default function AdminBrugerePage() {
                                     <TableHead>Type</TableHead>
                                     <TableHead>Årsag</TableHead>
                                     <TableHead>Oprettet</TableHead>
+                                    <TableHead className="w-12" />
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
                                 {filteredUnassigned.length === 0 ? (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">Ingen poster uden tilknytning</TableCell>
+                                        <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">Ingen poster uden tilknytning</TableCell>
                                     </TableRow>
                                 ) : filteredUnassigned.map(record => (
                                     <TableRow key={record.id}>
@@ -494,6 +528,19 @@ export default function AdminBrugerePage() {
                                         <TableCell>{record.kind === "auth_user" ? "Loginbruger" : "Rettighedshaver"}</TableCell>
                                         <TableCell className="text-amber-700 dark:text-amber-300">{record.reason}</TableCell>
                                         <TableCell className="whitespace-nowrap text-muted-foreground">{new Date(record.created_at).toLocaleDateString("da-DK")}</TableCell>
+                                        <TableCell>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="text-destructive"
+                                                aria-label={`Slet ${record.full_name} permanent`}
+                                                disabled={deletingUnassignedId === record.id}
+                                                onClick={() => void handleDeleteUnassigned(record)}
+                                            >
+                                                {deletingUnassignedId === record.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                            </Button>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>

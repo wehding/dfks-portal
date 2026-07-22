@@ -17,26 +17,31 @@ async function getAdminContext(errorPrefix: string) {
   return admin;
 }
 
-async function loadAllowedHolders(ids: string[], orgId: string) {
+async function loadAllowedHolders(ids: string[], orgId: string, allowUnassigned: boolean) {
   const db = createServiceClient();
   const { data: holders, error: holdersError } = await db
     .from("rettighedshavere")
-    .select("id, full_name, user_id, org_affiliations!inner(org_id)")
-    .in("id", ids)
-    .eq("org_affiliations.org_id", orgId);
+    .select("id, full_name, user_id, org_affiliations(org_id)")
+    .in("id", ids);
 
   if (holdersError) throw new Error(holdersError.message);
 
-  const allowedIds = new Set((holders ?? []).map(holder => holder.id as string));
+  const candidates = (holders ?? []).flatMap(holder => {
+    const affiliations = (holder.org_affiliations ?? []) as Array<{ org_id: string }>;
+    const belongsToOrganisation = affiliations.some(affiliation => affiliation.org_id === orgId);
+    const isUnassigned = affiliations.length === 0;
+    if (!belongsToOrganisation && !(allowUnassigned && isUnassigned)) return [];
+    return [{
+      id: holder.id as string,
+      name: String(holder.full_name ?? "Ukendt"),
+      userId: holder.user_id as string | null,
+      isUnassigned,
+    }];
+  });
+  const allowedIds = new Set(candidates.map(holder => holder.id));
   const blocked: DeleteBlocked[] = ids
     .filter(id => !allowedIds.has(id))
-    .map(id => ({ id, name: "Ukendt", reason: "Rettighedshaveren findes ikke i din organisation." }));
-
-  const candidates = (holders ?? []).map(holder => ({
-    id: holder.id as string,
-    name: String(holder.full_name ?? "Ukendt"),
-    userId: holder.user_id as string | null,
-  }));
+    .map(id => ({ id, name: "Ukendt", reason: "Rettighedshaveren findes ikke i din organisation eller er tilknyttet en anden organisation." }));
 
   return { db, candidates, blocked };
 }
@@ -47,7 +52,7 @@ export async function archiveRightsHolders(ids: string[]) {
 
   try {
     const admin = await getAdminContext("Du har ikke adgang til at arkivere rettighedshavere.");
-    const { db, candidates, blocked } = await loadAllowedHolders(uniqueIds, admin.orgId);
+    const { db, candidates, blocked } = await loadAllowedHolders(uniqueIds, admin.orgId, admin.role === "superadmin");
     const archiveIds = candidates.map(holder => holder.id);
     if (archiveIds.length === 0) return { success: true, archivedCount: 0, blocked };
 
@@ -68,7 +73,7 @@ export async function restoreRightsHolders(ids: string[]) {
 
   try {
     const admin = await getAdminContext("Du har ikke adgang til at gendanne rettighedshavere.");
-    const { db, candidates } = await loadAllowedHolders(uniqueIds, admin.orgId);
+    const { db, candidates } = await loadAllowedHolders(uniqueIds, admin.orgId, admin.role === "superadmin");
     const restoreIds = candidates.map(holder => holder.id);
     if (restoreIds.length === 0) return { success: true, restoredCount: 0 };
     const { error } = await db
@@ -87,13 +92,13 @@ export async function permanentlyDeleteRightsHolders(
   options: { deleteContracts: boolean; deleteUnsharedWorks: boolean }
 ) {
   const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-  if (!uniqueIds.length) return { success: false, error: "Vælg mindst én rettighedshaver.", deletedCount: 0, deletedContracts: 0, deletedWorks: 0, blocked: [] as DeleteBlocked[] };
+  if (!uniqueIds.length) return { success: false, error: "Vælg mindst én rettighedshaver.", deletedCount: 0, deletedContracts: 0, deletedWorks: 0, deletedUsers: 0, authDeleteFailures: [] as string[], blocked: [] as DeleteBlocked[] };
 
   try {
     const admin = await getAdminContext("Du har ikke adgang til at slette rettighedshavere permanent.");
-    const { db, candidates, blocked } = await loadAllowedHolders(uniqueIds, admin.orgId);
+    const { db, candidates, blocked } = await loadAllowedHolders(uniqueIds, admin.orgId, admin.role === "superadmin");
     const holderIds = candidates.map(holder => holder.id);
-    if (holderIds.length === 0) return { success: true, deletedCount: 0, deletedContracts: 0, deletedWorks: 0, blocked };
+    if (holderIds.length === 0) return { success: true, deletedCount: 0, deletedContracts: 0, deletedWorks: 0, deletedUsers: 0, authDeleteFailures: [] as string[], blocked };
 
     let deletedContracts = 0;
     let deletedWorks = 0;
@@ -162,14 +167,34 @@ export async function permanentlyDeleteRightsHolders(
       .in("id", holderIds);
     if (deleteError) throw new Error(deleteError.message);
 
-    await Promise.all(
-      candidates
-        .map(holder => holder.userId)
-        .filter((userId): userId is string => Boolean(userId))
-        .map(userId => db.auth.admin.deleteUser(userId).catch(() => null))
-    );
+    const userIds = candidates.map(holder => holder.userId).filter((userId): userId is string => Boolean(userId));
+    if (userIds.length) {
+      const { error: roleDeleteError } = await db
+        .from("user_org_roles")
+        .delete()
+        .in("user_id", userIds)
+        .eq("org_id", admin.orgId);
+      if (roleDeleteError) throw new Error(roleDeleteError.message);
+    }
 
-    return { success: true, deletedCount: holderIds.length, deletedContracts, deletedWorks, blocked };
+    let deletedUsers = 0;
+    const authDeleteFailures: string[] = [];
+    for (const userId of userIds) {
+      const [{ count: remainingRoles }, { count: remainingProfiles }] = await Promise.all([
+        db.from("user_org_roles").select("user_id", { count: "exact", head: true }).eq("user_id", userId),
+        db.from("rettighedshavere").select("id", { count: "exact", head: true }).eq("user_id", userId),
+      ]);
+      if ((remainingRoles ?? 0) > 0 || (remainingProfiles ?? 0) > 0) continue;
+      const { error: authDeleteError } = await db.auth.admin.deleteUser(userId);
+      if (authDeleteError) {
+        console.error("Rettighedshaver slettet, men loginbrugeren kunne ikke slettes", { userId, error: authDeleteError.message });
+        authDeleteFailures.push(authDeleteError.message);
+      } else {
+        deletedUsers += 1;
+      }
+    }
+
+    return { success: true, deletedCount: holderIds.length, deletedContracts, deletedWorks, deletedUsers, authDeleteFailures, blocked };
   } catch (error) {
     return {
       success: false,
@@ -177,6 +202,8 @@ export async function permanentlyDeleteRightsHolders(
       deletedCount: 0,
       deletedContracts: 0,
       deletedWorks: 0,
+      deletedUsers: 0,
+      authDeleteFailures: [] as string[],
       blocked: [] as DeleteBlocked[],
     };
   }

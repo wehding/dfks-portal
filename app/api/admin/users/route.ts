@@ -9,6 +9,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
+import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
 const ROLE_RANK: Record<string, number> = {
@@ -182,6 +183,67 @@ export async function PATCH(req: NextRequest) {
 
     const body = await req.json()
     const admin = getAdmin()
+
+    // ── Slet post uden organisationstilknytning ─────────────
+    if (body.action === "delete-unassigned") {
+        if (patchCaller.role !== "superadmin") {
+            return NextResponse.json({ error: "Kun superadmin kan slette poster uden tilknytning" }, { status: 403 })
+        }
+        const kind = body.kind as UnassignedRecordKind | undefined
+        const recordId = kind ? parseUnassignedRecordId(body.recordId, kind) : ""
+        if (!recordId || !kind) return NextResponse.json({ error: "Post og type er påkrævet" }, { status: 400 })
+
+        if (kind === "auth_user") {
+            if (recordId === patchCaller.userId) return NextResponse.json({ error: "Du kan ikke slette din egen loginbruger" }, { status: 400 })
+            const [{ count: roles }, { count: profiles }] = await Promise.all([
+                admin.from("user_org_roles").select("user_id", { count: "exact", head: true }).eq("user_id", recordId),
+                admin.from("rettighedshavere").select("id", { count: "exact", head: true }).eq("user_id", recordId),
+            ])
+            if (!isStillUnassigned({ roles, profiles })) {
+                return NextResponse.json({ error: "Brugeren har fået en tilknytning og kan ikke længere slettes herfra" }, { status: 409 })
+            }
+            const { error } = await admin.auth.admin.deleteUser(recordId)
+            if (error) return NextResponse.json({ error: `Loginbrugeren kunne ikke slettes: ${error.message}` }, { status: 409 })
+            return NextResponse.json({ ok: true, deletedUser: true })
+        }
+
+        const { data: holder, error: holderError } = await admin
+            .from("rettighedshavere")
+            .select("id, user_id")
+            .eq("id", recordId)
+            .maybeSingle()
+        if (holderError) return NextResponse.json({ error: holderError.message }, { status: 500 })
+        if (!holder) return NextResponse.json({ error: "Rettighedshaveren findes ikke" }, { status: 404 })
+        const { count: affiliations } = await admin
+            .from("org_affiliations")
+            .select("id", { count: "exact", head: true })
+            .eq("rights_holder_id", recordId)
+        if (!isStillUnassigned({ affiliations })) {
+            return NextResponse.json({ error: "Rettighedshaveren har fået en organisationstilknytning og skal slettes fra Rettighedshavere" }, { status: 409 })
+        }
+
+        const { error: contractError } = await admin.from("contracts").update({ rights_holder_id: null }).eq("rights_holder_id", recordId)
+        if (contractError) return NextResponse.json({ error: contractError.message }, { status: 500 })
+        const { error: assignmentError } = await admin.from("work_assignments").delete().eq("rights_holder_id", recordId)
+        if (assignmentError) return NextResponse.json({ error: assignmentError.message }, { status: 500 })
+        const { error: deleteHolderError } = await admin.from("rettighedshavere").delete().eq("id", recordId)
+        if (deleteHolderError) return NextResponse.json({ error: deleteHolderError.message }, { status: 500 })
+
+        let deletedUser = false
+        let warning: string | null = null
+        if (holder.user_id && holder.user_id !== patchCaller.userId) {
+            const [{ count: roles }, { count: profiles }] = await Promise.all([
+                admin.from("user_org_roles").select("user_id", { count: "exact", head: true }).eq("user_id", holder.user_id),
+                admin.from("rettighedshavere").select("id", { count: "exact", head: true }).eq("user_id", holder.user_id),
+            ])
+            if ((roles ?? 0) === 0 && (profiles ?? 0) === 0) {
+                const { error: authError } = await admin.auth.admin.deleteUser(holder.user_id)
+                if (authError) warning = `Rettighedshaveren blev slettet, men loginbrugeren kunne ikke slettes: ${authError.message}`
+                else deletedUser = true
+            }
+        }
+        return NextResponse.json({ ok: true, deletedUser, warning })
+    }
 
     // ── Opdater roller ────────────────────────────────────────
     if (body.action === "set-roles") {

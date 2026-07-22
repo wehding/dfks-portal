@@ -549,7 +549,10 @@ export default function RettighedshavereAdminPage() {
             toast.error(result.error ?? "Rettighedshavere kunne ikke slettes permanent")
             return
         }
-        toast.success(`${result.deletedCount} slettet permanent. ${result.deletedContracts} kontrakter og ${result.deletedWorks} værker slettet.`)
+        toast.success(`${result.deletedCount} rettighedshaver(e) og ${result.deletedUsers} loginbruger(e) slettet permanent. ${result.deletedContracts} kontrakter og ${result.deletedWorks} værker slettet.`)
+        if (result.authDeleteFailures.length > 0) {
+            toast.warning(`Rettighedshaveren blev slettet, men ${result.authDeleteFailures.length} loginbruger(e) kunne ikke slettes. Kontroller om brugeren ejer filer i Storage.`)
+        }
         setPermanentDeleteOpen(false)
         setDeleteConfirmation("")
         setSelectedIds(new Set())
