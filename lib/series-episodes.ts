@@ -120,17 +120,18 @@ export function buildCompleteEpisodeOptions({
   externalOptions,
   localChildren,
   seasonNumber = 1,
+  defaultMinCount = 8,
 }: {
   episodeCount?: number | null;
   externalOptions?: EpisodeOptionInput[] | null;
   localChildren?: SeriesChildLike[] | null;
   seasonNumber?: number | null;
+  defaultMinCount?: number;
 }): SeriesEpisodeOption[] {
   const sourceOptions = (externalOptions ?? []).map(cleanOption).filter((option): option is SeriesEpisodeOption => Boolean(option));
   const localOptions = episodeOptionsFromLocalChildren(localChildren, seasonNumber ?? 1);
   const maxFromOptions = [...sourceOptions, ...localOptions].reduce((max, option) => Math.max(max, option.number), 0);
-  const count = Math.max(Number(episodeCount ?? 0) || 0, maxFromOptions);
-  if (count <= 0) return sourceOptions.length ? sourceOptions : localOptions;
+  const count = Math.max(Number(episodeCount ?? 0) || 0, maxFromOptions, defaultMinCount);
 
   const byNumber = new Map<number, SeriesEpisodeOption>();
   for (const option of sourceOptions) byNumber.set(option.number, option);

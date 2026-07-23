@@ -2368,10 +2368,10 @@ function AdminKontrakterContent() {
                                                     </div>
 
                                                     {episodesLoading ? (
-                                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">
+                                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
                                                             <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
                                                         </div>
-                                                    ) : detectedEpisodeCount !== null ? (
+                                                    ) : (
                                                         <SeriesEpisodeSelector
                                                             season={Number(addSeason) || 1}
                                                             onSeasonChange={season => setAddSeason(String(season))}
@@ -2379,15 +2379,14 @@ function AdminKontrakterContent() {
                                                                 episodeCount: detectedEpisodeCount,
                                                                 externalOptions: episodeOptions,
                                                                 seasonNumber: Number(addSeason) || 1,
+                                                                defaultMinCount: 8,
                                                             })}
                                                             selected={selectedEpisodes}
                                                             onSelectedChange={setSelectedEpisodes}
                                                             showSeason={false}
                                                             compact
                                                         />
-                                                    ) : episodesError ? (
-                                                        <p className="text-xs text-destructive">{episodesError}</p>
-                                                    ) : null}
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
