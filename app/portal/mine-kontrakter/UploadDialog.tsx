@@ -626,6 +626,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     }
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !saving) onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, saving]);
+
   // Fælles select-stil (shadcn Select er overkill her — native select er tilstrækkeligt)
   const selectCls = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 

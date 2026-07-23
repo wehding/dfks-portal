@@ -849,6 +849,22 @@ export default function VaerksadministrationPage() {
   };
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (editingSeasonGroup) {
+          setEditingSeasonGroup(null);
+        } else if (editing) {
+          setEditing(null);
+        } else if (addOpen) {
+          setAddOpen(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingSeasonGroup, editing, addOpen]);
+
+  useEffect(() => {
     load();
   }, []);
 

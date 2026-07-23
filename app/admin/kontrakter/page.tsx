@@ -463,6 +463,27 @@ function AdminKontrakterContent() {
         }
     }, [])
 
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                if (duplicatesOpen) {
+                    setDuplicatesOpen(false)
+                } else if (editContract && !editSaving) {
+                    closeEditDialog()
+                } else if (viewContract) {
+                    setViewContract(null)
+                    setViewPdfUrl(null)
+                } else if (showUpload && !saving) {
+                    setShowUpload(false)
+                    setUploadItems([])
+                    setUploadPhase("select")
+                }
+            }
+        }
+        window.addEventListener("keydown", handleKeyDown)
+        return () => window.removeEventListener("keydown", handleKeyDown)
+    }, [editContract, editSaving, viewContract, showUpload, saving, duplicatesOpen, closeEditDialog])
+
     // Delete
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const validateAndNextRef = useRef<() => void>(() => undefined)
