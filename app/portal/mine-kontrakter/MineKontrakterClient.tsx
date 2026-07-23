@@ -328,9 +328,19 @@ export default function MineKontrakterClient({
             setSelectedEpisodes([]);
             setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
           }
+        } else {
+          // Opslaget fejlede — ryd stale afsnit fra forrige sæson og vis fejl.
+          setDetectedEpisodeCount(null);
+          setEpisodeOptions([]);
+          setSelectedEpisodes([]);
+          setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
         }
       } catch (e) {
         console.error("Fejl ved hentning af sæsonafsnit:", e);
+        setDetectedEpisodeCount(null);
+        setEpisodeOptions([]);
+        setSelectedEpisodes([]);
+        setEpisodesError("Kunne ikke hente sæsonoplysninger.");
       } finally {
         setEpisodesLoading(false);
       }

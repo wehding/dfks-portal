@@ -5,6 +5,8 @@ import { Upload, X, Loader2, CheckCircle2, Sparkles, Plus } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { linkContractToWork, queueUploadedContractAiJob, saveUploadedContract } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, findManualWorkDuplicates, linkExistingWorkForMember, resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,6 +75,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [director, setDirector] = useState("");
   const [seriesSeason, setSeriesSeason] = useState("");
   const [contractSeriesScope, setContractSeriesScope] = useState<"season" | "episodes">("episodes");
+  const [pickerEpisodeOptions, setPickerEpisodeOptions] = useState<SeriesEpisodeOption[]>([]);
+  const [pickerEpisodesLoading, setPickerEpisodesLoading] = useState(false);
+  const [pickerEpisodesError, setPickerEpisodesError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [uploadStage, setUploadStage] = useState<UploadStage | null>(null);
   const [workPickerOpen, setWorkPickerOpen] = useState(false);
@@ -165,6 +170,40 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (limited.length === 1 && (first.type === "application/pdf" || /\.pdf$/i.test(first.name))) setPdfUrl(URL.createObjectURL(first));
     else setPdfUrl(null);
   }, []);
+
+  // Sæson-skift for et valgt serie-værk: hent sæsonens afsnit fra databaserne —
+  // ukendt sæson giver en tydelig fejl i stedet for stale/manuelle afsnit.
+  useEffect(() => {
+    const updateSeasonEpisodes = async () => {
+      if (!pickedUnifiedResult || (pickedUnifiedResult.type !== "tv-serie" && pickedUnifiedResult.type !== "dokumentar-serie")) {
+        setPickerEpisodeOptions([]);
+        setPickerEpisodesError(null);
+        return;
+      }
+      const sNum = parseInt(seriesSeason) || 1;
+      setPickerEpisodesLoading(true);
+      setPickerEpisodesError(null);
+      try {
+        const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
+        const details = detailsRes.success ? detailsRes.details : null;
+        const options = (details?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
+        const count = Math.max(details?.episode_count ?? 0, options.length);
+        if (count > 0) {
+          setPickerEpisodeOptions(buildCompleteEpisodeOptions({ episodeCount: count, externalOptions: options, seasonNumber: sNum }));
+        } else {
+          setPickerEpisodeOptions([]);
+          setPickerEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+        }
+      } catch (e) {
+        console.error("Fejl ved hentning af sæsonafsnit:", e);
+        setPickerEpisodeOptions([]);
+        setPickerEpisodesError("Kunne ikke hente sæsonoplysninger.");
+      } finally {
+        setPickerEpisodesLoading(false);
+      }
+    };
+    void updateSeasonEpisodes();
+  }, [seriesSeason, pickedUnifiedResult]);
 
   // Batch-upload indsendes automatisk ved filvalg — uden formular-trin.
   const batchAutoSubmittedRef = React.useRef(false);
@@ -841,6 +880,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setSelectedWorkId(result.local_id ?? "");
                       setManualMode(false);
                       setManualDuplicateMatches([]);
+                      // Et valgt serie-værk skal altid vise sæson/afsnit-vælgeren —
+                      // synk kategorien fra værkets type (AI-screeningen kan have gættet forkert).
+                      if (result.type === "tv-serie") setCategory("tvSeries");
+                      else if (result.type === "dokumentar-serie") setCategory("docSeries");
+                      if ((result.type === "tv-serie" || result.type === "dokumentar-serie") && !seriesSeason.trim()) {
+                        setSeriesSeason(String(result.season_hint ?? result.season_number ?? 1));
+                      }
                     }}
                     typeFilter={typeFilter}
                     onTypeFilterChange={setTypeFilter}
@@ -987,8 +1033,37 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       className={aiFields.has("seasonNumber") ? "bg-purple-50" : ""}
                     />
                   </div>
+                  {pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
+                    <div className="rounded-md border bg-muted/20 p-3">
+                      {pickerEpisodesLoading ? (
+                        <div className="flex items-center gap-1.5 py-1 text-xs text-muted-foreground">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
+                        </div>
+                      ) : pickerEpisodesError ? (
+                        <p className="text-xs text-destructive">{pickerEpisodesError}</p>
+                      ) : pickerEpisodeOptions.length > 0 ? (
+                        <SeriesEpisodeSelector
+                          season={Number(seriesSeason) || 1}
+                          onSeasonChange={season => setSeriesSeason(String(season))}
+                          options={pickerEpisodeOptions}
+                          selected={episodeCredits.map(ec => ec.number)}
+                          onSelectedChange={numbers => {
+                            setEpisodesTouched(true);
+                            const defaultRole = creditedRoles.find(Boolean) ?? episodeCredits.find(ec => ec.role)?.role ?? "Klipper";
+                            setEpisodeCredits([...numbers].sort((a, b) => a - b).map(number => ({
+                              number,
+                              role: episodeCredits.find(ec => ec.number === number)?.role ?? defaultRole,
+                            })));
+                          }}
+                          showSeason={false}
+                          compact
+                        />
+                      ) : null}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium text-muted-foreground">Afsnit og kreditering</Label>
+                    {!(pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && pickerEpisodeOptions.length > 0) && (
                     <button
                       onClick={() => {
                         setEpisodesTouched(true);
@@ -998,6 +1073,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     >
                       <Plus className="h-3 w-3" /> Tilføj afsnit
                     </button>
+                    )}
                   </div>
                   <div className="rounded-md border bg-muted/20 p-3">
                     <Label className="text-sm font-medium text-foreground">Kontraktens omfang</Label>
