@@ -365,19 +365,23 @@ function AdminKontrakterContent() {
                         const count = Math.max(d.episode_count ?? 0, options.length)
                         if (count > 0) {
                             setDetectedEpisodeCount(count)
-                            setEpisodeOptions(options)
+                            setEpisodeOptions(buildCompleteEpisodeOptions({
+                                episodeCount: count,
+                                externalOptions: options,
+                                seasonNumber: sNum,
+                            }))
                             setSelectedEpisodes(prev => prev.filter(x => x <= count))
                         } else {
-                            setDetectedEpisodeCount(null)
+                            setDetectedEpisodeCount(1)
                             setEpisodeOptions([])
                             setSelectedEpisodes([])
-                            setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
+                            setEpisodesError(null)
                         }
                     } else {
-                        setDetectedEpisodeCount(null)
+                        setDetectedEpisodeCount(1)
                         setEpisodeOptions([])
                         setSelectedEpisodes([])
-                        setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
+                        setEpisodesError(null)
                     }
                 } catch (e) {
                     console.error(e)
@@ -390,40 +394,14 @@ function AdminKontrakterContent() {
         updateEpisodesForSeason()
     }, [addSeason, pickedUnifiedResult])
 
-    const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
+    const pickUnifiedResult = (result: UnifiedSearchWorkResult) => {
         setPickedUnifiedResult(result)
-        setDetectedEpisodeCount(null)
         setSelectedEpisodes([])
         setEpisodeOptions([])
-        setDetailsLoading(true)
-
-        try {
-            const isSeries = result.type === "tv-serie" || result.type === "dokumentar-serie"
-            if (isSeries) {
-                const detRes = await resolveUnifiedSearchResultDetails(result)
-                if (detRes.success && detRes.details) {
-                    const d = detRes.details
-                    const options = d.episode_options || []
-                    const count = Math.max(d.episode_count || 0, options.length)
-                    const hintedSeason = d.season_hint ?? result.season_hint ?? null
-                    if (hintedSeason) setAddSeason(String(hintedSeason))
-
-                    if (count) {
-                        setDetectedEpisodeCount(count)
-                        setEpisodeOptions(buildCompleteEpisodeOptions({
-                            episodeCount: count,
-                            externalOptions: options,
-                            seasonNumber: Number(hintedSeason ?? result.season_hint ?? 1),
-                        }))
-                        setSelectedEpisodes([])
-                    }
-                }
-            }
-        } catch (e) {
-            console.error(e)
-        } finally {
-            setDetailsLoading(false)
-        }
+        setDetectedEpisodeCount(null)
+        setEpisodesError(null)
+        const initialSeason = result.season_hint ? String(result.season_hint) : "1"
+        setAddSeason(initialSeason)
     }
     const [editRightsHolderSearch, setEditRightsHolderSearch] = useState("")
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
