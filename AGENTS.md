@@ -12,6 +12,26 @@ Disse regler gælder for alt Codex-arbejde i dette repository.
 - Direkte push til `master` er ikke tilladt.
 - Brug ikke force push, medmindre brugeren eksplicit beder om det og forstår risikoen.
 
+## Efter en gennemført Pull Request
+
+- Når en ønsket Pull Request er oprettet og kontrolleret, må dens branch ikke bruges til nyt featurearbejde.
+- Hent altid seneste remote-status, og opret straks en ny sidebranch til det efterfølgende arbejde.
+- Hvis PR'en er merget, skal den nye branch oprettes fra opdateret `origin/master`.
+- Hvis PR'en stadig er åben, skal nyt uafhængigt arbejde oprettes fra `origin/master`. Arbejde, der afhænger af den åbne PR, må kun oprettes fra PR-branchens tip som en tydeligt angivet stacked branch.
+- Nye commits på den gamle PR-branch er kun tilladt, når de konkret retter den eksisterende PR, for eksempel reviewkommentarer, konflikter eller fejlede checks.
+- Bekræft og oplys navnet på den nye branch, før arbejdet fortsætter.
+
+## Lokal app efter ændringer
+
+- Efter hver funktionel kodeændring skal udviklingsserveren genstartes fra præcis den branch og worktree, som indeholder ændringen.
+- Bekræft aktiv branch og worktree før genstart. Start aldrig appen fra hovedarbejdsmappen, hvis ændringen ligger i en isoleret worktree.
+- Stop kun en eksisterende udviklingsserver, når processen tilhører dette repository. Afslut aldrig en uvedkommende proces, som bruger den ønskede port.
+- Start appen med `npm run dev -- --hostname 0.0.0.0`, så den kan tilgås lokalt og via Tailscale. Brug som udgangspunkt port 3000.
+- Hvis worktreet mangler `.env.local`, skal den eksisterende lokale konfiguration bruges uden at kopiere, vise eller committe hemmeligheder.
+- Kontrollér efter genstart, at appen svarer, og rapportér branch, worktree, port samt lokal og eventuel Tailscale-URL.
+- Hvis genstarten fejler, skal fejlen rapporteres. Skift ikke til en anden branch for at skjule problemet.
+- Dokumentationsændringer og andre ændringer uden runtime-effekt kræver ikke genstart.
+
 ## Commit-beskeder
 
 Brug korte commit-beskeder med prefix:
