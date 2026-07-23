@@ -57,6 +57,7 @@ import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { SeasonStepper } from "@/components/works/season-stepper";
 import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 
@@ -1732,6 +1733,7 @@ export default function VaerksadministrationPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     const updateEpisodesForSeason = async () => {
       if (pickedUnifiedAddResult && (pickedUnifiedAddResult.type === "tv-serie" || pickedUnifiedAddResult.type === "dokumentar-serie")) {
         const sNum = parseInt(addSeasonNumber) || 1;
@@ -1739,10 +1741,11 @@ export default function VaerksadministrationPage() {
         setAddEpisodesError(null);
         try {
           const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum);
+          if (cancelled) return;
           const d = detailsRes.success ? detailsRes.details : null;
           const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
           const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
-          if (episodeCount > 0) {
+          if (d?.episode_lookup_status === "found" && episodeCount > 0) {
             setAddEpisodeOptions(buildCompleteEpisodeOptions({
               episodeCount,
               externalOptions: episodeOptions,
@@ -1753,19 +1756,23 @@ export default function VaerksadministrationPage() {
             // Sæsonen findes ikke — ryd stale afsnit og vis fejl (sæson-inputtet forbliver synligt).
             setAddEpisodeOptions([]);
             setAddSelectedEpisodes([]);
-            setAddEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+            setAddEpisodesError(d?.episode_lookup_status === "error"
+              ? `Kunne ikke hente sæson ${sNum}. Prøv igen.`
+              : `Sæson ${sNum} blev ikke fundet.`);
           }
         } catch (e) {
+          if (cancelled) return;
           console.error("Fejl ved opdatering af sæsonafsnit i admin:", e);
           setAddEpisodeOptions([]);
           setAddSelectedEpisodes([]);
-          setAddEpisodesError("Kunne ikke hente sæsonoplysninger.");
+          setAddEpisodesError(`Kunne ikke hente sæson ${parseInt(addSeasonNumber) || 1}. Prøv igen.`);
         } finally {
-          setAddEpisodesLoading(false);
+          if (!cancelled) setAddEpisodesLoading(false);
         }
       }
     };
     updateEpisodesForSeason();
+    return () => { cancelled = true; };
   }, [addSeasonNumber, pickedUnifiedAddResult]);
 
   const handleCreateWork = async () => {
@@ -2372,7 +2379,7 @@ export default function VaerksadministrationPage() {
                                   onSelectedChange={setReviewEpisodes}
                                   label="Afsnit medlemmet er krediteret på"
                                   compact
-                                  showSeason={false}
+                                  seasonReadOnly
                                 />
                               </div>
                             )}
@@ -2561,7 +2568,7 @@ export default function VaerksadministrationPage() {
                             options={editingSeasonEpisodes.map(episode => ({ number: episode.episode_number ?? 0, title: episode.title })).filter(option => option.number > 0)}
                             selected={credit.episodes}
                             onSelectedChange={episodes => setSeasonCreditDrafts(previous => ({ ...previous, [credit.rightsHolderId]: { ...credit, episodes } }))}
-                            showSeason={false}
+                            seasonReadOnly
                             compact
                           />
                         </div>
@@ -2944,14 +2951,14 @@ export default function VaerksadministrationPage() {
                 {pickedUnifiedAddResult && (pickedUnifiedAddResult.type === "tv-serie" || pickedUnifiedAddResult.type === "dokumentar-serie") && (
                   <div className="rounded-md border p-3">
                     <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                      <Field label="Sæson">
-                        <Input
-                          inputMode="numeric"
-                          className="w-24"
-                          value={addSeasonNumber}
-                          onChange={e => setAddSeasonNumber(e.target.value)}
-                        />
-                      </Field>
+                      <SeasonStepper
+                        value={Number(addSeasonNumber) || 1}
+                        onChange={season => {
+                          setAddSeasonNumber(String(season));
+                          setAddSelectedEpisodes([]);
+                        }}
+                        compact
+                      />
                     </div>
                     {addEpisodesLoading ? (
                       <div className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">

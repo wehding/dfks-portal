@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageStatusBadge, MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { SeasonStepper } from "@/components/works/season-stepper";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
@@ -283,6 +284,7 @@ export default function MineKontrakterClient({
   }, [workSearch]);
 
   useEffect(() => {
+    let cancelled = false;
     const updateSeasonEpisodes = async () => {
       if (!pickedUnifiedResult || (pickedUnifiedResult.type !== "tv-serie" && pickedUnifiedResult.type !== "dokumentar-serie")) {
         return;
@@ -294,6 +296,7 @@ export default function MineKontrakterClient({
 
         if (tmdbId) {
           const season = await getTMDBSeasonEpisodes(tmdbId, sNum);
+          if (cancelled) return;
           const seasonOptions = (season.success ? season.episodes ?? [] : [])
             .map((episode: { episode_number?: number; name?: string }) => ({
               number: Number(episode.episode_number),
@@ -313,7 +316,8 @@ export default function MineKontrakterClient({
 
         // Fallback to resolveUnifiedSearchResultDetails for DFI/Local series or missing TMDB seasons
         const detRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
-        if (detRes.success && detRes.details) {
+        if (cancelled) return;
+        if (detRes.success && detRes.details?.episode_lookup_status === "found") {
           const d = detRes.details;
           const options = d.episode_options || [];
           const count = Math.max(d.episode_count || 0, options.length);
@@ -326,26 +330,29 @@ export default function MineKontrakterClient({
             setDetectedEpisodeCount(null);
             setEpisodeOptions([]);
             setSelectedEpisodes([]);
-            setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+            setEpisodesError(`Sæson ${sNum} blev ikke fundet.`);
           }
         } else {
           // Opslaget fejlede — ryd stale afsnit fra forrige sæson og vis fejl.
           setDetectedEpisodeCount(null);
           setEpisodeOptions([]);
           setSelectedEpisodes([]);
-          setEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+          const lookupFailed = detRes.success && detRes.details?.episode_lookup_status === "error";
+          setEpisodesError(lookupFailed ? `Kunne ikke hente sæson ${sNum}. Prøv igen.` : `Sæson ${sNum} blev ikke fundet.`);
         }
       } catch (e) {
+        if (cancelled) return;
         console.error("Fejl ved hentning af sæsonafsnit:", e);
         setDetectedEpisodeCount(null);
         setEpisodeOptions([]);
         setSelectedEpisodes([]);
-        setEpisodesError("Kunne ikke hente sæsonoplysninger.");
+        setEpisodesError(`Kunne ikke hente sæson ${parseInt(addSeason) || 1}. Prøv igen.`);
       } finally {
-        setEpisodesLoading(false);
+        if (!cancelled) setEpisodesLoading(false);
       }
     };
     updateSeasonEpisodes();
+    return () => { cancelled = true; };
   }, [addSeason, pickedUnifiedResult]);
 
   const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
@@ -1186,17 +1193,14 @@ export default function MineKontrakterClient({
 
                         {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
                           <div className="space-y-3 pt-2 border-t">
-                            <div className="flex flex-col gap-1">
-                              <Label className="text-[11px] font-medium text-muted-foreground">Sæson</Label>
-                              <Input
-                                type="number"
-                                min="1"
-                                className="h-8 text-xs"
-                                placeholder="1"
-                                value={addSeason || "1"}
-                                onChange={e => setAddSeason(e.target.value)}
-                              />
-                            </div>
+                            <SeasonStepper
+                              value={Number(addSeason) || 1}
+                              onChange={season => {
+                                setAddSeason(String(season));
+                                setSelectedEpisodes([]);
+                              }}
+                              compact
+                            />
 
                             {episodesLoading ? (
                               <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center">

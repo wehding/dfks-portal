@@ -9,7 +9,7 @@ import { getDFIFilmDetails, normalizeDfiSeriesResults, searchDFIFilms } from "@/
 import { cleanDfiTitle, extractDfiPosterUrl, extractDfiDirectors, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { generateEpisodesForSeries } from "@/app/actions/series-generator";
 import type { DbWork } from "@/lib/db/types";
-import { buildCompleteEpisodeOptions, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesType, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
 import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
@@ -145,6 +145,8 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
   let tmdbId = params.tmdbId ?? null;
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
   let episodeCount: number | null = null;
+  let seasonFound = false;
+  let lookupError: string | null = null;
 
   try {
     if (params.dfiId) {
@@ -156,8 +158,12 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
     }
     if (dfiMetadata) {
       const dfiEpisodes = dfiEpisodeOptionsFromFilm(dfiMetadata);
-      episodeOptions = dfiEpisodes.options;
-      episodeCount = dfiEpisodes.episodeCount;
+      const dfiSeasonNumber = parseSeasonNumberFromTitle(String((dfiMetadata as Record<string, unknown>).Title ?? params.title)) ?? 1;
+      if (params.seasonNumber === dfiSeasonNumber) {
+        episodeOptions = dfiEpisodes.options;
+        episodeCount = dfiEpisodes.episodeCount;
+        seasonFound = episodeOptions.length > 0 || Boolean(episodeCount);
+      }
       if (!tmdbId && typeof (dfiMetadata as Record<string, unknown>).TmdbId === "number") {
         tmdbId = Number((dfiMetadata as Record<string, unknown>).TmdbId);
       }
@@ -185,13 +191,18 @@ async function resolveExternalSeriesEpisodesForTitle(params: {
         }))
         .filter(option => Number.isFinite(option.number) && option.number > 0);
       if (tmdbOptions.length > episodeOptions.length) episodeOptions = tmdbOptions;
-      if (tmdbOptions.length) episodeCount = Math.max(episodeCount ?? 0, ...tmdbOptions.map(option => option.number));
+      if (tmdbOptions.length) {
+        seasonFound = true;
+        episodeCount = Math.max(episodeCount ?? 0, ...tmdbOptions.map(option => option.number));
+      } else if (!season.success && !season.notFound) {
+        lookupError = season.error ?? "Kunne ikke hente sæsonens afsnit.";
+      }
     }
   } catch (error) {
     console.error("TMDB serieafsnit lookup fejlede:", error);
   }
 
-  return { dfiMetadata, tmdbId, episodeOptions, episodeCount };
+  return { dfiMetadata, tmdbId, episodeOptions, episodeCount, seasonFound, lookupError };
 }
 
 async function currentUser() {
@@ -1940,7 +1951,9 @@ export async function updateMemberCoEditors(params: {
 }
 
 export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWorkResult, seasonNumber?: number | null) {
-  const detailSeasonNumber = seasonNumber ?? result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
+  const defaultSeasonNumber = result.season_hint ?? parseSeasonNumberFromTitle(result.title) ?? 1;
+  const detailSeasonNumber = seasonNumber ?? defaultSeasonNumber;
+  const explicitDifferentSeason = seasonNumber != null && detailSeasonNumber !== defaultSeasonNumber;
   let dfiMetadata: DfiMetadata | null = null;
   let tmdbId = result.tmdb_id ?? null;
   let imdbId = result.imdb_id ?? null;
@@ -1958,6 +1971,8 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let productionCompanies: string[] = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
   let localChildren: any[] = Array.isArray(result.raw_local?.__local_children) ? result.raw_local.__local_children : [];
+  let seasonConfirmed = false;
+  let seasonLookupError: string | null = null;
 
   if (result.local_id && isSeriesType(result.type)) {
     try {
@@ -1974,6 +1989,8 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       console.error("Local episode lookup error in resolveUnifiedSearchResultDetails:", e);
     }
   }
+
+  seasonConfirmed = episodeOptionsFromLocalChildren(localChildren, detailSeasonNumber).length > 0;
 
   // 1. Fetch DFI details if DFI ID is present
   if (result.dfi_id) {
@@ -2030,6 +2047,13 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
     }
   }
 
+  if (explicitDifferentSeason) {
+    episodeOptions = [];
+    episodeCount = null;
+  } else if (episodeOptions.length > 0 || (episodeCount ?? 0) > 0) {
+    seasonConfirmed = true;
+  }
+
   // 2. Fetch TMDB match and external IDs if TMDB ID is missing
   if (result.dfi_id && !tmdbId) {
     try {
@@ -2062,6 +2086,7 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
           productionCompanies = productionCompanies.length ? productionCompanies : (tDetails.production_companies ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
           if (season?.episode_count && (!episodeCount || season.episode_count > episodeCount)) {
             episodeCount = season.episode_count;
+            seasonConfirmed = true;
           }
         }
       }
@@ -2094,6 +2119,8 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
     if (externalEpisodes.episodeCount && externalEpisodes.episodeCount > (episodeCount ?? 0)) {
       episodeCount = externalEpisodes.episodeCount;
     }
+    seasonConfirmed = seasonConfirmed || externalEpisodes.seasonFound;
+    seasonLookupError = externalEpisodes.lookupError;
   }
 
   // 3. Enrich from Wikidata
@@ -2114,6 +2141,17 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
     localChildren,
     seasonNumber: detailSeasonNumber,
   }) as { number: number; title: string; dfiId?: string | null }[];
+
+  const episodeLookupStatus = !seasonConfirmed && seasonLookupError
+    ? "error"
+    : seasonConfirmed && episodeOptions.length > 0
+      ? "found"
+      : "not_found";
+
+  if (episodeLookupStatus !== "found") {
+    episodeOptions = [];
+    episodeCount = null;
+  }
 
   return {
     success: true,
@@ -2137,6 +2175,8 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       production_countries: productionCountries,
       production_companies: productionCompanies,
       episode_options: episodeOptions,
+      episode_lookup_status: episodeLookupStatus,
+      episode_lookup_error: seasonLookupError,
       season_hint: result.season_hint ?? parseSeasonNumberFromTitle(result.title),
     }
   };

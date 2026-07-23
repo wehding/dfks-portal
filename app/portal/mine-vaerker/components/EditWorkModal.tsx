@@ -546,7 +546,7 @@ export function EditWorkModal({
               selected={directSelectedEpisodeNumbers}
               onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
               loading={directEpisodesLoading}
-              showSeason={false}
+              seasonReadOnly
               compact
             />
           </div>

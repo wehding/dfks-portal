@@ -14,6 +14,7 @@ import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistin
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { SeasonStepper } from "@/components/works/season-stepper";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
@@ -374,6 +375,7 @@ export function AddWorkModal({
   const autoSearchKeyRef = React.useRef("");
 
   useEffect(() => {
+    let cancelled = false;
     const updateEpisodesForSeason = async () => {
       if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
         setEpisodesLoading(true);
@@ -381,7 +383,8 @@ export function AddWorkModal({
         try {
           const sNum = parseInt(addSeason) || 1;
           const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
-          if (detailsRes.success && detailsRes.details) {
+          if (cancelled) return;
+          if (detailsRes.success && detailsRes.details?.episode_lookup_status === "found") {
             const d = detailsRes.details;
             const options = (d.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
             const count = Math.max(d.episode_count ?? 0, options.length);
@@ -393,23 +396,30 @@ export function AddWorkModal({
               setDetectedEpisodeCount(null);
               setEpisodeOptions([]);
               setSelectedEpisodes([]);
-              setEpisodesError(locale === "da" ? `Kan ikke finde sæson ${sNum}.` : `Season ${sNum} not found.`);
+              setEpisodesError(locale === "da" ? `Sæson ${sNum} blev ikke fundet.` : `Season ${sNum} was not found.`);
             }
           } else {
             setDetectedEpisodeCount(null);
             setEpisodeOptions([]);
             setSelectedEpisodes([]);
-            setEpisodesError(locale === "da" ? `Kan ikke finde sæson ${sNum}.` : `Season ${sNum} not found.`);
+            const lookupFailed = detailsRes.success && detailsRes.details?.episode_lookup_status === "error";
+            setEpisodesError(lookupFailed
+              ? (locale === "da" ? `Kunne ikke hente sæson ${sNum}. Prøv igen.` : `Could not load season ${sNum}. Try again.`)
+              : (locale === "da" ? `Sæson ${sNum} blev ikke fundet.` : `Season ${sNum} was not found.`));
           }
         } catch (e) {
+          if (cancelled) return;
           console.error(e);
-          setEpisodesError(locale === "da" ? "Kunne ikke hente sæsonoplysninger." : "Could not fetch season details.");
+          setEpisodeOptions([]);
+          setSelectedEpisodes([]);
+          setEpisodesError(locale === "da" ? `Kunne ikke hente sæson ${parseInt(addSeason) || 1}. Prøv igen.` : `Could not load season ${parseInt(addSeason) || 1}. Try again.`);
         } finally {
-          setEpisodesLoading(false);
+          if (!cancelled) setEpisodesLoading(false);
         }
       }
     };
     updateEpisodesForSeason();
+    return () => { cancelled = true; };
   }, [addSeason, pickedUnifiedResult, locale]);
 
   const resetAddState = React.useCallback(() => {
@@ -691,11 +701,14 @@ export function AddWorkModal({
   const seriesEpisodePicker = (
     <div className="mt-3 space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-gray-500">{t("works.season")}</Label>
-          <Input type="number" min="1" placeholder="1" value={addSeason} onChange={e => setAddSeason(e.target.value)} />
-        </div>
-        {!episodesLoading && detectedEpisodeCount === null && (
+        <SeasonStepper
+          value={Number(addSeason) || 1}
+          onChange={season => {
+            setAddSeason(String(season));
+            setSelectedEpisodes([]);
+          }}
+        />
+        {!episodesLoading && detectedEpisodeCount === null && !episodesError && (
           <div className="space-y-1.5">
             <Label className="text-sm font-medium text-gray-500">{t("works.episode")}</Label>
             <Input type="number" min="1" placeholder="1" value={addEpisode} onChange={e => setAddEpisode(e.target.value)} />
