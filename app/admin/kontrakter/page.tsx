@@ -372,16 +372,17 @@ function AdminKontrakterContent() {
                             }))
                             setSelectedEpisodes(prev => prev.filter(x => x <= count))
                         } else {
-                            setDetectedEpisodeCount(1)
+                            // Sæsonen findes ikke — vis fejl i stedet for placeholder-afsnit.
+                            setDetectedEpisodeCount(null)
                             setEpisodeOptions([])
                             setSelectedEpisodes([])
-                            setEpisodesError(null)
+                            setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
                         }
                     } else {
-                        setDetectedEpisodeCount(1)
+                        setDetectedEpisodeCount(null)
                         setEpisodeOptions([])
                         setSelectedEpisodes([])
-                        setEpisodesError(null)
+                        setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
                     }
                 } catch (e) {
                     console.error(e)
@@ -529,7 +530,7 @@ function AdminKontrakterContent() {
                             season_number, episode_numbers,
                             employers (name),
                             rettighedshavere (full_name),
-                            works (id, title, poster_url),
+                            works (id, title, type, poster_url),
                             contract_validations (has_credit_clause, has_overenskomst_incorporation)
                         `)
                         .eq("org_id", resolvedOrgId)
@@ -549,7 +550,7 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
+                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
                     const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
@@ -671,7 +672,7 @@ function AdminKontrakterContent() {
                         contract_validations (has_credit_clause, has_overenskomst_incorporation)
                     `)
                     .in("id", doneIds)
-                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
+                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
                     const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
                     refreshed[r.id] = {
                         type: r.type,
@@ -1024,7 +1025,8 @@ function AdminKontrakterContent() {
                 id: `local:${c.work_id}`,
                 local_id: c.work_id,
                 title: c.work_title ?? c.working_title ?? "Valgt værk",
-                type: c.type as UnifiedSearchWorkResult["type"],
+                // Værkets type kendes først efter loadContractDetail — c.type er kontraktens type (a-løn/leverandør).
+                type: "spillefilm" as UnifiedSearchWorkResult["type"],
                 year: null,
                 description: null,
                 poster_url: null,
@@ -1052,7 +1054,7 @@ function AdminKontrakterContent() {
                 season_number, episode_numbers,
                 employers (name),
                 rettighedshavere (full_name),
-                works (id, title, poster_url),
+                works (id, title, type, poster_url),
                 contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
             `)
             .eq("id", c.id)
@@ -1070,7 +1072,7 @@ function AdminKontrakterContent() {
             .limit(1)
 
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
@@ -1110,7 +1112,7 @@ function AdminKontrakterContent() {
                 id: `local:${row.works.id}`,
                 local_id: row.works.id,
                 title: row.works.title ?? row.working_title ?? "Valgt værk",
-                type: row.type as UnifiedSearchWorkResult["type"],
+                type: (row.works.type ?? "spillefilm") as UnifiedSearchWorkResult["type"],
                 year: null,
                 description: null,
                 poster_url: row.works.poster_url ?? null,
@@ -1162,13 +1164,13 @@ function AdminKontrakterContent() {
                 season_number, episode_numbers,
                 employers (name),
                 rettighedshavere (full_name),
-                works (id, title, poster_url),
+                works (id, title, type, poster_url),
                 contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
             `)
             .eq("id", contractId)
             .maybeSingle()
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const patch: Partial<ContractRow> = {
             type: row.type,
@@ -1353,7 +1355,7 @@ function AdminKontrakterContent() {
                 selectedWork = { id: created.workId, title, year: null, poster_url: null }
                 setWorks(prev => prev.some(w => w.id === created.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
             }
-            const isSeriesSave = editForm.type === "tv-serie" || editForm.type === "dokumentar-serie"
+            const isSeriesSave = pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie"
             const saveSeasonNumber = isSeriesSave ? (Number(addSeason) || 1) : null
             const saveEpisodeNumbers = isSeriesSave ? selectedEpisodes : null
 
@@ -2381,7 +2383,7 @@ function AdminKontrakterContent() {
                                                         {works.find(w => w.id === editForm.work_id)?.title ?? pickedUnifiedResult?.title ?? editContract?.work_title ?? "Valgt værk"}
                                                     </p>
                                                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                                                        {works.find(w => w.id === editForm.work_id)?.year ?? pickedUnifiedResult?.year ?? "-"} · {editForm.type}
+                                                        {works.find(w => w.id === editForm.work_id)?.year ?? pickedUnifiedResult?.year ?? "-"} · {pickedUnifiedResult?.type ?? "værk"}
                                                     </p>
                                                 </div>
                                                 <button
@@ -2408,7 +2410,7 @@ function AdminKontrakterContent() {
                                                 </div>
                                             )}
 
-                                            {!detailsLoading && (editForm.type === "tv-serie" || editForm.type === "dokumentar-serie") && (
+                                            {!detailsLoading && (pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie") && (
                                                 <div className="space-y-3 pt-2 border-t">
                                                     <div className="flex flex-col gap-1">
                                                         <Label className="text-[11px] font-medium text-muted-foreground">Sæson</Label>
@@ -2426,6 +2428,8 @@ function AdminKontrakterContent() {
                                                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
                                                             <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
                                                         </div>
+                                                    ) : episodesError ? (
+                                                        <p className="text-xs text-destructive">{episodesError}</p>
                                                     ) : (
                                                         <SeriesEpisodeSelector
                                                             season={Number(addSeason) || 1}
@@ -2434,7 +2438,6 @@ function AdminKontrakterContent() {
                                                                 episodeCount: detectedEpisodeCount,
                                                                 externalOptions: episodeOptions,
                                                                 seasonNumber: Number(addSeason) || 1,
-                                                                defaultMinCount: 8,
                                                             })}
                                                             selected={selectedEpisodes}
                                                             onSelectedChange={setSelectedEpisodes}

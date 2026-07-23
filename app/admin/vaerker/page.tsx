@@ -798,6 +798,8 @@ export default function VaerksadministrationPage() {
   const [pickedSource, setPickedSource] = useState<"local" | "dfi" | "tmdb" | null>(null);
   const [addSeasonNumber, setAddSeasonNumber] = useState("1");
   const [addEpisodeOptions, setAddEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
+  const [addEpisodesLoading, setAddEpisodesLoading] = useState(false);
+  const [addEpisodesError, setAddEpisodesError] = useState<string | null>(null);
   const [addSelectedEpisodes, setAddSelectedEpisodes] = useState<number[]>([]);
   const [isSearchingAdd, setIsSearchingAdd] = useState(false);
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
@@ -1733,24 +1735,33 @@ export default function VaerksadministrationPage() {
     const updateEpisodesForSeason = async () => {
       if (pickedUnifiedAddResult && (pickedUnifiedAddResult.type === "tv-serie" || pickedUnifiedAddResult.type === "dokumentar-serie")) {
         const sNum = parseInt(addSeasonNumber) || 1;
+        setAddEpisodesLoading(true);
+        setAddEpisodesError(null);
         try {
           const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum);
-          if (detailsRes.success && detailsRes.details) {
-            const d = detailsRes.details;
-            const episodeOptions = (d.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
-            const episodeCount = Math.max(d.episode_count ?? 0, episodeOptions.length);
-            setAddEpisodeOptions(
-              episodeCount
-                ? buildCompleteEpisodeOptions({
-                  episodeCount,
-                  externalOptions: episodeOptions,
-                  seasonNumber: sNum,
-                })
-                : []
-            );
+          const d = detailsRes.success ? detailsRes.details : null;
+          const episodeOptions = (d?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
+          const episodeCount = Math.max(d?.episode_count ?? 0, episodeOptions.length);
+          if (episodeCount > 0) {
+            setAddEpisodeOptions(buildCompleteEpisodeOptions({
+              episodeCount,
+              externalOptions: episodeOptions,
+              seasonNumber: sNum,
+            }));
+            setAddSelectedEpisodes(prev => prev.filter(number => number <= episodeCount));
+          } else {
+            // Sæsonen findes ikke — ryd stale afsnit og vis fejl (sæson-inputtet forbliver synligt).
+            setAddEpisodeOptions([]);
+            setAddSelectedEpisodes([]);
+            setAddEpisodesError(`Kan ikke finde sæson ${sNum}.`);
           }
         } catch (e) {
           console.error("Fejl ved opdatering af sæsonafsnit i admin:", e);
+          setAddEpisodeOptions([]);
+          setAddSelectedEpisodes([]);
+          setAddEpisodesError("Kunne ikke hente sæsonoplysninger.");
+        } finally {
+          setAddEpisodesLoading(false);
         }
       }
     };
@@ -2930,6 +2941,45 @@ export default function VaerksadministrationPage() {
                     </div>
                   </div>
                 )}
+                {pickedUnifiedAddResult && (pickedUnifiedAddResult.type === "tv-serie" || pickedUnifiedAddResult.type === "dokumentar-serie") && (
+                  <div className="rounded-md border p-3">
+                    <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                      <Field label="Sæson">
+                        <Input
+                          inputMode="numeric"
+                          className="w-24"
+                          value={addSeasonNumber}
+                          onChange={e => setAddSeasonNumber(e.target.value)}
+                        />
+                      </Field>
+                    </div>
+                    {addEpisodesLoading ? (
+                      <div className="flex items-center gap-1.5 py-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
+                      </div>
+                    ) : addEpisodesError ? (
+                      <p className="text-xs text-destructive">{addEpisodesError}</p>
+                    ) : (
+                      <SeriesEpisodeSelector
+                        season={Number(addSeasonNumber) || 1}
+                        onSeasonChange={season => setAddSeasonNumber(String(season))}
+                        options={buildCompleteEpisodeOptions({
+                          episodeCount: Math.max(Number(addForm.episode_count) || 0, addEpisodeOptions.length),
+                          externalOptions: addEpisodeOptions,
+                          seasonNumber: Number(addSeasonNumber) || 1,
+                        })}
+                        selected={addSelectedEpisodes}
+                        onSelectedChange={setAddSelectedEpisodes}
+                        showSeason={false}
+                        compact
+                      />
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Skift sæson for at tilføje afsnit eller en hel sæson fra en anden sæson af samme serie.
+                      Hvis du vælger en rettighedshaver, tilknyttes personen de valgte afsnit.
+                    </p>
+                  </div>
+                )}
               </InfoPanel>
 
               {!pickedUnifiedAddResult && !addManualMode && (
@@ -2968,36 +3018,6 @@ export default function VaerksadministrationPage() {
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
                   <Field label="Sæsoner"><Input value={addForm.season_count} onChange={e => setAddForm({ ...addForm, season_count: e.target.value })} /></Field>
                   <Field label="Afsnit"><Input value={addForm.episode_count} onChange={e => setAddForm({ ...addForm, episode_count: e.target.value })} /></Field>
-                  {(addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") && addEpisodeOptions.length > 0 && (
-                    <div className="md:col-span-2 rounded-md border p-3">
-                      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                        <Field label="Sæson">
-                          <Input
-                            inputMode="numeric"
-                            className="w-24"
-                            value={addSeasonNumber}
-                            onChange={e => setAddSeasonNumber(e.target.value)}
-                          />
-                        </Field>
-                      </div>
-                      <SeriesEpisodeSelector
-                        season={Number(addSeasonNumber) || 1}
-                        onSeasonChange={season => setAddSeasonNumber(String(season))}
-                        options={buildCompleteEpisodeOptions({
-                          episodeCount: Math.max(Number(addForm.episode_count) || 0, addEpisodeOptions.length),
-                          externalOptions: addEpisodeOptions,
-                          seasonNumber: Number(addSeasonNumber) || 1,
-                        })}
-                        selected={addSelectedEpisodes}
-                        onSelectedChange={setAddSelectedEpisodes}
-                        showSeason={false}
-                        compact
-                      />
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        Hvis du vælger en rettighedshaver, tilknyttes personen de valgte afsnit.
-                      </p>
-                    </div>
-                  )}
                   <Field label="Genre"><Input value={addForm.genre} onChange={e => setAddForm({ ...addForm, genre: e.target.value })} /></Field>
                   <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
