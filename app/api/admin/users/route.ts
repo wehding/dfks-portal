@@ -9,6 +9,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
+import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
 import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
@@ -85,7 +86,7 @@ export async function GET() {
         rhQueryWithGender = rhQueryWithGender.eq("org_affiliations.org_id", orgId)
     }
     const rhWithGender = await rhQueryWithGender
-    if (rhWithGender.error && rhWithGender.error.message.includes("gender")) {
+    if (isMissingGenderColumn(rhWithGender.error)) {
         let rhQueryWithoutGender = admin
             .from("rettighedshavere")
             .select("id, full_name, email, user_id, onboarding_completed, org_affiliations!inner(org_id)")

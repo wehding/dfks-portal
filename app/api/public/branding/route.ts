@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveBranding } from "@/lib/branding";
 import { createServiceClient } from "@/lib/supabase/service";
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { isUuid } from "@/lib/uuid";
 
 export async function GET(request: NextRequest) {
   const orgId = request.nextUrl.searchParams.get("org")?.trim();
-  if (!orgId || !UUID_PATTERN.test(orgId)) {
+  if (!orgId || !isUuid(orgId)) {
     return NextResponse.json({ error: "Ugyldig organisation." }, { status: 400 });
   }
 
@@ -28,5 +27,9 @@ export async function GET(request: NextRequest) {
     short_name: branding.short_name,
     long_name: branding.long_name,
     primary_color: branding.primary_color,
+  }, {
+    // Branding er offentligt og skifter sjældent — cache på edge/CDN for at dæmpe UUID-enumerering
+    // og gentagne opslag (afbødning; ikke en fuld rate-limit).
+    headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
   });
 }

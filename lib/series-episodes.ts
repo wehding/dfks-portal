@@ -16,6 +16,19 @@ export function isSeriesType(type: string | null | undefined) {
   return normalized.includes("serie") || normalized.includes("tv");
 }
 
+// Formatterer en kontrakts sæson/afsnit-afgrænsning som fx "S06 E01, E02".
+// Returnerer "" hvis kontrakten hverken har sæson eller afsnit (spillefilm).
+export function contractEpisodeTag(
+  seasonNumber: number | null | undefined,
+  episodeNumbers: number[] | null | undefined,
+): string {
+  const hasEpisodes = Array.isArray(episodeNumbers) && episodeNumbers.length > 0;
+  if (!seasonNumber && !hasEpisodes) return "";
+  const seasonPart = seasonNumber ? `S${String(seasonNumber).padStart(2, "0")}` : "";
+  const episodePart = hasEpisodes ? episodeNumbers!.map(n => `E${String(n).padStart(2, "0")}`).join(", ") : "";
+  return [seasonPart, episodePart].filter(Boolean).join(" ");
+}
+
 export function parseLocalEpisodeCode(title: string | null | undefined) {
   if (!title) return null;
   const match = title.match(/\bS(\d{1,2})E(\d{1,3})\b/i);

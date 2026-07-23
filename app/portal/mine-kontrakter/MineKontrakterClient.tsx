@@ -219,8 +219,13 @@ export default function MineKontrakterClient({
   const [episodesError, setEpisodesError] = useState<string | null>(null);
 
   // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
+  // Afled et stabilt boolean-flag, så polling-effekten kun genstarter når behovet ændrer sig
+  // (ikke ved hvert setContracts-tick, som ellers ville rydde/genoprette intervallet hvert 3. sek.).
+  const needsReading = useMemo(
+    () => contracts.some(c => (!c.working_title || c.working_title === "Kontrakt" || c.status === "afventer") && !c.works),
+    [contracts],
+  );
   useEffect(() => {
-    const needsReading = contracts.some(c => (!c.working_title || c.working_title === "Kontrakt" || c.status === "afventer") && !c.works);
     if (!needsReading) return;
 
     const interval = setInterval(async () => {
@@ -252,7 +257,7 @@ export default function MineKontrakterClient({
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [contracts]);
+  }, [needsReading]);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {

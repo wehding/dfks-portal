@@ -41,7 +41,7 @@ import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector"
 import { WORK_TYPES } from "@/lib/work-types"
-import { buildCompleteEpisodeOptions } from "@/lib/series-episodes"
+import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
@@ -67,6 +67,8 @@ type ContractRow = {
     working_title: string | null
     work_title: string | null
     work_poster_url: string | null
+    season_number: number | null
+    episode_numbers: number[] | null
     contract_comments: ContractComment[]
     contract_attachments?: Array<{ id: string; title: string | null; ai_status: string | null; ai_result: Record<string, unknown> | null }>
     validation_data?: Record<string, unknown> | null
@@ -520,6 +522,7 @@ function AdminKontrakterContent() {
                             id, type, overenskomst, status, pdf_url,
                             contract_date, start_date, end_date, created_at,
                             employer_id, rights_holder_id, working_title,
+                            season_number, episode_numbers,
                             employers (name),
                             rettighedshavere (full_name),
                             works (id, title, poster_url),
@@ -542,7 +545,7 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
+                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
                     const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
@@ -600,6 +603,8 @@ function AdminKontrakterContent() {
                         working_title: r.working_title ?? null,
                         work_title: r.works?.title ?? null,
                         work_poster_url: r.works?.poster_url ?? null,
+                        season_number: r.season_number ?? null,
+                        episode_numbers: r.episode_numbers ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
                         contract_attachments: attachmentsByContract[r.id] ?? [],
                         validation_data: null,
@@ -657,11 +662,12 @@ function AdminKontrakterContent() {
                     .from("contracts")
                     .select(`
                         id, type, overenskomst, status, employer_id, rights_holder_id, working_title,
+                        season_number, episode_numbers,
                         employers (name), rettighedshavere (full_name), works (id, title, poster_url),
                         contract_validations (has_credit_clause, has_overenskomst_incorporation)
                     `)
                     .in("id", doneIds)
-                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
+                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
                     const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
                     refreshed[r.id] = {
                         type: r.type,
@@ -675,6 +681,8 @@ function AdminKontrakterContent() {
                         working_title: r.working_title ?? null,
                         work_title: r.works?.title ?? null,
                         work_poster_url: r.works?.poster_url ?? null,
+                        season_number: r.season_number ?? null,
+                        episode_numbers: r.episode_numbers ?? null,
                         validation_data: null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
@@ -780,6 +788,8 @@ function AdminKontrakterContent() {
                         rights_holder_name: uploadItems.length === 1 && uploadRightsHolderId ? rightsHolders.find(r => r.id === uploadRightsHolderId)?.full_name ?? null : null,
                         work_title: null,
                         work_poster_url: null,
+                        season_number: null,
+                        episode_numbers: null,
                         contract_comments: [],
                         validation_data: null,
                         validation_has_credit_clause: null,
@@ -1016,6 +1026,7 @@ function AdminKontrakterContent() {
                 id, type, overenskomst, status, pdf_url,
                 contract_date, start_date, end_date, created_at,
                 employer_id, rights_holder_id, working_title,
+                season_number, episode_numbers,
                 employers (name),
                 rettighedshavere (full_name),
                 works (id, title, poster_url),
@@ -1036,7 +1047,7 @@ function AdminKontrakterContent() {
             .limit(1)
 
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
@@ -1057,6 +1068,8 @@ function AdminKontrakterContent() {
             working_title: row.working_title ?? null,
             work_title: row.works?.title ?? null,
             work_poster_url: row.works?.poster_url ?? null,
+            season_number: row.season_number ?? null,
+            episode_numbers: row.episode_numbers ?? null,
             contract_comments: ((comments ?? []) as unknown as ContractComment[]),
             validation_data: validation?.extracted_data ?? null,
             validation_has_credit_clause: validation?.has_credit_clause ?? null,
@@ -1105,6 +1118,7 @@ function AdminKontrakterContent() {
                 id, type, overenskomst, status, pdf_url,
                 contract_date, start_date, end_date, created_at,
                 employer_id, rights_holder_id, working_title,
+                season_number, episode_numbers,
                 employers (name),
                 rettighedshavere (full_name),
                 works (id, title, poster_url),
@@ -1113,7 +1127,7 @@ function AdminKontrakterContent() {
             .eq("id", contractId)
             .maybeSingle()
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const patch: Partial<ContractRow> = {
             type: row.type,
@@ -1709,6 +1723,9 @@ function AdminKontrakterContent() {
                                     <div className="min-w-0 flex-1">
                                         <div className="flex flex-wrap items-center gap-2">
                                             <p className="font-medium leading-snug">{c.work_title ?? c.working_title ?? "—"}</p>
+                                            {contractEpisodeTag(c.season_number, c.episode_numbers) && (
+                                                <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
+                                            )}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -1805,6 +1822,9 @@ function AdminKontrakterContent() {
                                             <button type="button" onClick={() => openEdit(c)} className="text-left underline-offset-4 hover:underline">
                                                 {c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}
                                             </button>
+                                            {contractEpisodeTag(c.season_number, c.episode_numbers) && (
+                                                <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
+                                            )}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />

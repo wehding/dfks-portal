@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
+import { isUuid } from "@/lib/uuid";
+import { resolveTerminology } from "@/lib/branding";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
 
@@ -37,6 +39,26 @@ async function assertAdminForOrg(db: ReturnType<typeof createServiceClient>, use
     .eq("user_id", userId)
     .eq("org_id", orgId);
   return (data ?? []).some(row => ADMIN_ROLES.includes(row.role));
+}
+
+type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
+
+// Henter alle afsnit-værker for en serie (selve serien + dens børneværker) i en org.
+// parentId valideres som UUID før strenginterpolation i .or(...) (defense-in-depth mod filter-injection).
+async function fetchSeriesEpisodeWorks(
+  db: ReturnType<typeof createServiceClient>,
+  orgId: string,
+  parentId: string,
+): Promise<{ episodeWorks: SeriesEpisodeWork[]; error: string | null }> {
+  if (!isUuid(parentId)) return { episodeWorks: [], error: null };
+  const { data: relatedWorks, error } = await db
+    .from("works")
+    .select("id, title, season_number, episode_number, parent_work_id")
+    .eq("org_id", orgId)
+    .or(`id.eq.${parentId},parent_work_id.eq.${parentId}`);
+  if (error) return { episodeWorks: [], error: error.message };
+  const episodeWorks = ((relatedWorks ?? []) as SeriesEpisodeWork[]).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
+  return { episodeWorks, error: null };
 }
 
 export async function uploadMemberContract(formData: FormData) {
@@ -501,12 +523,7 @@ export async function getContractValidation(contractId: string) {
   const episodeOptions: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number }> = [];
   if (relatedWork && contract.rights_holder_id) {
     const parentId = relatedWork.parent_work_id ?? relatedWork.id;
-    const { data: relatedWorks } = await db
-      .from("works")
-      .select("id, title, season_number, episode_number, parent_work_id")
-      .eq("org_id", contract.org_id)
-      .or(`id.eq.${parentId},parent_work_id.eq.${parentId}`);
-    const episodeWorks = (relatedWorks ?? []).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
+    const { episodeWorks } = await fetchSeriesEpisodeWorks(db, contract.org_id, parentId);
     const episodeIds = episodeWorks.map(item => item.id);
     const { data: assignments } = episodeIds.length > 0
       ? await db
@@ -523,12 +540,12 @@ export async function getContractValidation(contractId: string) {
       const seasonNumber = episode.season_number ?? parsed?.seasonNumber;
       const episodeNumber = episode.episode_number ?? parsed?.episodeNumber;
       if (seasonNumber == null || episodeNumber == null) continue;
-      episodeOptions.push({ id: episode.id, title: episode.title, seasonNumber, episodeNumber });
+      episodeOptions.push({ id: episode.id, title: episode.title ?? "", seasonNumber, episodeNumber });
       const isDirectContractEpisode = episode.id === relatedWork.id;
       if (!isDirectContractEpisode && !roleByWork.has(episode.id)) continue;
       linkedEpisodes.push({
         id: episode.id,
-        title: episode.title,
+        title: episode.title ?? "",
         seasonNumber,
         episodeNumber,
         role: roleByWork.get(episode.id) ?? null,
@@ -539,7 +556,10 @@ export async function getContractValidation(contractId: string) {
   }
 
   const isSeriesWork = relatedWork?.type === "tv-serie" || relatedWork?.type === "dokumentar-serie" || Boolean(relatedWork?.parent_work_id);
-  return { success: true, extractedData, linkedEpisodes, episodeOptions, isSeriesWork };
+  // hasSavedValidation afspejler om der faktisk findes gemte valideringsdata FØR merge med værkets
+  // fallback-felter — så UI kan skelne "endnu ingen validering" fra "felter fyldt fra det linkede værk".
+  const hasSavedValidation = Boolean(data?.extracted_data && Object.keys(data.extracted_data as Record<string, unknown>).length > 0);
+  return { success: true, extractedData, linkedEpisodes, episodeOptions, isSeriesWork, hasSavedValidation };
 }
 
 export async function updateAdminContractEpisodeAssignments(params: {
@@ -561,14 +581,8 @@ export async function updateAdminContractEpisodeAssignments(params: {
   const relatedWork = Array.isArray(contract.works) ? contract.works[0] : contract.works;
   if (!relatedWork) return { success: false, error: "Kontrakten mangler et værk" };
   const parentId = relatedWork.parent_work_id ?? relatedWork.id;
-  const { data: relatedWorks, error: worksError } = await db
-    .from("works")
-    .select("id, title, season_number, episode_number, parent_work_id")
-    .eq("org_id", contract.org_id)
-    .or(`id.eq.${parentId},parent_work_id.eq.${parentId}`);
-  if (worksError) return { success: false, error: worksError.message };
-
-  const episodeWorks = (relatedWorks ?? []).filter(item => item.episode_number != null || parseLocalEpisodeCode(item.title));
+  const { episodeWorks, error: worksError } = await fetchSeriesEpisodeWorks(db, contract.org_id, parentId);
+  if (worksError) return { success: false, error: worksError };
   const allowedIds = new Set(episodeWorks.map(item => item.id));
   const selectedIds = [...new Set(params.selectedWorkIds.filter(id => allowedIds.has(id)))];
   if (selectedIds.length !== new Set(params.selectedWorkIds).size) {
@@ -589,7 +603,10 @@ export async function updateAdminContractEpisodeAssignments(params: {
   const selectedSet = new Set(selectedIds);
   const existingWorkIds = new Set((existing ?? []).map(item => item.work_id));
   const removeIds = (existing ?? []).filter(item => !selectedSet.has(item.work_id)).map(item => item.id);
-  const role = (existing ?? []).find(item => item.role)?.role ?? "Klipper";
+  // Default-rolle udledes fra organisationens terminologi (fx "Klipper" for DFKS), ikke hardcodet.
+  const { data: orgForRole } = await db.from("organisations").select("terminology").eq("id", contract.org_id).maybeSingle();
+  const defaultRole = resolveTerminology(orgForRole ?? null).role_labels[0] ?? "Medskaber";
+  const role = (existing ?? []).find(item => item.role)?.role ?? defaultRole;
   const additions = selectedIds.filter(id => !existingWorkIds.has(id)).map(workId => ({
     org_id: contract.org_id,
     work_id: workId,
