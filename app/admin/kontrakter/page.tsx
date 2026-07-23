@@ -160,10 +160,10 @@ const STATUS_CLASS: Record<string, string> = {
 }
 
 const AI_JOB_LABELS: Record<string, string> = {
-    queued: "AI-kø",
-    processing: "AI-læser",
-    done: "AI-læst",
-    error: "AI-fejl",
+    queued: "I kø",
+    processing: "Analyserer",
+    done: "Indlæst",
+    error: "Fejl",
 }
 
 const AI_JOB_CLASS: Record<string, string> = {
@@ -425,6 +425,7 @@ function AdminKontrakterContent() {
     const [uploadPhase, setUploadPhase] = useState<"select" | "processing">("select")
     const [uploadRightsHolderId, setUploadRightsHolderId] = useState("")
     const [uploadRightsHolderSearch, setUploadRightsHolderSearch] = useState("")
+    const removeUploadItem = (index: number) => setUploadItems(prev => prev.filter((_, i) => i !== index))
     const [saving, setSaving] = useState(false)
     const prefillWorkIdRef = useRef<string | null>(null)
     const { activeRh, setActiveRh } = useActiveRightsHolder()
@@ -813,7 +814,7 @@ function AdminKontrakterContent() {
         const queuedCount = updated.filter(i => i.status === "queued").length
         const errCount  = updated.filter(i => i.status === "error").length
         if (queuedCount > 0) {
-            toast.success(`${queuedCount} kontrakt${queuedCount !== 1 ? "er" : ""} gemt som kladde — AI-læsning starter nu`)
+            toast.success(`${queuedCount} kontrakt${queuedCount !== 1 ? "er" : ""} gemt som kladde — indlæsning starter nu`)
         }
         if (errCount  > 0) toast.error(`${errCount} kontrakt${errCount !== 1 ? "er" : ""} fejlede`)
 
@@ -827,9 +828,9 @@ function AdminKontrakterContent() {
                     body: JSON.stringify(jobs[0].jobId ? { jobId: jobs[0].jobId } : { contractId: jobs[0].contractId }),
                 })
                 const firstJson = await firstRes.json()
-                if (!firstRes.ok || !firstJson.ok) throw new Error(firstJson.error ?? "AI-job fejlede")
+                if (!firstRes.ok || !firstJson.ok) throw new Error(firstJson.error ?? "Indlæsning fejlede")
                 updated[0] = { ...updated[0], status: "done" }
-                toast.success("Første kontrakt er AI-læst og klar som kladde")
+                toast.success("Første kontrakt er indlæst og klar som kladde")
                 setShowUpload(false)
                 setUploadItems([])
                 setUploadPhase("select")
@@ -1016,6 +1017,25 @@ function AdminKontrakterContent() {
             work_id: c.work_id ?? "",
             working_title: c.working_title ?? "",
         })
+        setAddSeason(String(c.season_number ?? 1))
+        setSelectedEpisodes(c.episode_numbers ?? [])
+        if (c.work_id) {
+            setPickedUnifiedResult({
+                id: `local:${c.work_id}`,
+                local_id: c.work_id,
+                title: c.work_title ?? c.working_title ?? "Valgt værk",
+                type: c.type as UnifiedSearchWorkResult["type"],
+                year: null,
+                description: null,
+                poster_url: null,
+                director: null,
+                genre: null,
+                duration_minutes: null,
+                sources: ["local"],
+            })
+        } else {
+            setPickedUnifiedResult(null)
+        }
         setEditWorkSearch(c.work_title ?? c.working_title ?? "")
         setEditRightsHolderSearch(c.rights_holder_name ?? "")
         void loadContractDetail(c)
@@ -1082,6 +1102,24 @@ function AdminKontrakterContent() {
         }
         setEditContract(prev => prev?.id === c.id ? detail : prev)
         setContracts(prev => prev.map(contract => contract.id === c.id ? { ...contract, ...detail } : contract))
+
+        if (row.season_number) setAddSeason(String(row.season_number))
+        if (row.episode_numbers) setSelectedEpisodes(row.episode_numbers)
+        if (row.works?.id) {
+            setPickedUnifiedResult({
+                id: `local:${row.works.id}`,
+                local_id: row.works.id,
+                title: row.works.title ?? row.working_title ?? "Valgt værk",
+                type: row.type as UnifiedSearchWorkResult["type"],
+                year: null,
+                description: null,
+                poster_url: row.works.poster_url ?? null,
+                director: null,
+                genre: null,
+                duration_minutes: null,
+                sources: ["local"],
+            })
+        }
 
         const rightsHolderName = detail.validation_data?.rightsHolderName as string | undefined
         if (rightsHolderName) {
@@ -1315,6 +1353,10 @@ function AdminKontrakterContent() {
                 selectedWork = { id: created.workId, title, year: null, poster_url: null }
                 setWorks(prev => prev.some(w => w.id === created.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
             }
+            const isSeriesSave = editForm.type === "tv-serie" || editForm.type === "dokumentar-serie"
+            const saveSeasonNumber = isSeriesSave ? (Number(addSeason) || 1) : null
+            const saveEpisodeNumbers = isSeriesSave ? selectedEpisodes : null
+
             const updateResult = await updateAdminContract(editContract.id, {
                     type: editForm.type,
                     overenskomst: editForm.overenskomst === "ingen" ? null : editForm.overenskomst,
@@ -1326,6 +1368,8 @@ function AdminKontrakterContent() {
                     rights_holder_id: editForm.rights_holder_id || null,
                     work_id: resolvedWorkId || null,
                     working_title: editForm.working_title || null,
+                    season_number: saveSeasonNumber,
+                    episode_numbers: saveEpisodeNumbers,
                 })
             if (!updateResult.success) throw new Error(updateResult.error)
 
@@ -1347,6 +1391,8 @@ function AdminKontrakterContent() {
                 work_title: selectedWork?.title ?? (resolvedWorkId ? c.work_title : null),
                 work_poster_url: selectedWork?.poster_url ?? (resolvedWorkId ? c.work_poster_url : null),
                 working_title: editForm.working_title || null,
+                season_number: saveSeasonNumber,
+                episode_numbers: saveEpisodeNumbers,
             } : c))
             closeEditDialog()
             toast.success(newStatus === "valideret" ? "Kontrakt valideret" : "Kontrakt gemt")
@@ -1918,43 +1964,46 @@ function AdminKontrakterContent() {
                         </DialogTitle>
                         <DialogDescription>
                             {uploadPhase === "select"
-                                ? "Vælg op til 15 filer. De gemmes som kladde, og AI-læsning kører i køen."
-                                : "Uploader, opretter AI-jobs og læser første kontrakt..."}
+                                ? "Vælg op til 15 filer. De gemmes som kladde, og indlæsning kører i køen."
+                                : "Uploader og læser første kontrakt..."}
                         </DialogDescription>
                     </DialogHeader>
 
                     {/* Phase: select files */}
                     {uploadPhase === "select" && (
-                        <div className="py-2">
-                            <Label className="block mb-2">Vælg filer</Label>
-                            <div
-                                className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 p-10 cursor-pointer hover:border-primary/50 transition-colors text-center"
-                                onClick={() => document.getElementById("bulk-file-input")?.click()}
-                            >
-                                <Upload className="h-10 w-10 text-muted-foreground mb-3" />
-                                <p className="text-sm font-medium">Klik for at vælge filer</p>
-                                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX eller TXT — maks. 15 filer ad gangen</p>
-                                <input id="bulk-file-input" type="file" accept=".pdf,.docx,.txt" multiple className="hidden" onChange={handleFileSelect} />
+                        <div className="py-2 space-y-4">
+                            <div>
+                                <Label className="block mb-2">Vælg filer</Label>
+                                <div
+                                    className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 p-10 cursor-pointer hover:border-primary/50 transition-colors text-center"
+                                    onClick={() => document.getElementById("bulk-file-input")?.click()}
+                                >
+                                    <Upload className="h-10 w-10 text-muted-foreground mb-3" />
+                                    <p className="text-sm font-medium">Klik for at vælge filer</p>
+                                    <p className="text-xs text-muted-foreground mt-1">PDF, DOCX eller TXT — maks. 15 filer ad gangen</p>
+                                    <input id="bulk-file-input" type="file" accept=".pdf,.docx,.txt" multiple className="hidden" onChange={handleFileSelect} />
+                                </div>
                             </div>
                             {uploadItems.length > 0 && (
-                                <div className="mt-3 space-y-1">
-                                    {uploadItems.map((item, i) => (
-                                        <div key={i} className="flex items-center gap-2 text-sm p-2 rounded-md bg-muted/40">
-                                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                                            <span className="flex-1 truncate">{item.file.name}</span>
-                                            <span className="text-muted-foreground text-xs">{Math.round(item.file.size / 1024)} KB</span>
-                                            <button onClick={() => setUploadItems(prev => prev.filter((_, j) => j !== i))}>
-                                                <X className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                                            </button>
-                                        </div>
-                                    ))}
+                                <div className="space-y-2">
+                                    <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>
+                                    <div className="max-h-36 overflow-y-auto space-y-1 rounded-md border p-2">
+                                        {uploadItems.map((item, i) => (
+                                            <div key={i} className="flex items-center justify-between text-xs py-1 px-2 rounded hover:bg-muted">
+                                                <span className="truncate flex-1 font-medium">{item.file.name}</span>
+                                                <button type="button" onClick={() => removeUploadItem(i)} className="text-muted-foreground hover:text-destructive ml-2">
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
-                            {uploadItems.length === 1 && (
-                                <div className="mt-4 rounded-lg border p-3">
-                                    <Label className="text-sm font-medium">Tilknyt bruger</Label>
-                                    <p className="mb-2 mt-1 text-xs text-muted-foreground">
-                                        Valgfrit. Hvis du ikke vælger en bruger, forsøger AI-jobbet selv at matche kontraktens navn mod brugerne.
+                            {uploadItems.length > 0 && (
+                                <div className="space-y-2 pt-2 border-t">
+                                    <Label className="text-xs font-semibold">Tilknyt rettighedshaver (valgfrit)</Label>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Valgfrit. Hvis du ikke vælger en bruger, gemmes kontrakten som kladde uden rettighedshaver, og der søges automatisk efter brugeren.
                                     </p>
                                     {uploadRightsHolderId ? (
                                         <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
@@ -2011,9 +2060,9 @@ function AdminKontrakterContent() {
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm truncate">{item.file.name}</p>
                                             {item.status === "uploading"  && <p className="text-xs text-muted-foreground">Uploader...</p>}
-                                            {item.status === "queued"     && <p className="text-xs text-amber-600">I AI-kø</p>}
-                                            {item.status === "extracting" && <p className="text-xs text-muted-foreground">AI-læser...</p>}
-                                            {item.status === "done"       && <p className="text-xs text-emerald-600">AI-læst som kladde</p>}
+                                            {item.status === "queued"     && <p className="text-xs text-amber-600">I kø</p>}
+                                            {item.status === "extracting" && <p className="text-xs text-muted-foreground">Analyserer...</p>}
+                                            {item.status === "done"       && <p className="text-xs text-emerald-600">Indlæst som kladde</p>}
                                             {item.status === "error"      && <p className="text-xs text-destructive">{item.error}</p>}
                                         </div>
                                     </div>
@@ -2324,23 +2373,29 @@ function AdminKontrakterContent() {
                                             </Button>
                                         )}
                                     </div>
-                                    {editForm.work_id ? (
-                                        <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
-                                            <span className="font-medium">{works.find(w => w.id === editForm.work_id)?.title ?? editContract?.work_title ?? "Valgt værk"}</span>
-                                            <span className="text-xs text-muted-foreground">{works.find(w => w.id === editForm.work_id)?.year ?? ""}</span>
-                                        </div>
-                                    ) : pickedUnifiedResult ? (
+                                    {editForm.work_id || pickedUnifiedResult ? (
                                         <div className="rounded-lg border bg-card p-3 text-card-foreground space-y-3">
                                             <div className="flex items-start justify-between gap-2">
                                                 <div>
-                                                    <p className="text-xs font-semibold text-foreground">{pickedUnifiedResult.title}</p>
+                                                    <p className="text-xs font-semibold text-foreground">
+                                                        {works.find(w => w.id === editForm.work_id)?.title ?? pickedUnifiedResult?.title ?? editContract?.work_title ?? "Valgt værk"}
+                                                    </p>
                                                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                                                        {pickedUnifiedResult.year ?? "-"} · {pickedUnifiedResult.type}
+                                                        {works.find(w => w.id === editForm.work_id)?.year ?? pickedUnifiedResult?.year ?? "-"} · {editForm.type}
                                                     </p>
                                                 </div>
                                                 <button
                                                     type="button"
-                                                    onClick={() => setPickedUnifiedResult(null)}
+                                                    onClick={() => {
+                                                        setEditForm(f => f && ({ ...f, work_id: "" }))
+                                                        setEditWorkSearch(editForm.working_title)
+                                                        setPickedUnifiedResult(null)
+                                                        setAddSeason("1")
+                                                        setSelectedEpisodes([])
+                                                        setEpisodeOptions([])
+                                                        setDetectedEpisodeCount(null)
+                                                        setEpisodesError(null)
+                                                    }}
                                                     className="text-muted-foreground hover:text-foreground"
                                                 >
                                                     <X className="h-3.5 w-3.5" />
@@ -2353,7 +2408,7 @@ function AdminKontrakterContent() {
                                                 </div>
                                             )}
 
-                                            {!detailsLoading && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
+                                            {!detailsLoading && (editForm.type === "tv-serie" || editForm.type === "dokumentar-serie") && (
                                                 <div className="space-y-3 pt-2 border-t">
                                                     <div className="flex flex-col gap-1">
                                                         <Label className="text-[11px] font-medium text-muted-foreground">Sæson</Label>
@@ -2449,7 +2504,7 @@ function AdminKontrakterContent() {
                                     />
                                 )}
                             </div>
-                            {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "AI-læst" : attachment.ai_status === "fejl" ? "AI-fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">AI-læst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}
+                            {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "Indlæst" : attachment.ai_status === "fejl" ? "Fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">Indlæst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}
                             <MessageThread
                                 title="Beskeder"
                                 messages={contractMessages(editContract?.contract_comments ?? [])}
