@@ -21,6 +21,7 @@ import {
 import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useI18n } from "@/lib/i18n"
 
 // ── Typer ─────────────────────────────────────────────────
 
@@ -164,6 +165,7 @@ const TABS: { key: Tab; label: string; icon: React.ElementType }[] = [
 // ── Hovedkomponent ────────────────────────────────────────
 
 export default function AdminBrugerePage() {
+    const { t } = useI18n()
     const [users, setUsers] = useState<User[]>([])
     const [callerRole, setCallerRole] = useState("")
     const [unassigned, setUnassigned] = useState<UnassignedRecord[]>([])
@@ -207,6 +209,7 @@ export default function AdminBrugerePage() {
     const [detailTitle, setDetailTitle] = useState("")
     const [detailGender, setDetailGender] = useState("")
     const [detailRoles, setDetailRoles] = useState<string[]>([])
+    const [detailIsRightsHolder, setDetailIsRightsHolder] = useState(false)
     const [detailDirectPassword, setDetailDirectPassword] = useState("")
     const [detailResetLink, setDetailResetLink] = useState<string | null>(null)
     const [detailSaving, setDetailSaving] = useState(false)
@@ -218,6 +221,7 @@ export default function AdminBrugerePage() {
         setDetailTitle(user.title || "")
         setDetailGender(user.gender || "")
         setDetailRoles(user.org_roles.length > 0 ? user.org_roles.slice() : (user.roles.includes("rettighedshaver") ? [] : ["viewer"]))
+        setDetailIsRightsHolder(user.is_rettighedshaver)
         setDetailDirectPassword("")
         setDetailResetLink(null)
     }
@@ -243,7 +247,7 @@ export default function AdminBrugerePage() {
                 throw new Error(j.error ?? "Fejl ved opdatering af profil")
             }
 
-            if (detailRoles.length > 0) {
+            {
                 const roleRes = await fetch("/api/admin/users", {
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
@@ -256,6 +260,24 @@ export default function AdminBrugerePage() {
                 if (!roleRes.ok) {
                     const j = await roleRes.json()
                     throw new Error(j.error ?? "Fejl ved opdatering af roller")
+                }
+            }
+
+            if (detailIsRightsHolder !== detailUser.is_rettighedshaver) {
+                const rightsHolderRes = await fetch("/api/admin/users", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: "set-rights-holder-status",
+                        userId: detailUser.id,
+                        enabled: detailIsRightsHolder,
+                        fullName: detailName.trim(),
+                        email: detailUser.email,
+                    }),
+                })
+                if (!rightsHolderRes.ok) {
+                    const json = await rightsHolderRes.json()
+                    throw new Error(json.error ?? "Rettighedshaverstatus kunne ikke opdateres")
                 }
             }
 
@@ -1101,6 +1123,10 @@ export default function AdminBrugerePage() {
                                     />
                                 ))}
                             </div>
+                            <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                                <input type="checkbox" className="mt-0.5 h-4 w-4" checked={detailIsRightsHolder} onChange={event => setDetailIsRightsHolder(event.target.checked)} />
+                                <span><span className="block text-sm font-medium">{t("admin.users.rightsHolder")}</span><span className="block text-xs text-muted-foreground">{t("admin.users.rightsHolderHelp")}</span></span>
+                            </label>
                         </div>
 
                         {/* Adgangskode & Nulstilling */}

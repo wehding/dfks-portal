@@ -1,427 +1,111 @@
-"use client"
+"use client";
 
-import { useEffect, useState, useMemo } from "react"
-import { createClient } from "@/lib/supabase/client"
-import { PageHeader } from "@/components/page-header"
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
-import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table"
-import {
-    Search, ChevronRight, Building2, FileText, Users2,
-    ExternalLink, Loader2, X,
-} from "lucide-react"
+import { Fragment, useEffect, useState } from "react";
+import { Building2, ChevronDown, ChevronRight, FileText, Film, Loader2, Search, X } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
+import { PageHeader } from "@/components/page-header";
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
+import { TableSkeleton } from "@/components/ui/data-skeletons";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Employer = {
-    id: string
-    name: string
-    parent_id: string | null
-    dfi_company_id: number | null
-    parent_name: string | null
-    contract_count: number
-    latest_contract: string | null
-    klippere: string[]
-    contracts: ContractRow[]
-}
+type Producer = { id: string; name: string; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null };
+type RightsHolder = { id: string; full_name: string };
+type WorkDetail = { id: string; title: string; type: string; year: number | null; status: string };
+type ContractDetail = { id: string; working_title: string | null; type: string; status: string; contract_date: string | null; created_at: string; rettighedshavere: { full_name: string | null } | Array<{ full_name: string | null }> | null };
+type DetailState = { loading: boolean; error: string | null; rows: Array<WorkDetail | ContractDetail> };
+type DetailType = "works" | "contracts";
 
-type ContractRow = {
-    id: string
-    working_title: string | null
-    type: string
-    overenskomst: string | null
-    status: string
-    contract_date: string | null
-    created_at: string
-    rights_holder_name: string | null
-}
+const statusTone = { attention: "border-amber-300 bg-amber-100 text-amber-800", active: "border-emerald-300 bg-emerald-100 text-emerald-800", inactive: "border-border bg-muted text-muted-foreground" };
 
-type ContractQueryRow = {
-    id: string
-    working_title: string | null
-    type: string
-    overenskomst: string | null
-    status: string
-    contract_date: string | null
-    created_at: string
-    employer_id: string | null
-    rettighedshavere?: { full_name: string | null } | { full_name: string | null }[] | null
-}
+export default function ProducersPage() {
+  const { t, locale } = useI18n();
+  const [producers, setProducers] = useState<Producer[]>([]);
+  const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("all");
+  const [rightsHolderId, setRightsHolderId] = useState("all");
+  const [sort, setSort] = useState("name");
+  const [direction, setDirection] = useState<"asc" | "desc">("asc");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [details, setDetails] = useState<Record<string, DetailState>>({});
 
-const STATUS_CFG: Record<string, { label: string; class: string }> = {
-    kladde:    { label: "Kladde",     class: "bg-amber-100 text-amber-700 dark:bg-amber-950/40" },
-    valideret: { label: "Valideret",  class: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40" },
-    arkiveret: { label: "Arkiveret",  class: "bg-muted text-muted-foreground" },
-}
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLoading(true);
+      const params = new URLSearchParams({ sort, direction });
+      if (query.trim()) params.set("query", query.trim());
+      if (status !== "all") params.set("status", status);
+      if (rightsHolderId !== "all") params.set("rightsHolderId", rightsHolderId);
+      try {
+        const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error);
+        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []);
+      } catch (error) {
+        if ((error as Error).name !== "AbortError") setProducers([]);
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, status, rightsHolderId, sort, direction]);
 
-const OVERENSKOMST_LABELS: Record<string, string> = {
-    "de4-fiktion":   "De4 fiktion",
-    "faf":           "FAF fiktion",
-    "faf-dokumentar":"FAF dok.",
-    "ingen":         "Ingen",
-}
+  const allSelected = producers.length > 0 && producers.every(producer => selected.includes(producer.id));
+  const statusLabel = (value: Producer["status"]) => t(`admin.producers.status.${value}` as Parameters<typeof t>[0]);
+  const detailKey = (id: string, type: DetailType) => `${id}:${type}`;
+  const loadDetails = async (id: string, type: DetailType, force = false) => {
+    const key = detailKey(id, type);
+    if (!force && details[key]) return;
+    setDetails(current => ({ ...current, [key]: { loading: true, error: null, rows: current[key]?.rows ?? [] } }));
+    try {
+      const response = await fetch(`/api/admin/producers/${id}?type=${type}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error);
+      setDetails(current => ({ ...current, [key]: { loading: false, error: null, rows: json.data ?? [] } }));
+    } catch (error) {
+      setDetails(current => ({ ...current, [key]: { loading: false, error: error instanceof Error ? error.message : t("common.error"), rows: [] } }));
+    }
+  };
+  const toggleDetail = (id: string, type: DetailType) => {
+    const key = detailKey(id, type);
+    setOpen(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+    if (!open.has(key)) void loadDetails(id, type);
+  };
+  const toggleSelected = (id: string) => setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+  const toggleAll = () => setSelected(allSelected ? [] : producers.map(producer => producer.id));
+  const changeSort = (key: string) => { if (sort === key) setDirection(value => value === "asc" ? "desc" : "asc"); else { setSort(key); setDirection("asc"); } };
+  const mark = (key: string) => sort === key ? (direction === "asc" ? " ↑" : " ↓") : "";
 
-export default function ProducenterPage() {
-    const [employers, setEmployers] = useState<Employer[]>([])
-    const [loading, setLoading] = useState(true)
-    const [search, setSearch] = useState("")
-    useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
-    const [expanded, setExpanded] = useState<string | null>(null)
+  const DetailPanel = ({ producer, type }: { producer: Producer; type: DetailType }) => {
+    const key = detailKey(producer.id, type); const state = details[key];
+    if (!open.has(key)) return null;
+    return <div className="border-t bg-muted/20 p-4">
+      {state?.loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
+        : state?.error ? <div className="flex items-center gap-2 text-sm text-destructive">{state.error}<Button size="sm" variant="outline" onClick={() => void loadDetails(producer.id, type, true)}>{t("common.retry")}</Button></div>
+        : !state?.rows.length ? <p className="text-sm text-muted-foreground">{type === "works" ? t("admin.producers.noWorks") : t("admin.producers.noContracts")}</p>
+        : <div className="space-y-2">{state.rows.map(row => type === "works" ? <div key={row.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm"><span className="font-medium">{(row as WorkDetail).title}</span><span className="text-muted-foreground">{(row as WorkDetail).year ?? "—"} · {(row as WorkDetail).type}</span></div> : (() => { const contract = row as ContractDetail; const holder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere; return <div key={contract.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm"><span><span className="block font-medium">{contract.working_title ?? "—"}</span><span className="text-xs text-muted-foreground">{holder?.full_name ?? "—"}</span></span><Badge variant="outline">{contract.status}</Badge></div>; })())}</div>}
+    </div>;
+  };
 
-    useEffect(() => {
-        const load = async () => {
-            const supabase = createClient()
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) { setLoading(false); return }
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const orgId = roleRow?.org_id
-            if (!orgId) { setLoading(false); return }
+  return <div className="space-y-6">
+    <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} />
+    <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
+      <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
+      <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
+      <Select value={rightsHolderId} onValueChange={setRightsHolderId}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder={t("admin.producers.rightsHolder")} /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allRightsHolders")}</SelectItem>{rightsHolders.map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent></Select>
+      <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
+      <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
+    </div>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>{selected.length > 0 && <><span className="text-sm text-muted-foreground">{t("common.selectedCount", { count: selected.length })}</span><Button variant="ghost" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></>}</div>
 
-            // Hent alle producenter med kontrakter
-            const { data: emps } = await supabase
-                .from("employers")
-                .select("id, name, parent_id, dfi_company_id")
-                .order("name")
-
-            if (!emps?.length) { setLoading(false); return }
-
-            // Hent alle kontrakter for denne org med producent + klipper info
-            const { data: contracts } = await supabase
-                .from("contracts")
-                .select(`
-                    id, working_title, type, overenskomst, status,
-                    contract_date, created_at, employer_id,
-                    rettighedshavere(full_name)
-                `)
-                .eq("org_id", orgId)
-                .order("created_at", { ascending: false })
-
-            // Byg et map: employer_id → contracts
-            const contractMap: Record<string, ContractRow[]> = {}
-            for (const c of (contracts ?? []) as ContractQueryRow[]) {
-                const eid = c.employer_id
-                if (!eid) continue
-                if (!contractMap[eid]) contractMap[eid] = []
-                contractMap[eid].push({
-                    id: c.id,
-                    working_title: c.working_title,
-                    type: c.type,
-                    overenskomst: c.overenskomst,
-                    status: c.status,
-                    contract_date: c.contract_date,
-                    created_at: c.created_at,
-                    rights_holder_name: Array.isArray(c.rettighedshavere)
-                        ? c.rettighedshavere[0]?.full_name ?? null
-                        : c.rettighedshavere?.full_name ?? null,
-                })
-            }
-
-            // Byg parent-name map
-            const parentMap: Record<string, string> = {}
-            for (const e of emps) parentMap[e.id] = e.name
-
-            // Saml employer-objekter
-            const mapped: Employer[] = emps.map(e => {
-                const cs = contractMap[e.id] ?? []
-                const klippere = [...new Set(cs.map(c => c.rights_holder_name).filter(Boolean) as string[])]
-                const latest = cs.length > 0 ? cs[0].contract_date ?? cs[0].created_at : null
-                return {
-                    ...e,
-                    parent_name: e.parent_id ? (parentMap[e.parent_id] ?? null) : null,
-                    contract_count: cs.length,
-                    latest_contract: latest,
-                    klippere,
-                    contracts: cs,
-                }
-            })
-
-            // Sorter: flest kontrakter øverst, derefter navn
-            mapped.sort((a, b) => b.contract_count - a.contract_count || a.name.localeCompare(b.name, "da"))
-            setEmployers(mapped)
-            setLoading(false)
-        }
-        load()
-    }, [])
-
-    const visible = useMemo(() => {
-        if (!search.trim()) return employers
-        const q = search.toLowerCase()
-        return employers.filter(e =>
-            e.name.toLowerCase().includes(q) ||
-            e.parent_name?.toLowerCase().includes(q) ||
-            e.klippere.some(k => k.toLowerCase().includes(q))
-        )
-    }, [employers, search])
-
-    const withContracts = employers.filter(e => e.contract_count > 0).length
-    const totalContracts = employers.reduce((sum, e) => sum + e.contract_count, 0)
-
-    return (
-        <div className="space-y-6">
-            <PageHeader
-                title="Producenter"
-                subtitle="Produktionsselskaber med kontrakter i systemet"
-            />
-
-            {/* Stats */}
-            {!loading && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {[
-                        { label: "Producenter i alt",        value: employers.length },
-                        { label: "Med kontrakter",           value: withContracts },
-                        { label: "Kontrakter total",         value: totalContracts },
-                    ].map(s => (
-                        <div key={s.label} className="rounded-lg border px-4 py-3 space-y-0.5">
-                            <p className="text-xs text-muted-foreground">{s.label}</p>
-                            <p className="text-2xl font-bold tabular-nums">{s.value}</p>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {/* Søg */}
-            <div className="relative w-full sm:max-w-sm">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                    placeholder="Søg producent, moderselskab, klipper..."
-                    className="pl-8"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                />
-                {search && (
-                    <button className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground" onClick={() => setSearch("")}>
-                        <X className="h-4 w-4" />
-                    </button>
-                )}
-            </div>
-
-            {/* Tabel */}
-            {loading ? (
-                <div className="flex items-center justify-center py-16">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-            ) : (
-                <>
-                <MobileCardList>
-                    {visible.length === 0 ? (
-                        <MobileDataCard>
-                            <p className="py-6 text-center text-sm text-muted-foreground">Ingen producenter fundet</p>
-                        </MobileDataCard>
-                    ) : visible.map(emp => (
-                        <MobileDataCard key={emp.id}>
-                            <button
-                                type="button"
-                                className="flex w-full items-start justify-between gap-3 text-left"
-                                onClick={() => setExpanded(expanded === emp.id ? null : emp.id)}
-                            >
-                                <div className="min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                                        <p className="truncate font-medium">{emp.name}</p>
-                                    </div>
-                                    <p className="mt-1 truncate text-sm text-muted-foreground">{emp.parent_name ?? "Intet moderselskab"}</p>
-                                </div>
-                                <ChevronRight className={`mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${expanded === emp.id ? "rotate-90" : ""}`} />
-                            </button>
-                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                                <MobileMetaRow label="Kontrakter">{emp.contract_count}</MobileMetaRow>
-                                <MobileMetaRow label="Seneste">
-                                    {emp.latest_contract ? new Date(emp.latest_contract).toLocaleDateString("da-DK") : "—"}
-                                </MobileMetaRow>
-                            </div>
-                            {emp.klippere.length > 0 && (
-                                <div className="mt-3 flex flex-wrap gap-1">
-                                    {emp.klippere.slice(0, 4).map(k => (
-                                        <Badge key={k} variant="secondary" className="text-[10px] font-normal">
-                                            {k}
-                                        </Badge>
-                                    ))}
-                                    {emp.klippere.length > 4 && <span className="text-xs text-muted-foreground">+{emp.klippere.length - 4}</span>}
-                                </div>
-                            )}
-                            {expanded === emp.id && (
-                                <div className="mt-4 space-y-2 border-t pt-3">
-                                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Kontrakthistorik</p>
-                                    {emp.contracts.length === 0 ? (
-                                        <p className="text-sm text-muted-foreground">Ingen kontrakter registreret</p>
-                                    ) : emp.contracts.map(c => {
-                                        const s = STATUS_CFG[c.status] ?? STATUS_CFG.kladde
-                                        return (
-                                            <div key={c.id} className="rounded-md border bg-muted/20 p-3">
-                                                <p className="font-medium">{c.working_title ?? "—"}</p>
-                                                <p className="mt-1 text-sm text-muted-foreground">{c.rights_holder_name ?? "—"} · {c.type === "a-løn" ? "A-løn" : "Leverandør"}</p>
-                                                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                                                    <span>{c.contract_date ? new Date(c.contract_date).toLocaleDateString("da-DK") : new Date(c.created_at).toLocaleDateString("da-DK")}</span>
-                                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${s.class}`}>{s.label}</span>
-                                                </div>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                        </MobileDataCard>
-                    ))}
-                </MobileCardList>
-
-                <ResponsiveTableFrame>
-                    <Table>
-                        <TableHeader>
-                            <TableRow>
-                                <TableHead className="w-8" />
-                                <TableHead>Producent</TableHead>
-                                <TableHead>Moderselskab</TableHead>
-                                <TableHead>Klippere</TableHead>
-                                <TableHead>Kontrakter</TableHead>
-                                <TableHead>Seneste</TableHead>
-                                <TableHead className="w-8" />
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {visible.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
-                                        Ingen producenter fundet
-                                    </TableCell>
-                                </TableRow>
-                            ) : visible.map(emp => (
-                                <>
-                                    <TableRow
-                                        key={emp.id}
-                                        className="cursor-pointer hover:bg-muted/40"
-                                        onClick={() => setExpanded(expanded === emp.id ? null : emp.id)}
-                                    >
-                                        <TableCell>
-                                            <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${expanded === emp.id ? "rotate-90" : ""}`} />
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex items-center gap-2">
-                                                <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                                <span className="font-medium">{emp.name}</span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground">
-                                            {emp.parent_name ?? "—"}
-                                        </TableCell>
-                                        <TableCell>
-                                            {emp.klippere.length > 0 ? (
-                                                <div className="flex flex-wrap gap-1">
-                                                    {emp.klippere.slice(0, 2).map(k => (
-                                                        <Badge key={k} variant="secondary" className="text-[10px] font-normal px-1.5 py-0">
-                                                            {k}
-                                                        </Badge>
-                                                    ))}
-                                                    {emp.klippere.length > 2 && (
-                                                        <span className="text-xs text-muted-foreground">+{emp.klippere.length - 2}</span>
-                                                    )}
-                                                </div>
-                                            ) : (
-                                                <span className="text-sm text-muted-foreground">—</span>
-                                            )}
-                                        </TableCell>
-                                        <TableCell>
-                                            <div className="flex items-center gap-1.5">
-                                                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                                <span className="tabular-nums font-medium">{emp.contract_count}</span>
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-sm text-muted-foreground tabular-nums">
-                                            {emp.latest_contract
-                                                ? new Date(emp.latest_contract).toLocaleDateString("da-DK")
-                                                : "—"}
-                                        </TableCell>
-                                        <TableCell>
-                                            {emp.dfi_company_id && (
-                                                <a
-                                                    href={`https://www.dfi.dk/viden-om-film/filmografier/produktionsselskab/${emp.dfi_company_id}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                    onClick={e => e.stopPropagation()}
-                                                    title="Se i DFI"
-                                                >
-                                                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                                                </a>
-                                            )}
-                                        </TableCell>
-                                    </TableRow>
-
-                                    {/* Expanded: kontrakthistorik */}
-                                    {expanded === emp.id && (
-                                        <TableRow key={`${emp.id}-expanded`}>
-                                            <TableCell colSpan={7} className="p-0 bg-muted/20">
-                                                {emp.contracts.length === 0 ? (
-                                                    <p className="px-8 py-4 text-sm text-muted-foreground">Ingen kontrakter registreret</p>
-                                                ) : (
-                                                    <div className="px-8 py-3 space-y-1">
-                                                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Kontrakthistorik</p>
-                                                        <div className="rounded-md border bg-background overflow-hidden">
-                                                            <Table>
-                                                                <TableHeader>
-                                                                    <TableRow className="bg-muted/30">
-                                                                        <TableHead className="text-xs">Produktion</TableHead>
-                                                                        <TableHead className="text-xs">Klipper</TableHead>
-                                                                        <TableHead className="text-xs">Type</TableHead>
-                                                                        <TableHead className="text-xs">Overenskomst</TableHead>
-                                                                        <TableHead className="text-xs">Dato</TableHead>
-                                                                        <TableHead className="text-xs">Status</TableHead>
-                                                                    </TableRow>
-                                                                </TableHeader>
-                                                                <TableBody>
-                                                                    {emp.contracts.map(c => {
-                                                                        const s = STATUS_CFG[c.status] ?? STATUS_CFG.kladde
-                                                                        return (
-                                                                            <TableRow key={c.id}>
-                                                                                <TableCell className="text-sm font-medium">
-                                                                                    {c.working_title ?? <span className="text-muted-foreground">—</span>}
-                                                                                </TableCell>
-                                                                                <TableCell className="text-sm text-muted-foreground">
-                                                                                    {c.rights_holder_name ?? "—"}
-                                                                                </TableCell>
-                                                                                <TableCell className="text-sm text-muted-foreground">
-                                                                                    {c.type === "a-løn" ? "A-løn" : "Leverandør"}
-                                                                                </TableCell>
-                                                                                <TableCell className="text-sm text-muted-foreground">
-                                                                                    {c.overenskomst ? (OVERENSKOMST_LABELS[c.overenskomst] ?? c.overenskomst) : "—"}
-                                                                                </TableCell>
-                                                                                <TableCell className="text-sm text-muted-foreground tabular-nums">
-                                                                                    {c.contract_date
-                                                                                        ? new Date(c.contract_date).toLocaleDateString("da-DK")
-                                                                                        : new Date(c.created_at).toLocaleDateString("da-DK")}
-                                                                                </TableCell>
-                                                                                <TableCell>
-                                                                                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${s.class}`}>
-                                                                                        {s.label}
-                                                                                    </span>
-                                                                                </TableCell>
-                                                                            </TableRow>
-                                                                        )
-                                                                    })}
-                                                                </TableBody>
-                                                            </Table>
-                                                        </div>
-                                                        <Separator className="mt-2" />
-                                                        <div className="flex items-center gap-4 py-1 text-xs text-muted-foreground">
-                                                            <span className="flex items-center gap-1"><Users2 className="h-3 w-3" />{emp.klippere.length} klipper{emp.klippere.length !== 1 ? "e" : ""}</span>
-                                                            <span className="flex items-center gap-1"><FileText className="h-3 w-3" />{emp.contracts.length} kontrakt{emp.contracts.length !== 1 ? "er" : ""}</span>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </TableCell>
-                                        </TableRow>
-                                    )}
-                                </>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </ResponsiveTableFrame>
-                </>
-            )}
-        </div>
-    )
+    {loading ? <TableSkeleton columns={7} rows={8} /> : <>
+      <MobileCardList>{producers.length ? producers.map(producer => <MobileDataCard key={producer.id}><div className="flex items-start gap-3"><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /><Building2 className="h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="font-medium">{producer.name}</p><p className="text-sm text-muted-foreground">{producer.parent_name ?? "—"}</p></div><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></div><div className="mt-4 grid grid-cols-2 gap-2"><MobileMetaRow label={t("admin.producers.works")}>{producer.work_count}</MobileMetaRow><MobileMetaRow label={t("admin.producers.contracts")}>{producer.contract_count}</MobileMetaRow></div><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "works")}><Film className="mr-1 h-3.5 w-3.5" />{t("admin.producers.works")}</Button><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "contracts")}><FileText className="mr-1 h-3.5 w-3.5" />{t("admin.producers.contracts")}</Button></div><DetailPanel producer={producer} type="works" /><DetailPanel producer={producer} type="contracts" /></MobileDataCard>) : <MobileDataCard><p className="py-6 text-center text-sm text-muted-foreground">{t("common.noResults")}</p></MobileDataCard>}</MobileCardList>
+      <ResponsiveTableFrame><Table><TableHeader><TableRow><TableHead className="w-10"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label={t("common.selectAll")} /></TableHead>{[["name","admin.producers.producer"],["parent","admin.producers.parent"],["status","common.status"],["works","admin.producers.works"],["contracts","admin.producers.contracts"],["latest","admin.producers.latest"]].map(([key,label]) => <TableHead key={key}><button type="button" onClick={() => changeSort(key)}>{t(label as Parameters<typeof t>[0])}{mark(key)}</button></TableHead>)}</TableRow></TableHeader><TableBody>{producers.length ? producers.map(producer => <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium">{producer.name}</TableCell><TableCell>{producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "works")}>{open.has(detailKey(producer.id,"works")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.work_count}</button></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "contracts")}>{open.has(detailKey(producer.id,"contracts")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.contract_count}</button></TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{open.has(detailKey(producer.id,"works")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="works" /></TableCell></TableRow>}{open.has(detailKey(producer.id,"contracts")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="contracts" /></TableCell></TableRow>}</Fragment>) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
+    </>}
+  </div>;
 }

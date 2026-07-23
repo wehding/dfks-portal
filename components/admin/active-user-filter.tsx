@@ -5,6 +5,7 @@ import { Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ActiveRightsHolder } from "@/lib/use-active-rights-holder";
+import { useI18n } from "@/lib/i18n";
 
 type RightsHolderOption = { id: string; full_name: string };
 
@@ -15,6 +16,7 @@ type Props = {
 };
 
 export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -38,7 +40,7 @@ export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
   if (activeRh) {
     return (
       <div className="flex min-h-10 w-full flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm sm:w-auto">
-        <span className="text-muted-foreground">Aktiv rettighedshaver:</span>
+        <span className="text-muted-foreground">{t("filters.activeRightsHolder")}</span>
         <span className="font-medium">{activeRh.name}</span>
         <Button
           type="button"
@@ -46,7 +48,7 @@ export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
           size="icon"
           className="h-6 w-6"
           onClick={() => onChange(null)}
-          aria-label="Ryd aktiv rettighedshaver"
+          aria-label={t("filters.clearActiveRightsHolder")}
         >
           <X className="h-3.5 w-3.5" />
         </Button>
@@ -67,7 +69,7 @@ export function ActiveUserFilter({ rightsHolders, activeRh, onChange }: Props) {
         onKeyDown={event => {
           if (event.key === "Escape") setOpen(false);
         }}
-        placeholder="Filtrér på rettighedshaver..."
+        placeholder={t("filters.rightsHolderPlaceholder")}
         className="pl-8"
       />
       {open && suggestions.length > 0 && (

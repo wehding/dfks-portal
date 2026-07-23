@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import type { DbContractReview } from "@/lib/db/types"
+import { useI18n } from "@/lib/i18n"
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -62,6 +63,11 @@ interface ReviewResult {
     samlet_vurdering: "godkendt" | "forbehold" | "kritisk"
     prioriterede_forhandlingspunkter: string[]
     prioriterede_mail_sektioner?: (number | null)[]
+}
+
+interface ReviewAssignee {
+    id: string
+    label: string
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -178,10 +184,13 @@ function highlightText(text: string, quotes: string[], activeQuote: string | nul
 // ── Hoved-komponent ───────────────────────────────────────────
 
 export default function KontraktGennemgangDetailPage({ params }: { params: Promise<{ id: string }> }) {
+    const { t } = useI18n()
     const { id } = use(params)
     const router = useRouter()
 
     const [review, setReview] = useState<DbContractReview | null>(null)
+    const [assignees, setAssignees] = useState<ReviewAssignee[]>([])
+    const [canAssign, setCanAssign] = useState(false)
     const [loading, setLoading] = useState(true)
     const [result, setResult] = useState<ReviewResult | null>(null)
     const [riskLevel, setRiskLevel] = useState<"LAV" | "MELLEM" | "HØJ" | null>(null)
@@ -213,6 +222,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .then(json => {
                 const r = json.data as DbContractReview
                 setReview(r)
+                setAssignees(Array.isArray(json.assignees) ? json.assignees : [])
+                setCanAssign(Boolean(json.canAssign))
                 if (r?.risk_level) setRiskLevel(r.risk_level)
                 if (r?.should_escalate != null) setShouldEscalate(r.should_escalate)
                 if (r?.ai_result && Object.keys(r.ai_result).length > 0) {
@@ -241,14 +252,14 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     }, [activeQuote])
 
-    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string }) => {
+    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string; action?: "claim" | "release" | "assign" }) => {
         const resp = await fetch(`/api/admin/contracts/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(updates),
         })
-        if (!resp.ok) { toast.error("Opdatering fejlede"); return }
         const json = await resp.json()
+        if (!resp.ok) { toast.error(json.error ?? "Opdatering fejlede"); return }
         setReview(json.data)
         toast.success("Opdateret")
     }
@@ -330,8 +341,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     if (loading) {
         return (
             <div className="space-y-6">
-                <PageHeader title="Kontraktgennemgang" />
-                <div className="text-sm text-muted-foreground">Henter kontrakt...</div>
+                <PageHeader title={t("nav.contractReview")} />
+                <div className="text-sm text-muted-foreground">{t("admin.reviewDetail.loading")}</div>
             </div>
         )
     }
@@ -339,8 +350,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     if (!review) {
         return (
             <div className="space-y-6">
-                <PageHeader title="Kontraktgennemgang" />
-                <div className="text-sm text-muted-foreground">Kontrakt ikke fundet.</div>
+                <PageHeader title={t("nav.contractReview")} />
+                <div className="text-sm text-muted-foreground">{t("admin.reviewDetail.notFound")}</div>
             </div>
         )
     }
@@ -356,7 +367,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             <div className="flex items-center gap-3 flex-wrap shrink-0">
                 <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => router.push("/admin/kontraktgennemgang")}>
                     <ArrowLeft className="h-4 w-4" />
-                    Tilbage til indbakke
+                    {t("admin.reviewDetail.back")}
                 </Button>
                 <Separator orientation="vertical" className="h-5" />
                 <FileText className="h-4 w-4 text-muted-foreground" />
@@ -414,20 +425,25 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                 {/* Status og tildeling */}
                 <div className="flex flex-wrap gap-3 items-center pt-2 border-t">
                     <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Status:</span>
-                        <Select
-                            value={review.status}
-                            onValueChange={v => updateReview({ status: v })}
-                        >
-                            <SelectTrigger className="h-7 text-xs w-44">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="afventer">Afventer</SelectItem>
-                                <SelectItem value="behandling">Under behandling</SelectItem>
-                                <SelectItem value="afsluttet">Afsluttet</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <span className="text-xs text-muted-foreground">{t("common.status")}:</span>
+                        <Badge variant="outline" className={statusCfg.class}>{review.status === "afventer" ? t("admin.reviewQueue.unassigned") : review.status === "behandling" ? t("admin.reviewQueue.processing") : t("admin.reviewQueue.completed")}</Badge>
+                        {!review.assigned_to && review.status !== "afsluttet" && <Button size="sm" className="h-7 text-xs" onClick={() => updateReview({ action: "claim" })}>{t("admin.reviewDetail.claim")}</Button>}
+                        {review.assigned_to && review.status !== "afsluttet" && <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => updateReview({ action: "release" })}>{t("admin.reviewDetail.release")}</Button>}
+                        {canAssign && review.status !== "afsluttet" && assignees.length > 0 && (
+                            <Select
+                                value={review.assigned_to ?? undefined}
+                                onValueChange={assignedTo => updateReview({ action: "assign", assignedTo })}
+                            >
+                                <SelectTrigger className="h-7 w-48 text-xs" aria-label={t("admin.reviewDetail.assignTo")}>
+                                    <SelectValue placeholder={t("admin.reviewDetail.assignTo")} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {assignees.map(assignee => (
+                                        <SelectItem key={assignee.id} value={assignee.id}>{assignee.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-2 ml-auto">
@@ -440,7 +456,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             onClick={() => handleReanalyse()}
                         >
                             <RotateCcw className={`h-3.5 w-3.5 ${reanalysing ? "animate-spin" : ""}`} />
-                            {reanalysing ? "Analyserer..." : "Kør ny analyse"}
+                            {reanalysing ? t("admin.reviewDetail.analysing") : t("admin.reviewDetail.reanalyse")}
                         </Button>
                         {/* Skjult fil-input — trigges automatisk hvis storage_path mangler */}
                         <input
@@ -457,7 +473,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                         {review.status !== "afsluttet" && (
                             <Button size="sm" className="gap-1.5 text-xs h-7" onClick={handleAfslut}>
                                 <CheckCircle2 className="h-3.5 w-3.5" />
-                                Afslut sag
+                                {t("admin.reviewDetail.complete")}
                             </Button>
                         )}
                     </div>

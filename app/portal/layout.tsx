@@ -52,7 +52,6 @@ const ALL_ADMIN_NAV_ITEMS = [
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"      },
     { key: "producenter",          href: "/admin/producenter",          icon: Building2,   labelKey: "nav.producers"          },
     { key: "kontraktgennemgang", href: "/admin/kontraktgennemgang", icon: Scale,       labelKey: "nav.contractReview"   },
-    { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "udbetalinger",       href: "/admin/udbetalinger",       icon: Wallet,      labelKey: "nav.payouts"          },
     { key: "streaming",          href: "/admin/streaming",          icon: Play,        labelKey: "nav.streaming"        },
     { key: "statistik",          href: "/admin/statistik",          icon: BarChart3,   labelKey: "nav.statistics"       },
@@ -62,6 +61,7 @@ const ALL_ADMIN_NAV_ITEMS = [
 ]
 
 const SETUP_ADMIN_NAV_ITEMS = [
+    { key: "ai-kontrolrum",      href: "/admin/ai-kontrolrum",      icon: BrainCircuit, labelKey: "nav.aiKontrolrum"     },
     { key: "organisation",       href: "/admin/organisation",       icon: Building2,   labelKey: "nav.organisation"     },
     { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
     { key: "organisationer",     href: "/admin/organisationer",     icon: ShieldCheck, labelKey: "nav.organisations"    },
@@ -224,7 +224,7 @@ export default function PortalLayout({
     ]
 
     const visiblePortalNavItems = portalNavItems.filter(item => item.href !== "/portal/kontraktgennemgang" || isAssociationMember)
-    const adminUserNavItems = visiblePortalNavItems.filter(item => item.href !== "/portal/min-profil")
+    const adminUserNavItems = isAssociationMember ? visiblePortalNavItems.filter(item => item.href !== "/portal/min-profil") : []
     const primaryRole = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
         .find(role => roleList.includes(role)) ?? null
     const hasAdminMenu = primaryRole !== null
@@ -276,7 +276,7 @@ export default function PortalLayout({
                 <SidebarContent>
                     {hasAdminMenu ? (
                         <>
-                            <SidebarGroup>
+                            {adminUserNavItems.length > 0 && <SidebarGroup>
                                 <SidebarGroupContent>
                                     <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                                         {t("nav.userSection" as Parameters<typeof t>[0])}
@@ -311,9 +311,9 @@ export default function PortalLayout({
                                         ))}
                                     </SidebarMenu>
                                 </SidebarGroupContent>
-                            </SidebarGroup>
+                            </SidebarGroup>}
 
-                            <Separator className="mx-4 my-2 w-auto" />
+                            {adminUserNavItems.length > 0 && <Separator className="mx-4 my-2 w-auto" />}
 
                             <SidebarGroup>
                                 <SidebarGroupContent>

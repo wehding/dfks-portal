@@ -53,12 +53,12 @@ const ADMIN_NAV_ITEMS = [
     { key: "rettighedshavere",    href: "/admin/rettighedshavere",    icon: UserCheck,   labelKey: "nav.rightsHolders"    },
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },
     { key: "kontraktgennemgang",  href: "/admin/kontraktgennemgang",  icon: Scale,       labelKey: "nav.contractReview"   },
-    { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "statistik",           href: "/admin/statistik",           icon: BarChart3,   labelKey: "nav.statistics"       },
     { key: "indbetalinger",       href: "/admin/indbetalinger",       icon: Receipt,     labelKey: "nav.producerPayments" },
 ]
 
 const SETUP_NAV_ITEMS = [
+    { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
     { key: "min-profil",          href: "/admin/min-profil",          icon: UserCog,     labelKey: "nav.minProfil"        },
@@ -139,12 +139,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
     const [pendingWorkMessagesCount, setPendingWorkMessagesCount] = useState<number>(0)
+    const [pendingReviewCount, setPendingReviewCount] = useState<number>(0)
+    const [pendingScreeningCount, setPendingScreeningCount] = useState<number>(0)
     const [isAssociationMember, setIsAssociationMember] = useState(false)
 
-    // Kollaps-tilstand per sektion — åbne som default
+    // Kollaps-tilstand per sektion. Opsætning er lukket som standard.
     const [brugerOpen, setBrugerOpen] = useState(true)
     const [adminOpen, setAdminOpen] = useState(true)
-    const [setupOpen, setSetupOpen] = useState(true)
+    const [setupOpen, setSetupOpen] = useState(false)
     const [rettighedsOpen, setRettighedsOpen] = useState(true)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string }>({ logo_url: null, short_name: "DFKS" })
 
@@ -171,22 +173,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
             const { data: memberRow } = await supabase
                 .from("rettighedshavere")
-                .select("id")
+                .select("id,org_affiliations!inner(org_id)")
                 .eq("user_id", user.id)
-                .eq("org_id", orgId)
+                .eq("org_affiliations.org_id", orgId)
                 .maybeSingle()
             setIsAssociationMember(Boolean(memberRow?.id))
 
-            const [contractsRes, worksRes, contractMessagesRes, workMessagesRes] = await Promise.all([
-                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "afventer").not("work_id", "is", null),
+            const [contractsRes, worksRes, contractMessagesRes, workMessagesRes, reviewsRes, screeningsRes] = await Promise.all([
+                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde").not("work_id", "is", null),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
                 supabase.from("contract_comments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("author_role", "member").is("admin_read_at", null),
                 supabase.from("work_change_request_comments").select("id, work_change_requests!inner(org_id)", { count: "exact", head: true }).eq("author_role", "member").is("admin_read_at", null).eq("work_change_requests.org_id", orgId),
+                supabase.from("contract_reviews").select("id", { count: "exact", head: true }).eq("org_id", orgId).in("status", ["afventer", "behandling"]),
+                supabase.from("screening_claims").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
             ])
             setPendingCount(contractsRes.count ?? 0)
             setPendingWorksCount(worksRes.count ?? 0)
             setPendingContractMessagesCount(contractMessagesRes.count ?? 0)
             setPendingWorkMessagesCount(workMessagesRes.count ?? 0)
+            setPendingReviewCount(reviewsRes.count ?? 0)
+            setPendingScreeningCount(screeningsRes.count ?? 0)
         }
 
         supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -205,6 +211,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             window.removeEventListener("works-updated", fetchCount)
         }
     }, [])
+
+    const setupRouteActive = SETUP_NAV_ITEMS.some(item => pathname === item.href || pathname.startsWith(`${item.href}/`))
 
     const handleLogout = async () => {
         const supabase = createClient()
@@ -235,7 +243,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         }))
 
     const renderItem = (item: typeof adminItems[0]) => (
-        <SidebarMenuItem key={item.href}>
+        <SidebarMenuItem key={item.key}>
             <SidebarMenuButton
                 asChild
                 isActive={item.href === "/admin" || item.href === "/portal"
@@ -265,6 +273,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                             )}
                         </span>
                     )}
+                    {item.key === "kontraktgennemgang" && pendingReviewCount > 0 && <span title={t("common.pendingApproval")} className={`ml-auto ${MENU_BADGE_GODKEND}`}>{pendingReviewCount}</span>}
+                    {item.key === "aftalelicens" && pendingScreeningCount > 0 && <span title={t("common.pendingApproval")} className={`ml-auto ${MENU_BADGE_GODKEND}`}>{pendingScreeningCount}</span>}
                 </SidebarNavigationLink>
             </SidebarMenuButton>
         </SidebarMenuItem>
@@ -286,14 +296,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </SidebarHeader>
 
                 <SidebarContent>
-                    {/* Bruger-sektion */}
-                    <NavSection
-                        title={t("nav.userSection" as Parameters<typeof t>[0])}
-                        isOpen={brugerOpen}
-                        onToggle={() => setBrugerOpen(o => !o)}
-                    >
-                        {userNavItems.map(item => (
-                            <SidebarMenuItem key={item.href}>
+                    {/* Bruger-sektion vises kun for staff, som også er rettighedshaver. */}
+                    {isAssociationMember && <>
+                        <NavSection
+                            title={t("nav.userSection" as Parameters<typeof t>[0])}
+                            isOpen={brugerOpen}
+                            onToggle={() => setBrugerOpen(o => !o)}
+                        >
+                            {userNavItems.map(item => (
+                            <SidebarMenuItem key={item.key}>
                                 <SidebarMenuButton asChild isActive={pathname === item.href || (pathname?.startsWith(`${item.href}/`) ?? false)}>
                                     <SidebarNavigationLink href={item.href}>
                                         <item.icon className="h-4 w-4" />
@@ -301,10 +312,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                     </SidebarNavigationLink>
                                 </SidebarMenuButton>
                             </SidebarMenuItem>
-                        ))}
-                    </NavSection>
-
-                    <Separator className="mx-4 my-1 w-auto" />
+                            ))}
+                        </NavSection>
+                        <Separator className="mx-4 my-1 w-auto" />
+                    </>}
 
                     {/* Administrator-sektion */}
                     <NavSection
@@ -317,19 +328,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
                     <Separator className="mx-4 my-1 w-auto" />
 
-                    {/* Opsætning-sektion */}
-                    {setupItems.length > 0 && (
-                        <NavSection
-                            title={t("nav.setupSection")}
-                            isOpen={setupOpen}
-                            onToggle={() => setSetupOpen(open => !open)}
-                        >
-                            {setupItems.map(renderItem)}
-                        </NavSection>
-                    )}
-
-                    <Separator className="mx-4 my-1 w-auto" />
-
                     {/* Rettighedsbetaling-sektion */}
                     {rettighedsItems.length > 0 && (
                         <NavSection
@@ -338,6 +336,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                             onToggle={() => setRettighedsOpen(o => !o)}
                         >
                             {rettighedsItems.map(renderItem)}
+                        </NavSection>
+                    )}
+
+                    <Separator className="mx-4 my-1 w-auto" />
+
+                    {/* Opsætning-sektion */}
+                    {setupItems.length > 0 && (
+                        <NavSection
+                            title={t("nav.setupSection")}
+                            isOpen={setupOpen || setupRouteActive}
+                            onToggle={() => setSetupOpen(open => !open)}
+                        >
+                            {setupItems.map(renderItem)}
                         </NavSection>
                     )}
                 </SidebarContent>

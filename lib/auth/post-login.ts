@@ -17,7 +17,7 @@ export async function resolvePostLoginDestination(
     .in("role", STAFF_ROLES)
     .limit(1);
 
-  if (roleRows?.length) return "/admin/kontraktgennemgang";
+  if (roleRows?.length) return "/admin";
 
   const { data: rightsHolder } = await supabase
     .from("rettighedshavere")

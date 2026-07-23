@@ -21,8 +21,6 @@ const ROLE_RANK: Record<string, number> = {
     viewer: 0,
 }
 const ALLOWED_STAFF_ROLES = Object.keys(ROLE_RANK)
-const PRESERVED_SYSTEM_ROLES = ["member"]
-const ALLOWED_ORG_ROLES = new Set([...ALLOWED_STAFF_ROLES, ...PRESERVED_SYSTEM_ROLES])
 
 function primaryRole(roles: string[]): string {
     return roles.reduce((best, r) => (ROLE_RANK[r] ?? -1) > (ROLE_RANK[best] ?? -1) ? r : best, "viewer")
@@ -299,11 +297,11 @@ export async function PATCH(req: NextRequest) {
     // ── Opdater roller ────────────────────────────────────────
     if (body.action === "set-roles") {
         const { userId, roles }: { userId: string; roles: string[] } = body
-        if (!userId || !Array.isArray(roles) || !roles.length) {
+        if (!userId || !Array.isArray(roles)) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
         }
         const nextRoles = Array.from(new Set(roles))
-        const invalidRoles = nextRoles.filter(role => !ALLOWED_ORG_ROLES.has(role))
+        const invalidRoles = nextRoles.filter(role => !ALLOWED_STAFF_ROLES.includes(role))
         if (invalidRoles.length > 0) {
             return NextResponse.json({
                 error: `En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`,
@@ -333,20 +331,74 @@ export async function PATCH(req: NextRequest) {
             }
         }
 
-        // Slet eksisterende roller for denne bruger i org
-        await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId)
+        // Redigér kun staffroller. Systemrollen `member` styres separat af
+        // rettighedshaverkontakten og må ikke forsvinde ved almindelig rolleændring.
+        await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId).in("role", ALLOWED_STAFF_ROLES)
 
         // Indsæt nye roller
-        const { error: insertErr } = await admin.from("user_org_roles").insert(
-            nextRoles.map(role => ({ user_id: userId, org_id: orgId, role }))
-        )
-        if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+        if (nextRoles.length > 0) {
+            const { error: insertErr } = await admin.from("user_org_roles").insert(
+                nextRoles.map(role => ({ user_id: userId, org_id: orgId, role }))
+            )
+            if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+        }
 
         // Opdater user_metadata.role til den højeste rolle (bruges af admin layout)
-        const primary = primaryRole(nextRoles)
+        const primary = nextRoles.length ? primaryRole(nextRoles) : "member"
         await admin.auth.admin.updateUserById(userId, { user_metadata: { role: primary } })
 
         return NextResponse.json({ ok: true })
+    }
+
+    if (body.action === "set-rights-holder-status") {
+        const { userId, enabled, fullName, email } = body as { userId?: string; enabled?: boolean; fullName?: string; email?: string }
+        if (!userId || typeof enabled !== "boolean") return NextResponse.json({ error: "Bruger og status er påkrævet" }, { status: 400 })
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
+
+        const { data: linkedProfiles } = await admin.from("rettighedshavere")
+            .select("id,org_affiliations!inner(org_id)")
+            .eq("user_id", userId)
+            .eq("org_affiliations.org_id", orgId)
+
+        if (!enabled) {
+            const ids = (linkedProfiles ?? []).map(profile => profile.id)
+            if (ids.length) {
+                const { error: unlinkError } = await admin.from("rettighedshavere").update({ user_id: null }).in("id", ids).eq("user_id", userId)
+                if (unlinkError) return NextResponse.json({ error: "Rettighedshaveradgangen kunne ikke fjernes" }, { status: 500 })
+            }
+            await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId).eq("role", "member")
+            return NextResponse.json({ ok: true })
+        }
+
+        let rightsHolderId = linkedProfiles?.[0]?.id ?? null
+        if (!rightsHolderId && email?.trim()) {
+            const { data: candidates } = await admin.from("rettighedshavere")
+                .select("id,user_id,org_affiliations!inner(org_id)")
+                .ilike("email", email.trim())
+                .eq("org_affiliations.org_id", orgId)
+            const available = (candidates ?? []).filter(candidate => !candidate.user_id || candidate.user_id === userId)
+            if (available.length > 1) return NextResponse.json({ error: "Flere rettighedshavere matcher e-mailen. Tilknyt profilen fra Rettighedshavere." }, { status: 409 })
+            rightsHolderId = available[0]?.id ?? null
+        }
+
+        if (rightsHolderId) {
+            const { error: linkError } = await admin.from("rettighedshavere").update({ user_id: userId }).eq("id", rightsHolderId).or(`user_id.is.null,user_id.eq.${userId}`)
+            if (linkError) return NextResponse.json({ error: "Rettighedshaverprofilen kunne ikke tilknyttes" }, { status: 500 })
+        } else {
+            const { data: created, error: createError } = await admin.from("rettighedshavere").insert({ user_id: userId, full_name: fullName?.trim() || email?.trim() || "Rettighedshaver", email: email?.trim() || null }).select("id").single()
+            if (createError || !created) return NextResponse.json({ error: "Rettighedshaverprofilen kunne ikke oprettes" }, { status: 500 })
+            rightsHolderId = created.id
+            const { error: affiliationError } = await admin.from("org_affiliations").insert({ org_id: orgId, rights_holder_id: rightsHolderId, is_member: true })
+            if (affiliationError) {
+                await admin.from("rettighedshavere").delete().eq("id", rightsHolderId)
+                return NextResponse.json({ error: "Organisationstilknytningen kunne ikke oprettes" }, { status: 500 })
+            }
+        }
+
+        const { error: memberRoleError } = await admin.from("user_org_roles").upsert({ user_id: userId, org_id: orgId, role: "member" }, { onConflict: "user_id,org_id,role", ignoreDuplicates: true })
+        if (memberRoleError) return NextResponse.json({ error: "Medlemsrollen kunne ikke gemmes" }, { status: 500 })
+        return NextResponse.json({ ok: true, rightsHolderId })
     }
 
     // ── Deaktiver bruger ──────────────────────────────────────

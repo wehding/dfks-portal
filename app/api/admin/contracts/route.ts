@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
     let query = supabase
         .from("contract_reviews")
         .select("*", { count: "exact" })
+        .eq("org_id", caller.orgId)
         .order("reviewed_at", { ascending: false })
         .range(offset, offset + limit - 1)
 
