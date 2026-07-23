@@ -197,7 +197,9 @@ export function ContractAiDataEditor({
         getContractValidation(contractId).then(res => {
             if (!active) return;
             const ed = res.success ? (res.extractedData ?? null) : null;
-            setFound(Boolean(ed && Object.keys(ed).length > 0));
+            // Brug serverens hasSavedValidation (baseret på data FØR merge), så "Ingen data endnu"
+            // stadig vises korrekt selvom extractedData altid fyldes med felter fra det linkede værk.
+            setFound(res.success ? Boolean(res.hasSavedValidation) : false);
             setValues(toFormValues(ed));
             setLockedFields(new Set((ed?._lockedFields ?? []) as string[]));
             setSources((ed?._sources ?? null) as Record<string, string | null>);
@@ -296,7 +298,7 @@ export function ContractAiDataEditor({
                                     const roleById = new Map(linkedEpisodes.map(episode => [episode.id, episode.role]));
                                     setLinkedEpisodes(episodeOptions.filter(episode => selectedEpisodeIds.includes(episode.id)).map(episode => ({
                                         ...episode,
-                                        role: roleById.get(episode.id) ?? "Klipper",
+                                        role: roleById.get(episode.id) ?? null,
                                     })));
                                     toast.success("Afsnitstilknytninger gemt");
                                 }}

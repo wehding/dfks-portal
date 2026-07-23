@@ -112,7 +112,7 @@ export default function AdminDashboardPage() {
 
             const [pendingRes, validatedRes, membersRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true })
-                    .eq("org_id", resolvedOrgId).eq("status", "kladde"),
+                    .eq("org_id", resolvedOrgId).eq("status", "afventer").not("work_id", "is", null),
                 supabase.from("contracts").select("id", { count: "exact", head: true })
                     .eq("org_id", resolvedOrgId).eq("status", "valideret"),
                 supabase.from("org_affiliations").select("id", { count: "exact", head: true })

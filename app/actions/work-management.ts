@@ -1532,6 +1532,7 @@ export async function reviewWorkDataCorrection(params: {
       const { error: roleError } = await db
         .from("work_assignments")
         .update({ role: proposed.memberRole })
+        .eq("org_id", request.org_id)
         .eq("work_id", request.work_id)
         .eq("rights_holder_id", request.requested_by_rights_holder_id);
       if (roleError) throw new Error(roleError.message);

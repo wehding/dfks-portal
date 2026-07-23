@@ -6,6 +6,22 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { requireOrgId } from "@/lib/org";
 import { sendMemberNotification } from "@/lib/member-notifications";
+import { addMemberContractComment, addAdminContractComment, markContractCommentsRead } from "@/app/actions/member-contracts";
+import { addScreeningClaimComment, markScreeningClaimCommentsRead } from "@/app/actions/screenings";
+
+// De sammensatte tråd-id'er fra fetchMemberInbox/fetchAdminInbox: "contract-<uuid>" og
+// "screening-<uuid>" peger IKKE på member_message_threads. Denne helper afkoder kilden, så
+// svar/læsemarkering kan route til den rette tabel i stedet for at slå fejl.
+type InboxThreadRef =
+  | { kind: "direct"; id: string }
+  | { kind: "contract"; id: string }
+  | { kind: "screening"; id: string };
+
+function parseInboxThreadId(threadId: string): InboxThreadRef {
+  if (threadId.startsWith("contract-")) return { kind: "contract", id: threadId.slice("contract-".length) };
+  if (threadId.startsWith("screening-")) return { kind: "screening", id: threadId.slice("screening-".length) };
+  return { kind: "direct", id: threadId };
+}
 
 async function signedInUser() {
   const supabase = await createClient();
@@ -49,10 +65,13 @@ async function ensureWelcomeThread(db: ReturnType<typeof createServiceClient>, p
       .insert({ thread_id: thread.id, author_user_id: senderId, author_role: "admin", body: welcomeText })
       .select("id").single();
     if (!message) { await db.from("member_message_threads").delete().eq("id", thread.id); return; }
-    await db.from("member_message_participants").insert([
-      { thread_id: thread.id, user_id: senderId, last_read_at: new Date().toISOString() },
-      ...(senderId !== params.memberUserId ? [{ thread_id: thread.id, user_id: params.memberUserId, last_read_at: null }] : []),
-    ]);
+    // Medlemmets deltager-række skal altid have last_read_at=null, så velkomsten fremstår ulæst —
+    // også når der ikke er en admin, og medlemmet selv står som (tekniske) afsender.
+    const memberParticipant = { thread_id: thread.id, user_id: params.memberUserId, last_read_at: null };
+    const participants = senderId === params.memberUserId
+      ? [memberParticipant]
+      : [{ thread_id: thread.id, user_id: senderId, last_read_at: new Date().toISOString() }, memberParticipant];
+    await db.from("member_message_participants").insert(participants);
   } catch (error) {
     console.error("[inbox] Velkomstbesked kunne ikke oprettes:", error);
   }
@@ -262,8 +281,24 @@ export async function sendInboxReply(threadId: string, bodyValue: string) {
   if (!user) return { success: false, error: "Ikke logget ind" };
   const body = bodyValue.trim().slice(0, 10000);
   if (!body) return { success: false, error: "Skriv en besked." };
+
+  // Kontrakt-/visningstråde svares via deres egne kommentar-tabeller (ikke member_messages).
+  const ref = parseInboxThreadId(threadId);
+  if (ref.kind === "contract") {
+    const isAdmin = Boolean(await assertAdminRole(supabase));
+    const res = isAdmin
+      ? await addAdminContractComment(ref.id, body)
+      : await addMemberContractComment(ref.id, body);
+    return res.success ? { success: true } : { success: false, error: res.error };
+  }
+  if (ref.kind === "screening") {
+    const isAdmin = Boolean(await assertAdminRole(supabase));
+    const res = await addScreeningClaimComment({ claimId: ref.id, message: body, authorRole: isAdmin ? "admin" : "member" });
+    return res.success ? { success: true } : { success: false, error: res.error };
+  }
+
   const db = createServiceClient();
-  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", threadId).maybeSingle();
+  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", ref.id).maybeSingle();
   if (!thread) return { success: false, error: "Tråden findes ikke" };
   const { data: holder } = await db.from("rettighedshavere").select("id,user_id").eq("id", thread.rights_holder_id).maybeSingle();
   const admin = await assertAdminRole(supabase);
@@ -280,10 +315,21 @@ export async function sendInboxReply(threadId: string, bodyValue: string) {
 }
 
 export async function markInboxThreadRead(threadId: string) {
-  const { user } = await signedInUser();
+  const { supabase, user } = await signedInUser();
   if (!user) return { success: false };
+
+  const ref = parseInboxThreadId(threadId);
+  if (ref.kind === "contract" || ref.kind === "screening") {
+    const isAdmin = Boolean(await assertAdminRole(supabase));
+    const viewerRole = isAdmin ? "admin" : "member";
+    const res = ref.kind === "contract"
+      ? await markContractCommentsRead(ref.id, viewerRole)
+      : await markScreeningClaimCommentsRead(ref.id, viewerRole);
+    return { success: Boolean(res?.success) };
+  }
+
   const db = createServiceClient();
-  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", threadId).maybeSingle();
+  const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", ref.id).maybeSingle();
   if (!thread) return { success: false };
   const { data: holder } = await db.from("rettighedshavere").select("user_id").eq("id", thread.rights_holder_id).maybeSingle();
   const { data: role } = await db.from("user_org_roles").select("id").eq("user_id", user.id).eq("org_id", thread.org_id).limit(1).maybeSingle();

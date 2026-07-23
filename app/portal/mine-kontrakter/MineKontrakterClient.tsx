@@ -219,8 +219,13 @@ export default function MineKontrakterClient({
   const [episodesError, setEpisodesError] = useState<string | null>(null);
 
   // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
+  // Afled et stabilt boolean-flag, så polling-effekten kun genstarter når behovet ændrer sig
+  // (ikke ved hvert setContracts-tick, som ellers ville rydde/genoprette intervallet hvert 3. sek.).
+  const needsReading = useMemo(
+    () => contracts.some(c => (!c.working_title || c.working_title === "Kontrakt" || c.status === "afventer") && !c.works),
+    [contracts],
+  );
   useEffect(() => {
-    const needsReading = contracts.some(c => (!c.working_title || c.working_title === "Kontrakt" || c.status === "afventer") && !c.works);
     if (!needsReading) return;
 
     const interval = setInterval(async () => {
@@ -252,7 +257,7 @@ export default function MineKontrakterClient({
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [contracts]);
+  }, [needsReading]);
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(async () => {
@@ -668,6 +673,11 @@ export default function MineKontrakterClient({
     setLinkingSaving(true);
     try {
       const note = manualWorkNote.trim();
+      if ((forceCreateDuplicate || manualWorkMatches.length > 0) && !note) {
+        toast.error("Angiv venligst en forklaring/besked til DFKS administrationen før oprettelse af et lignende værk.");
+        setLinkingSaving(false);
+        return;
+      }
       const result = await addManualWorkAndLinkContract({
         rightsHolderId,
         role: "Klipper",
@@ -1367,9 +1377,15 @@ export default function MineKontrakterClient({
           <DialogHeader>
             <DialogTitle>Indtast værk manuelt</DialogTitle>
             <DialogDescription>
-              Opret værket og tilknyt det til kontrakten. Manuelt oprettede værker kan kræve godkendelse fra administrator.
+              Opret værket og tilknyt det til kontrakten. Manuelt oprettede værker med lignende duplikater kræver godkendelse fra administrator.
             </DialogDescription>
           </DialogHeader>
+          <div className="rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+            <p className="font-medium">Information om duplikatsikring:</p>
+            <p className="mt-0.5 text-blue-800 dark:text-blue-300">
+              Hvis der findes et lignende værk i databasen, skal oprettelsen godkendes af DFKS administrationen. Du bedes i så fald angive en kort forklaring i beskedfeltet nedenfor. Nye sæsoner til eksisterende serier tilknyttes automatisk uden ekstra godkendelse.
+            </p>
+          </div>
           <ManualWorkFormFields
             value={manualWork}
             onChange={value => {
@@ -1380,9 +1396,9 @@ export default function MineKontrakterClient({
             locale="da"
           />
           <div className="space-y-1.5 pt-2 border-t">
-            <Label className="text-xs font-medium text-muted-foreground">Besked til DFKS (valgfri)</Label>
+            <Label className="text-xs font-medium text-muted-foreground">Besked til DFKS (kræves hvis et lignende værk findes)</Label>
             <Textarea
-              placeholder="Skriv en kommentar eller bemærkning til DFKS administrationen angående dette værk..."
+              placeholder="Skriv en kommentar eller forklaring til DFKS administrationen angående dette værk..."
               value={manualWorkNote}
               onChange={e => setManualWorkNote(e.target.value)}
               className="h-20 text-xs"

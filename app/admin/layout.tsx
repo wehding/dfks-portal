@@ -17,6 +17,7 @@ import {
     Receipt,
     Scale,
     UserCheck,
+    UserCog,
     BrainCircuit,
     ShieldCheck,
     ChevronRight,
@@ -60,6 +61,7 @@ const ADMIN_NAV_ITEMS = [
 const SETUP_NAV_ITEMS = [
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
+    { key: "min-profil",          href: "/admin/min-profil",          icon: UserCog,     labelKey: "nav.minProfil"        },
     { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
 ]
 
@@ -176,7 +178,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             setIsAssociationMember(Boolean(memberRow?.id))
 
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes] = await Promise.all([
-                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
+                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "afventer").not("work_id", "is", null),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
                 supabase.from("contract_comments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("author_role", "member").is("admin_read_at", null),
                 supabase.from("work_change_request_comments").select("id, work_change_requests!inner(org_id)", { count: "exact", head: true }).eq("author_role", "member").is("admin_read_at", null).eq("work_change_requests.org_id", orgId),

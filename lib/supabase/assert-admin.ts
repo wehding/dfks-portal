@@ -32,6 +32,10 @@ export async function assertAdminRole(
         .select("role, org_id")
         .eq("user_id", user.id)
         .in("role", roles)
+    // ANTAGELSE: "én admin = én org". Har en bruger admin-roller i flere organisationer, bindes
+    // hele admin-sessionen til org'en for den HØJEST-rangerede rolle. Der er (bevidst) ingen
+    // org-vælger endnu — skal multi-org-admin understøttes, skal orgId gøres til et eksplicit
+    // valg/parameter i stedet for at udledes af rolle-rank her.
     const highestRole = data?.slice().sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))[0]
 
     if (!highestRole) return null

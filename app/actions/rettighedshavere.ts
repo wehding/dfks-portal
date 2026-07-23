@@ -6,6 +6,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { encryptValue } from "@/lib/encryption";
+import { isMissingGenderColumn } from "@/lib/rights-holder-gender";
 import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
 
 export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
@@ -57,19 +58,6 @@ function securePayload(input: RightsHolderInput) {
     ...(input.gender !== undefined ? { gender: input.gender || null } : {}),
     ...(input.opt_out_statistics !== undefined ? { opt_out_statistics: Boolean(input.opt_out_statistics) } : {}),
   };
-}
-
-type DatabaseError = {
-  code?: string;
-  message?: string;
-} | null;
-
-function isMissingGenderColumn(error: DatabaseError) {
-  return Boolean(
-    error &&
-    error.code === "PGRST204" &&
-    error.message?.includes("'gender' column of 'rettighedshavere'")
-  );
 }
 
 function withoutGender(payload: ReturnType<typeof securePayload>) {

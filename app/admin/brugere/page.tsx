@@ -200,6 +200,136 @@ export default function AdminBrugerePage() {
     const [toggleLoading, setToggleLoading] = useState(false)
     const [deletingUnassignedId, setDeletingUnassignedId] = useState<string | null>(null)
 
+    // Bruger detalje/rediger modal
+    const [detailUser, setDetailUser] = useState<User | null>(null)
+    const [detailName, setDetailName] = useState("")
+    const [detailPhone, setDetailPhone] = useState("")
+    const [detailTitle, setDetailTitle] = useState("")
+    const [detailGender, setDetailGender] = useState("")
+    const [detailRoles, setDetailRoles] = useState<string[]>([])
+    const [detailDirectPassword, setDetailDirectPassword] = useState("")
+    const [detailResetLink, setDetailResetLink] = useState<string | null>(null)
+    const [detailSaving, setDetailSaving] = useState(false)
+
+    function openDetailModal(user: User) {
+        setDetailUser(user)
+        setDetailName(user.full_name || "")
+        setDetailPhone(user.phone || "")
+        setDetailTitle(user.title || "")
+        setDetailGender(user.gender || "")
+        setDetailRoles(user.org_roles.length > 0 ? user.org_roles.slice() : (user.roles.includes("rettighedshaver") ? [] : ["viewer"]))
+        setDetailDirectPassword("")
+        setDetailResetLink(null)
+    }
+
+    async function handleSaveUserDetail() {
+        if (!detailUser) return
+        setDetailSaving(true)
+        try {
+            const profileRes = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "update-profile",
+                    userId: detailUser.id,
+                    fullName: detailName.trim(),
+                    phone: detailPhone.trim(),
+                    title: detailTitle.trim(),
+                    gender: detailGender,
+                }),
+            })
+            if (!profileRes.ok) {
+                const j = await profileRes.json()
+                throw new Error(j.error ?? "Fejl ved opdatering af profil")
+            }
+
+            if (detailRoles.length > 0) {
+                const roleRes = await fetch("/api/admin/users", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: "set-roles",
+                        userId: detailUser.id,
+                        roles: detailRoles,
+                    }),
+                })
+                if (!roleRes.ok) {
+                    const j = await roleRes.json()
+                    throw new Error(j.error ?? "Fejl ved opdatering af roller")
+                }
+            }
+
+            if (detailDirectPassword.trim()) {
+                if (detailDirectPassword.length < 8) {
+                    throw new Error("Password skal være på mindst 8 tegn")
+                }
+                const pwRes = await fetch("/api/admin/users", {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        action: "set-password",
+                        userId: detailUser.id,
+                        password: detailDirectPassword.trim(),
+                    }),
+                })
+                if (!pwRes.ok) {
+                    const j = await pwRes.json()
+                    throw new Error(j.error ?? "Fejl ved indstilling af password")
+                }
+            }
+
+            toast.success("Brugeroplysninger gemt")
+            setDetailUser(null)
+            await load()
+        } catch (err: unknown) {
+            toast.error(errorMessage(err))
+        } finally {
+            setDetailSaving(false)
+        }
+    }
+
+    async function handleGenerateDetailResetLink() {
+        if (!detailUser?.email) return
+        setResetLoading(true)
+        try {
+            const res = await fetch("/api/admin/user", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "generate-reset-link", email: detailUser.email }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            setDetailResetLink(json.reset_url)
+            toast.success("Reset-link genereret")
+        } catch (err: unknown) {
+            toast.error(errorMessage(err, "Fejl ved generering af reset-link"))
+        } finally {
+            setResetLoading(false)
+        }
+    }
+
+    async function handleToggleDetailBan() {
+        if (!detailUser) return
+        const action = detailUser.banned ? "activate" : "deactivate"
+        setToggleLoading(true)
+        try {
+            const res = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action, userId: detailUser.id }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(json.error)
+            toast.success(detailUser.banned ? "Konto genaktiveret" : "Konto deaktiveret")
+            setDetailUser(null)
+            await load()
+        } catch (err: unknown) {
+            toast.error(errorMessage(err))
+        } finally {
+            setToggleLoading(false)
+        }
+    }
+
     useEffect(() => { load() }, [])
 
     async function load() {
@@ -430,9 +560,6 @@ export default function AdminBrugerePage() {
                 subtitle="Administrer stab, jurister og rettighedshavere"
                 actions={
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                        <Button size="sm" variant="outline" onClick={() => openInvite(true)}>
-                            <Plus className="h-4 w-4 mr-1" />Ny rettighedshaver
-                        </Button>
                         <Button size="sm" onClick={() => openInvite(false)}>
                             <Plus className="h-4 w-4 mr-1" />Inviter stab
                         </Button>
@@ -569,48 +696,15 @@ export default function AdminBrugerePage() {
                         <p className="py-6 text-center text-sm text-muted-foreground">Ingen brugere fundet</p>
                     </MobileDataCard>
                 ) : filtered.map(u => (
-                    <MobileDataCard key={u.id} className={u.banned ? "opacity-60" : ""}>
+                    <MobileDataCard key={u.id} className={`cursor-pointer hover:bg-muted/30 transition-colors ${u.banned ? "opacity-60" : ""}`} onClick={() => openDetailModal(u)}>
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                                <p className="truncate font-medium">{u.full_name}</p>
+                                <p className="truncate font-medium flex items-center gap-2">
+                                    {u.full_name}
+                                    <Pencil className="h-3 w-3 text-muted-foreground" />
+                                </p>
                                 <p className="mt-1 truncate text-sm text-muted-foreground">{u.email ?? "Ingen email"}</p>
                             </div>
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-                                        <MoreHorizontal className="h-4 w-4" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
-                                        <DropdownMenuItem onClick={() => {
-                                            setEditUser(u)
-                                            setEditRoles(u.org_roles.slice())
-                                        }}>
-                                            <Pencil className="h-3.5 w-3.5 mr-2" />Skift rolle(r)
-                                        </DropdownMenuItem>
-                                    )}
-                                    {u.email && (
-                                        <DropdownMenuItem onClick={() => { setResetUser(u); setResetLink(null) }}>
-                                            <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
-                                        </DropdownMenuItem>
-                                    )}
-                                    {callerRole === "superadmin" && (
-                                        <>
-                                            <DropdownMenuSeparator />
-                                            <DropdownMenuItem
-                                                onClick={() => setToggleUser(u)}
-                                                className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                            >
-                                                {u.banned
-                                                    ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                                    : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                                }
-                                            </DropdownMenuItem>
-                                        </>
-                                    )}
-                                </DropdownMenuContent>
-                            </DropdownMenu>
                         </div>
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <MobileMetaRow label="Telefon">{u.phone ?? "—"}</MobileMetaRow>
@@ -645,25 +739,31 @@ export default function AdminBrugerePage() {
                             {callerRole === "superadmin" && <TableHead>Organisation</TableHead>}
                             <TableHead>Status</TableHead>
                             <TableHead>Sidst logget ind</TableHead>
-                            <TableHead className="w-12" />
                         </TableRow>
                     </TableHeader>
                     <TableBody>
                         {loading ? (
                             <TableRow>
-                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 9 : 8} className="py-10 text-center text-muted-foreground">
                                     <Loader2 className="inline h-4 w-4 animate-spin mr-2" />Henter...
                                 </TableCell>
                             </TableRow>
                         ) : filtered.length === 0 ? (
                             <TableRow>
-                                <TableCell colSpan={callerRole === "superadmin" ? 10 : 9} className="py-10 text-center text-muted-foreground">
+                                <TableCell colSpan={callerRole === "superadmin" ? 9 : 8} className="py-10 text-center text-muted-foreground">
                                     Ingen brugere fundet
                                 </TableCell>
                             </TableRow>
                         ) : filtered.map(u => (
-                            <TableRow key={u.id} className={u.banned ? "opacity-50" : ""}>
-                                <TableCell className="font-medium">{u.full_name}</TableCell>
+                            <TableRow
+                                key={u.id}
+                                className={`cursor-pointer hover:bg-muted/50 transition-colors ${u.banned ? "opacity-50" : ""}`}
+                                onClick={() => openDetailModal(u)}
+                            >
+                                <TableCell className="font-medium flex items-center gap-1.5">
+                                    {u.full_name}
+                                    <Pencil className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                                </TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.email ?? "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.phone ?? "—"}</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">{u.gender ? GENDER_LABELS[u.gender] ?? u.gender : "—"}</TableCell>
@@ -681,44 +781,6 @@ export default function AdminBrugerePage() {
                                     {u.last_sign_in
                                         ? new Date(u.last_sign_in).toLocaleDateString("da-DK", { day: "numeric", month: "short", year: "numeric" })
                                         : "—"}
-                                </TableCell>
-                                <TableCell>
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-7 w-7">
-                                                <MoreHorizontal className="h-4 w-4" />
-                                            </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                            {u.org_roles.length > 0 && (callerRole === "superadmin" || !u.org_roles.includes("superadmin")) && (
-                                                <DropdownMenuItem onClick={() => {
-                                                    setEditUser(u)
-                                                    setEditRoles(u.org_roles.slice())
-                                                }}>
-                                                    <Pencil className="h-3.5 w-3.5 mr-2" />Skift rolle(r)
-                                                </DropdownMenuItem>
-                                            )}
-                                            {u.email && (
-                                                <DropdownMenuItem onClick={() => { setResetUser(u); setResetLink(null) }}>
-                                                    <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
-                                                </DropdownMenuItem>
-                                            )}
-                                            {callerRole === "superadmin" && (
-                                                <>
-                                                    <DropdownMenuSeparator />
-                                                    <DropdownMenuItem
-                                                        onClick={() => setToggleUser(u)}
-                                                        className={u.banned ? "text-emerald-600" : "text-destructive"}
-                                                    >
-                                                        {u.banned
-                                                            ? <><UserCheck className="h-3.5 w-3.5 mr-2" />Genaktiver konto</>
-                                                            : <><UserX className="h-3.5 w-3.5 mr-2" />Deaktiver konto</>
-                                                        }
-                                                    </DropdownMenuItem>
-                                                </>
-                                            )}
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
                                 </TableCell>
                             </TableRow>
                         ))}
@@ -974,6 +1036,141 @@ export default function AdminBrugerePage() {
                         >
                             {toggleLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                             {toggleUser?.banned ? "Genaktiver" : "Deaktiver"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* ── Samlet Brugerredigering & Detaljer Dialog ── */}
+            <Dialog open={!!detailUser} onOpenChange={o => { if (!o) setDetailUser(null) }}>
+                <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <UserCog className="h-5 w-5" /> Rediger bruger oplysninger
+                        </DialogTitle>
+                        <DialogDescription>
+                            {detailUser?.email ? `${detailUser.full_name} (${detailUser.email})` : detailUser?.full_name}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="space-y-5 py-2">
+                        {/* Stamdata */}
+                        <div className="space-y-3">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Stamdata</h4>
+                            <div className="space-y-1.5">
+                                <Label>Navn</Label>
+                                <Input value={detailName} onChange={e => setDetailName(e.target.value)} placeholder="Fornavn Efternavn" />
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-1.5">
+                                    <Label>Telefon</Label>
+                                    <Input value={detailPhone} onChange={e => setDetailPhone(e.target.value)} placeholder="Tlf. nummer" />
+                                </div>
+                                <div className="space-y-1.5">
+                                    <Label>Titel / Stilling</Label>
+                                    <Input value={detailTitle} onChange={e => setDetailTitle(e.target.value)} placeholder="Fx Administrator" />
+                                </div>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label>Køn</Label>
+                                <select
+                                    value={detailGender}
+                                    onChange={e => setDetailGender(e.target.value)}
+                                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                >
+                                    <option value="">– Vælg køn –</option>
+                                    <option value="female">Kvinde</option>
+                                    <option value="male">Mand</option>
+                                    <option value="non_binary">Nonbinær</option>
+                                    <option value="other">Andet</option>
+                                    <option value="prefer_not_to_say">Ønsker ikke at oplyse</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {/* Roller */}
+                        <div className="space-y-3 border-t pt-4">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brugerroller</h4>
+                            <div className="space-y-0.5">
+                                {staffRoles.map(r => (
+                                    <RoleToggle
+                                        key={r}
+                                        role={r}
+                                        selected={detailRoles.includes(r)}
+                                        onToggle={() => setDetailRoles(toggleStaffRole(detailRoles, r))}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Adgangskode & Nulstilling */}
+                        <div className="space-y-3 border-t pt-4">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Adgangskode & Nulstilling</h4>
+                            <div className="space-y-2">
+                                {detailResetLink ? (
+                                    <div className="rounded-md border border-emerald-300 bg-emerald-50 p-3 text-xs dark:bg-emerald-950/40">
+                                        <p className="font-medium text-emerald-800 dark:text-emerald-300">Nulstillings-link genereret:</p>
+                                        <div className="mt-1 flex gap-2">
+                                            <Input value={detailResetLink} readOnly className="h-7 text-xs font-mono" />
+                                            <Button size="sm" variant="outline" className="h-7" onClick={() => {
+                                                navigator.clipboard.writeText(detailResetLink);
+                                                toast.success("Kopieret!");
+                                            }}>Kopiér</Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full text-xs gap-1.5"
+                                        disabled={resetLoading}
+                                        onClick={handleGenerateDetailResetLink}
+                                    >
+                                        {resetLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                                        Send / generér nulstillings-link
+                                    </Button>
+                                )}
+
+                                <div className="pt-2 space-y-1.5">
+                                    <Label className="text-xs">Eller sæt ny adgangskode direkte</Label>
+                                    <Input
+                                        type="password"
+                                        value={detailDirectPassword}
+                                        onChange={e => setDetailDirectPassword(e.target.value)}
+                                        placeholder="Skriv ny adgangskode (mindst 8 tegn)"
+                                        className="text-xs"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Konto status / Deaktiver */}
+                        <div className="border-t pt-4 flex items-center justify-between">
+                            <div>
+                                <p className="text-xs font-medium">Konto status</p>
+                                <p className="text-[11px] text-muted-foreground">
+                                    {detailUser?.banned ? "Kontoen er deaktiveret." : "Kontoen er aktiv."}
+                                </p>
+                            </div>
+                            <Button
+                                type="button"
+                                variant={detailUser?.banned ? "outline" : "destructive"}
+                                size="sm"
+                                disabled={toggleLoading}
+                                onClick={handleToggleDetailBan}
+                            >
+                                {toggleLoading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
+                                {detailUser?.banned ? "Genaktiver konto" : "Deaktiver konto"}
+                            </Button>
+                        </div>
+                    </div>
+
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setDetailUser(null)}>Annuller</Button>
+                        <Button onClick={handleSaveUserDetail} disabled={detailSaving}>
+                            {detailSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            Gem ændringer
                         </Button>
                     </DialogFooter>
                 </DialogContent>

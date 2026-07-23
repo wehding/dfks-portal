@@ -68,6 +68,9 @@ async function linkExistingAuthUserToHolder(
             admin.from("contracts").select("id", { count: "exact", head: true }).eq("rights_holder_id", currentProfile.id),
             admin.from("work_assignments").select("id", { count: "exact", head: true }).eq("rights_holder_id", currentProfile.id),
         ])
+        // En profil med relationer (affiliation/kontrakt/assignment) må aldrig auto-slettes — det
+        // ville kunne ramme en profil i en anden org. Kun en fuldt forældreløs stub (0 af alt, dvs.
+        // ikke tilknyttet nogen org) sammenflettes automatisk; alt andet kræver manuel sammenfletning.
         if ((affiliations ?? 0) > 0 || (contracts ?? 0) > 0 || (assignments ?? 0) > 0) {
             throw new Error("Der findes allerede en anden aktiv rettighedshaverprofil med denne loginbruger. Sammenflet profilerne manuelt.")
         }

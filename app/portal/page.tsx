@@ -20,9 +20,17 @@ export default async function PortalDashboardPage() {
   if (!user) redirect("/");
   const db = createServiceClient();
   const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
-  if (!holder) redirect("/onboarding");
+  if (!holder) {
+    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (staffRole) redirect("/admin");
+    redirect("/onboarding");
+  }
   const orgId = (Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations)?.org_id;
-  if (!orgId) redirect("/onboarding");
+  if (!orgId) {
+    const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+    if (staffRole) redirect("/admin");
+    redirect("/onboarding");
+  }
   const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),
@@ -79,7 +87,7 @@ export default async function PortalDashboardPage() {
       ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds)
       : { data: [] as Array<{ contract_id: string; extracted_data: Record<string, unknown> | null }> };
     const extractedMap = new Map((validations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
-    const salaryRows: Array<{ year: number; weekly: number; mine: boolean; holderId: string | null }> = [];
+    const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null }> = [];
     for (const contract of orgContracts ?? []) {
       const extracted = extractedMap.get(contract.id) as { salary?: number; salaryUnit?: string; startDate?: string; contractDate?: string } | null | undefined;
       if (!extracted?.salary || contract.type === "leverandør") continue;
@@ -94,15 +102,33 @@ export default async function PortalDashboardPage() {
       // Grundløn normaliseret til ugeløn.
       const weekly = unit === "daily" ? salary * 5 : unit === "monthly" ? Math.round(salary * 12 / 52) : salary;
       if (!Number.isFinite(weekly) || weekly <= 0 || !Number.isFinite(year)) continue;
-      salaryRows.push({ year, weekly, mine: isMine, holderId: contract.rights_holder_id ?? null });
+      salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null });
     }
     membersWithContracts = new Set(salaryRows.map(row => row.holderId).filter(Boolean)).size;
+    const MIN_MEMBERS_PER_YEAR = 10;
     const avg = (list: number[]) => (list.length ? Math.round(list.reduce((sum, value) => sum + value, 0) / list.length) : null);
-    salaryPoints = [...new Set(salaryRows.map(row => row.year))].sort((a, b) => a - b).map(year => ({
-      year,
-      egen: avg(salaryRows.filter(row => row.year === year && row.mine).map(row => row.weekly)),
-      gennemsnit: avg(salaryRows.filter(row => row.year === year).map(row => row.weekly)),
-    }));
+    // Gennemsnit pr. MEDLEM (ikke pr. kontrakt) og kun for år med nok distinkte bidragydere.
+    // Det sikrer at et enkelt medlems ugeløn aldrig kan aflæses som "gennemsnit" et år med få bidragydere.
+    const yearlyAverage = (rows: typeof salaryRows) => {
+      const byHolder = new Map<string, number[]>();
+      for (const row of rows) {
+        if (!row.contributes || !row.holderId) continue;
+        const list = byHolder.get(row.holderId) ?? [];
+        list.push(row.weekly);
+        byHolder.set(row.holderId, list);
+      }
+      if (byHolder.size < MIN_MEMBERS_PER_YEAR) return null;
+      const perHolderMeans = Array.from(byHolder.values()).map(list => list.reduce((sum, value) => sum + value, 0) / list.length);
+      return Math.round(perHolderMeans.reduce((sum, value) => sum + value, 0) / perHolderMeans.length);
+    };
+    salaryPoints = [...new Set(salaryRows.map(row => row.year))].sort((a, b) => a - b).map(year => {
+      const yearRows = salaryRows.filter(row => row.year === year);
+      return {
+        year,
+        egen: avg(yearRows.filter(row => row.mine).map(row => row.weekly)),
+        gennemsnit: yearlyAverage(yearRows),
+      };
+    });
   }
   const insufficientMembers = membersWithContracts < 10;
   const waitingItems = [

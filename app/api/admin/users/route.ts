@@ -9,6 +9,7 @@ import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
+import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
 import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
 
 // Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
@@ -58,11 +59,14 @@ export async function GET() {
 
     const authMap = new Map(authData.users.map(u => [u.id, u]))
 
-    // Hent alle staff-roller fra user_org_roles
-    const { data: orgRoles } = await admin
-        .from("user_org_roles")
-        .select("user_id, role")
-        .eq("org_id", orgId)
+    const isSuperadmin = caller.role === "superadmin" || SUPERADMIN_ROLES.includes(caller.role as "superadmin" | "admin");
+
+    // Hent staff-roller fra user_org_roles
+    let orgRolesQuery = admin.from("user_org_roles").select("user_id, role");
+    if (!isSuperadmin) {
+        orgRolesQuery = orgRolesQuery.eq("org_id", orgId);
+    }
+    const { data: orgRoles } = await orgRolesQuery;
 
     // Gruppér roller per bruger
     const rolesMap = new Map<string, string[]>()
@@ -74,17 +78,23 @@ export async function GET() {
 
     // Rettighedshavere med user_id — bruges til at berige staff-entries
     let rh: Array<{ id: string; full_name: string; email: string | null; user_id: string | null; onboarding_completed: boolean | null; gender?: string | null }> | null = null
-    const rhWithGender = await admin
+    let rhQueryWithGender = admin
         .from("rettighedshavere")
         .select("id, full_name, email, user_id, onboarding_completed, gender, org_affiliations!inner(org_id)")
-        .eq("org_affiliations.org_id", orgId)
         .not("user_id", "is", null)
-    if (rhWithGender.error && rhWithGender.error.message.includes("gender")) {
-        const rhWithoutGender = await admin
+    if (!isSuperadmin) {
+        rhQueryWithGender = rhQueryWithGender.eq("org_affiliations.org_id", orgId)
+    }
+    const rhWithGender = await rhQueryWithGender
+    if (isMissingGenderColumn(rhWithGender.error)) {
+        let rhQueryWithoutGender = admin
             .from("rettighedshavere")
             .select("id, full_name, email, user_id, onboarding_completed, org_affiliations!inner(org_id)")
-            .eq("org_affiliations.org_id", orgId)
             .not("user_id", "is", null)
+        if (!isSuperadmin) {
+            rhQueryWithoutGender = rhQueryWithoutGender.eq("org_affiliations.org_id", orgId)
+        }
+        const rhWithoutGender = await rhQueryWithoutGender
         rh = rhWithoutGender.data ?? []
     } else {
         rh = rhWithGender.data ?? []
@@ -370,6 +380,47 @@ export async function PATCH(req: NextRequest) {
             ban_duration: "none",
         })
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        return NextResponse.json({ ok: true })
+    }
+
+    // ── Opdater stamdata ──────────────────────────────────────
+    if (body.action === "update-profile") {
+        const { userId, fullName, phone, title, gender } = body
+        if (!userId) return NextResponse.json({ error: "userId påkrævet" }, { status: 400 })
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
+
+        const { error: authErr } = await admin.auth.admin.updateUserById(userId, {
+            user_metadata: {
+                full_name: fullName?.trim() || undefined,
+                phone: phone?.trim() || undefined,
+                title: title?.trim() || undefined,
+                gender: gender || undefined,
+            },
+        })
+        if (authErr) return NextResponse.json({ error: authErr.message }, { status: 500 })
+
+        await admin.from("rettighedshavere").update({
+            full_name: fullName?.trim() || undefined,
+            phone: phone?.trim() || undefined,
+            gender: gender || undefined,
+        }).eq("user_id", userId)
+
+        return NextResponse.json({ ok: true })
+    }
+
+    // ── Sæt nyt password direkte ─────────────────────────────
+    if (body.action === "set-password") {
+        const { userId, password } = body
+        if (!userId || !password || password.length < 8) {
+            return NextResponse.json({ error: "Gyldigt password på mindst 8 tegn påkrævet" }, { status: 400 })
+        }
+        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+        if (targetError) return targetError
+
+        const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password })
+        if (pwErr) return NextResponse.json({ error: pwErr.message }, { status: 500 })
+
         return NextResponse.json({ ok: true })
     }
 

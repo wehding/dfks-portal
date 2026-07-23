@@ -161,11 +161,24 @@ export async function permanentlyDeleteRightsHolders(
 
     await db.from("org_affiliations").delete().in("rights_holder_id", holderIds).eq("org_id", admin.orgId);
 
-    const { error: deleteError } = await db
-      .from("rettighedshavere")
-      .delete()
-      .in("id", holderIds);
-    if (deleteError) throw new Error(deleteError.message);
+    // org_affiliations er mange-til-mange: en rettighedshaver kan tilhøre flere organisationer.
+    // Slet KUN selve rettighedshaver-rækken hvis den ikke længere er tilknyttet nogen organisation —
+    // ellers ville vi ødelægge en holder, som en anden org stadig bruger (dangling FK / datatab).
+    const { data: remainingAffiliations, error: remainingError } = await db
+      .from("org_affiliations")
+      .select("rights_holder_id")
+      .in("rights_holder_id", holderIds);
+    if (remainingError) throw new Error(remainingError.message);
+    const stillAffiliated = new Set((remainingAffiliations ?? []).map(row => row.rights_holder_id as string));
+    const deletableHolderIds = holderIds.filter(id => !stillAffiliated.has(id));
+
+    if (deletableHolderIds.length) {
+      const { error: deleteError } = await db
+        .from("rettighedshavere")
+        .delete()
+        .in("id", deletableHolderIds);
+      if (deleteError) throw new Error(deleteError.message);
+    }
 
     const userIds = candidates.map(holder => holder.userId).filter((userId): userId is string => Boolean(userId));
     if (userIds.length) {
