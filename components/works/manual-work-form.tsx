@@ -8,6 +8,7 @@ import { useI18n } from "@/lib/i18n";
 import { isManualSeries, type ManualWorkFormValue } from "@/lib/manual-work";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
+import { ProductionCompanyPicker } from "@/components/production-company-picker";
 
 const selectCls =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring dark:bg-input/30";
@@ -60,9 +61,16 @@ export function ManualWorkFormFields({ value, onChange, locale }: Props) {
           <Label className="text-sm font-medium text-muted-foreground">{t("works.durationField")}</Label>
           <Input value={value.duration_minutes} onChange={event => update("duration_minutes", event.target.value)} inputMode="numeric" />
         </div>
-        <div className="space-y-1.5">
-          <Label className="text-sm font-medium text-muted-foreground">{locale === "da" ? "Produktionsselskab" : "Production company"}</Label>
-          <Input value={value.production_company} onChange={event => update("production_company", event.target.value)} />
+        <div className="space-y-1.5 sm:col-span-2">
+          <ProductionCompanyPicker
+            value={value.production_companies}
+            suggestedName={value.production_company}
+            onChange={companies => onChange({
+              ...value,
+              production_companies: companies,
+              production_company: companies[0]?.canonicalName ?? "",
+            })}
+          />
         </div>
         <div className="space-y-1.5">
           <Label className="text-sm font-medium text-muted-foreground">{locale === "da" ? "Instruktør" : "Director"}</Label>

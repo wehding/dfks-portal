@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { tjekNavn } from "@/lib/rettighedshaver-tjek";
+import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
 import { isUuid } from "@/lib/uuid";
 import { resolveTerminology } from "@/lib/branding";
@@ -836,6 +838,7 @@ export type AdminContractUpdate = {
   working_title?: string | null;
   season_number?: number | null;
   episode_numbers?: number[] | null;
+  producer_selections?: ProductionCompanySelection[];
 };
 
 export async function updateAdminContract(contractId: string, values: AdminContractUpdate) {
@@ -846,8 +849,16 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
   const { data: existing } = await db.from("contracts").select("id,status,org_id").eq("id", contractId).eq("org_id", orgId).maybeSingle();
   if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
-  const { error } = await db.from("contracts").update(values).eq("id", contractId).eq("org_id", orgId);
+  const { producer_selections: producerSelections, ...contractValues } = values;
+  const { error } = await db.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
   if (error) return { success: false, error: error.message };
+  if (producerSelections) {
+    try {
+      await syncContractProducerRelations(db, contractId, producerSelections, "admin");
+    } catch (relationError) {
+      return { success: false, error: relationError instanceof Error ? relationError.message : "Producentrelationer kunne ikke gemmes" };
+    }
+  }
   if (existing.status !== "valideret" && values.status === "valideret" && values.rights_holder_id) {
     try {
       await sendMemberNotification({ eventKey: `contract-validated:${contractId}`, eventType: "contract_validated", orgId, rightsHolderId: values.rights_holder_id, category: "transactional", subject: "Din kontrakt er valideret", bodyText: "DFKS har valideret din kontrakt. Du kan se resultatet i portalen.", path: `/portal/mine-kontrakter?contract=${contractId}`, entityType: "contract", entityId: contractId });
@@ -939,16 +950,29 @@ export async function createAdminEmployer(params: { name: string; cvr?: string |
     return { success: false, error: "Ikke autoriseret" };
   }
 
+  const normalizedCvr = params.cvr?.replace(/\D/g, "") || null;
+  if (normalizedCvr && !/^\d{8}$/.test(normalizedCvr)) return { success: false, error: "Et CVR-nummer skal bestå af 8 cifre" };
+  if (normalizedCvr) {
+    const { data: existingRegistration } = await db.from("employer_legal_entities").select("employer_id").eq("registration_country", "DK").eq("registration_type", "CVR").eq("registration_number", normalizedCvr).maybeSingle();
+    if (existingRegistration) return { success: false, error: "CVR-nummeret er allerede registreret under et andet kanonisk selskab" };
+  }
   const { data, error } = await db
     .from("employers")
     .insert({
       name: params.name.trim(),
-      cvr: params.cvr?.trim() || null,
+      cvr: normalizedCvr,
     })
     .select()
     .single();
 
   if (error) return { success: false, error: error.message };
+  if (normalizedCvr) {
+    const legal = await db.from("employer_legal_entities").insert({ employer_id: data.id, legal_name: data.name, registration_country: "DK", registration_type: "CVR", registration_number: normalizedCvr, entity_kind: "company", is_primary: true, created_by: user.id });
+    if (legal.error && legal.error.code !== "42P01" && legal.error.code !== "PGRST205") {
+      await db.from("employers").delete().eq("id", data.id);
+      return { success: false, error: legal.error.message };
+    }
+  }
   return { success: true, employer: data };
 }
 

@@ -60,6 +60,8 @@ import { SeriesEpisodeSelector } from "@/components/works/series-episode-selecto
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
+import { ProductionCompanyPicker } from "@/components/production-company-picker";
+import { normalizeCompanyName, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -773,6 +775,7 @@ export default function VaerksadministrationPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<WorkRow | null>(null);
   const [editForm, setEditForm] = useState<WorkForm | null>(null);
+  const [editProducerSelections, setEditProducerSelections] = useState<ProductionCompanySelection[]>([]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [adminComment, setAdminComment] = useState("");
   // Admin-redigering af antal afsnit + hvilke afsnit medlemmet krediteres på (ved serie-rettelse)
@@ -788,6 +791,7 @@ export default function VaerksadministrationPage() {
   const [addQuery, setAddQuery] = useState("");
   const [addTypeFilter, setAddTypeFilter] = useState("all");
   const [addForm, setAddForm] = useState<AddWorkForm>(defaultAddForm);
+  const [addProducerSelections, setAddProducerSelections] = useState<ProductionCompanySelection[]>([]);
   const [addManualMode, setAddManualMode] = useState(false);
   const [addAssignments, setAddAssignments] = useState<AssignmentDraft[]>([]);
   const [addDistributions, setAddDistributions] = useState<DistributionDraft[]>([]);
@@ -1113,6 +1117,24 @@ export default function VaerksadministrationPage() {
     if (results.some(r => r.success)) notifyWorksUpdated();
   };
 
+  const resolveProducerSelections = async (names: string[] | null | undefined) => {
+    const cleanNames = [...new Set((names ?? []).map(name => name.trim()).filter(Boolean))];
+    const resolved = await Promise.all(cleanNames.map(async name => {
+      try {
+        const response = await fetch(`/api/production-companies?query=${encodeURIComponent(name)}`);
+        if (!response.ok) return null;
+        const json = await response.json();
+        const option = (json.data as ProductionCompanyOption[] | undefined)?.find(company =>
+          normalizeCompanyName(company.canonicalName) === normalizeCompanyName(name)
+          || company.aliases.some(alias => normalizeCompanyName(alias) === normalizeCompanyName(name))
+          || company.legalEntities.some(entity => normalizeCompanyName(entity.legalName) === normalizeCompanyName(name))
+        );
+        return option ? { employerId: option.employerId, canonicalName: option.canonicalName } : null;
+      } catch { return null; }
+    }));
+    return resolved.filter((selection): selection is ProductionCompanySelection => Boolean(selection));
+  };
+
   const openEdit = async (work: WorkRow) => {
     setEditingSeasonGroup(null);
     setEditingSeasonEpisodes([]);
@@ -1125,6 +1147,7 @@ export default function VaerksadministrationPage() {
     void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
+    void resolveProducerSelections(work.production_companies).then(setEditProducerSelections);
     setEditDistributions(toDistributionDrafts(work));
     setAssignmentDrafts(Object.fromEntries((work.work_assignments ?? []).map(assignment => [
       assignment.id,
@@ -1152,6 +1175,7 @@ export default function VaerksadministrationPage() {
     setWorks(prev => prev.map(item => item.id === work.id ? detailedWork : item));
     setEditing(detailedWork);
     setEditForm(toForm(detailedWork));
+    void resolveProducerSelections(detailedWork.production_companies).then(setEditProducerSelections);
     setEditDistributions(toDistributionDrafts(detailedWork));
     setAssignmentDrafts(Object.fromEntries((detailedWork.work_assignments ?? []).map(assignment => [
       assignment.id,
@@ -1250,6 +1274,7 @@ export default function VaerksadministrationPage() {
           status: editForm.status === "arkiveret" ? "godkendt" : editForm.status,
           dfi_metadata: editForm.dfi_metadata || null,
         },
+        productionCompanies: editProducerSelections,
         distributions: distributionPayload(editDistributions),
         assignments: [
           ...Object.values(assignmentDrafts).map(assignment => ({
@@ -1445,6 +1470,7 @@ export default function VaerksadministrationPage() {
           status,
           dfi_metadata: editForm.dfi_metadata || null,
         },
+        productionCompanies: editProducerSelections,
         broadcaster: editForm.broadcaster === NO_BROADCASTER ? null : editForm.broadcaster,
       });
       setNotice(status === "godkendt" ? "Værket er godkendt." : "Værket er arkiveret.");
@@ -1845,6 +1871,7 @@ export default function VaerksadministrationPage() {
       await createAdminWork({
         workId: pickedSource === "local" && pickedResult ? textValue(pickedResult.id) : null,
         data,
+        productionCompanies: addProducerSelections,
         assignments: addAssignments
           .filter(assignment => assignment.rightsHolderId && assignment.role)
           .map(assignment => ({
@@ -1862,6 +1889,7 @@ export default function VaerksadministrationPage() {
       setAddOpen(false);
       setAddQuery("");
       setAddForm(defaultAddForm());
+      setAddProducerSelections([]);
       setAddManualMode(false);
       setAddAssignments([]);
       setAddDistributions([]);
@@ -1887,8 +1915,9 @@ export default function VaerksadministrationPage() {
   const addRequiresEpisodeSelection =
     addAssignments.some(assignment => Boolean(assignment.rightsHolderId)) &&
     (addForm.type === "tv-serie" || addForm.type === "dokumentar-serie") &&
-    addEpisodeOptions.length > 0 &&
+    (addEpisodeOptions.length > 0 || (addManualMode && Number(addForm.episode_count) > 0)) &&
     addSelectedEpisodes.length === 0;
+  const addIsSeries = addForm.type === "tv-serie" || addForm.type === "dokumentar-serie";
 
   return (
     <div className="space-y-6">
@@ -2505,7 +2534,7 @@ export default function VaerksadministrationPage() {
                       <Field label="Produktionslande"><Input value={editForm.production_countries} onChange={e => setEditForm({ ...editForm, production_countries: e.target.value })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.production_companies}>
-                      <Field label="Produktionsselskaber"><Input value={editForm.production_companies} onChange={e => setEditForm({ ...editForm, production_companies: e.target.value })} /></Field>
+                      <div className="md:col-span-2"><ProductionCompanyPicker value={editProducerSelections} suggestedName={editForm.production_companies} onChange={selections => { setEditProducerSelections(selections); setEditForm({ ...editForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
                     </DiffField>
                     <DiffField diff={activeDiffMap.dfi_id}>
                       <Field label="DFI-id"><Input value={editForm.dfi_id} onChange={e => setEditForm({ ...editForm, dfi_id: e.target.value })} /></Field>
@@ -2850,6 +2879,7 @@ export default function VaerksadministrationPage() {
           setAddAssignments([]);
           setAddDistributions([]);
           setAddForm(defaultAddForm());
+          setAddProducerSelections([]);
           setPickedResult(null);
           setPickedSource(null);
           setPickedUnifiedAddResult(null);
@@ -3023,13 +3053,24 @@ export default function VaerksadministrationPage() {
                   </Field>
                   <Field label="Premiereår"><Input value={addForm.year} onChange={e => setAddForm({ ...addForm, year: e.target.value })} /></Field>
                   <Field label="Varighed"><Input value={addForm.duration_minutes} onChange={e => setAddForm({ ...addForm, duration_minutes: e.target.value })} /></Field>
-                  <Field label="Sæsoner"><Input value={addForm.season_count} onChange={e => setAddForm({ ...addForm, season_count: e.target.value })} /></Field>
-                  <Field label="Afsnit"><Input value={addForm.episode_count} onChange={e => setAddForm({ ...addForm, episode_count: e.target.value })} /></Field>
+                  {addManualMode && addIsSeries && <>
+                    <SeasonStepper value={Number(addSeasonNumber) || 1} onChange={season => { setAddSeasonNumber(String(season)); setAddSelectedEpisodes([]); }} />
+                    <Field label="Antal afsnit"><Input inputMode="numeric" value={addForm.episode_count} onChange={e => { setAddForm({ ...addForm, episode_count: e.target.value.replace(/\D/g, "") }); setAddSelectedEpisodes([]); }} /></Field>
+                    {Number(addForm.episode_count) > 0 && <div className="md:col-span-2"><SeriesEpisodeSelector
+                      season={Number(addSeasonNumber) || 1}
+                      onSeasonChange={season => { setAddSeasonNumber(String(season)); setAddSelectedEpisodes([]); }}
+                      options={buildCompleteEpisodeOptions({ episodeCount: Number(addForm.episode_count), seasonNumber: Number(addSeasonNumber) || 1 })}
+                      selected={addSelectedEpisodes}
+                      onSelectedChange={setAddSelectedEpisodes}
+                      label="Vælg afsnit"
+                      showSeason={false}
+                    /></div>}
+                  </>}
                   <Field label="Genre"><Input value={addForm.genre} onChange={e => setAddForm({ ...addForm, genre: e.target.value })} /></Field>
                   <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
                   <Field label="Produktionslande"><Input value={addForm.production_countries} onChange={e => setAddForm({ ...addForm, production_countries: e.target.value })} /></Field>
-                  <Field label="Produktionsselskaber"><Input value={addForm.production_companies} onChange={e => setAddForm({ ...addForm, production_companies: e.target.value })} /></Field>
+                  <div className="md:col-span-2"><ProductionCompanyPicker value={addProducerSelections} suggestedName={addForm.production_companies} onChange={selections => { setAddProducerSelections(selections); setAddForm({ ...addForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
                   <div className="md:col-span-2"><Field label="Beskrivelse"><Textarea value={addForm.description} onChange={e => setAddForm({ ...addForm, description: e.target.value })} /></Field></div>
                   <Field label="DFI ID"><Input value={addForm.dfi_id} onChange={e => setAddForm({ ...addForm, dfi_id: e.target.value })} /></Field>
                   <Field label="TMDB ID"><Input value={addForm.tmdb_id} onChange={e => setAddForm({ ...addForm, tmdb_id: e.target.value })} /></Field>

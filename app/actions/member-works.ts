@@ -13,6 +13,8 @@ import { buildCompleteEpisodeOptions, episodeOptionsFromLocalChildren, isSeriesT
 import { isExactManualWorkMatch, manualWorkDuplicateDecision } from "@/lib/manual-work";
 import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
+import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -31,6 +33,7 @@ type MemberWorkData = {
   genre?: string | null;
   director?: string | null;
   production_companies?: string[] | null;
+  production_company_selections?: ProductionCompanySelection[] | null;
   description?: string | null;
   poster_url?: string | null;
   dfi_metadata?: DfiMetadata | null;
@@ -438,12 +441,11 @@ function normalizeCoEditors(coEditors?: ProposedCoEditor[]) {
     }));
 }
 
-async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, title: string, year: number | null, orgId: string) {
+async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, title: string, year: number | null) {
   if (!title.trim()) return [];
   const { data } = await db
     .from("works")
     .select("id, title, type, year, status, dfi_id, tmdb_id, poster_url")
-    .eq("org_id", orgId)
     .limit(200);
 
   return (data ?? [])
@@ -457,13 +459,12 @@ async function findSimilarWorks(db: ReturnType<typeof createServiceClient>, titl
 export async function findManualWorkDuplicates(title: string, year: number | null) {
   const db = createServiceClient();
   const user = await currentUser();
-  const orgId = await currentOrgId(db, user.id);
+  await currentOrgId(db, user.id);
   if (!title.trim() || !year) return { success: true, matches: [] };
 
   const { data, error } = await db
     .from("works")
     .select("id, title, type, year, poster_url, status")
-    .eq("org_id", orgId)
     .eq("year", year);
   if (error) return { success: false, error: error.message, matches: [] };
 
@@ -695,14 +696,13 @@ export async function addWorkForMember(params: {
 export async function searchLocalWorksForMember(query: string) {
   const user = await currentUser();
   const db = createServiceClient();
-  const orgId = await currentOrgId(db, user.id);
+  await currentOrgId(db, user.id);
   const q = query.trim();
   if (!q) return { success: true, works: [] };
 
   const { data, error } = await db
     .from("works")
-    .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description, work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name))")
-    .eq("org_id", orgId)
+    .select("id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, field_sources, poster_url, description")
     .ilike("title", `%${q}%`)
     .limit(10);
 
@@ -728,9 +728,9 @@ export async function linkExistingWorkForMember(params: {
     .from("works")
     .select("id, title, type, year, parent_work_id, season_number, episode_number, status, duration_minutes, episode_count, season_count, genre, director, description, poster_url, dfi_id, tmdb_id, dfi_metadata")
     .eq("id", params.workId)
-    .eq("org_id", orgId)
     .single();
   if (workError || !work) return { success: false, error: "Værket findes ikke." };
+  await syncWorkProducerRelations(db, { workId: params.workId, orgId, names: [], source: "catalogue_link" });
 
   let targetWorkIds = [params.workId];
   let seriesParentWorkId: string | null = null;
@@ -807,7 +807,6 @@ export async function linkExistingWorkForMember(params: {
     let siblingQuery = db
       .from("works")
       .select("id, episode_number")
-      .eq("org_id", orgId)
       .in("type", ["tv-serie", "dokumentar-serie"])
       .not("episode_number", "is", null);
     if (work.dfi_id) siblingQuery = siblingQuery.eq("dfi_id", work.dfi_id);
@@ -929,7 +928,7 @@ export async function addWorkForMemberWithApproval(params: {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const orgId = await currentOrgId(db, user.id);
-  const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year, orgId);
+  const similarWorks = await findSimilarWorks(db, params.workData.title, params.workData.year);
   const exactExistingWork = similarWorks.find(work => {
     if (params.source === "manual") {
       return isExactManualWorkMatch(work, { title: params.workData.title, year: params.workData.year });
@@ -1002,13 +1001,13 @@ export async function addWorkForMemberWithApproval(params: {
     if (forceManualDuplicate) {
       parentWork = null;
     } else if (enrichedWorkData.dfi_id) {
-      const { data } = await db.from("works").select("*").eq("dfi_id", enrichedWorkData.dfi_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      const { data } = await db.from("works").select("*").eq("dfi_id", enrichedWorkData.dfi_id).is("parent_work_id", null).maybeSingle();
       parentWork = data;
     } else if (enrichedWorkData.tmdb_id) {
-      const { data } = await db.from("works").select("*").eq("tmdb_id", enrichedWorkData.tmdb_id).eq("org_id", orgId).is("parent_work_id", null).maybeSingle();
+      const { data } = await db.from("works").select("*").eq("tmdb_id", enrichedWorkData.tmdb_id).is("parent_work_id", null).maybeSingle();
       parentWork = data;
     } else {
-      let parentQuery = db.from("works").select("*").eq("title", enrichedWorkData.title).eq("org_id", orgId).is("parent_work_id", null);
+      let parentQuery = db.from("works").select("*").eq("title", enrichedWorkData.title).is("parent_work_id", null);
       if (params.source === "manual" && enrichedWorkData.year) {
         parentQuery = parentQuery.eq("year", enrichedWorkData.year);
       }
@@ -1163,6 +1162,14 @@ export async function addWorkForMemberWithApproval(params: {
 
     finalWorkId = workId;
   }
+
+  await syncWorkProducerRelations(db, {
+    workId: finalWorkId,
+    orgId,
+    selections: params.workData.production_company_selections,
+    names: params.workData.production_companies,
+    source: params.source ?? "manual",
+  });
 
   if (requiresApproval) {
     const requestId = await createWorkRequest({
@@ -1539,19 +1546,17 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
   const db = createServiceClient();
   const user = await currentUser();
-  const orgId = await currentOrgId(db, user.id);
+  await currentOrgId(db, user.id);
 
   let localWorks: any[] = [];
   try {
     let { data, error } = await db.from("works")
       .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, imdb_id, wikidata_id, poster_url, description, parent_work_id")
-      .eq("org_id", orgId)
       .ilike("title", `%${q}%`)
       .limit(15);
     if (isMissingOptionalWorkColumn(error)) {
       const retry = await db.from("works")
         .select("id, title, type, year, duration_minutes, season_count, episode_count, season_number, episode_number, genre, director, production_companies, status, dfi_id, tmdb_id, poster_url, description, parent_work_id")
-        .eq("org_id", orgId)
         .ilike("title", `%${q}%`)
         .limit(15);
       data = (retry.data ?? []).map(work => ({ ...work, imdb_id: null, wikidata_id: null }));

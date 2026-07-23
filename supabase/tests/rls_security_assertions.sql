@@ -207,4 +207,38 @@ begin
   end if;
 end $$;
 
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'employer_aliases',
+    'employer_legal_entities',
+    'work_organisations',
+    'work_employers',
+    'contract_employers',
+    'employer_merge_audit'
+  ] loop
+    if not exists (
+      select 1 from pg_class relation
+      join pg_namespace namespace on namespace.oid = relation.relnamespace
+      where namespace.nspname = 'public'
+        and relation.relname = table_name
+        and relation.relrowsecurity
+    ) then
+      raise exception 'RLS failure: %.% is missing or RLS is disabled', 'public', table_name;
+    end if;
+    if has_table_privilege('anon', format('public.%I', table_name), 'SELECT') then
+      raise exception 'RLS failure: anon can select public.%', table_name;
+    end if;
+  end loop;
+
+  if not has_table_privilege('authenticated', 'public.employer_legal_entities', 'SELECT') then
+    raise exception 'RLS failure: authenticated cannot read shared legal entities';
+  end if;
+  if has_function_privilege('authenticated', 'public.merge_canonical_employers(uuid,uuid,uuid)', 'EXECUTE') then
+    raise exception 'RLS failure: authenticated can execute canonical employer merge';
+  end if;
+end $$;
+
 rollback;

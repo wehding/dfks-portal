@@ -10,7 +10,7 @@ import {
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
-import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, createAdminEmployer, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
+import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb"
@@ -44,6 +44,8 @@ import { SeasonStepper } from "@/components/works/season-stepper"
 import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
+import { ProductionCompanyPicker } from "@/components/production-company-picker"
+import type { ProductionCompanySelection } from "@/lib/production-companies"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -312,6 +314,7 @@ function AdminKontrakterContent() {
     // Edit dialog
     const [editContract, setEditContract] = useState<ContractRow | null>(null)
     const [editForm, setEditForm] = useState<EditForm | null>(null)
+    const [editProducerSelections, setEditProducerSelections] = useState<ProductionCompanySelection[]>([])
     const [editWorkSearch, setEditWorkSearch] = useState("")
     const [editWorkTypeFilter, setEditWorkTypeFilter] = useState("all")
     const [editSaving, setEditSaving] = useState(false)
@@ -416,7 +419,6 @@ function AdminKontrakterContent() {
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
     const [navneTjekResult, setNavneTjekResult] = useState<NavneTjekResult | null>(null)
     const [navneTjekLoading, setNavneTjekLoading] = useState(false)
-    const [creatingEmployer, setCreatingEmployer] = useState(false)
     const closeEditDialog = () => {
         setEditContract(null)
         setEditForm(null)
@@ -943,62 +945,6 @@ function AdminKontrakterContent() {
 
     // ── Edit ──────────────────────────────────────────────────
 
-    // ── Fuzzy match & normalize helpers ──────────────────────
-    const normalizeMatchText = (value: unknown) => {
-        return String(value ?? "")
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/[^a-z0-9æøå]+/g, " ")
-            .replace(/\s+/g, " ")
-            .trim()
-    }
-
-    const levenshtein = (a: string, b: string) => {
-        const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i])
-        for (let j = 1; j <= b.length; j++) matrix[0][j] = j
-        for (let i = 1; i <= a.length; i++) {
-            for (let j = 1; j <= b.length; j++) {
-                matrix[i][j] = a[i - 1] === b[j - 1]
-                    ? matrix[i - 1][j - 1]
-                    : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1
-            }
-        }
-        return matrix[a.length][b.length]
-    }
-
-    const fuzzyTitleScore = (a: string, b: string) => {
-        const left = normalizeMatchText(a)
-        const right = normalizeMatchText(b)
-        if (!left || !right) return 0
-        if (left === right) return 1
-        const distance = levenshtein(left, right)
-        const similarity = 1 - distance / Math.max(left.length, right.length)
-        const leftTokens = new Set(left.split(" "))
-        const rightTokens = new Set(right.split(" "))
-        const overlap = [...leftTokens].filter(token => rightTokens.has(token)).length / Math.max(1, Math.min(leftTokens.size, rightTokens.size))
-        return Math.max(similarity, overlap)
-    }
-
-    const findBestEmployerMatch = (extractedName: string | null, employersList: Employer[]) => {
-        if (!extractedName) return null
-        const normExtracted = normalizeMatchText(extractedName)
-        if (!normExtracted) return null
-
-        let bestMatch: Employer | null = null
-        let bestScore = 0
-
-        for (const emp of employersList) {
-            const score = fuzzyTitleScore(emp.name, normExtracted)
-            if (score > bestScore) {
-                bestScore = score
-                bestMatch = emp
-            }
-        }
-
-        return bestScore >= 0.6 ? { employer: bestMatch, score: bestScore } : null
-    }
-
     const openEdit = (c: ContractRow) => {
         setEditContract(c)
         setAdminReply("")
@@ -1026,6 +972,16 @@ function AdminKontrakterContent() {
             work_id: c.work_id ?? "",
             working_title: c.working_title ?? "",
         })
+        setEditProducerSelections(c.employer_id ? [{
+            employerId: c.employer_id,
+            canonicalName: c.employer_name ?? employers.find(employer => employer.id === c.employer_id)?.name ?? "Producent",
+        }] : [])
+        void fetch(`/api/admin/contracts/${c.id}/producers`)
+            .then(response => response.ok ? response.json() : null)
+            .then(json => {
+                if (json?.data?.length) setEditProducerSelections(json.data)
+            })
+            .catch(() => undefined)
         setAddSeason(String(c.season_number ?? 1))
         setSelectedEpisodes(c.episode_numbers ?? [])
         if (c.work_id) {
@@ -1375,6 +1331,7 @@ function AdminKontrakterContent() {
                     start_date: editForm.start_date || null,
                     end_date: editForm.end_date || null,
                     employer_id: editForm.employer_id || null,
+                    producer_selections: editProducerSelections,
                     rights_holder_id: editForm.rights_holder_id || null,
                     work_id: resolvedWorkId || null,
                     working_title: editForm.working_title || null,
@@ -2262,67 +2219,21 @@ function AdminKontrakterContent() {
                                         )}
                                     </div>
                                 </div>
-                                <div className="space-y-1">
-                                    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-                                        <Label className="text-xs">Producent (juridisk)</Label>
-                                        {(() => {
-                                            const validation = editContract?.validation_data
-                                            const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
-                                            if (!extractedEmployer) return null
-                                            return (
-                                                <Button
-                                                    type="button"
-                                                    variant="link"
-                                                    size="xs"
-                                                    className="h-auto max-w-full justify-start whitespace-normal p-0 text-left text-[10px] leading-snug text-primary hover:underline"
-                                                    disabled={creatingEmployer}
-                                                    onClick={async () => {
-                                                        const cvr = window.prompt(`Opret nyt selskab "${extractedEmployer}" i databasen.\n\nIndtast CVR-nummer (valgfrit):`, "")
-                                                        if (cvr === null) return
-                                                        setCreatingEmployer(true)
-                                                        const res = await createAdminEmployer({ name: extractedEmployer, cvr })
-                                                        setCreatingEmployer(false)
-                                                        if (res.success && res.employer) {
-                                                            toast.success(`Selskabet "${extractedEmployer}" er oprettet!`)
-                                                            setEmployers(prev => [...prev, res.employer].sort((a,b) => a.name.localeCompare(b.name)))
-                                                            setEditForm(f => f && ({ ...f, employer_id: res.employer.id }))
-                                                        } else {
-                                                            toast.error(res.error ?? "Kunne ikke oprette selskab")
-                                                        }
-                                                    }}
-                                                >
-                                                    Opret &quot;{extractedEmployer}&quot;
-                                                </Button>
-                                            )
-                                        })()}
-                                    </div>
-                                    <Select value={editForm.employer_id || "__none__"} onValueChange={v => setEditForm(f => f && ({ ...f, employer_id: v === "__none__" ? "" : v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="__none__">—</SelectItem>
-                                            {employers.map(e => <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>)}
-                                        </SelectContent>
-                                    </Select>
+                                <div className="space-y-1 sm:col-span-2">
+                                    <ProductionCompanyPicker
+                                        value={editProducerSelections}
+                                        onChange={selections => {
+                                            setEditProducerSelections(selections)
+                                            setEditForm(form => form && ({ ...form, employer_id: selections[0]?.employerId ?? "" }))
+                                        }}
+                                        label="Producent / juridisk kontraktpart"
+                                    />
                                     {(() => {
                                         const validation = editContract?.validation_data
                                         const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
-                                        if (!extractedEmployer || editForm.employer_id) return null
-                                        const match = findBestEmployerMatch(extractedEmployer, employers)
-                                        if (match && match.employer) {
-                                            return (
-                                                <p className="text-[10px] text-muted-foreground mt-0.5">
-                                                    Forslag:{" "}
-                                                    <button
-                                                        type="button"
-                                                        className="font-medium text-amber-600 hover:underline"
-                                                        onClick={() => setEditForm(f => f && ({ ...f, employer_id: match.employer!.id }))}
-                                                    >
-                                                        {match.employer.name} ({Math.round(match.score * 100)}% match)
-                                                    </button>
-                                                </p>
-                                            )
-                                        }
-                                        return null
+                                        return extractedEmployer && editProducerSelections.length === 0
+                                            ? <p className="text-xs text-muted-foreground">Aflæst fra kontrakten: <span className="font-medium">{extractedEmployer}</span>. Søg og vælg selskabet ovenfor.</p>
+                                            : null
                                     })()}
                                 </div>
                                 <div className="space-y-1">
