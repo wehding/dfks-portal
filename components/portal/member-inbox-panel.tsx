@@ -8,6 +8,7 @@ import { fetchMemberInbox, markInboxThreadRead, sendInboxReply } from "@/app/act
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { useI18n } from "@/lib/i18n";
 
 type Message = { id: string; author_role: string; body: string; created_at: string };
 type Thread = { id: string; subject: string; updated_at: string; member_messages: Message[]; member_message_participants: Array<{ last_read_at: string | null }> };
@@ -17,10 +18,12 @@ type Thread = { id: string; subject: string; updated_at: string; member_messages
  * Understøtter deep-link via ?thread=<id> (bruges af mails og gamle links).
  */
 export function MemberInboxPanel() {
-  return <Suspense fallback={<p className="text-sm text-muted-foreground">Henter beskeder…</p>}><MemberInboxContent /></Suspense>;
+  const { t } = useI18n();
+  return <Suspense fallback={<p className="text-sm text-muted-foreground">{t("inbox.loading")}</p>}><MemberInboxContent /></Suspense>;
 }
 
 function MemberInboxContent() {
+  const { t, locale } = useI18n();
   const params = useSearchParams();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -54,17 +57,18 @@ function MemberInboxContent() {
     await load();
   };
 
-  if (loading) return <p className="text-sm text-muted-foreground">Henter beskeder…</p>;
+  if (loading) return <p className="text-sm text-muted-foreground">{t("inbox.loading")}</p>;
 
   if (threads.length === 0) {
-    return <Card><CardContent className="flex items-center gap-3 py-6 text-muted-foreground"><MessageSquare className="h-5 w-5" /><p className="text-sm">Du har ingen beskeder endnu.</p></CardContent></Card>;
+    return <Card><CardContent className="flex items-center gap-3 py-6 text-muted-foreground"><MessageSquare className="h-5 w-5" /><p className="text-sm">{t("inbox.empty")}</p></CardContent></Card>;
   }
 
   return (
     <div className="grid gap-4 lg:grid-cols-[300px_1fr]">
-      <nav aria-label="Beskedtråde" className="space-y-2">
+      <nav aria-label={t("inbox.threads")} className="space-y-2">
         {threads.map(thread => {
           const categoryLabel = (thread as any).category_label ?? "Generelt";
+          const categoryText = categoryLabel === "Kontrakt" ? t("inbox.category.contract") : categoryLabel === "Værk" ? t("inbox.category.work") : categoryLabel === "Visning" ? t("inbox.category.screening") : t("inbox.category.general");
           const contextTitle = (thread as any).context_title ?? thread.subject;
           const badgeClass =
             categoryLabel === "Kontrakt" ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
@@ -83,10 +87,10 @@ function MemberInboxContent() {
             >
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeClass}`}>
-                  {categoryLabel}
+                  {categoryText}
                 </span>
                 <span className="text-[11px] text-muted-foreground">
-                  {new Date(thread.updated_at).toLocaleDateString("da-DK")}
+                  {new Date(thread.updated_at).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB")}
                 </span>
               </div>
               <span className="block font-medium text-xs text-foreground truncate">{contextTitle}</span>
@@ -104,7 +108,7 @@ function MemberInboxContent() {
                 : ((selected as any).category_label) === "Visning" ? "bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300"
                 : "bg-muted text-muted-foreground"
               }`}>
-                {(selected as any).category_label ?? "Generelt"}
+                {((selected as any).category_label) === "Kontrakt" ? t("inbox.category.contract") : ((selected as any).category_label) === "Værk" ? t("inbox.category.work") : ((selected as any).category_label) === "Visning" ? t("inbox.category.screening") : t("inbox.category.general")}
               </span>
               <CardTitle className="text-base font-semibold">{(selected as any).context_title ?? selected.subject}</CardTitle>
             </div>
@@ -120,17 +124,17 @@ function MemberInboxContent() {
                 >
                   <p className="whitespace-pre-wrap text-sm">{message.body}</p>
                   <p className="mt-1 text-[11px] opacity-70">
-                    {message.author_role === "member" ? "Dig" : "DFKS"} · {new Date(message.created_at).toLocaleString("da-DK")}
+                    {message.author_role === "member" ? t("inbox.you") : "DFKS"} · {new Date(message.created_at).toLocaleString(locale === "da" ? "da-DK" : "en-GB")}
                   </p>
                 </div>
               ))}
             </div>
             <div className="space-y-2 pt-2 border-t">
-              <label htmlFor="member-reply" className="text-xs font-medium text-muted-foreground">Skriv et svar</label>
+              <label htmlFor="member-reply" className="text-xs font-medium text-muted-foreground">{t("inbox.writeReply")}</label>
               <Textarea id="member-reply" value={reply} onChange={event => setReply(event.target.value)} maxLength={10000} className="min-h-[80px]" />
               <Button type="button" size="sm" onClick={submitReply} disabled={sending || !reply.trim()}>
                 {sending ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Send className="mr-2 h-3.5 w-3.5" />}
-                Send svar
+                {t("inbox.sendReply")}
               </Button>
             </div>
           </CardContent>

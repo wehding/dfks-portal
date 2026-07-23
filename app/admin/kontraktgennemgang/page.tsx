@@ -8,7 +8,8 @@
  *   2. Manuel gennemgang — eksisterende jurist-værktøj med upload + AI-analyse
  */
 
-import { useState, useRef, useCallback, useEffect } from "react"
+import { Suspense, useState, useRef, useCallback, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
@@ -38,6 +39,7 @@ import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
 import type { DbContractReview } from "@/lib/db/types"
 import type { ContractType, ProductionType, DistributionChannel, ProducerSelection } from "@/lib/types"
+import { useI18n } from "@/lib/i18n"
 import {
     Chip,
     SegmentedControl,
@@ -122,16 +124,17 @@ const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
     afsluttet: { label: "Afsluttet",        class: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800" },
 }
 
-function relativeTime(dateStr: string): string {
+function relativeTime(dateStr: string, locale: "da" | "en"): string {
     const diff = Date.now() - new Date(dateStr).getTime()
     const mins = Math.floor(diff / 60000)
-    if (mins < 1) return "lige nu"
-    if (mins < 60) return `${mins} min siden`
+    const formatter = new Intl.RelativeTimeFormat(locale === "da" ? "da-DK" : "en-GB", { numeric: "auto" })
+    if (mins < 1) return formatter.format(0, "minute")
+    if (mins < 60) return formatter.format(-mins, "minute")
     const hours = Math.floor(mins / 60)
-    if (hours < 24) return `${hours} time${hours > 1 ? "r" : ""} siden`
+    if (hours < 24) return formatter.format(-hours, "hour")
     const days = Math.floor(hours / 24)
-    if (days < 7) return `${days} dag${days > 1 ? "e" : ""} siden`
-    return new Date(dateStr).toLocaleDateString("da-DK")
+    if (days < 7) return formatter.format(-days, "day")
+    return new Date(dateStr).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB")
 }
 
 function highlightText(text: string, quotes: string[], activeQuote: string | null): string {
@@ -206,12 +209,14 @@ function extractGulText(text: string): string {
 // ── Indbakke-komponent ────────────────────────────────────────
 
 function Indbakke() {
+    const { t, locale } = useI18n()
     const router = useRouter()
-    const [tab, setTab] = useState<"mine" | "alle">("alle")
+    const searchParams = useSearchParams()
+    const [tab, setTab] = useState<"mine" | "alle">(() => searchParams.get("queue") === "mine" ? "mine" : "alle")
     const [reviews, setReviews] = useState<DbContractReview[]>([])
     const [totalCount, setTotalCount] = useState(0)
     const [loading, setLoading] = useState(true)
-    const [statusFilter, setStatusFilter] = useState<string[]>([])
+    const [statusFilter, setStatusFilter] = useState<string[]>(() => searchParams.get("status")?.split(",").filter(Boolean) ?? [])
     const [productionTypeFilter, setProductionTypeFilter] = useState<string[]>([])
     const [search, setSearch] = useState("")
     const [reanalysingIds, setReanalysingIds] = useState<Set<string>>(new Set())
@@ -290,13 +295,13 @@ function Indbakke() {
                     onClick={() => setTab("alle")}
                     className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${tab === "alle" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
-                    Alle {totalCount > 0 && <span className="ml-1.5 text-xs bg-muted rounded-full px-1.5 py-0.5">{totalCount}</span>}
+                    {t("admin.reviewQueue.all")} {totalCount > 0 && <span className="ml-1.5 text-xs bg-muted rounded-full px-1.5 py-0.5">{totalCount}</span>}
                 </button>
                 <button
                     onClick={() => setTab("mine")}
                     className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${tab === "mine" ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 >
-                    Min kø {mineCount > 0 && tab !== "mine" && <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 rounded-full px-1.5 py-0.5">{mineCount}</span>}
+                    {t("admin.reviewQueue.mine")} {mineCount > 0 && tab !== "mine" && <span className="ml-1.5 text-xs bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 rounded-full px-1.5 py-0.5">{mineCount}</span>}
                 </button>
             </div>
 
@@ -307,7 +312,7 @@ function Indbakke() {
                     <Input
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        placeholder="Søg på navn, fil, producent..."
+                        placeholder={t("admin.reviewQueue.search")}
                         className="pl-8 h-8 text-xs w-60"
                     />
                 </div>
@@ -320,11 +325,11 @@ function Indbakke() {
                         <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="alle">Status</SelectItem>
-                        <SelectItem value="afventer">Ikke tildelt</SelectItem>
-                        <SelectItem value="behandling">Under behandling</SelectItem>
-                        <SelectItem value="afsluttet">Afsluttet</SelectItem>
-                        <SelectItem value="afventer,behandling">Aktive</SelectItem>
+                        <SelectItem value="alle">{t("common.status")}</SelectItem>
+                        <SelectItem value="afventer">{t("admin.reviewQueue.unassigned")}</SelectItem>
+                        <SelectItem value="behandling">{t("admin.reviewQueue.processing")}</SelectItem>
+                        <SelectItem value="afsluttet">{t("admin.reviewQueue.completed")}</SelectItem>
+                        <SelectItem value="afventer,behandling">{t("admin.reviewQueue.active")}</SelectItem>
                     </SelectContent>
                 </Select>
 
@@ -336,7 +341,7 @@ function Indbakke() {
                         <SelectValue placeholder="Produktionstype" />
                     </SelectTrigger>
                     <SelectContent>
-                        <SelectItem value="alle">Alle typer</SelectItem>
+                        <SelectItem value="alle">{t("admin.reviewQueue.allTypes")}</SelectItem>
                         <SelectItem value="dokumentar">Dokumentar</SelectItem>
                         <SelectItem value="spillefilm">Spillefilm</SelectItem>
                         <SelectItem value="tvserie">TV-serie</SelectItem>
@@ -351,29 +356,29 @@ function Indbakke() {
                     className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
                     <RotateCcw className="h-3.5 w-3.5" />
-                    Opdater
+                    {t("common.refresh")}
                 </button>
             </div>
 
             {/* Tabel */}
             <div className="rounded-lg border overflow-hidden">
                 {loading ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">Henter kontrakter...</div>
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t("admin.reviewQueue.loading")}</div>
                 ) : reviews.length === 0 ? (
                     <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        {tab === "mine" ? "Ingen kontrakter i din kø" : "Ingen kontrakter fundet"}
+                        {tab === "mine" ? t("admin.reviewQueue.emptyMine") : t("admin.reviewQueue.empty")}
                     </div>
                 ) : (
                     <table className="w-full text-xs">
                         <thead>
                             <tr className="border-b bg-muted/30">
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Indsendt</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Medlem</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Fil</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Type</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Producer</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
-                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Tildelt</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.submitted")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.member")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.file")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("common.type")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.producers.producer")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("common.status")}</th>
+                                <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.assigned")}</th>
                                 <th className="px-4 py-2.5" />
                             </tr>
                         </thead>
@@ -383,7 +388,7 @@ function Indbakke() {
                                 return (
                                     <tr key={r.id} className="hover:bg-muted/20 transition-colors">
                                         <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                                            {relativeTime(r.reviewed_at)}
+                                            {relativeTime(r.reviewed_at, locale)}
                                         </td>
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1.5">
@@ -420,7 +425,7 @@ function Indbakke() {
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-1.5">
                                                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusCfg.class}`}>
-                                                    {statusCfg.label}
+                                                    {r.status === "afventer" ? t("admin.reviewQueue.unassigned") : r.status === "behandling" ? t("admin.reviewQueue.processing") : t("admin.reviewQueue.completed")}
                                                 </span>
                                                 {/* AI-analysestatus */}
                                                 {(() => {
@@ -474,7 +479,7 @@ function Indbakke() {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-muted-foreground">
-                                            {r.assigned_to ? "Tildelt" : "Ikke tildelt"}
+                                            {r.assigned_to ? t("admin.reviewQueue.assigned") : t("admin.reviewQueue.unassigned")}
                                         </td>
                                         <td className="px-4 py-3">
                                             <Button
@@ -486,7 +491,7 @@ function Indbakke() {
                                                     router.push(`/admin/kontraktgennemgang/${r.id}`)
                                                 }}
                                             >
-                                                Åbn
+                                                {t("common.open")}
                                                 <ChevronRight className="h-3 w-3 ml-0.5" />
                                             </Button>
                                         </td>
@@ -1283,7 +1288,9 @@ export default function KontraktGennemgangPage() {
             />
 
             {/* Indbakke */}
-            <Indbakke />
+            <Suspense fallback={<div className="h-48 animate-pulse rounded-lg bg-muted" />}>
+                <Indbakke />
+            </Suspense>
 
             {/* Manuel gennemgang — collapsible */}
             <div className="space-y-4">
