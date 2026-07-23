@@ -352,38 +352,42 @@ function AdminKontrakterContent() {
     }, [editWorkSearch])
 
     useEffect(() => {
-        const updateTmdbEpisodes = async () => {
+        const updateEpisodesForSeason = async () => {
             if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
-                const tmdbId = pickedUnifiedResult.tmdb_id
-                if (tmdbId) {
-                    setEpisodesLoading(true)
-                    try {
-                        const sNum = parseInt(addSeason) || 1
-                        const season = await getTMDBSeasonEpisodes(tmdbId, sNum)
-                        const seasonOptions = (season.success ? season.episodes ?? [] : [])
-                            .map((episode: { episode_number?: number; name?: string }) => ({ number: Number(episode.episode_number), title: episode.name || `Afsnit ${episode.episode_number ?? ""}` }))
-                            .filter(option => Number.isFinite(option.number) && option.number > 0)
-                        if (seasonOptions.length) {
-                            setDetectedEpisodeCount(seasonOptions.length)
-                            setEpisodeOptions(seasonOptions)
-                            setSelectedEpisodes(prev => prev.filter(x => seasonOptions.some(option => option.number === x)))
-                            setEpisodesError(null)
+                setEpisodesLoading(true)
+                setEpisodesError(null)
+                try {
+                    const sNum = parseInt(addSeason) || 1
+                    const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum)
+                    if (detailsRes.success && detailsRes.details) {
+                        const d = detailsRes.details
+                        const options = (d.episode_options ?? []).map(option => ({ number: option.number, title: option.title }))
+                        const count = Math.max(d.episode_count ?? 0, options.length)
+                        if (count > 0) {
+                            setDetectedEpisodeCount(count)
+                            setEpisodeOptions(options)
+                            setSelectedEpisodes(prev => prev.filter(x => x <= count))
                         } else {
-                            // Sæsonen findes ikke — vis fejl i stedet for stale afsnit fra en anden sæson.
                             setDetectedEpisodeCount(null)
                             setEpisodeOptions([])
                             setSelectedEpisodes([])
                             setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
                         }
-                    } catch (e) {
-                        console.error(e)
-                    } finally {
-                        setEpisodesLoading(false)
+                    } else {
+                        setDetectedEpisodeCount(null)
+                        setEpisodeOptions([])
+                        setSelectedEpisodes([])
+                        setEpisodesError(`Kan ikke finde sæson ${sNum}.`)
                     }
+                } catch (e) {
+                    console.error(e)
+                    setEpisodesError("Kunne ikke hente sæsonoplysninger.")
+                } finally {
+                    setEpisodesLoading(false)
                 }
             }
         }
-        updateTmdbEpisodes()
+        updateEpisodesForSeason()
     }, [addSeason, pickedUnifiedResult])
 
     const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {
