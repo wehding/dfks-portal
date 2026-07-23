@@ -823,17 +823,19 @@ export async function addAdminContractComment(contractId: string, message: strin
   return { success: true, comment };
 }
 
-type AdminContractUpdate = {
-  type: string;
-  overenskomst: string | null;
-  status: "kladde" | "valideret" | "arkiveret";
-  contract_date: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  employer_id: string | null;
-  rights_holder_id: string | null;
-  work_id: string | null;
-  working_title: string | null;
+export type AdminContractUpdate = {
+  type?: string;
+  overenskomst?: string | null;
+  status?: string;
+  contract_date?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  employer_id?: string | null;
+  rights_holder_id?: string | null;
+  work_id?: string | null;
+  working_title?: string | null;
+  season_number?: number | null;
+  episode_numbers?: number[] | null;
 };
 
 export async function updateAdminContract(contractId: string, values: AdminContractUpdate) {
