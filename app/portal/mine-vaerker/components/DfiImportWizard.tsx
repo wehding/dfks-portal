@@ -10,6 +10,7 @@ import { importApprovedOnboardingWorks, resolveOnboardingEpisodeOptions, searchN
 import { useI18n } from "@/lib/i18n";
 import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
+import { seasonLookupMessage } from "@/lib/season-selection";
 
 interface DfiImportWizardProps {
   isOpen: boolean;
@@ -28,7 +29,7 @@ export function DfiImportWizard({
   onImportComplete,
   reloadAssignments,
 }: DfiImportWizardProps) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
 
   const [wizardStep, setWizardStep]         = useState<"search" | "credits">("search");
   const [wizardQuery, setWizardQuery]       = useState(userName);
@@ -42,6 +43,7 @@ export function DfiImportWizard({
   const [wizardEpisodeOptions, setWizardEpisodeOptions] = useState<Record<string, SeriesEpisodeOption[]>>({});
   const [wizardEpisodeLoading, setWizardEpisodeLoading] = useState<Record<string, boolean>>({});
   const [wizardEpisodeErrors, setWizardEpisodeErrors] = useState<Record<string, string | null>>({});
+  const wizardEpisodeRequestIds = React.useRef<Record<string, number>>({});
   const [wizardSkippedExistingCount, setWizardSkippedExistingCount] = useState(0);
   const [wizardSearching, setWizardSearching] = useState(false);
   const [wizardImporting, setWizardImporting] = useState(false);
@@ -79,16 +81,19 @@ export function DfiImportWizard({
   // Henter afsnit for en konkret sæson — sæson-skift skal altid refetche,
   // og en ukendt sæson skal give en tydelig fejl (ikke stale afsnit).
   const loadEpisodesForSeason = async (credit: OnboardingCredit, season: number) => {
+    const requestId = (wizardEpisodeRequestIds.current[credit.id] ?? 0) + 1;
+    wizardEpisodeRequestIds.current[credit.id] = requestId;
     setWizardEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
     setWizardEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
     const result = await resolveOnboardingEpisodeOptions(credit, season);
+    if (wizardEpisodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setWizardEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
     } else {
       setWizardEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
-      setWizardEpisodeErrors(prev => ({ ...prev, [credit.id]: result.error }));
+      setWizardEpisodeErrors(prev => ({ ...prev, [credit.id]: seasonLookupMessage(locale, result.status === "error" ? "error" : "not_found", season) }));
     }
     setWizardEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
   };
@@ -313,7 +318,12 @@ export function DfiImportWizard({
                             <div className="mt-3 space-y-3">
                               <SeriesEpisodeSelector
                                 season={seriesSeasons[c.id] ?? seasonForCredit(c)}
-                                onSeasonChange={season => { setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodesForSeason(c, season); }}
+                                onSeasonChange={season => {
+                                  setSeriesSeasons(prev => ({ ...prev, [c.id]: season }));
+                                  setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }));
+                                  setWizardEpisodeOptions(prev => ({ ...prev, [c.id]: [] }));
+                                  void loadEpisodesForSeason(c, season);
+                                }}
                                 options={displayOptionsForCredit(c)}
                                 selected={selectedEpisodes}
                                 onSelectedChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))}

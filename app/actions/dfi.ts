@@ -1217,6 +1217,7 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
         if (seasonOptions.length) {
           return {
             success: true,
+            status: "found" as const,
             options: buildCompleteEpisodeOptions({
               episodeCount: seasonOptions.length,
               externalOptions: seasonOptions,
@@ -1227,8 +1228,11 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
           };
         }
       }
+      if (!season.success && !season.notFound) {
+        return { success: false, status: "error" as const, options: [], error: `Kunne ikke hente sæson ${seasonNumber}. Prøv igen.` };
+      }
     }
-    return { success: false, options: [], error: `Kan ikke finde sæson ${seasonNumber}.` };
+    return { success: false, status: "not_found" as const, options: [], error: `Sæson ${seasonNumber} blev ikke fundet.` };
   }
 
   let options = credit.episode_options ?? [];
@@ -1318,7 +1322,9 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
       }
     }
   }
-  return { success: options.length > 0, options, error: options.length ? null : "Der blev ikke fundet afsnit for denne sæson." };
+  return options.length > 0
+    ? { success: true, status: "found" as const, options, error: null }
+    : { success: false, status: "not_found" as const, options: [], error: `Sæson ${seasonNumber} blev ikke fundet.` };
 }
 
 export async function searchNewCreditsForCurrentMember(fullName: string) {

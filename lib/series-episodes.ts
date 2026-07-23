@@ -120,7 +120,7 @@ export function buildCompleteEpisodeOptions({
   externalOptions,
   localChildren,
   seasonNumber = 1,
-  defaultMinCount = 8,
+  defaultMinCount = 0,
 }: {
   episodeCount?: number | null;
   externalOptions?: EpisodeOptionInput[] | null;

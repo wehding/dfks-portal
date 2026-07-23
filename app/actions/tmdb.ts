@@ -268,14 +268,19 @@ export async function getTMDBSeasonEpisodes(tmdbId: number, seasonNumber: number
     const res = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=da-DK`);
     if (!res.ok) {
       const resEn = await tmdbFetch(`/tv/${tmdbId}/season/${seasonNumber}?language=en-US`);
-      if (!resEn.ok) throw new Error(`TMDB returned status ${resEn.status}`);
+      if (!resEn.ok) {
+        if (res.status === 404 && resEn.status === 404) {
+          return { success: false, notFound: true, error: null, episodes: [] as TMDBSeasonEpisode[] };
+        }
+        throw new Error(`TMDB returned status ${resEn.status}`);
+      }
       const data = await resEn.json();
-      return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
+      return { success: true, notFound: false, error: null, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
     }
     const data = await res.json();
-    return { success: true, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
+    return { success: true, notFound: false, error: null, episodes: (data.episodes || []) as TMDBSeasonEpisode[] };
   } catch (err: unknown) {
     console.error("TMDB season episodes error:", err);
-    return { success: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] as TMDBSeasonEpisode[] };
+    return { success: false, notFound: false, error: err instanceof Error ? err.message : "Kunne ikke hente afsnitsliste fra TMDB", episodes: [] as TMDBSeasonEpisode[] };
   }
 }

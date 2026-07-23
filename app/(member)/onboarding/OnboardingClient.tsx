@@ -12,6 +12,7 @@ import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
+import { seasonLookupMessage } from "@/lib/season-selection";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -45,7 +46,7 @@ export default function OnboardingClient({
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const router = useRouter();
   const steps = [
     { id: 1, title: t("onboarding.stepWelcome"), icon: "👋" },
@@ -71,6 +72,7 @@ export default function OnboardingClient({
   const [episodeOptions, setEpisodeOptions] = useState<Record<string, Array<{ number: number; title?: string | null }>>>({});
   const [episodeLoading, setEpisodeLoading] = useState<Record<string, boolean>>({});
   const [episodeErrors, setEpisodeErrors] = useState<Record<string, string | null>>({});
+  const episodeRequestIds = React.useRef<Record<string, number>>({});
   const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
@@ -156,9 +158,12 @@ export default function OnboardingClient({
   };
 
   const loadEpisodes = async (credit: OnboardingCredit, season = seriesSeasons[credit.id] ?? 1) => {
+    const requestId = (episodeRequestIds.current[credit.id] ?? 0) + 1;
+    episodeRequestIds.current[credit.id] = requestId;
     setEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
     setEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
     const result = await resolveOnboardingEpisodeOptions(credit, season);
+    if (episodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
@@ -166,7 +171,7 @@ export default function OnboardingClient({
       // Ryd stale afsnit fra en tidligere sæson, så fejlen ikke kan blandes med gamle valg.
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
-      setEpisodeErrors(prev => ({ ...prev, [credit.id]: result.error }));
+      setEpisodeErrors(prev => ({ ...prev, [credit.id]: seasonLookupMessage(locale, result.status === "error" ? "error" : "not_found", season) }));
     }
     setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
   };
@@ -734,7 +739,12 @@ export default function OnboardingClient({
                                 <div style={{ marginTop: "10px" }}>
                                   <SeriesEpisodeSelector
                                     season={seriesSeasons[c.id] ?? 1}
-                                    onSeasonChange={season => { setSeriesSeasons(prev => ({ ...prev, [c.id]: season })); void loadEpisodes(c, season); }}
+                                    onSeasonChange={season => {
+                                      setSeriesSeasons(prev => ({ ...prev, [c.id]: season }));
+                                      setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }));
+                                      setEpisodeOptions(prev => ({ ...prev, [c.id]: [] }));
+                                      void loadEpisodes(c, season);
+                                    }}
                                     options={(seriesSeasons[c.id] ?? 1) > 1
                                       ? buildCompleteEpisodeOptions({ externalOptions: episodeOptions[c.id] ?? [], seasonNumber: seriesSeasons[c.id] ?? 1 })
                                       : buildCompleteEpisodeOptions({

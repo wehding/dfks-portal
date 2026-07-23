@@ -3,6 +3,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { SeasonStepper } from "@/components/works/season-stepper";
 import { useI18n } from "@/lib/i18n";
 import { isManualSeries, type ManualWorkFormValue } from "@/lib/manual-work";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
@@ -72,16 +73,10 @@ export function ManualWorkFormFields({ value, onChange, locale }: Props) {
       {isSeries && (
         <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label className="text-sm font-medium text-muted-foreground">{t("works.season")}</Label>
-              <Input
-                type="number"
-                min="1"
-                placeholder="1"
-                value={value.season_number}
-                onChange={event => update("season_number", event.target.value)}
-              />
-            </div>
+            <SeasonStepper
+              value={Number(value.season_number) || 1}
+              onChange={season => onChange({ ...value, season_number: String(season), selected_episodes: [] })}
+            />
             <div className="space-y-1.5">
               <Label className="text-sm font-medium text-muted-foreground">{t("works.episodesField")}</Label>
               <Input

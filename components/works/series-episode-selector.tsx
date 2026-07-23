@@ -1,9 +1,10 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { EpisodePicker } from "@/components/works/episode-picker";
+import { SeasonStepper } from "@/components/works/season-stepper";
+import { useI18n } from "@/lib/i18n";
+import { seasonLookupMessage } from "@/lib/season-selection";
 import type { SeriesEpisodeOption } from "@/lib/series-episodes";
 
 export function SeriesEpisodeSelector({
@@ -17,6 +18,7 @@ export function SeriesEpisodeSelector({
   compact = true,
   label = "Vælg afsnit",
   showSeason = true,
+  seasonReadOnly = false,
 }: {
   season: number;
   onSeasonChange: (season: number) => void;
@@ -28,20 +30,13 @@ export function SeriesEpisodeSelector({
   compact?: boolean;
   label?: string;
   showSeason?: boolean;
+  seasonReadOnly?: boolean;
 }) {
+  const { locale } = useI18n();
   return (
     <div className="space-y-3">
       {showSeason && (
-        <Label className="flex items-center gap-2 text-xs text-muted-foreground">
-          Sæson
-          <Input
-            type="number"
-            min="1"
-            value={season}
-            onChange={event => onSeasonChange(Math.max(1, Number(event.target.value) || 1))}
-            className="h-8 w-20"
-          />
-        </Label>
+        <SeasonStepper value={season} onChange={onSeasonChange} readOnly={seasonReadOnly} compact={compact} />
       )}
 
       {loading ? (
@@ -54,7 +49,9 @@ export function SeriesEpisodeSelector({
       ) : options.length > 0 ? (
         <EpisodePicker compact={compact} options={options} selected={selected} onChange={onSelectedChange} label={label} />
       ) : (
-        <p className="text-xs text-amber-700">Der blev ikke fundet en sikker afsnitsliste for denne sæson.</p>
+        <p className="text-xs text-amber-700">
+          {seasonLookupMessage(locale, "not_found", season)}
+        </p>
       )}
     </div>
   );

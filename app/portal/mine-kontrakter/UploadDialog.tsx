@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { linkContractToWork, queueUploadedContractAiJob, saveUploadedContract } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, findManualWorkDuplicates, linkExistingWorkForMember, resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { SeasonStepper } from "@/components/works/season-stepper";
 import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -174,6 +175,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   // Sæson-skift for et valgt serie-værk: hent sæsonens afsnit fra databaserne —
   // ukendt sæson giver en tydelig fejl i stedet for stale/manuelle afsnit.
   useEffect(() => {
+    let cancelled = false;
     const updateSeasonEpisodes = async () => {
       if (!pickedUnifiedResult || (pickedUnifiedResult.type !== "tv-serie" && pickedUnifiedResult.type !== "dokumentar-serie")) {
         setPickerEpisodeOptions([]);
@@ -185,24 +187,29 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       setPickerEpisodesError(null);
       try {
         const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedResult, sNum);
+        if (cancelled) return;
         const details = detailsRes.success ? detailsRes.details : null;
         const options = (details?.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
         const count = Math.max(details?.episode_count ?? 0, options.length);
-        if (count > 0) {
+        if (details?.episode_lookup_status === "found" && count > 0) {
           setPickerEpisodeOptions(buildCompleteEpisodeOptions({ episodeCount: count, externalOptions: options, seasonNumber: sNum }));
         } else {
           setPickerEpisodeOptions([]);
-          setPickerEpisodesError(`Kan ikke finde sæson ${sNum}.`);
+          setPickerEpisodesError(details?.episode_lookup_status === "error"
+            ? `Kunne ikke hente sæson ${sNum}. Prøv igen.`
+            : `Sæson ${sNum} blev ikke fundet.`);
         }
       } catch (e) {
+        if (cancelled) return;
         console.error("Fejl ved hentning af sæsonafsnit:", e);
         setPickerEpisodeOptions([]);
-        setPickerEpisodesError("Kunne ikke hente sæsonoplysninger.");
+        setPickerEpisodesError(`Kunne ikke hente sæson ${parseInt(seriesSeason) || 1}. Prøv igen.`);
       } finally {
-        setPickerEpisodesLoading(false);
+        if (!cancelled) setPickerEpisodesLoading(false);
       }
     };
     void updateSeasonEpisodes();
+    return () => { cancelled = true; };
   }, [seriesSeason, pickedUnifiedResult]);
 
   // Batch-upload indsendes automatisk ved filvalg — uden formular-trin.
@@ -1019,19 +1026,15 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                      Sæson
-                      {aiFields.has("seasonNumber") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                    </Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={seriesSeason}
-                      onChange={event => setSeriesSeason(event.target.value)}
-                      placeholder="1"
-                      className={aiFields.has("seasonNumber") ? "bg-purple-50" : ""}
+                  <div className="flex items-end gap-2">
+                    <SeasonStepper
+                      value={Number(seriesSeason) || 1}
+                      onChange={season => {
+                        setSeriesSeason(String(season));
+                        setEpisodeCredits([]);
+                      }}
                     />
+                    {aiFields.has("seasonNumber") && <Sparkles className="mb-2.5 h-3 w-3 text-purple-500" aria-hidden="true" />}
                   </div>
                   {pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && (
                     <div className="rounded-md border bg-muted/20 p-3">
@@ -1061,7 +1064,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       ) : null}
                     </div>
                   )}
-                  <div className="flex items-center justify-between">
+                  {!pickerEpisodesError && <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium text-muted-foreground">Afsnit og kreditering</Label>
                     {!(pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie") && pickerEpisodeOptions.length > 0) && (
                     <button
@@ -1074,7 +1077,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       <Plus className="h-3 w-3" /> Tilføj afsnit
                     </button>
                     )}
-                  </div>
+                  </div>}
                   <div className="rounded-md border bg-muted/20 p-3">
                     <Label className="text-sm font-medium text-foreground">Kontraktens omfang</Label>
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -1086,7 +1089,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       </button>
                     </div>
                   </div>
-                  {episodeCredits.map((ec, idx) => (
+                  {!pickerEpisodesError && episodeCredits.map((ec, idx) => (
                     <div key={idx} className="grid gap-1.5 mb-1.5 items-center" style={{ gridTemplateColumns: "52px 1fr 32px" }}>
                       <div className="relative">
                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">#</span>
