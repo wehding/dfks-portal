@@ -382,32 +382,32 @@ export default function OnboardingClient({
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      padding: "24px",
+      padding: "16px",
     }}>
-      <div style={{ width: "100%", maxWidth: "640px", display: "flex", flexDirection: "column", gap: "24px" }}>
+      <div style={{ width: "100%", maxWidth: "640px", display: "flex", flexDirection: "column", gap: "16px" }}>
 
         {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: "8px" }}>
+        <div style={{ textAlign: "center", marginBottom: "4px" }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="DFKS" style={{ height: "48px", objectFit: "contain" }} />
+          <img src="/logo.png" alt="DFKS" style={{ height: "40px", objectFit: "contain" }} />
         </div>
 
         {/* Fremskridtsindikator */}
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
             {steps.map((s) => (
-              <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", flex: 1 }}>
+              <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", flex: 1 }}>
                 <div style={{
-                  width: "36px", height: "36px", borderRadius: "50%",
+                  width: "32px", height: "32px", borderRadius: "50%",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "16px",
+                  fontSize: "14px",
                   backgroundColor: step > s.id ? "var(--foreground)" : step === s.id ? "var(--foreground)" : "var(--muted)",
                   color: step >= s.id ? "var(--card)" : "var(--border)",
                   transition: "all 0.3s ease", fontWeight: 700,
                 }}>
-                  {step > s.id ? <CheckCircle size={18} color="white" /> : s.icon}
+                  {step > s.id ? <CheckCircle size={16} color="white" /> : s.icon}
                 </div>
-                <div style={{ fontSize: "11px", fontWeight: 600, textAlign: "center", color: step === s.id ? "var(--on-surface)" : "var(--on-surface-variant)" }}>
+                <div style={{ fontSize: "10px", fontWeight: 600, textAlign: "center", color: step === s.id ? "var(--on-surface)" : "var(--on-surface-variant)" }}>
                   {s.title}
                 </div>
               </div>
@@ -429,7 +429,7 @@ export default function OnboardingClient({
 
           {/* Trin 1: Velkommen */}
           {step === 1 && (
-            <div style={{ padding: "40px" }}>
+            <div className="p-5 sm:p-10">
               <div style={{ textAlign: "center", marginBottom: "32px" }}>
                 <div style={{ fontSize: "48px", marginBottom: "16px" }}>👋</div>
                 <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 12px", color: "var(--on-surface)" }}>
@@ -466,7 +466,7 @@ export default function OnboardingClient({
 
           {/* Trin 2: Dine oplysninger */}
           {step === 2 && (
-            <div style={{ padding: "40px" }}>
+            <div className="p-5 sm:p-10">
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>Dine oplysninger</h2>
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
                 Kontrollér dine oplysninger. E-mailadressen er låst til den bruger, du er logget ind med.
@@ -645,7 +645,7 @@ export default function OnboardingClient({
           )}
 
           {step === 4 && (
-            <div style={{ padding: "40px" }}>
+            <div className="p-5 sm:p-10">
               <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 8px", color: "var(--on-surface)" }}>
                 🎬 Dine film og serier i DFI & TMDb
               </h2>

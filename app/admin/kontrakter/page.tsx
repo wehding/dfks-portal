@@ -1880,7 +1880,7 @@ function AdminKontrakterContent() {
 
             {/* PDF Viewer */}
             <Dialog open={!!viewContract} onOpenChange={() => { setViewContract(null); setViewPdfUrl(null) }}>
-                <DialogContent className="h-[90vh] flex flex-col" style={{ maxWidth: "80vw", width: "80vw" }}>
+                <DialogContent className="h-[92vh] max-h-[92vh] w-full max-w-[95vw] sm:max-w-4xl lg:max-w-[1180px] flex flex-col p-4 sm:p-6">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2">
                             <FileText className="h-4 w-4" />
@@ -1905,8 +1905,7 @@ function AdminKontrakterContent() {
             {/* Upload Dialog */}
             <Dialog open={showUpload} onOpenChange={o => { if (!o && !saving) { setShowUpload(false); setUploadItems([]); setUploadPhase("select") } }}>
                 <DialogContent
-                    className="flex flex-col"
-                    style={{ maxWidth: "560px" }}
+                    className="flex flex-col w-full max-w-[95vw] sm:max-w-[560px]"
                     onCloseAutoFocus={e => e.preventDefault()}
                 >
                     <DialogHeader className="shrink-0">
@@ -2035,7 +2034,7 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
-                <DialogContent className="w-[min(1180px,calc(100vw-2rem))] !max-w-none sm:!max-w-none">
+                <DialogContent className="w-full max-w-[95vw] sm:max-w-4xl lg:max-w-[1180px] max-h-[92vh] overflow-y-auto p-4 sm:p-6">
                     <DialogHeader>
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
