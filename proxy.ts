@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
+import { isMissingRefreshTokenError, isSupabaseAuthCookie } from "@/lib/auth/session-cookies"
 
 // Stier der altid er tilgængelige uden session
 const PUBLIC_PATHS = [
@@ -59,7 +60,18 @@ export async function proxy(req: NextRequest) {
     )
 
     // Opdater session (vigtigt — må ikke fjernes)
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+
+    // En udløbet eller tilbagekaldt refresh-token må ikke låse login-siden i en
+    // fejlsluske. Fjern kun Supabases auth-cookies; øvrige cookies bevares.
+    if (isMissingRefreshTokenError(userError)) {
+        req.cookies.getAll()
+            .filter(({ name }) => isSupabaseAuthCookie(name))
+            .forEach(({ name }) => {
+                req.cookies.delete(name)
+                supabaseResponse.cookies.set(name, "", { maxAge: 0, path: "/" })
+            })
+    }
 
     // Beskyttede stier kræver login
     const isProtected =
