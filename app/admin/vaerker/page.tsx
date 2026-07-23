@@ -1713,6 +1713,34 @@ export default function VaerksadministrationPage() {
     }));
   };
 
+  useEffect(() => {
+    const updateEpisodesForSeason = async () => {
+      if (pickedUnifiedAddResult && (pickedUnifiedAddResult.type === "tv-serie" || pickedUnifiedAddResult.type === "dokumentar-serie")) {
+        const sNum = parseInt(addSeasonNumber) || 1;
+        try {
+          const detailsRes = await resolveUnifiedSearchResultDetails(pickedUnifiedAddResult, sNum);
+          if (detailsRes.success && detailsRes.details) {
+            const d = detailsRes.details;
+            const episodeOptions = (d.episode_options ?? []).map(option => ({ number: option.number, title: option.title }));
+            const episodeCount = Math.max(d.episode_count ?? 0, episodeOptions.length);
+            setAddEpisodeOptions(
+              episodeCount
+                ? buildCompleteEpisodeOptions({
+                  episodeCount,
+                  externalOptions: episodeOptions,
+                  seasonNumber: sNum,
+                })
+                : []
+            );
+          }
+        } catch (e) {
+          console.error("Fejl ved opdatering af sæsonafsnit i admin:", e);
+        }
+      }
+    };
+    updateEpisodesForSeason();
+  }, [addSeasonNumber, pickedUnifiedAddResult]);
+
   const handleCreateWork = async () => {
     setSaving(true);
     try {
@@ -2935,24 +2963,6 @@ export default function VaerksadministrationPage() {
                             onChange={e => setAddSeasonNumber(e.target.value)}
                           />
                         </Field>
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setAddSelectedEpisodes(addEpisodeOptions.map(option => option.number))}
-                          >
-                            Vælg alle
-                          </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => setAddSelectedEpisodes([])}
-                          >
-                            Fravælg alle
-                          </Button>
-                        </div>
                       </div>
                       <SeriesEpisodeSelector
                         season={Number(addSeasonNumber) || 1}
