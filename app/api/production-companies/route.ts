@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireSessionApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
-  companyMatches,
+  companyMatchScore,
   normalizeCompanyName,
   validateRegistrationNumber,
   type LegalEntityKind,
@@ -82,7 +82,14 @@ export async function GET(req: NextRequest) {
   try {
     const companies = await readCompanies();
     return NextResponse.json({
-      data: companies.filter(company => companyMatches(company, query)).slice(0, 20),
+      data: companies
+        .map(company => ({ company, score: companyMatchScore(company, query) }))
+        .filter(result => result.score > 0)
+        .sort((left, right) => right.score - left.score
+          || Number(right.company.isVerified) - Number(left.company.isVerified)
+          || left.company.canonicalName.localeCompare(right.company.canonicalName, "da-DK"))
+        .slice(0, 20)
+        .map(result => result.company),
     });
   } catch {
     return NextResponse.json({ error: "Produktionsselskaber kunne ikke hentes." }, { status: 500 });

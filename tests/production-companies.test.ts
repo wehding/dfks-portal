@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  companyMatchScore,
   companyMatches,
   normalizeCompanyName,
   normalizeRegistrationNumber,
@@ -35,6 +36,20 @@ test("finder kanonisk navn, alias, juridisk navn og hvert CVR under samme selska
   assert.equal(companyMatches(option, "Andet selskab"), false);
 });
 
+test("rangerer et kanonisk navn højt når AI-navnet kun tilføjer ApS", () => {
+  const finalCut: ProductionCompanyOption = {
+    employerId: "final-cut",
+    canonicalName: "Final Cut for Real",
+    aliases: [],
+    legalEntities: [],
+    isVerified: true,
+  };
+  assert.equal(companyMatches(finalCut, "Final Cut for Real ApS"), true);
+  assert.ok(companyMatchScore(finalCut, "Final Cut for Real ApS") >= 100);
+  assert.equal(companyMatches(finalCut, "Final Reality Media"), false);
+  assert.equal(companyMatches(finalCut, "Re"), false);
+});
+
 test("bevarer flere CVR-enheder under samme kanoniske selskab uden dubletvalg", () => {
   const selections = uniqueCompanySelections([
     { employerId: "canonical-1", legalEntityId: "legal-1", canonicalName: "Nordisk Film" },
@@ -44,4 +59,3 @@ test("bevarer flere CVR-enheder under samme kanoniske selskab uden dubletvalg", 
   assert.equal(selections.length, 2);
   assert.deepEqual(selections.map(selection => selection.legalEntityId), ["legal-1", "legal-2"]);
 });
-

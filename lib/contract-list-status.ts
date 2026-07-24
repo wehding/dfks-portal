@@ -11,6 +11,15 @@ export function hasLinkedWork(workId: string | null | undefined) {
   return Boolean(workId);
 }
 
+export function isPendingContractValidation(contract: {
+  work_id?: string | null;
+  status?: string | null;
+}) {
+  return hasLinkedWork(contract.work_id)
+    && contract.status !== "valideret"
+    && contract.status !== "arkiveret";
+}
+
 export function shouldShowWorkLinkBadge(hasLinkedWork: boolean, status: string) {
   return !(hasLinkedWork && status === "valideret");
 }

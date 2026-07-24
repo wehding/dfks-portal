@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Search, Send } from "lucide-react";
 import { toast } from "sonner";
 import { createAdminInboxMessage, fetchAdminInbox, fetchAdminInboxRecipients, markInboxThreadRead, sendInboxReply } from "@/app/actions/member-inbox";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/lib/i18n";
+import { filterInboxRecipients, selectVisibleRecipientIds } from "@/lib/inbox-recipients";
 
 type Recipient = { id: string; full_name: string; email: string | null };
 type Message = { id: string; author_role: string; body: string; created_at: string };
@@ -25,6 +26,7 @@ export function AdminInboxPanel() {
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
+  const [recipientQuery, setRecipientQuery] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [reply, setReply] = useState("");
@@ -39,6 +41,7 @@ export function AdminInboxPanel() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (selectedThread) void markInboxThreadRead(selectedThread); }, [selectedThread]);
   const active = useMemo(() => threads.find(thread => thread.id === selectedThread) ?? null, [threads, selectedThread]);
+  const visibleRecipients = useMemo(() => filterInboxRecipients(recipients, recipientQuery), [recipients, recipientQuery]);
 
   const requestSend = () => {
     if (!selectedRecipients.length || !subject.trim() || !body.trim()) return toast.error(t("admin.inbox.validation"));
@@ -63,7 +66,15 @@ export function AdminInboxPanel() {
   };
 
   return <div className="grid gap-6 xl:grid-cols-2">
-    <Card><CardHeader><CardTitle>{t("admin.inbox.newMessage")}</CardTitle></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between"><span className="text-sm font-medium">{t("admin.inbox.recipients", { count: selectedRecipients.length })}</span><Button type="button" variant="ghost" size="sm" onClick={() => setSelectedRecipients(selectedRecipients.length === recipients.length ? [] : recipients.map(r => r.id))}>{selectedRecipients.length === recipients.length ? t("common.deselectAll") : t("common.selectAll")}</Button></div><div className="max-h-52 space-y-1 overflow-auto rounded-md border p-2">{recipients.map(recipient => <label key={recipient.id} className="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-muted"><input type="checkbox" checked={selectedRecipients.includes(recipient.id)} onChange={() => setSelectedRecipients(current => current.includes(recipient.id) ? current.filter(id => id !== recipient.id) : [...current, recipient.id])} /><span className="text-sm">{recipient.full_name}</span></label>)}</div><div><label htmlFor="message-subject" className="text-sm font-medium">{t("admin.inbox.subject")}</label><Input id="message-subject" value={subject} onChange={event => setSubject(event.target.value)} maxLength={200} /></div><div><label htmlFor="message-body" className="text-sm font-medium">{t("admin.inbox.message")}</label><Textarea id="message-body" value={body} onChange={event => setBody(event.target.value)} maxLength={10000} rows={6} /></div><Button type="button" disabled={busy || !selectedRecipients.length} onClick={requestSend}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}{t("admin.inbox.send")}</Button></CardContent></Card>
+    <Card><CardHeader><CardTitle>{t("admin.inbox.newMessage")}</CardTitle></CardHeader><CardContent className="space-y-4">
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-sm font-medium">{t("admin.inbox.recipients", { count: selectedRecipients.length })}</span><div className="flex gap-1"><Button type="button" variant="ghost" size="sm" disabled={!visibleRecipients.length} onClick={() => setSelectedRecipients(current => selectVisibleRecipientIds(current, visibleRecipients.map(recipient => recipient.id)))}>{recipientQuery.trim() ? t("admin.inbox.selectVisible", { count: visibleRecipients.length }) : t("common.selectAll")}</Button>{selectedRecipients.length > 0 && <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedRecipients([])}>{t("common.deselectAll")}</Button>}</div></div>
+        <div className="relative"><Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={recipientQuery} onChange={event => setRecipientQuery(event.target.value)} className="pl-9" placeholder={t("admin.inbox.searchRecipients")} aria-label={t("admin.inbox.searchRecipients")} /></div>
+        <p className="text-xs text-muted-foreground">{t("admin.inbox.visibleRecipients", { visible: visibleRecipients.length, total: recipients.length })}</p>
+        <div className="max-h-52 space-y-1 overflow-auto rounded-md border p-2">{visibleRecipients.length ? visibleRecipients.map(recipient => <label key={recipient.id} className="flex cursor-pointer items-start gap-2 rounded p-2 hover:bg-muted"><input type="checkbox" className="mt-0.5" checked={selectedRecipients.includes(recipient.id)} onChange={() => setSelectedRecipients(current => current.includes(recipient.id) ? current.filter(id => id !== recipient.id) : [...current, recipient.id])} /><span className="min-w-0 text-sm"><span className="block">{recipient.full_name}</span>{recipient.email && <span className="block truncate text-xs text-muted-foreground">{recipient.email}</span>}</span></label>) : <p className="p-2 text-sm text-muted-foreground">{t("admin.inbox.noRecipients")}</p>}</div>
+      </div>
+      <div><label htmlFor="message-subject" className="text-sm font-medium">{t("admin.inbox.subject")}</label><Input id="message-subject" value={subject} onChange={event => setSubject(event.target.value)} maxLength={200} /></div><div><label htmlFor="message-body" className="text-sm font-medium">{t("admin.inbox.message")}</label><Textarea id="message-body" value={body} onChange={event => setBody(event.target.value)} maxLength={10000} rows={6} /></div><Button type="button" disabled={busy || !selectedRecipients.length} onClick={requestSend}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}{t("admin.inbox.send")}</Button>
+    </CardContent></Card>
     <Card><CardHeader><CardTitle>{t("admin.inbox.threads")}</CardTitle></CardHeader><CardContent className="space-y-4"><div className="max-h-52 space-y-2 overflow-auto">{threads.length ? threads.map(thread => {
       const categoryLabel = (thread as any).category_label ?? "Generelt";
       const categoryText = categoryLabel === "Kontrakt" ? t("inbox.category.contract") : categoryLabel === "Værk" ? t("inbox.category.work") : categoryLabel === "Visning" ? t("inbox.category.screening") : t("inbox.category.general");

@@ -149,7 +149,7 @@ export type RightsHolderRelationOption = {
   id: string;
   title: string;
   secondary: string | null;
-  selected: boolean;
+  kind: "work" | "contract";
 };
 
 export async function getRightsHolderRelations(rightsHolderId: string) {
@@ -158,65 +158,24 @@ export async function getRightsHolderRelations(rightsHolderId: string) {
   if (!caller) throw new Error("Ikke autoriseret");
   const db = createServiceClient();
   await assertRightsHolderInOrg(db, rightsHolderId, caller.orgId);
-  const [{ data: assignments, error: assignmentsError }, { data: contracts, error: contractsError }, { data: works, error: worksError }] = await Promise.all([
-    db.from("work_assignments").select("work_id").eq("org_id", caller.orgId).eq("rights_holder_id", rightsHolderId),
-    db.from("contracts").select("id,working_title,status,rights_holder_id").eq("org_id", caller.orgId).order("created_at", { ascending: false }),
-    db.from("works").select("id,title,type,year").is("parent_work_id", null).order("title").limit(1000),
+  const [{ data: assignments, error: assignmentsError }, { data: contracts, error: contractsError }] = await Promise.all([
+    db.from("work_assignments")
+      .select("work_id,works(id,title,type,year)")
+      .eq("org_id", caller.orgId)
+      .eq("rights_holder_id", rightsHolderId),
+    db.from("contracts")
+      .select("id,working_title,status,works(title)")
+      .eq("org_id", caller.orgId)
+      .eq("rights_holder_id", rightsHolderId)
+      .order("created_at", { ascending: false }),
   ]);
-  if (assignmentsError || contractsError || worksError) throw new Error(assignmentsError?.message ?? contractsError?.message ?? worksError?.message ?? "Relationer kunne ikke hentes");
-  const selectedWorkIds = new Set((assignments ?? []).map(row => row.work_id));
+  if (assignmentsError || contractsError) throw new Error(assignmentsError?.message ?? contractsError?.message ?? "Relationer kunne ikke hentes");
+  const workRelations = (assignments ?? []) as unknown as Array<{ work_id: string; works: { id: string; title: string; type: string | null; year: number | null } | null }>;
+  const contractRelations = (contracts ?? []) as unknown as Array<{ id: string; working_title: string | null; status: string; works: { title: string } | null }>;
   return {
-    works: (works ?? []).map(work => ({ id: work.id, title: work.title, secondary: [work.year, work.type].filter(Boolean).join(" · ") || null, selected: selectedWorkIds.has(work.id) })) as RightsHolderRelationOption[],
-    contracts: (contracts ?? []).map(contract => ({ id: contract.id, title: contract.working_title ?? "Kontrakt uden titel", secondary: contract.status, selected: contract.rights_holder_id === rightsHolderId })) as RightsHolderRelationOption[],
+    works: workRelations.flatMap(row => row.works ? [{ id: row.works.id, title: row.works.title, secondary: [row.works.year, row.works.type].filter(Boolean).join(" · ") || null, kind: "work" as const }] : []),
+    contracts: contractRelations.map(contract => ({ id: contract.id, title: contract.works?.title ?? contract.working_title ?? "Kontrakt uden titel", secondary: contract.status, kind: "contract" as const })),
   };
-}
-
-export async function saveRightsHolderRelations(params: { rightsHolderId: string; workIds: string[]; contractIds: string[] }) {
-  const supabase = await createClient();
-  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
-  if (!caller) return { success: false, error: "Ikke autoriseret" };
-  const db = createServiceClient();
-  await assertRightsHolderInOrg(db, params.rightsHolderId, caller.orgId);
-  const workIds = [...new Set(params.workIds)].slice(0, 1000);
-  const contractIds = [...new Set(params.contractIds)].slice(0, 1000);
-  const { data: existingAssignments, error: assignmentReadError } = await db
-    .from("work_assignments")
-    .select("id,work_id")
-    .eq("org_id", caller.orgId)
-    .eq("rights_holder_id", params.rightsHolderId);
-  if (assignmentReadError) return { success: false, error: assignmentReadError.message };
-  const removeAssignmentIds = (existingAssignments ?? []).filter(row => !workIds.includes(row.work_id)).map(row => row.id);
-  if (removeAssignmentIds.length) {
-    const removed = await db.from("work_assignments").delete().in("id", removeAssignmentIds).eq("org_id", caller.orgId);
-    if (removed.error) return { success: false, error: removed.error.message };
-  }
-  const existingWorkIds = new Set((existingAssignments ?? []).map(row => row.work_id));
-  const additions = workIds.filter(id => !existingWorkIds.has(id));
-  if (additions.length) {
-    const { data: validWorks, error: validWorksError } = await db.from("works").select("id").in("id", additions);
-    if (validWorksError) return { success: false, error: validWorksError.message };
-    const validIds = new Set((validWorks ?? []).map(work => work.id));
-    const added = await db.from("work_assignments").insert(additions.filter(id => validIds.has(id)).map(workId => ({
-      work_id: workId,
-      org_id: caller.orgId,
-      rights_holder_id: params.rightsHolderId,
-      role: "Klipper",
-    })));
-    if (added.error) return { success: false, error: added.error.message };
-    await Promise.all(additions.filter(id => validIds.has(id)).map(workId => db.from("work_organisations").upsert({ work_id: workId, org_id: caller.orgId, relation_role: "catalogue" }, { onConflict: "work_id,org_id" })));
-  }
-  let ownedContracts = db.from("contracts").update({ rights_holder_id: null }).eq("org_id", caller.orgId).eq("rights_holder_id", params.rightsHolderId);
-  if (contractIds.length) ownedContracts = ownedContracts.not("id", "in", `(${contractIds.join(",")})`);
-  const cleared = await ownedContracts;
-  if (cleared.error) return { success: false, error: cleared.error.message };
-  if (contractIds.length) {
-    const assigned = await db.from("contracts").update({ rights_holder_id: params.rightsHolderId }).eq("org_id", caller.orgId).in("id", contractIds);
-    if (assigned.error) return { success: false, error: assigned.error.message };
-  }
-  revalidatePath("/admin/rettighedshavere");
-  revalidatePath("/admin/kontrakter");
-  revalidatePath("/admin/vaerker");
-  return { success: true };
 }
 
 export async function createRettighedshaverSecure(

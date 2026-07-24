@@ -14,7 +14,7 @@ export type ResponseTimeStats = {
 
 export type AdminDashboardMetrics = {
   tasks: {
-    contractDrafts: number;
+    contractValidationsPending: number;
     workRequests: number;
     screeningClaims: number;
     contractReviews: number;

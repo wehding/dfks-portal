@@ -15,7 +15,11 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
     contractUnread, workUnread, screeningUnread,
     contractMessages, workMessages, screeningMessages, directThreads, reviewRows,
   ] = await Promise.all([
-    db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
+    db.from("contracts").select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .not("work_id", "is", null)
+      .neq("status", "valideret")
+      .neq("status", "arkiveret"),
     db.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "valideret"),
     db.from("org_affiliations").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("is_member", true),
     db.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
@@ -54,7 +58,7 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
 
   return {
     tasks: {
-      contractDrafts: drafts.count ?? 0,
+      contractValidationsPending: drafts.count ?? 0,
       workRequests: workRequests.count ?? 0,
       screeningClaims: screeningClaims.count ?? 0,
       contractReviews: reviews.count ?? 0,

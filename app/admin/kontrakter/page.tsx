@@ -46,6 +46,7 @@ import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-ep
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
+import { isPendingContractValidation } from "@/lib/contract-list-status"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -446,6 +447,8 @@ function AdminKontrakterContent() {
         if (typeof window === "undefined") return
         const params = new URLSearchParams(window.location.search)
         prefillWorkIdRef.current = params.get("work")
+        const status = params.get("status")
+        if (status) setFilterStatus(status)
         if (params.get("new") === "1") {
             setShowUpload(true)
             setUploadPhase("select")
@@ -1465,6 +1468,7 @@ function AdminKontrakterContent() {
         if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
         else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
         else if (filterStatus === "missingWork") list = list.filter(c => !hasContractWorkLink(c))
+        else if (filterStatus === "validationPending") list = list.filter(isPendingContractValidation)
         else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
         else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
         if (filterType !== "all") list = list.filter(c => c.type === filterType)
@@ -1623,6 +1627,7 @@ function AdminKontrakterContent() {
                     <SelectContent>
                         <SelectItem value="all">Status</SelectItem>
                         <SelectItem value="kladde">Kladde</SelectItem>
+                        <SelectItem value="validationPending">Afventer validering</SelectItem>
                         <SelectItem value="validationRecommended">Validering anbefalet</SelectItem>
                         <SelectItem value="missingOwner">Mangler ejer</SelectItem>
                         <SelectItem value="missingWork">Mangler værk</SelectItem>
@@ -2066,18 +2071,21 @@ function AdminKontrakterContent() {
                         </div>
                     </DialogHeader>
                     <div className="flex flex-wrap gap-2 border-b pb-3">
-	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving}>
-	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-	                            Hent data
+	                        <Button type="button" variant="outline" size="sm" onClick={closeEditDialog} disabled={editSaving}>
+	                            {t("common.cancel")}
 	                        </Button>
 	                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-	                            Gem
+	                            {t("admin.contracts.saveContract")}
 	                        </Button>
 	                        <Button type="button" size="sm" className="gap-2" onClick={handleValidateAndNext} disabled={editSaving}>
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-	                            Valider
+	                            {t("admin.contracts.validate")}
 	                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving} title={t("admin.contracts.rereadHelp")}>
+                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                            {t("admin.contracts.reread")}
+                        </Button>
                         <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
@@ -2451,27 +2459,10 @@ function AdminKontrakterContent() {
                                     setEditContract(prev => prev ? { ...prev, contract_comments: [] } : prev)
                                     setContracts(prev => prev.map(contract => contract.id === editContract.id ? { ...contract, contract_comments: [] } : contract))
                                 }}
-                                footer={(
-                                    <Button type="button" variant="outline" onClick={() => handleSaveEdit()} disabled={editSaving} className="w-full sm:w-auto">
-                                        {editSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        Gem kontrakt
-                                    </Button>
-                                )}
                             />
                         </div>
                         </div>
                     )}
-	                    <DialogFooter>
-	                        <Button variant="outline" onClick={closeEditDialog} disabled={editSaving}>
-	                            Annuller
-	                        </Button>
-	                        <Button variant="outline" onClick={() => handleSaveEdit(undefined, { saveOnly: true })} disabled={editSaving}>
-	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Gem"}
-	                        </Button>
-	                        <Button onClick={handleValidateAndNext} disabled={editSaving}>
-	                            {editSaving ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Gemmer...</> : "Valider"}
-	                        </Button>
-                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
