@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useSyncExternalStore } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -81,6 +81,10 @@ const USER_NAV_ITEMS = [
     { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
 
+const subscribeToLocation = () => () => undefined
+const embeddedLocationSnapshot = () => new URLSearchParams(window.location.search).get("embedded") === "1"
+const embeddedServerSnapshot = () => false
+
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
@@ -149,6 +153,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [setupOpen, setSetupOpen] = useState(false)
     const [rettighedsOpen, setRettighedsOpen] = useState(true)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string }>({ logo_url: null, short_name: "DFKS" })
+    const embedded = useSyncExternalStore(subscribeToLocation, embeddedLocationSnapshot, embeddedServerSnapshot)
 
     useEffect(() => {
         const supabase = createClient()
@@ -265,6 +270,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </SidebarMenuButton>
         </SidebarMenuItem>
     )
+
+    if (embedded) {
+        return <main className="min-h-screen bg-background p-2 sm:p-4">{children}</main>
+    }
 
     return (
         <SidebarProvider>

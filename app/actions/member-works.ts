@@ -1976,6 +1976,7 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
   let alternativeTitles: string[] = [];
   let productionCountries: string[] = [];
   let productionCompanies: string[] = [];
+  let externalProductionCompanies: Array<{ source: "dfi" | "tmdb"; externalId?: string | null; name: string }> = [];
   let episodeOptions: { number: number; title: string; dfiId?: string | null }[] = [];
   let localChildren: any[] = Array.isArray(result.raw_local?.__local_children) ? result.raw_local.__local_children : [];
   let seasonConfirmed = false;
@@ -2018,6 +2019,14 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
         alternativeTitles = Array.from(new Set([...toTextList(meta.AltTitle), ...toTextList(meta.ForeignTitles)]));
         productionCountries = toTextList(meta.ProductionCountries);
         productionCompanies = toTextList(meta.ProductionCompanies);
+        externalProductionCompanies = (Array.isArray(meta.ProductionCompanies) ? meta.ProductionCompanies : meta.ProductionCompanies ? [meta.ProductionCompanies] : []).flatMap(item => {
+          if (typeof item === "string") return [{ source: "dfi" as const, externalId: null, name: item.trim() }];
+          if (!item || typeof item !== "object") return [];
+          const company = item as Record<string, unknown>;
+          const name = String(company.Name ?? company.Title ?? "").trim();
+          const externalId = company.Id ?? company.CompanyId ?? company.OrganisationId;
+          return name ? [{ source: "dfi" as const, externalId: externalId == null ? null : String(externalId), name }] : [];
+        });
 
         // Fetch DFI episodes count
         const comment = (dfiMetadata as any).Comment || (dfiMetadata as any).Synopsis || "";
@@ -2081,21 +2090,27 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       imdbId = imdbId ?? externalIds.imdb_id;
       wikidataId = wikidataId ?? externalIds.wikidata_id;
 
-      if (isSeries) {
-        const tmdbDet = await getTMDBWorkDetails(tmdbId, "tv");
-        if (tmdbDet.success && tmdbDet.details) {
+      const tmdbDet = await getTMDBWorkDetails(tmdbId, isSeries ? "tv" : "movie");
+      if (tmdbDet.success && tmdbDet.details) {
           const tDetails = tmdbDet.details as any;
+          const tmdbCompanies: Array<{ source: "tmdb"; externalId: string | null; name: string }> = (tDetails.production_companies ?? []).flatMap((item: any) => {
+            const name = String(item?.name ?? "").trim();
+            return name ? [{ source: "tmdb" as const, externalId: item?.id == null ? null : String(item.id), name }] : [];
+          });
+          externalProductionCompanies = [...externalProductionCompanies, ...tmdbCompanies]
+            .filter((company, index, rows) => rows.findIndex(item => item.source === company.source && item.externalId === company.externalId && item.name === company.name) === index);
+          if (!productionCompanies.length) productionCompanies = tmdbCompanies.map(company => company.name);
+        if (isSeries) {
           const season = Array.isArray(tDetails.seasons)
             ? tDetails.seasons.find((item: any) => item.season_number === detailSeasonNumber)
             : null;
           seasonCount = Number(tDetails.number_of_seasons ?? 0) || seasonCount;
           productionCountries = productionCountries.length ? productionCountries : (tDetails.production_countries ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
-          productionCompanies = productionCompanies.length ? productionCompanies : (tDetails.production_companies ?? []).map((item: any) => String(item.name ?? "")).filter(Boolean);
           if (season?.episode_count && (!episodeCount || season.episode_count > episodeCount)) {
             episodeCount = season.episode_count;
             seasonConfirmed = true;
           }
-        }
+          }
       }
     } catch (e) {
       console.error("TMDB external IDs lookup error in resolveUnifiedSearchResultDetails:", e);
@@ -2181,6 +2196,7 @@ export async function resolveUnifiedSearchResultDetails(result: UnifiedSearchWor
       alternative_titles: alternativeTitles,
       production_countries: productionCountries,
       production_companies: productionCompanies,
+      external_production_companies: externalProductionCompanies,
       episode_options: episodeOptions,
       episode_lookup_status: episodeLookupStatus,
       episode_lookup_error: seasonLookupError,

@@ -4,7 +4,6 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Clock,
   Film,
@@ -18,7 +17,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
+import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
@@ -64,7 +63,7 @@ import { SeasonStepper } from "@/components/works/season-stepper";
 import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
-import { normalizeCompanyName, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
+import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -170,8 +169,10 @@ type WorkDistribution = {
   valid_from_year?: number | null;
   valid_to_year?: number | null;
   broadcasters?: { name?: string | null; logo_path?: string | null } | null;
+  source?: "manual" | "producer" | "import";
+  inherited_from_employer_id?: string | null;
 };
-type DistributionDraft = { broadcasterName: string; distributionType: "tv" | "streaming" | "both"; validFromYear: string; validToYear: string };
+type DistributionDraft = { broadcasterName: string; distributionType: "tv" | "streaming" | "both"; validFromYear: string; validToYear: string; inherited?: boolean };
 type SeasonCreditDraft = { rightsHolderId: string; name: string; role: string; episodes: number[] };
 
 type WorkRow = {
@@ -750,6 +751,7 @@ function toDistributionDrafts(work: WorkRow): DistributionDraft[] {
       distributionType: item.distribution_type ?? "both",
       validFromYear: item.valid_from_year == null ? "" : String(item.valid_from_year),
       validToYear: item.valid_to_year == null ? "" : String(item.valid_to_year),
+      inherited: item.source === "producer",
     }));
   }
   const legacy = getWorkBroadcaster(work);
@@ -757,7 +759,7 @@ function toDistributionDrafts(work: WorkRow): DistributionDraft[] {
 }
 
 function distributionPayload(items: DistributionDraft[]) {
-  return items.filter(item => item.broadcasterName).map(item => ({
+  return items.filter(item => item.broadcasterName && !item.inherited).map(item => ({
     broadcasterName: item.broadcasterName,
     distributionType: item.distributionType,
     validFromYear: nullableNumber(item.validFromYear),
@@ -1126,22 +1128,36 @@ export default function VaerksadministrationPage() {
     if (results.some(r => r.success)) notifyWorksUpdated();
   };
 
-  const resolveProducerSelections = async (names: string[] | null | undefined) => {
+  const resolveProducerSelections = async (names: string[] | null | undefined, externalCompanies: ExternalProductionCompany[] = []) => {
     const cleanNames = [...new Set((names ?? []).map(name => name.trim()).filter(Boolean))];
-    const resolved = await Promise.all(cleanNames.map(async name => {
+    const resolved: Array<ProductionCompanySelection | null> = await Promise.all(cleanNames.map(async (name): Promise<ProductionCompanySelection | null> => {
       try {
-        const response = await fetch(`/api/production-companies?query=${encodeURIComponent(name)}`);
+        const external = externalCompanies.find(company => normalizeCompanyName(company.name) === normalizeCompanyName(name));
+        const params = new URLSearchParams({ query: name });
+        if (external?.source) params.set("source", external.source);
+        if (external?.externalId) params.set("externalId", external.externalId);
+        const response = await fetch(`/api/production-companies?${params}`);
         if (!response.ok) return null;
         const json = await response.json();
-        const option = (json.data as ProductionCompanyOption[] | undefined)?.find(company =>
+        const candidates = json.data as ProductionCompanyOption[] | undefined;
+        const exact = candidates?.find(company =>
           normalizeCompanyName(company.canonicalName) === normalizeCompanyName(name)
           || company.aliases.some(alias => normalizeCompanyName(alias) === normalizeCompanyName(name))
           || company.legalEntities.some(entity => normalizeCompanyName(entity.legalName) === normalizeCompanyName(name))
         );
-        return option ? { employerId: option.employerId, canonicalName: option.canonicalName } : null;
+        const option = exact ?? ((candidates?.[0]?.matchScore ?? 0) >= 90 ? candidates?.[0] : null);
+        return option ? {
+          employerId: option.employerId,
+          canonicalName: option.canonicalName,
+          externalSource: external?.source,
+          externalId: external?.externalId ?? undefined,
+          externalName: external?.name,
+          matchScore: option.matchScore,
+          matchMethod: option.externalMatch ? "external_id" as const : exact ? "exact_name" as const : "fuzzy_name" as const,
+        } : null;
       } catch { return null; }
     }));
-    return resolved.filter((selection): selection is ProductionCompanySelection => Boolean(selection));
+    return resolved.filter((selection): selection is ProductionCompanySelection => selection !== null);
   };
 
   const openEdit = async (work: WorkRow) => {
@@ -1670,6 +1686,7 @@ export default function VaerksadministrationPage() {
       };
       setImportPreview({ source: primarySource === "tmdb" ? "TMDB" : "DFI", rows: importDiffRows(editForm, nextValues) });
       setEditForm({ ...editForm, ...nextValues });
+      void resolveProducerSelections(details.production_companies, details.external_production_companies ?? []).then(setEditProducerSelections);
       setNotice("Kombinerede værksdata er hentet. Gennemgå ændringerne og gem værket.");
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente kombinerede værksdata."));
@@ -1775,6 +1792,7 @@ export default function VaerksadministrationPage() {
         : []
     );
     setAddSelectedEpisodes([]);
+    void resolveProducerSelections(d?.production_companies, d?.external_production_companies ?? []).then(setAddProducerSelections);
     setAddForm(form => ({
       ...form,
       title: d?.title ?? result.title,
@@ -1785,6 +1803,8 @@ export default function VaerksadministrationPage() {
       genre: d?.genre ?? result.genre ?? "",
       director: d?.director ?? result.director ?? "",
       description: d?.description ?? result.description ?? "",
+      production_companies: d?.production_companies?.length ? d.production_companies.join(", ") : form.production_companies,
+      production_countries: d?.production_countries?.length ? d.production_countries.join(", ") : form.production_countries,
       dfi_id: d?.dfi_id ? String(d.dfi_id) : result.dfi_id ? String(result.dfi_id) : "",
       tmdb_id: d?.tmdb_id ? String(d.tmdb_id) : result.tmdb_id ? String(result.tmdb_id) : "",
       imdb_id: d?.imdb_id ?? result.imdb_id ?? "",
@@ -2133,7 +2153,7 @@ export default function VaerksadministrationPage() {
                 <div onClick={event => event.stopPropagation()} className="pt-1">
                   <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
                 </div>
-                {isSeason && <button type="button" onClick={() => toggleAdminSeason(work)} className="mt-1 shrink-0 text-muted-foreground" aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}>{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>}
+                {isSeason && <ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleAdminSeason(work)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} className="mt-1" />}
                 <button type="button" onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
                   <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
                     {poster ? (
@@ -2253,7 +2273,7 @@ export default function VaerksadministrationPage() {
                       </button>
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
-                          {isSeason && <button type="button" onClick={() => toggleAdminSeason(work)} className="text-muted-foreground" aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}>{isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>}
+                          {isSeason && <ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleAdminSeason(work)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} />}
                           <button onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="inline-flex items-center gap-1 text-left font-medium underline-offset-4 hover:underline">
                             {work.title}{isSeason && work.season_number != null ? ` · Sæson ${work.season_number}` : ""}
                           </button>
@@ -3263,13 +3283,13 @@ function DistributionEditor({ value, onChange, options }: { value: DistributionD
   const update = (index: number, patch: Partial<DistributionDraft>) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
   return (
     <div className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "" }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
+      <div className="flex items-center justify-between gap-2"><Label>Broadcastere og streamere</Label><Button type="button" size="sm" variant="outline" onClick={() => onChange([...value, { broadcasterName: "", distributionType: "both", validFromYear: "", validToYear: "", inherited: false }])}><Plus className="mr-1 h-4 w-4" />Tilføj</Button></div>
       {value.length === 0 ? <p className="text-xs text-muted-foreground">Ingen broadcastere eller streamere tilknyttet.</p> : value.map((item, index) => (
         <div key={index} className="grid gap-2 rounded border p-2 sm:grid-cols-[minmax(180px,1fr)_100px_100px_auto]">
-          <Select value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>
-          <Input inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
-          <Input inputMode="numeric" placeholder="Til år" value={item.validToYear} onChange={event => update(index, { validToYear: event.target.value })} />
-          <Button type="button" size="icon" variant="ghost" aria-label="Fjern broadcaster" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="h-4 w-4" /></Button>
+          <div><Select disabled={item.inherited} value={item.broadcasterName} onValueChange={broadcasterName => update(index, { broadcasterName })}><SelectTrigger><SelectValue placeholder="Vælg broadcaster" /></SelectTrigger><SelectContent>{options.map(option => <SelectItem key={option.name} value={option.name}>{option.name}</SelectItem>)}</SelectContent></Select>{item.inherited && <p className="mt-1 text-xs text-muted-foreground">Fra producent</p>}</div>
+          <Input disabled={item.inherited} inputMode="numeric" placeholder="Fra år" value={item.validFromYear} onChange={event => update(index, { validFromYear: event.target.value })} />
+          <Input disabled={item.inherited} inputMode="numeric" placeholder="Til år" value={item.validToYear} onChange={event => update(index, { validToYear: event.target.value })} />
+          <Button type="button" size="icon" variant="ghost" disabled={item.inherited} aria-label={item.inherited ? "Fjern producenten fra værket for at fjerne broadcasteren" : "Fjern broadcaster"} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="h-4 w-4" /></Button>
         </div>
       ))}
     </div>

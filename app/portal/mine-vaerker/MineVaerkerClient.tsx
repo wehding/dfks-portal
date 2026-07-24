@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Film, Plus, Search, X, Trash2 } from "lucide-react";
+import { Film, Plus, Search, X, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,6 +18,7 @@ import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MINE_VAERKER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
+import { ExpandableListTrigger } from "@/components/responsive-data-view";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -835,14 +836,7 @@ export default function MineVaerkerClient({
               {/* Poster + titel */}
               <div className="flex items-center gap-3">
                 {isSeriesParent ? (
-                  <button
-                    type="button"
-                    onClick={event => { event.stopPropagation(); void toggleSeries(w); }}
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                    aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
-                  >
-                    {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                  </button>
+                  <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
                 ) : (
                   <span className="w-4 shrink-0" />
                 )}
@@ -940,14 +934,7 @@ export default function MineVaerkerClient({
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         {isSeriesParent && (
-                          <button
-                            type="button"
-                            onClick={event => { event.stopPropagation(); void toggleSeries(w); }}
-                            className="shrink-0 text-gray-400 hover:text-gray-700"
-                            aria-label={isExpanded ? "Skjul afsnit" : "Vis afsnit"}
-                          >
-                            {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          </button>
+                          <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
                         )}
                         <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
                         {broadcasterLogo && (

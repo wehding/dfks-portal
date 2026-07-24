@@ -16,14 +16,15 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get("sort") ?? "name";
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
 
-  const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult] = await Promise.all([
-    db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at)").is("merged_into_id", null).is("archived_at", null),
+  const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult, broadcasterResult] = await Promise.all([
+    db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
     db.from("contracts").select("id,employer_id,status,created_at,rights_holder_id").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("works").select("id,employer_id,status,created_at").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("work_assignments").select("rights_holder_id,work_id,works(employer_id)").eq("org_id", auth.orgId),
     db.from("rettighedshavere").select("id,full_name,org_affiliations!inner(org_id)").eq("org_affiliations.org_id", auth.orgId).order("full_name"),
     db.from("work_organisations").select("work_id").eq("org_id", auth.orgId),
     db.from("contract_employers").select("contract_id,employer_id,contracts!inner(org_id)").eq("contracts.org_id", auth.orgId),
+    db.from("broadcasters").select("id,name,logo_path,content_type").order("name"),
   ]);
   let employerRows = employers ?? [];
   if (error) {
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     }
     const legacy = await db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr");
     if (legacy.error) return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
-    employerRows = (legacy.data ?? []).map(row => ({ ...row, status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [] })) as typeof employerRows;
+    employerRows = (legacy.data ?? []).map(row => ({ ...row, broadcaster_id: null, broadcasters: [], status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [] })) as unknown as typeof employerRows;
   }
 
   const relationWorkIds = (workOrgResult.data ?? []).map(row => row.work_id);
@@ -124,7 +125,7 @@ export async function GET(req: NextRequest) {
     const [left, right] = values[sort] ?? values.name;
     return (typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), "da", { numeric: true })) * direction;
   });
-  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], canMerge: auth.role === "superadmin" });
+  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], canMerge: auth.role === "superadmin" });
 }
 
 export async function POST(req: NextRequest) {
@@ -133,6 +134,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null) as {
     name?: string;
     dfiCompanyId?: string | number | null;
+    broadcasterId?: string | null;
     legalEntities?: Array<{ legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean }>;
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
@@ -155,6 +157,7 @@ export async function POST(req: NextRequest) {
     dfi_company_id: Number.isFinite(parsedDfiId) ? parsedDfiId : null,
     status: "active",
     is_verified: Boolean(parsedDfiId),
+    broadcaster_id: body?.broadcasterId || null,
   }).select("id").single();
   if (error || !employer) return NextResponse.json({ error: error?.message ?? "Producenten kunne ikke oprettes" }, { status: 409 });
 

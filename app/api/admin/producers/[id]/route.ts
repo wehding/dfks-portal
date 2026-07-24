@@ -38,6 +38,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json().catch(() => null) as {
     name?: string;
     dfiCompanyId?: string | number | null;
+    broadcasterId?: string | null;
     legalEntities?: Array<{ id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean }>;
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
@@ -57,6 +58,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     name,
     dfi_company_id: Number.isFinite(parsedDfiId) ? parsedDfiId : null,
     is_verified: Boolean(parsedDfiId),
+    broadcaster_id: body?.broadcasterId || null,
     updated_at: new Date().toISOString(),
   }).eq("id", id).is("merged_into_id", null);
   if (employerUpdate.error) return NextResponse.json({ error: employerUpdate.error.message }, { status: 409 });

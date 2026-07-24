@@ -24,6 +24,16 @@ export type ProductionCompanyOption = {
   aliases: string[];
   legalEntities: ProductionCompanyLegalEntity[];
   isVerified: boolean;
+  matchScore?: number;
+  matchMethod?: "external_id" | "cvr" | "exact_name" | "fuzzy_name";
+  externalMatch?: boolean;
+  externalIdentities?: Array<{ source: string; externalId: string; externalName?: string | null; approved: boolean }>;
+};
+
+export type ExternalProductionCompany = {
+  source: "dfi" | "tmdb" | "other";
+  externalId?: string | null;
+  name: string;
 };
 
 export type ProductionCompanySelection = {
@@ -32,6 +42,11 @@ export type ProductionCompanySelection = {
   canonicalName: string;
   legalName?: string;
   registrationNumber?: string;
+  externalSource?: ExternalProductionCompany["source"];
+  externalId?: string;
+  externalName?: string;
+  matchScore?: number;
+  matchMethod?: "external_id" | "cvr" | "exact_name" | "fuzzy_name" | "admin";
 };
 
 export function normalizeCompanyName(value: string) {

@@ -582,11 +582,20 @@ export async function fetchAdminWorksForReview() {
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
   const workListFields = "id, org_id, title, type, year, duration_minutes, season_count, episode_count, parent_work_id, season_number, episode_number, genre, director, status, dfi_id, tmdb_id, imdb_id, description, poster_url, created_at";
-  const { data, error } = await db
+  let workListResult = await db
     .from("works")
-    .select(`${workListFields}, work_change_requests(id, status), contracts(id, season_number, episode_numbers), work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
+    .select(`${workListFields}, work_change_requests(id, status), contracts(id, season_number, episode_numbers), work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, source, inherited_from_employer_id, broadcasters(name, logo_path))`)
     .eq("org_id", orgId)
     .order("created_at", { ascending: false });
+
+  if (workListResult.error?.code === "42703") {
+    workListResult = await db
+      .from("works")
+      .select(`${workListFields}, work_change_requests(id, status), contracts(id, season_number, episode_numbers), work_assignments(id, role, rights_holder_id, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))`)
+      .eq("org_id", orgId)
+      .order("created_at", { ascending: false }) as typeof workListResult;
+  }
+  const { data, error } = workListResult;
 
   if (error) throw new Error(error.message);
   const rows = data ?? [];
@@ -705,21 +714,31 @@ export async function fetchAdminSeasonEpisodes(params: { parentWorkId: string; s
   const orgId = await currentOrgId(db, user.id);
   const withSharePercent = await db
     .from("works")
-    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, source, inherited_from_employer_id, broadcasters(name, logo_path))")
     .eq("org_id", orgId)
     .eq("parent_work_id", params.parentWorkId)
     .eq("season_number", params.seasonNumber)
     .order("episode_number", { ascending: true });
-  const { data, error } = await retryWithoutSharePercent(
+  let seasonResult = await retryWithoutSharePercent(
     withSharePercent,
     async () => await db
       .from("works")
-      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, source, inherited_from_employer_id, broadcasters(name, logo_path))")
       .eq("org_id", orgId)
       .eq("parent_work_id", params.parentWorkId)
       .eq("season_number", params.seasonNumber)
       .order("episode_number", { ascending: true })
   );
+  if (seasonResult.error?.code === "42703") {
+    seasonResult = await db
+      .from("works")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+      .eq("org_id", orgId)
+      .eq("parent_work_id", params.parentWorkId)
+      .eq("season_number", params.seasonNumber)
+      .order("episode_number", { ascending: true }) as typeof seasonResult;
+  }
+  const { data, error } = seasonResult;
   if (error) return { success: false, error: error.message, works: [] };
   const { data: seasonContracts, error: seasonContractError } = await db.from("contracts")
     .select("id, type, status, created_at, rights_holder_id, season_number, episode_numbers, rettighedshavere(full_name)")
@@ -777,19 +796,28 @@ export async function fetchAdminWorkDetail(workId: string) {
   const orgId = await currentOrgId(db, user.id);
   const withSharePercent = await db
     .from("works")
-    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+    .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, share_percent, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, source, inherited_from_employer_id, broadcasters(name, logo_path))")
     .eq("org_id", orgId)
     .eq("id", workId)
     .maybeSingle();
-  const { data, error } = await retryWithoutSharePercent(
+  let detailResult = await retryWithoutSharePercent(
     withSharePercent,
     async () => await db
       .from("works")
-      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, source, inherited_from_employer_id, broadcasters(name, logo_path))")
       .eq("org_id", orgId)
       .eq("id", workId)
       .maybeSingle()
   );
+  if (detailResult.error?.code === "42703") {
+    detailResult = await db
+      .from("works")
+      .select("*, work_change_requests(*, rettighedshavere(full_name), work_change_request_comments(*)), contracts(id, type, status, created_at, rettighedshavere(full_name)), work_assignments(id, role, rettighedshavere(id, full_name)), work_production_numbers(id, tv_station, number), work_distributions(id, broadcaster_name, distribution_type, valid_from_year, valid_to_year, broadcasters(name, logo_path))")
+      .eq("org_id", orgId)
+      .eq("id", workId)
+      .maybeSingle() as typeof detailResult;
+  }
+  const { data, error } = detailResult;
 
   if (error) return { success: false, error: error.message };
   if (!data) return { success: false, error: "Værket blev ikke fundet." };
@@ -999,12 +1027,12 @@ export async function fetchAdminBroadcasters() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("broadcasters")
-    .select("name, logo_path")
+    .select("id, name, logo_path, content_type")
     .order("name", { ascending: true });
 
   if (error) throw new Error(error.message);
   const broadcasters = (data ?? [])
-    .filter((row): row is { name: string; logo_path: string | null } => Boolean(row.name));
+    .filter((row): row is { id: string; name: string; logo_path: string | null; content_type: string | null } => Boolean(row.id && row.name));
 
   return { success: true, broadcasters };
 }
@@ -1058,15 +1086,55 @@ async function updateWorkDistributions(db: ReturnType<typeof createServiceClient
     if (keys.has(key)) throw new Error("Den samme broadcaster og periode er tilføjet flere gange.");
     keys.add(key);
   }
-  const { error: deleteError } = await db.from("work_distributions").delete().eq("work_id", workId).eq("org_id", orgId);
+  const { error: deleteError } = await db.from("work_distributions").delete().eq("work_id", workId).eq("org_id", orgId).neq("source", "producer");
+  if (deleteError?.code === "42703") {
+    const legacyDelete = await db.from("work_distributions").delete().eq("work_id", workId).eq("org_id", orgId);
+    if (legacyDelete.error) throw new Error(legacyDelete.error.message);
+    if (normalized.length) {
+      const { data: legacyBroadcasters } = await db.from("broadcasters").select("id, name").in("name", normalized.map(item => item.broadcasterName));
+      const legacyIds = new Map((legacyBroadcasters ?? []).map(item => [item.name.toLowerCase(), item.id]));
+      const legacyInsert = await db.from("work_distributions").insert(normalized.map(item => ({
+        org_id: orgId,
+        work_id: workId,
+        broadcaster_id: legacyIds.get(item.broadcasterName.toLowerCase()) ?? null,
+        broadcaster_name: legacyIds.has(item.broadcasterName.toLowerCase()) ? null : item.broadcasterName,
+        distribution_type: item.distributionType,
+        valid_from_year: item.validFromYear ?? null,
+        valid_to_year: item.validToYear ?? null,
+      })));
+      if (legacyInsert.error) throw new Error(legacyInsert.error.message);
+    }
+    await updateWorkBroadcaster(db, workId, normalized[0]?.broadcasterName ?? null);
+    return;
+  }
   if (deleteError) throw new Error(deleteError.message);
   if (!normalized.length) {
-    await updateWorkBroadcaster(db, workId, null);
+    const { data: inherited } = await db.from("work_distributions")
+      .select("broadcaster_name,broadcasters(name)")
+      .eq("work_id", workId)
+      .eq("org_id", orgId)
+      .eq("source", "producer")
+      .limit(1)
+      .maybeSingle();
+    const inheritedRelation = inherited?.broadcasters as unknown as { name?: string | null } | Array<{ name?: string | null }> | null;
+    const inheritedBroadcaster = Array.isArray(inheritedRelation) ? inheritedRelation[0]?.name : inheritedRelation?.name;
+    await updateWorkBroadcaster(db, workId, inheritedBroadcaster ?? inherited?.broadcaster_name ?? null);
     return;
   }
   const { data: broadcasters } = await db.from("broadcasters").select("id, name").in("name", normalized.map(item => item.broadcasterName));
   const ids = new Map((broadcasters ?? []).map(item => [item.name.toLowerCase(), item.id]));
-  const { error } = await db.from("work_distributions").insert(normalized.map(item => ({
+  const { data: inheritedRows } = await db.from("work_distributions")
+    .select("broadcaster_name,broadcasters(name)")
+    .eq("work_id", workId)
+    .eq("org_id", orgId)
+    .eq("source", "producer");
+  const inheritedNames = new Set((inheritedRows ?? []).flatMap(row => {
+    const relation = row.broadcasters as unknown as { name?: string | null } | Array<{ name?: string | null }> | null;
+    const name = Array.isArray(relation) ? relation[0]?.name : relation?.name;
+    return [name ?? row.broadcaster_name].filter((value): value is string => Boolean(value)).map(value => value.toLocaleLowerCase("da"));
+  }));
+  const manualRows = normalized.filter(item => !inheritedNames.has(item.broadcasterName.toLocaleLowerCase("da")));
+  const { error } = manualRows.length ? await db.from("work_distributions").insert(manualRows.map(item => ({
     org_id: orgId,
     work_id: workId,
     broadcaster_id: ids.get(item.broadcasterName.toLowerCase()) ?? null,
@@ -1074,7 +1142,8 @@ async function updateWorkDistributions(db: ReturnType<typeof createServiceClient
     distribution_type: item.distributionType,
     valid_from_year: item.validFromYear ?? null,
     valid_to_year: item.validToYear ?? null,
-  })));
+    source: "manual",
+  }))) : { error: null };
   if (error) throw new Error(error.message);
   await updateWorkBroadcaster(db, workId, normalized[0]?.broadcasterName ?? null);
 }

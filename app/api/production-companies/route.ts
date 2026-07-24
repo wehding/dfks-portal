@@ -14,6 +14,7 @@ type EmployerRow = {
   name: string;
   is_verified?: boolean | null;
   employer_aliases?: Array<{ alias: string }> | null;
+  employer_external_ids?: Array<{ source: string; external_id: string; external_name: string | null; approved: boolean }> | null;
   employer_legal_entities?: Array<{
     id: string;
     legal_name: string;
@@ -59,6 +60,12 @@ function toOption(row: EmployerRow): ProductionCompanyOption {
         companyType: entity.company_type ?? null,
       })),
     isVerified: Boolean(row.is_verified),
+    externalIdentities: (row.employer_external_ids ?? []).map(identity => ({
+      source: identity.source,
+      externalId: identity.external_id,
+      externalName: identity.external_name,
+      approved: identity.approved,
+    })),
   };
 }
 
@@ -69,6 +76,7 @@ async function readCompanies() {
     .select(`
       id,name,is_verified,
       employer_aliases(alias),
+      employer_external_ids(source,external_id,external_name,approved),
       employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at)
     `)
     .is("merged_into_id", null)
@@ -84,6 +92,7 @@ async function readCompanies() {
       aliases: [],
       legalEntities: [],
       isVerified: false,
+      externalIdentities: [],
     } satisfies ProductionCompanyOption));
   }
   return ((data ?? []) as EmployerRow[]).map(toOption);
@@ -93,11 +102,30 @@ export async function GET(req: NextRequest) {
   const auth = await requireSessionApi();
   if (!auth.ok) return auth.response;
   const query = (req.nextUrl.searchParams.get("query") ?? "").trim().slice(0, 100);
+  const externalSource = (req.nextUrl.searchParams.get("source") ?? "").trim();
+  const externalId = (req.nextUrl.searchParams.get("externalId") ?? "").trim();
   try {
     const companies = await readCompanies();
+    const rows = companies.map(company => {
+      const externalMatch = Boolean(externalSource && externalId && company.externalIdentities?.some(identity =>
+        identity.source === externalSource && identity.externalId === externalId && identity.approved
+      ));
+      const score = externalMatch ? 120 : companyMatchScore(company, query);
+      const normalizedQuery = normalizeCompanyName(query);
+      const exactName = [company.canonicalName, ...company.aliases, ...company.legalEntities.map(entity => entity.legalName)]
+        .some(name => normalizeCompanyName(name) === normalizedQuery);
+      return {
+        company: {
+          ...company,
+          matchScore: score,
+          matchMethod: externalMatch ? "external_id" as const : exactName ? "exact_name" as const : "fuzzy_name" as const,
+          externalMatch,
+        },
+        score,
+      };
+    });
     return NextResponse.json({
-      data: companies
-        .map(company => ({ company, score: companyMatchScore(company, query) }))
+      data: rows
         .filter(result => result.score > 0)
         .sort((left, right) => right.score - left.score
           || Number(right.company.isVerified) - Number(left.company.isVerified)
