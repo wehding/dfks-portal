@@ -9,19 +9,30 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Ugyldigt CVR-nummer" }, { status: 400 })
     }
 
+    const apiKey = process.env.CVR_DEV_API_KEY
+    if (!apiKey) {
+        return NextResponse.json({ error: "CVR-opslag er ikke konfigureret. CVR_DEV_API_KEY mangler." }, { status: 503 })
+    }
+
     try {
-        const res = await fetch("https://api.cvr.dev/api/elastic/cvr/virksomhed/_search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: { term: { cvrNummer: parseInt(cvr) } } }),
+        const res = await fetch(`https://api.cvr.dev/api/cvr/virksomhed?cvr_nummer=${cvr}`, {
+            headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+            signal: AbortSignal.timeout(10000),
         })
 
         if (!res.ok) {
-            return NextResponse.json({ error: "CVR-register svarede ikke" }, { status: 502 })
+            const error = res.status === 401
+                ? "CVR-API-nøglen er ugyldig"
+                : res.status === 402
+                    ? "CVR-abonnementet er ikke aktivt"
+                    : res.status === 429
+                        ? "CVR-registerets forespørgselsgrænse er nået. Prøv igen senere."
+                        : "CVR-register svarede ikke"
+            return NextResponse.json({ error }, { status: res.status === 429 ? 429 : 502 })
         }
 
         const data = await res.json()
-        const hit = data?.hits?.hits?.[0]?._source
+        const hit = Array.isArray(data) ? data[0] : null
         if (!hit) {
             return NextResponse.json({ error: "CVR-nummer ikke fundet" }, { status: 404 })
         }
@@ -37,12 +48,17 @@ export async function GET(req: NextRequest) {
         ].filter(Boolean)
         const address = addressParts.length ? addressParts.join(" ").replace(/\s+/g, " ").trim() : null
         const status = metadata.sammensatStatus ?? hit.virksomhedsstatus?.[0]?.status ?? null
+        const phone = [...(Array.isArray(hit.telefonNummer) ? hit.telefonNummer : [])]
+            .reverse()
+            .find(entry => !entry?.hemmelig && typeof entry?.kontaktoplysning === "string")
+            ?.kontaktoplysning ?? null
 
         return NextResponse.json({
             navn,
             legalName: navn,
             registrationNumber: cvr,
             address,
+            contactPhone: phone,
             status,
             companyType: metadata.nyesteVirksomhedsform?.kortBeskrivelse ?? null,
         })
