@@ -2244,42 +2244,6 @@ function AdminKontrakterContent() {
                                             : null
                                     })()}
                                 </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Type</Label>
-                                    <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="a-løn">A-løn</SelectItem>
-                                            <SelectItem value="leverandør">Leverandør</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Overenskomst</Label>
-                                    <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
-                                            <SelectItem value="faf">FAF (fiktion)</SelectItem>
-                                            <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
-                                            <SelectItem value="dj">DJ</SelectItem>
-                                            <SelectItem value="metal">Metal</SelectItem>
-                                            <SelectItem value="ingen">Ingen</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-	                                <div className="space-y-1">
-	                                    <Label className="text-xs">Kontraktdato</Label>
-	                                    <Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Startdato</Label>
-                                    <Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} />
-                                </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Slutdato</Label>
-                                    <Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} />
-                                </div>
                                 <div className="col-span-2 space-y-1">
                                     <Label className="text-xs">Arbejdstitel</Label>
                                     <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
@@ -2420,6 +2384,33 @@ function AdminKontrakterContent() {
                                         </div>
                                     )}
                                 </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Kontrakttype</Label>
+                                    <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="a-løn">A-løn</SelectItem>
+                                            <SelectItem value="leverandør">Leverandør</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Overenskomst</Label>
+                                    <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
+                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
+                                            <SelectItem value="faf">FAF (fiktion)</SelectItem>
+                                            <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
+                                            <SelectItem value="dj">DJ</SelectItem>
+                                            <SelectItem value="metal">Metal</SelectItem>
+                                            <SelectItem value="ingen">Ingen</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} /></div>
+                                <div className="space-y-1"><Label className="text-xs">Startdato</Label><Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} /></div>
+                                <div className="space-y-1"><Label className="text-xs">Slutdato</Label><Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} /></div>
                             </div>
                             <div className="rounded-md border p-3">
                                 {editContract && (

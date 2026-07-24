@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAdminApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveProducerStatus, type ProducerStatus } from "@/lib/admin-producers";
+import { normalizeCompanyName, validateRegistrationNumber } from "@/lib/production-companies";
 
 
 export async function GET(req: NextRequest) {
@@ -16,7 +17,7 @@ export async function GET(req: NextRequest) {
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
 
   const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult] = await Promise.all([
-    db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,archived_at)").is("merged_into_id", null).is("archived_at", null),
+    db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,archived_at)").is("merged_into_id", null).is("archived_at", null),
     db.from("contracts").select("id,employer_id,status,created_at,rights_holder_id").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("works").select("id,employer_id,status,created_at").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("work_assignments").select("rights_holder_id,work_id,works(employer_id)").eq("org_id", auth.orgId),
@@ -124,4 +125,57 @@ export async function GET(req: NextRequest) {
     return (typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), "da", { numeric: true })) * direction;
   });
   return NextResponse.json({ data: rows, rightsHolders: holders ?? [], canMerge: auth.role === "superadmin" });
+}
+
+export async function POST(req: NextRequest) {
+  const auth = await requireAdminApi(["superadmin", "admin", "org-admin"]);
+  if (!auth.ok) return auth.response;
+  const body = await req.json().catch(() => null) as {
+    name?: string;
+    dfiCompanyId?: string | number | null;
+    legalEntities?: Array<{ legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; isPrimary?: boolean }>;
+  } | null;
+  const name = body?.name?.trim().replace(/\s+/g, " ");
+  if (!name) return NextResponse.json({ error: "Producentnavn er påkrævet" }, { status: 400 });
+  const db = createServiceClient();
+  const { data: existing } = await db.from("employers").select("id,name").ilike("name", name).is("merged_into_id", null).limit(20);
+  if ((existing ?? []).some(row => normalizeCompanyName(row.name) === normalizeCompanyName(name))) {
+    return NextResponse.json({ error: "Producenten findes allerede" }, { status: 409 });
+  }
+  const preparedEntities = [];
+  for (const entity of body?.legalEntities ?? []) {
+    if (!entity.legalName?.trim()) continue;
+    const registration = validateRegistrationNumber(entity.registrationNumber ?? "");
+    if (!registration.valid) return NextResponse.json({ error: registration.error }, { status: 400 });
+    preparedEntities.push({ entity, legalName: entity.legalName.trim(), registrationNumber: registration.normalized });
+  }
+  const parsedDfiId = body?.dfiCompanyId ? Number(body.dfiCompanyId) : null;
+  const { data: employer, error } = await db.from("employers").insert({
+    name,
+    dfi_company_id: Number.isFinite(parsedDfiId) ? parsedDfiId : null,
+    status: "active",
+    is_verified: Boolean(parsedDfiId),
+  }).select("id").single();
+  if (error || !employer) return NextResponse.json({ error: error?.message ?? "Producenten kunne ikke oprettes" }, { status: 409 });
+
+  if (preparedEntities.length) {
+    const selectedPrimary = Math.max(0, preparedEntities.findIndex(item => item.entity.isPrimary));
+    const entityResult = await db.from("employer_legal_entities").insert(preparedEntities.map((prepared, index) => ({
+      employer_id: employer.id,
+      legal_name: prepared.legalName,
+      registration_country: "DK",
+      registration_type: "CVR",
+      registration_number: prepared.registrationNumber,
+      entity_kind: "company",
+      is_primary: index === selectedPrimary,
+      address: prepared.entity.address?.trim() || null,
+      contact_phone: prepared.entity.contactPhone?.trim() || null,
+      created_by: auth.userId,
+    })));
+    if (entityResult.error) {
+      await db.from("employers").delete().eq("id", employer.id);
+      return NextResponse.json({ error: entityResult.error.message }, { status: 409 });
+    }
+  }
+  return NextResponse.json({ id: employer.id }, { status: 201 });
 }

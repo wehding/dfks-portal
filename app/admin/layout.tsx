@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { resolveBranding } from "@/lib/branding"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -44,6 +43,7 @@ import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
+import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
 
 const ADMIN_NAV_ITEMS = [
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
@@ -134,7 +134,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const { t } = useI18n()
     const pathname = usePathname()
     const router = useRouter()
-    const [userRole, setUserRole] = useState<string>("admin")
+    const [userRole, setUserRole] = useState<string | null>(null)
     const [pendingCount, setPendingCount] = useState<number>(0)
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
@@ -153,31 +153,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     useEffect(() => {
         const supabase = createClient()
 
-        const fetchCount = async () => {
-            const { data: { user } } = await supabase.auth.getUser()
-            if (!user) return
-            const { data: roleRow } = await supabase
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", user.id)
-                .limit(1)
-                .maybeSingle()
-            const orgId = roleRow?.org_id
-            if (!orgId) return
-
-            supabase.from("organisations").select("name, logo_url, branding").eq("id", orgId).single().then(({ data: org }) => {
-                if (!org) return
-                const b = resolveBranding(org as never)
-                setBrand({ logo_url: (org as { logo_url?: string | null }).logo_url ?? null, short_name: b.short_name })
-            })
-
-            const { data: memberRow } = await supabase
-                .from("rettighedshavere")
-                .select("id,org_affiliations!inner(org_id)")
-                .eq("user_id", user.id)
-                .eq("org_affiliations.org_id", orgId)
-                .maybeSingle()
-            setIsAssociationMember(Boolean(memberRow?.id))
+        const loadContextAndCounts = async () => {
+            const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
+            if (!contextResponse.ok) {
+                setUserRole(null)
+                return
+            }
+            const context = await contextResponse.json() as {
+                orgId: string
+                role: string
+                isAssociationMember: boolean
+                brand: { logo_url: string | null; short_name: string }
+            }
+            setUserRole(context.role)
+            setIsAssociationMember(context.isAssociationMember)
+            setBrand(context.brand)
+            const orgId = context.orgId
 
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes, reviewsRes, screeningsRes] = await Promise.all([
                 supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde").not("work_id", "is", null),
@@ -195,20 +186,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             setPendingScreeningCount(screeningsRes.count ?? 0)
         }
 
-        supabase.auth.getUser().then(async ({ data: { user } }) => {
-            if (!user) return
-            const { data: roles } = await supabase.from("user_org_roles").select("role").eq("user_id", user.id)
-            const roleList = (roles ?? []).map(r => r.role)
-            const primary = ["superadmin", "admin", "org-admin", "jurist", "viewer"].find(r => roleList.includes(r)) ?? "viewer"
-            setUserRole(primary)
-            fetchCount()
-        })
+        void loadContextAndCounts()
 
-        window.addEventListener("contracts-updated", fetchCount)
-        window.addEventListener("works-updated", fetchCount)
+        window.addEventListener("contracts-updated", loadContextAndCounts)
+        window.addEventListener("works-updated", loadContextAndCounts)
+        window.addEventListener("admin-context-updated", loadContextAndCounts)
         return () => {
-            window.removeEventListener("contracts-updated", fetchCount)
-            window.removeEventListener("works-updated", fetchCount)
+            window.removeEventListener("contracts-updated", loadContextAndCounts)
+            window.removeEventListener("works-updated", loadContextAndCounts)
+            window.removeEventListener("admin-context-updated", loadContextAndCounts)
         }
     }, [])
 
@@ -221,7 +207,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         router.refresh()
     }
 
-    const allowedKeys = ROLE_MODULES[userRole] ?? ALL_KEYS
+    const allowedKeys = userRole ? (ROLE_MODULES[userRole] ?? []) : []
 
     const adminItems = ADMIN_NAV_ITEMS
         .filter(item => allowedKeys.includes(item.key))
@@ -371,6 +357,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <Separator orientation="vertical" className="h-4" />
                     <span className="text-sm font-medium text-muted-foreground">{t("nav.admin")}</span>
                     <div className="ml-auto flex items-center gap-1">
+                        <AdminContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>
