@@ -25,6 +25,11 @@ type EmployerRow = {
     registration_status: string | null;
     address?: string | null;
     contact_phone?: string | null;
+    contact_email?: string | null;
+    website?: string | null;
+    industry_code?: string | null;
+    industry_description?: string | null;
+    company_type?: string | null;
     archived_at: string | null;
   }> | null;
 };
@@ -47,6 +52,11 @@ function toOption(row: EmployerRow): ProductionCompanyOption {
         registrationStatus: entity.registration_status,
         address: entity.address ?? null,
         contactPhone: entity.contact_phone ?? null,
+        contactEmail: entity.contact_email ?? null,
+        website: entity.website ?? null,
+        industryCode: entity.industry_code ?? null,
+        industryDescription: entity.industry_description ?? null,
+        companyType: entity.company_type ?? null,
       })),
     isVerified: Boolean(row.is_verified),
   };
@@ -59,7 +69,7 @@ async function readCompanies() {
     .select(`
       id,name,is_verified,
       employer_aliases(alias),
-      employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,archived_at)
+      employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at)
     `)
     .is("merged_into_id", null)
     .is("archived_at", null)
@@ -114,6 +124,11 @@ export async function POST(req: NextRequest) {
     entityKind?: LegalEntityKind;
     address?: string | null;
     contactPhone?: string | null;
+    contactEmail?: string | null;
+    website?: string | null;
+    industryCode?: string | null;
+    industryDescription?: string | null;
+    companyType?: string | null;
     registrationStatus?: string | null;
   } | null;
   if (!body) return NextResponse.json({ error: "Ugyldige data." }, { status: 400 });
@@ -179,11 +194,16 @@ export async function POST(req: NextRequest) {
         entity_kind: body.entityKind ?? "company",
         address: body.address?.trim() || null,
         contact_phone: body.contactPhone?.trim() || null,
+        contact_email: body.contactEmail?.trim() || null,
+        website: body.website?.trim() || null,
+        industry_code: body.industryCode?.trim() || null,
+        industry_description: body.industryDescription?.trim() || null,
+        company_type: body.companyType?.trim() || null,
         registration_status: body.registrationStatus?.trim() || null,
         is_primary: (count ?? 0) === 0,
         created_by: auth.userId,
       })
-      .select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone")
+      .select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type")
       .single();
     if (error || !data) return NextResponse.json({ error: "Den juridiske enhed kunne ikke oprettes." }, { status: 409 });
     return NextResponse.json({ data }, { status: 201 });
