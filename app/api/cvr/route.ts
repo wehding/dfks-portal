@@ -26,9 +26,26 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "CVR-nummer ikke fundet" }, { status: 404 })
         }
 
-        const navn = hit.virksomhedMetadata?.nyesteNavn?.navn ?? null
+        const metadata = hit.virksomhedMetadata ?? {}
+        const navn = metadata.nyesteNavn?.navn ?? null
+        const addressParts = [
+            metadata.nyesteBeliggenhedsadresse?.vejnavn,
+            metadata.nyesteBeliggenhedsadresse?.husnummerFra,
+            metadata.nyesteBeliggenhedsadresse?.bogstavFra,
+            metadata.nyesteBeliggenhedsadresse?.postnummer,
+            metadata.nyesteBeliggenhedsadresse?.postdistrikt,
+        ].filter(Boolean)
+        const address = addressParts.length ? addressParts.join(" ").replace(/\s+/g, " ").trim() : null
+        const status = metadata.sammensatStatus ?? hit.virksomhedsstatus?.[0]?.status ?? null
 
-        return NextResponse.json({ navn })
+        return NextResponse.json({
+            navn,
+            legalName: navn,
+            registrationNumber: cvr,
+            address,
+            status,
+            companyType: metadata.nyesteVirksomhedsform?.kortBeskrivelse ?? null,
+        })
     } catch {
         return NextResponse.json({ error: "Fejl ved CVR-opslag" }, { status: 500 })
     }

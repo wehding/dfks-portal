@@ -34,6 +34,7 @@ import { MoreHorizontal } from "lucide-react"
 import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembersToRightsHolders, syncDfksMembers } from "@/app/actions/dfks-members"
 import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
+import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
@@ -135,6 +136,8 @@ export default function RettighedshavereAdminPage() {
     const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const router = useRouter()
     const [loading, setLoading] = useState(true)
+    const [loadingMore, setLoadingMore] = useState(false)
+    const [hasMore, setHasMore] = useState(false)
     const [search, setSearch] = useState("")
     useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
     const [filter, setFilter] = useState<Filter>("alle")
@@ -200,6 +203,7 @@ export default function RettighedshavereAdminPage() {
             setCountsByRightsHolder(result.countsByRightsHolder)
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
+            setHasMore(result.hasMore)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
@@ -207,6 +211,18 @@ export default function RettighedshavereAdminPage() {
         } finally {
             setLoading(false)
         }
+    }
+
+    async function loadMore() {
+        setLoadingMore(true)
+        try {
+            const result = await getAdminRightsHolders({ offset: rows.length, limit: 100 })
+            setRows(current => [...current, ...result.rows.filter(row => !current.some(existing => existing.id === row.id))])
+            setCountsByRightsHolder(current => ({ ...current, ...result.countsByRightsHolder }))
+            setHasMore(result.hasMore)
+        } catch (error) {
+            toast.error(errorMessage(error))
+        } finally { setLoadingMore(false) }
     }
 
     async function loadDfksMembers(oid: string) {
@@ -860,6 +876,7 @@ export default function RettighedshavereAdminPage() {
                                         : <span className="text-muted-foreground">Ingen adgang</span>}
                                 </MobileMetaRow>
                             </div>
+                            <RightsHolderRelations rightsHolderId={rh.id} />
                         </MobileDataCard>
                     )
                 })}
@@ -909,7 +926,7 @@ export default function RettighedshavereAdminPage() {
                                             aria-label={`Vælg ${rh.full_name}`}
                                         />
                                     </TableCell>
-                                    <TableCell className="font-medium cursor-pointer hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</TableCell>
+                                    <TableCell className="font-medium"><button type="button" className="text-left hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</button><RightsHolderRelations rightsHolderId={rh.id} /></TableCell>
                                     {canSeeAllOrganisations && <TableCell className="text-sm text-muted-foreground">{rh.organisation_names.join(", ") || "Uden tilknytning"}</TableCell>}
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
@@ -1033,6 +1050,7 @@ export default function RettighedshavereAdminPage() {
                     </TableBody>
                 </Table>
             </ResponsiveTableFrame>
+            {hasMore && <div className="flex justify-center"><Button type="button" variant="outline" disabled={loadingMore} onClick={loadMore}>{loadingMore && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Indlæs flere rettighedshavere</Button></div>}
 
             {/* Create dialog */}
             <Dialog open={createOpen} onOpenChange={setCreateOpen}>

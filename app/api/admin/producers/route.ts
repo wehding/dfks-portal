@@ -15,16 +15,37 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get("sort") ?? "name";
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
 
-  const [{ data: employers, error }, { data: contracts }, { data: works }, { data: assignments }, { data: holders }] = await Promise.all([
-    db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at"),
+  const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult] = await Promise.all([
+    db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,archived_at)").is("merged_into_id", null).is("archived_at", null),
     db.from("contracts").select("id,employer_id,status,created_at,rights_holder_id").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("works").select("id,employer_id,status,created_at").eq("org_id", auth.orgId).not("employer_id", "is", null),
-    db.from("work_assignments").select("rights_holder_id,works!inner(employer_id,org_id)").eq("works.org_id", auth.orgId).not("works.employer_id", "is", null),
+    db.from("work_assignments").select("rights_holder_id,work_id,works(employer_id)").eq("org_id", auth.orgId),
     db.from("rettighedshavere").select("id,full_name,org_affiliations!inner(org_id)").eq("org_affiliations.org_id", auth.orgId).order("full_name"),
+    db.from("work_organisations").select("work_id").eq("org_id", auth.orgId),
+    db.from("contract_employers").select("contract_id,employer_id,contracts!inner(org_id)").eq("contracts.org_id", auth.orgId),
   ]);
-  if (error) return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
+  let employerRows = employers ?? [];
+  if (error) {
+    if (error.code !== "42P01" && error.code !== "PGRST205" && !/schema cache|relationship|column/i.test(error.message)) {
+      return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
+    }
+    const legacy = await db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr");
+    if (legacy.error) return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
+    employerRows = (legacy.data ?? []).map(row => ({ ...row, status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [] })) as typeof employerRows;
+  }
 
-  const names = new Map((employers ?? []).map(employer => [employer.id, employer.name]));
+  const relationWorkIds = (workOrgResult.data ?? []).map(row => row.work_id);
+  const [{ data: sharedWorks }, workRelationsResult] = await Promise.all([
+    relationWorkIds.length
+      ? db.from("works").select("id,employer_id,status,created_at").in("id", relationWorkIds)
+      : Promise.resolve({ data: [] as Array<{ id: string; employer_id: string | null; status: string; created_at: string }>, error: null }),
+    relationWorkIds.length
+      ? db.from("work_employers").select("work_id,employer_id").in("work_id", relationWorkIds)
+      : Promise.resolve({ data: [] as Array<{ work_id: string; employer_id: string }>, error: null }),
+  ]);
+  const works = workOrgResult.error ? (legacyWorks ?? []) : (sharedWorks ?? []);
+
+  const names = new Map(employerRows.map(employer => [employer.id, employer.name]));
   const contractMap = new Map<string, typeof contracts>();
   const workMap = new Map<string, typeof works>();
   const holderMap = new Map<string, Set<string>>();
@@ -35,23 +56,48 @@ export async function GET(req: NextRequest) {
       const ids = holderMap.get(contract.employer_id) ?? new Set<string>(); ids.add(contract.rights_holder_id); holderMap.set(contract.employer_id, ids);
     }
   }
-  for (const work of works ?? []) if (work.employer_id) workMap.set(work.employer_id, [...(workMap.get(work.employer_id) ?? []), work]);
+  if (!contractRelationsResult.error) {
+    const contractsById = new Map((contracts ?? []).map(contract => [contract.id, contract]));
+    for (const relation of contractRelationsResult.data ?? []) {
+      const contract = contractsById.get(relation.contract_id);
+      if (!contract || relation.employer_id === contract.employer_id) continue;
+      contractMap.set(relation.employer_id, [...(contractMap.get(relation.employer_id) ?? []), contract]);
+      if (contract.rights_holder_id) {
+        const ids = holderMap.get(relation.employer_id) ?? new Set<string>(); ids.add(contract.rights_holder_id); holderMap.set(relation.employer_id, ids);
+      }
+    }
+  }
+  const worksById = new Map((works ?? []).map(work => [work.id, work]));
+  const linkedWorkIds = new Set<string>();
+  const employerIdsByWork = new Map<string, Set<string>>();
+  if (!workRelationsResult.error) {
+    for (const relation of workRelationsResult.data ?? []) {
+      const work = worksById.get(relation.work_id);
+      if (!work) continue;
+      linkedWorkIds.add(work.id);
+      const employerIds = employerIdsByWork.get(work.id) ?? new Set<string>(); employerIds.add(relation.employer_id); employerIdsByWork.set(work.id, employerIds);
+      workMap.set(relation.employer_id, [...(workMap.get(relation.employer_id) ?? []), work]);
+    }
+  }
+  for (const work of works ?? []) if (work.employer_id && !linkedWorkIds.has(work.id)) workMap.set(work.employer_id, [...(workMap.get(work.employer_id) ?? []), work]);
   for (const assignment of assignments ?? []) {
-    const linkedWorks = Array.isArray(assignment.works) ? assignment.works : [assignment.works];
-    for (const work of linkedWorks) {
-      const employerId = work?.employer_id;
+    const linkedWork = Array.isArray(assignment.works) ? assignment.works[0] : assignment.works;
+    const employerIds = employerIdsByWork.get(assignment.work_id) ?? new Set(linkedWork?.employer_id ? [linkedWork.employer_id] : []);
+    for (const employerId of employerIds) {
       if (!employerId || !assignment.rights_holder_id) continue;
       const ids = holderMap.get(employerId) ?? new Set<string>(); ids.add(assignment.rights_holder_id); holderMap.set(employerId, ids);
     }
   }
 
-  let rows = (employers ?? []).map(employer => {
+  let rows = employerRows.map(employer => {
     const employerContracts = contractMap.get(employer.id) ?? [];
     const employerWorks = workMap.get(employer.id) ?? [];
     const lastDates = [...employerContracts, ...employerWorks].map(row => row.created_at).filter(Boolean).sort().reverse();
     const producerStatus = resolveProducerStatus(employerContracts.map(row => row.status), employerWorks.length);
     return {
       ...employer,
+      legal_entities: (employer.employer_legal_entities ?? []).filter(entity => !entity.archived_at),
+      aliases: (employer.employer_aliases ?? []).map(alias => alias.alias),
       parent_name: employer.parent_id ? names.get(employer.parent_id) ?? null : null,
       contract_count: employerContracts.length,
       work_count: employerWorks.length,
@@ -60,7 +106,13 @@ export async function GET(req: NextRequest) {
       rights_holder_ids: [...(holderMap.get(employer.id) ?? [])],
     };
   });
-  if (query) rows = rows.filter(row => `${row.name} ${row.parent_name ?? ""}`.toLocaleLowerCase("da").includes(query));
+  if (query) rows = rows.filter(row => [
+    row.name,
+    row.parent_name ?? "",
+    row.cvr ?? "",
+    ...row.aliases,
+    ...row.legal_entities.flatMap(entity => [entity.legal_name, entity.registration_number ?? ""]),
+  ].join(" ").toLocaleLowerCase("da").includes(query));
   if (status && ["attention", "active", "inactive"].includes(status)) rows = rows.filter(row => row.status === status);
   if (rightsHolderId) rows = rows.filter(row => row.rights_holder_ids.includes(rightsHolderId));
   rows.sort((a, b) => {
@@ -71,5 +123,5 @@ export async function GET(req: NextRequest) {
     const [left, right] = values[sort] ?? values.name;
     return (typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), "da", { numeric: true })) * direction;
   });
-  return NextResponse.json({ data: rows, rightsHolders: holders ?? [] });
+  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], canMerge: auth.role === "superadmin" });
 }

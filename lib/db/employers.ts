@@ -171,6 +171,40 @@ export async function upsertEmployerInGroup(
         employerId = newEmp.id
     }
 
+    // CVR is modelled as a legal entity below the canonical employer. Keep the
+    // legacy employers.cvr mirror during the transition, but never create a
+    // second canonical employer for another CVR belonging to the same company.
+    const normalizedCvr = input.cvr?.replace(/\D/g, "") ?? ""
+    if (/^\d{8}$/.test(normalizedCvr)) {
+        const { data: existingRegistration, error: registrationLookupError } = await supabase
+            .from("employer_legal_entities")
+            .select("id, employer_id")
+            .eq("registration_country", "DK")
+            .eq("registration_type", "CVR")
+            .eq("registration_number", normalizedCvr)
+            .maybeSingle()
+        const missingNewSchema = registrationLookupError?.code === "42P01" || registrationLookupError?.code === "PGRST205"
+        if (existingRegistration && existingRegistration.employer_id !== employerId) return null
+        if (!existingRegistration && !missingNewSchema) {
+            const { count } = await supabase
+                .from("employer_legal_entities")
+                .select("id", { count: "exact", head: true })
+                .eq("employer_id", employerId)
+                .is("archived_at", null)
+            const { error: legalEntityError } = await supabase.from("employer_legal_entities").insert({
+                employer_id: employerId,
+                legal_name: normalizedName,
+                registration_country: "DK",
+                registration_type: "CVR",
+                registration_number: normalizedCvr,
+                entity_kind: "company",
+                is_primary: (count ?? 0) === 0,
+            })
+            if (legalEntityError) return null
+        }
+        await supabase.from("employers").update({ cvr: normalizedCvr }).eq("id", employerId)
+    }
+
     // 2. Add to group (idempotent — skips if already active member)
     await addToGroup(employerId, groupName)
     return employerId

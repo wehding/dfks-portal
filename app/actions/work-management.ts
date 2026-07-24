@@ -11,6 +11,8 @@ import type { DfiMetadata } from "@/lib/dfi-metadata";
 import { groupWorksBySeason, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import { sendMemberNotification } from "@/lib/member-notifications";
+import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -289,8 +291,7 @@ async function findRightsHolderByName(db: ReturnType<typeof createServiceClient>
 async function findExistingWorkByTitle(
   db: ReturnType<typeof createServiceClient>,
   title: string,
-  year: number | null,
-  orgId: string
+  year: number | null
 ) {
   const normalizedTitle = normalizeTitle(title);
   if (!normalizedTitle) return null;
@@ -298,7 +299,6 @@ async function findExistingWorkByTitle(
   const { data, error } = await db
     .from("works")
     .select("id, poster_url, title, year")
-    .eq("org_id", orgId)
     .limit(50);
   if (error) throw new Error(error.message);
 
@@ -1085,6 +1085,7 @@ export async function updateAdminWorkData(params: {
   assignments?: { id?: string; rightsHolderId?: string; role: string; sharePercent?: number | null }[];
   broadcaster?: string | null;
   distributions?: WorkDistributionInput[];
+  productionCompanies?: ProductionCompanySelection[];
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -1108,6 +1109,13 @@ export async function updateAdminWorkData(params: {
     .eq("org_id", orgId);
 
   if (error) throw new Error(error.message);
+  await syncWorkProducerRelations(db, {
+    workId: params.workId,
+    orgId,
+    selections: params.productionCompanies,
+    names: normalized.production_companies,
+    source: "admin",
+  });
 
   if (params.distributions) await updateWorkDistributions(db, params.workId, orgId, params.distributions);
   else await updateWorkBroadcaster(db, params.workId, params.broadcaster);
@@ -1182,6 +1190,7 @@ export async function createAdminWork(params: {
   selectedEpisodes?: number[] | null;
   status?: string | null;
   distributions?: WorkDistributionInput[];
+  productionCompanies?: ProductionCompanySelection[];
 }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase);
@@ -1201,7 +1210,6 @@ export async function createAdminWork(params: {
       .from("works")
       .select("id, poster_url")
       .eq("id", params.workId)
-      .eq("org_id", orgId)
       .maybeSingle();
     if (data?.id) {
       workId = data.id;
@@ -1209,21 +1217,21 @@ export async function createAdminWork(params: {
     }
   }
   if (!workId && params.data.dfi_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).eq("org_id", orgId).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("dfi_id", params.data.dfi_id).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
   if (!workId && params.data.tmdb_id) {
-    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).eq("org_id", orgId).maybeSingle();
+    const { data } = await db.from("works").select("id, poster_url").eq("tmdb_id", params.data.tmdb_id).maybeSingle();
     if (data?.id) {
       workId = data.id;
       existingPosterUrl = data.poster_url;
     }
   }
   if (!workId && normalized.title) {
-    const existing = await findExistingWorkByTitle(db, normalized.title, normalized.year, orgId);
+    const existing = await findExistingWorkByTitle(db, normalized.title, normalized.year);
     if (existing?.id) {
       workId = existing.id;
       existingPosterUrl = existing.poster_url;
@@ -1278,6 +1286,13 @@ export async function createAdminWork(params: {
   }
 
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");
+  await syncWorkProducerRelations(db, {
+    workId,
+    orgId,
+    selections: params.productionCompanies,
+    names: normalized.production_companies,
+    source: "admin",
+  });
 
   const assignments = params.assignments?.length
     ? params.assignments
@@ -1828,6 +1843,7 @@ export async function createAndLinkWorkForContract(params: {
 
   // 1. Find or create the parent work
   let parentId = result.local_id ?? null;
+  let producerNames: string[] = [];
 
   if (!parentId) {
     const detailsRes = await resolveUnifiedSearchResultDetails(result);
@@ -1835,19 +1851,20 @@ export async function createAndLinkWorkForContract(params: {
       return { success: false, error: "Kunne ikke hente detaljer for værket." };
     }
     const d = detailsRes.details;
+    producerNames = d.production_companies ?? [];
 
     // Check if matching work already exists locally before inserting
     let existingWork: { id: string } | null = null;
     if (d.dfi_id) {
-      const { data } = await db.from("works").select("id").eq("org_id", orgId).eq("dfi_id", String(d.dfi_id)).maybeSingle();
+      const { data } = await db.from("works").select("id").eq("dfi_id", String(d.dfi_id)).maybeSingle();
       if (data) existingWork = data;
     }
     if (!existingWork && d.tmdb_id) {
-      const { data } = await db.from("works").select("id").eq("org_id", orgId).eq("tmdb_id", Number(d.tmdb_id)).maybeSingle();
+      const { data } = await db.from("works").select("id").eq("tmdb_id", Number(d.tmdb_id)).maybeSingle();
       if (data) existingWork = data;
     }
     if (!existingWork && d.title) {
-      let query = db.from("works").select("id").eq("org_id", orgId).ilike("title", d.title).eq("type", d.type);
+      let query = db.from("works").select("id").ilike("title", d.title).eq("type", d.type);
       if (d.year) query = query.eq("year", d.year);
       const { data } = await query.limit(1).maybeSingle();
       if (data) existingWork = data;
@@ -1870,6 +1887,7 @@ export async function createAndLinkWorkForContract(params: {
         imdb_id: d.imdb_id ?? null,
         wikidata_id: d.wikidata_id ?? null,
         dfi_metadata: d.dfi_metadata,
+        production_companies: d.production_companies ?? [],
         status: "godkendt",
       };
 
@@ -1893,6 +1911,8 @@ export async function createAndLinkWorkForContract(params: {
       parentId = newWork.id;
     }
   }
+  if (!parentId) return { success: false, error: "Værket kunne ikke findes eller oprettes." };
+  await syncWorkProducerRelations(db, { workId: parentId, orgId, names: producerNames, source: result.sources.join("+") });
 
   // 2. Handle episodes if it is a series
   let targetWorkId = parentId;
@@ -1924,20 +1944,24 @@ export async function createAndLinkWorkForContract(params: {
         await db.from("work_assignments").upsert(
           episodes.map(ep => ({
             work_id: ep.id,
-            org_id: parentWork.org_id,
+            org_id: orgId,
             rights_holder_id: activeRightsHolderId,
             role: role,
           })),
           { onConflict: "work_id,rights_holder_id,role" }
         );
       }
+      await Promise.all(episodes.map(episode => syncWorkProducerRelations(db, {
+        workId: episode.id,
+        orgId,
+        names: producerNames,
+        source: result.sources.join("+"),
+      })));
     }
   } else if (activeRightsHolderId && role) {
-    const { data: parentWork } = await db.from("works").select("org_id").eq("id", parentId).single();
-    if (!parentWork?.org_id) return { success: false, error: "Værket mangler organisation." };
     await db.from("work_assignments").upsert({
       work_id: parentId,
-      org_id: parentWork.org_id,
+      org_id: orgId,
       rights_holder_id: activeRightsHolderId,
       role: role,
     }, { onConflict: "work_id,rights_holder_id,role" });

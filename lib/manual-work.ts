@@ -1,3 +1,5 @@
+import type { ProductionCompanySelection } from "@/lib/production-companies";
+
 export type ManualWorkFormValue = {
   title: string;
   type: string;
@@ -9,6 +11,7 @@ export type ManualWorkFormValue = {
   selected_episodes: number[];
   director: string;
   production_company: string;
+  production_companies: ProductionCompanySelection[];
   contract_id: string;
 };
 
@@ -45,6 +48,7 @@ export function emptyManualWorkForm(seed: ManualWorkFormSeed = {}): ManualWorkFo
     episode_number: "",
     director: "",
     production_company: "",
+    production_companies: [],
     contract_id: "",
     ...rest,
     selected_episodes: [...selectedEpisodes],
@@ -134,6 +138,7 @@ export function contractDataToManualWorkSeed(input: {
     episode_number: episodes.length === 1 ? String(episodes[0]) : "",
     selected_episodes: episodes,
     production_company: input.productionCompany?.trim() ?? "",
+    production_companies: [],
     director: input.director?.trim() ?? "",
     contract_id: input.contractId?.trim() ?? "",
   };

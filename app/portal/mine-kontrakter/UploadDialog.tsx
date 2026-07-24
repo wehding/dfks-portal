@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label";
 import { CONTRACT_SCREENING_TEXT } from "@/lib/profile-copy";
 import { CONTRACT_CATEGORY_TO_WORK_TYPE, contractDataToManualWorkSeed, contractWorkTypeFilter, emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
+import { ProductionCompanyPicker } from "@/components/production-company-picker";
+import type { ProductionCompanySelection } from "@/lib/production-companies";
 
 const BUCKET = "kontrakter";
 const MAX_FILES = 15;
@@ -73,6 +75,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [duration, setDuration] = useState("");
   const [premiereDate, setPremiereDate] = useState("");
   const [productionCompany, setProductionCompany] = useState("");
+  const [productionCompanySelections, setProductionCompanySelections] = useState<ProductionCompanySelection[]>([]);
   const [director, setDirector] = useState("");
   const [seriesSeason, setSeriesSeason] = useState("");
   const [contractSeriesScope, setContractSeriesScope] = useState<"season" | "episodes">("episodes");
@@ -259,7 +262,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         }
         if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate"); }
         if (result.duration && result.duration > 0) { setDuration(String(result.duration)); filled.add("duration"); }
-        if (result.productionCompany) { setProductionCompany(result.productionCompany); filled.add("productionCompany"); }
+        if (result.productionCompany) { setProductionCompanySelections([]); setProductionCompany(result.productionCompany); filled.add("productionCompany"); }
         if (result.director) { setDirector(result.director); filled.add("director"); }
         if (result.seasonNumber && result.seasonNumber > 0) { setSeriesSeason(String(result.seasonNumber)); filled.add("seasonNumber"); }
         if (result.episodes?.length) {
@@ -448,7 +451,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           episode_number: manualEpisodeNumber,
           selected_episodes: manualWork.selected_episodes,
           director: manualWork.director.trim() || null,
-          production_companies: manualWork.production_company.trim() ? [manualWork.production_company.trim()] : [],
+          production_companies: manualWork.production_companies.map(company => company.canonicalName),
+          production_company_selections: manualWork.production_companies,
           description: null,
         },
       });
@@ -1158,15 +1162,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               {!manualMode && (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                      Produktionsselskab
-                      {aiFields.has("productionCompany") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                    </Label>
-                    <Input
-                      value={productionCompany}
-                      onChange={e => setProductionCompany(e.target.value)}
-                      placeholder="Produktionsselskab"
-                      className={aiFields.has("productionCompany") ? "bg-purple-50" : ""}
+                    <ProductionCompanyPicker
+                      value={productionCompanySelections}
+                      suggestedName={productionCompany}
+                      onChange={selections => {
+                        setProductionCompanySelections(selections)
+                        setProductionCompany(selections[0]?.canonicalName ?? "")
+                      }}
+                      label={aiFields.has("productionCompany") ? "Produktionsselskab · AI-forslag" : "Produktionsselskab"}
                     />
                   </div>
                   <div className="space-y-1.5">

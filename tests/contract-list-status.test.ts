@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hasLinkedWork, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "../lib/contract-list-status";
+import { hasLinkedWork, isPendingContractValidation, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "../lib/contract-list-status";
 
 test("an unread admin message produces a contract message tag", () => {
   assert.equal(unreadAdminMessageCount([
@@ -27,4 +27,12 @@ test("work linkage depends only on contracts.work_id", () => {
   assert.equal(hasLinkedWork(null), false);
   assert.equal(hasLinkedWork(undefined), false);
   assert.equal(hasLinkedWork(""), false);
+});
+
+test("only active contracts with a linked work are pending validation", () => {
+  assert.equal(isPendingContractValidation({ status: "kladde", work_id: "work-1" }), true);
+  assert.equal(isPendingContractValidation({ status: "mangler_vaerk", work_id: "work-1" }), true);
+  assert.equal(isPendingContractValidation({ status: "kladde", work_id: null }), false);
+  assert.equal(isPendingContractValidation({ status: "valideret", work_id: "work-1" }), false);
+  assert.equal(isPendingContractValidation({ status: "arkiveret", work_id: "work-1" }), false);
 });

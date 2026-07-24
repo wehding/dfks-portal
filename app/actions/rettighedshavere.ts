@@ -66,7 +66,7 @@ function withoutGender(payload: ReturnType<typeof securePayload>) {
   return compatiblePayload;
 }
 
-export async function getAdminRightsHolders() {
+export async function getAdminRightsHolders(options: { offset?: number; limit?: number } = {}) {
   const supabase = await createClient();
   const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
   if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
@@ -79,8 +79,12 @@ export async function getAdminRightsHolders() {
         .from("rettighedshavere")
         .select(`${ADMIN_RIGHTS_HOLDER_FIELDS}, org_affiliations!inner(*)`)
         .eq("org_affiliations.org_id", caller.orgId);
-  const { data: holderRows, error: holdersError } = await holdersQuery.order("full_name");
+  const offset = Math.max(0, options.offset ?? 0);
+  const limit = Math.min(200, Math.max(25, options.limit ?? 100));
+  const { data: holderPage, error: holdersError } = await holdersQuery.order("full_name").range(offset, offset + limit);
   if (holdersError) throw new Error(holdersError.message);
+  const hasMore = (holderPage?.length ?? 0) > limit;
+  const holderRows = (holderPage ?? []).slice(0, limit);
 
   const orgIds = Array.from(new Set((holderRows ?? [])
     .flatMap(holder => (holder.org_affiliations ?? []).map((affiliation: { org_id: string }) => affiliation.org_id))));
@@ -137,6 +141,40 @@ export async function getAdminRightsHolders() {
     countsByRightsHolder,
     orgId: caller.orgId,
     canSeeAllOrganisations,
+    hasMore,
+  };
+}
+
+export type RightsHolderRelationOption = {
+  id: string;
+  title: string;
+  secondary: string | null;
+  kind: "work" | "contract";
+};
+
+export async function getRightsHolderRelations(rightsHolderId: string) {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
+  if (!caller) throw new Error("Ikke autoriseret");
+  const db = createServiceClient();
+  await assertRightsHolderInOrg(db, rightsHolderId, caller.orgId);
+  const [{ data: assignments, error: assignmentsError }, { data: contracts, error: contractsError }] = await Promise.all([
+    db.from("work_assignments")
+      .select("work_id,works(id,title,type,year)")
+      .eq("org_id", caller.orgId)
+      .eq("rights_holder_id", rightsHolderId),
+    db.from("contracts")
+      .select("id,working_title,status,works(title)")
+      .eq("org_id", caller.orgId)
+      .eq("rights_holder_id", rightsHolderId)
+      .order("created_at", { ascending: false }),
+  ]);
+  if (assignmentsError || contractsError) throw new Error(assignmentsError?.message ?? contractsError?.message ?? "Relationer kunne ikke hentes");
+  const workRelations = (assignments ?? []) as unknown as Array<{ work_id: string; works: { id: string; title: string; type: string | null; year: number | null } | null }>;
+  const contractRelations = (contracts ?? []) as unknown as Array<{ id: string; working_title: string | null; status: string; works: { title: string } | null }>;
+  return {
+    works: workRelations.flatMap(row => row.works ? [{ id: row.works.id, title: row.works.title, secondary: [row.works.year, row.works.type].filter(Boolean).join(" · ") || null, kind: "work" as const }] : []),
+    contracts: contractRelations.map(contract => ({ id: contract.id, title: contract.works?.title ?? contract.working_title ?? "Kontrakt uden titel", secondary: contract.status, kind: "contract" as const })),
   };
 }
 

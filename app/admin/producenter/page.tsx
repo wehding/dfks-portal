@@ -1,8 +1,10 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
+import Link from "next/link";
 import { Building2, ChevronDown, ChevronRight, FileText, Film, Loader2, Search, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
@@ -12,12 +14,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-type Producer = { id: string; name: string; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null };
+type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null };
+type Producer = { id: string; name: string; parent_name: string | null; status: "attention" | "active" | "inactive"; work_count: number; contract_count: number; latest_activity: string | null; legal_entities: LegalEntitySummary[]; aliases: string[] };
 type RightsHolder = { id: string; full_name: string };
 type WorkDetail = { id: string; title: string; type: string; year: number | null; status: string };
 type ContractDetail = { id: string; working_title: string | null; type: string; status: string; contract_date: string | null; created_at: string; rettighedshavere: { full_name: string | null } | Array<{ full_name: string | null }> | null };
-type DetailState = { loading: boolean; error: string | null; rows: Array<WorkDetail | ContractDetail> };
-type DetailType = "works" | "contracts";
+type DetailState = { loading: boolean; error: string | null; rows: Array<WorkDetail | ContractDetail | LegalEntitySummary> };
+type DetailType = "works" | "contracts" | "legal_entities";
 
 const statusTone = { attention: "border-amber-300 bg-amber-100 text-amber-800", active: "border-emerald-300 bg-emerald-100 text-emerald-800", inactive: "border-border bg-muted text-muted-foreground" };
 
@@ -34,6 +37,8 @@ export default function ProducersPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, DetailState>>({});
+  const [merging, setMerging] = useState(false);
+  const [canMerge, setCanMerge] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -47,7 +52,7 @@ export default function ProducersPage() {
         const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error);
-        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []);
+        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []); setCanMerge(Boolean(json.canMerge));
       } catch (error) {
         if ((error as Error).name !== "AbortError") setProducers([]);
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -80,6 +85,26 @@ export default function ProducersPage() {
   const toggleAll = () => setSelected(allSelected ? [] : producers.map(producer => producer.id));
   const changeSort = (key: string) => { if (sort === key) setDirection(value => value === "asc" ? "desc" : "asc"); else { setSort(key); setDirection("asc"); } };
   const mark = (key: string) => sort === key ? (direction === "asc" ? " ↑" : " ↓") : "";
+  const mergeSelected = async () => {
+    if (selected.length !== 2) return;
+    const [sourceId, targetId] = selected;
+    const source = producers.find(producer => producer.id === sourceId);
+    const target = producers.find(producer => producer.id === targetId);
+    if (!source || !target || !window.confirm(locale === "da"
+      ? `Sammenlæg “${source.name}” ind i “${target.name}”? Alle CVR-numre, værker og kontrakter flyttes. Handlingen kan ikke fortrydes i brugerfladen.`
+      : `Merge “${source.name}” into “${target.name}”? All registrations, works and contracts will move. This cannot be undone in the interface.`)) return;
+    setMerging(true);
+    try {
+      const response = await fetch("/api/admin/producers/merge", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sourceId, targetId }) });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error);
+      setProducers(current => current.filter(producer => producer.id !== sourceId));
+      setSelected([]);
+      toast.success(locale === "da" ? "Selskaberne blev sammenlagt." : "The companies were merged.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("common.error"));
+    } finally { setMerging(false); }
+  };
 
   const DetailPanel = ({ producer, type }: { producer: Producer; type: DetailType }) => {
     const key = detailKey(producer.id, type); const state = details[key];
@@ -87,8 +112,8 @@ export default function ProducersPage() {
     return <div className="border-t bg-muted/20 p-4">
       {state?.loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading")}</div>
         : state?.error ? <div className="flex items-center gap-2 text-sm text-destructive">{state.error}<Button size="sm" variant="outline" onClick={() => void loadDetails(producer.id, type, true)}>{t("common.retry")}</Button></div>
-        : !state?.rows.length ? <p className="text-sm text-muted-foreground">{type === "works" ? t("admin.producers.noWorks") : t("admin.producers.noContracts")}</p>
-        : <div className="space-y-2">{state.rows.map(row => type === "works" ? <div key={row.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm"><span className="font-medium">{(row as WorkDetail).title}</span><span className="text-muted-foreground">{(row as WorkDetail).year ?? "—"} · {(row as WorkDetail).type}</span></div> : (() => { const contract = row as ContractDetail; const holder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere; return <div key={contract.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm"><span><span className="block font-medium">{contract.working_title ?? "—"}</span><span className="text-xs text-muted-foreground">{holder?.full_name ?? "—"}</span></span><Badge variant="outline">{contract.status}</Badge></div>; })())}</div>}
+        : !state?.rows.length ? <p className="text-sm text-muted-foreground">{type === "works" ? t("admin.producers.noWorks") : type === "contracts" ? t("admin.producers.noContracts") : t("admin.producers.noLegalEntities")}</p>
+        : <div className="space-y-2">{state.rows.map(row => type === "works" ? (() => { const work = row as WorkDetail; return <Link href={`/admin/vaerker?edit=${work.id}`} key={work.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm hover:bg-muted/50"><span className="font-medium">{work.title}</span><span className="text-muted-foreground">{work.year ?? "—"} · {work.type}</span></Link>; })() : type === "contracts" ? (() => { const contract = row as ContractDetail; const holder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere; return <Link href={`/admin/kontrakter?edit=${contract.id}`} key={contract.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-md border bg-background p-3 text-sm hover:bg-muted/50"><span><span className="block font-medium">{contract.working_title ?? "—"}</span><span className="text-xs text-muted-foreground">{holder?.full_name ?? "—"}</span></span><Badge variant="outline">{contract.status}</Badge></Link>; })() : (() => { const entity = row as LegalEntitySummary; return <div key={entity.id} className="grid gap-1 rounded-md border bg-background p-3 text-sm sm:grid-cols-[1fr_auto]"><span><span className="block font-medium">{entity.legal_name}</span><span className="text-xs text-muted-foreground">{entity.entity_kind === "spv" ? "SPV" : entity.entity_kind === "subsidiary" ? t("admin.producers.subsidiary") : t("admin.producers.company")}{entity.registration_status ? ` · ${entity.registration_status}` : ""}</span></span><span className="text-muted-foreground">{entity.registration_number ? `${entity.registration_type} ${entity.registration_number}` : t("admin.producers.noRegistration")}{entity.is_primary ? ` · ${t("admin.producers.primary")}` : ""}</span></div>; })())}</div>}
     </div>;
   };
 
@@ -101,11 +126,11 @@ export default function ProducersPage() {
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
     </div>
-    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>{selected.length > 0 && <><span className="text-sm text-muted-foreground">{t("common.selectedCount", { count: selected.length })}</span><Button variant="ghost" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></>}</div>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>{selected.length > 0 && <><span className="text-sm text-muted-foreground">{t("common.selectedCount", { count: selected.length })}</span>{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}<Button variant="ghost" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></>}</div>
 
     {loading ? <TableSkeleton columns={7} rows={8} /> : <>
-      <MobileCardList>{producers.length ? producers.map(producer => <MobileDataCard key={producer.id}><div className="flex items-start gap-3"><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /><Building2 className="h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="font-medium">{producer.name}</p><p className="text-sm text-muted-foreground">{producer.parent_name ?? "—"}</p></div><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></div><div className="mt-4 grid grid-cols-2 gap-2"><MobileMetaRow label={t("admin.producers.works")}>{producer.work_count}</MobileMetaRow><MobileMetaRow label={t("admin.producers.contracts")}>{producer.contract_count}</MobileMetaRow></div><div className="mt-3 flex gap-2"><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "works")}><Film className="mr-1 h-3.5 w-3.5" />{t("admin.producers.works")}</Button><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "contracts")}><FileText className="mr-1 h-3.5 w-3.5" />{t("admin.producers.contracts")}</Button></div><DetailPanel producer={producer} type="works" /><DetailPanel producer={producer} type="contracts" /></MobileDataCard>) : <MobileDataCard><p className="py-6 text-center text-sm text-muted-foreground">{t("common.noResults")}</p></MobileDataCard>}</MobileCardList>
-      <ResponsiveTableFrame><Table><TableHeader><TableRow><TableHead className="w-10"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label={t("common.selectAll")} /></TableHead>{[["name","admin.producers.producer"],["parent","admin.producers.parent"],["status","common.status"],["works","admin.producers.works"],["contracts","admin.producers.contracts"],["latest","admin.producers.latest"]].map(([key,label]) => <TableHead key={key}><button type="button" onClick={() => changeSort(key)}>{t(label as Parameters<typeof t>[0])}{mark(key)}</button></TableHead>)}</TableRow></TableHeader><TableBody>{producers.length ? producers.map(producer => <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium">{producer.name}</TableCell><TableCell>{producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "works")}>{open.has(detailKey(producer.id,"works")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.work_count}</button></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "contracts")}>{open.has(detailKey(producer.id,"contracts")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.contract_count}</button></TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{open.has(detailKey(producer.id,"works")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="works" /></TableCell></TableRow>}{open.has(detailKey(producer.id,"contracts")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="contracts" /></TableCell></TableRow>}</Fragment>) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
+      <MobileCardList>{producers.length ? producers.map(producer => <MobileDataCard key={producer.id}><div className="flex items-start gap-3"><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /><Building2 className="h-4 w-4 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="font-medium">{producer.name}</p><p className="text-sm text-muted-foreground">{producer.parent_name ?? "—"}</p></div><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></div><div className="mt-4 grid grid-cols-2 gap-2"><MobileMetaRow label={t("admin.producers.works")}>{producer.work_count}</MobileMetaRow><MobileMetaRow label={t("admin.producers.contracts")}>{producer.contract_count}</MobileMetaRow></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "legal_entities")}><Building2 className="mr-1 h-3.5 w-3.5" />{t("admin.producers.legalEntities")}</Button><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "works")}><Film className="mr-1 h-3.5 w-3.5" />{t("admin.producers.works")}</Button><Button size="sm" variant="outline" onClick={() => toggleDetail(producer.id, "contracts")}><FileText className="mr-1 h-3.5 w-3.5" />{t("admin.producers.contracts")}</Button></div><DetailPanel producer={producer} type="legal_entities" /><DetailPanel producer={producer} type="works" /><DetailPanel producer={producer} type="contracts" /></MobileDataCard>) : <MobileDataCard><p className="py-6 text-center text-sm text-muted-foreground">{t("common.noResults")}</p></MobileDataCard>}</MobileCardList>
+      <ResponsiveTableFrame><Table><TableHeader><TableRow><TableHead className="w-10"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label={t("common.selectAll")} /></TableHead>{[["name","admin.producers.producer"],["parent","admin.producers.parent"],["status","common.status"],["works","admin.producers.works"],["contracts","admin.producers.contracts"],["latest","admin.producers.latest"]].map(([key,label]) => <TableHead key={key}><button type="button" onClick={() => changeSort(key)}>{t(label as Parameters<typeof t>[0])}{mark(key)}</button></TableHead>)}</TableRow></TableHeader><TableBody>{producers.length ? producers.map(producer => <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium"><button type="button" className="text-left hover:underline" onClick={() => toggleDetail(producer.id, "legal_entities")}>{producer.name}<span className="block text-xs font-normal text-muted-foreground">{producer.legal_entities.length} {t("admin.producers.legalEntities").toLocaleLowerCase(locale)}</span></button></TableCell><TableCell>{producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "works")}>{open.has(detailKey(producer.id,"works")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.work_count}</button></TableCell><TableCell><button type="button" className="flex items-center gap-1" onClick={() => toggleDetail(producer.id, "contracts")}>{open.has(detailKey(producer.id,"contracts")) ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}{producer.contract_count}</button></TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{open.has(detailKey(producer.id,"legal_entities")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="legal_entities" /></TableCell></TableRow>}{open.has(detailKey(producer.id,"works")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="works" /></TableCell></TableRow>}{open.has(detailKey(producer.id,"contracts")) && <TableRow><TableCell colSpan={7} className="p-0"><DetailPanel producer={producer} type="contracts" /></TableCell></TableRow>}</Fragment>) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
     </>}
   </div>;
 }

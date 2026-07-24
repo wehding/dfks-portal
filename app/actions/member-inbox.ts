@@ -240,8 +240,9 @@ export async function createAdminInboxMessage(params: { rightsHolderIds: string[
   if (!user || !(await assertAdminRole(supabase))) return { success: false, error: "Mangler adminrettigheder" };
   const subject = params.subject.trim().slice(0, 200);
   const body = params.body.trim().slice(0, 10000);
-  const ids = [...new Set(params.rightsHolderIds)].slice(0, 500);
+  const ids = [...new Set(params.rightsHolderIds)];
   if (!subject || !body || !ids.length) return { success: false, error: "Vælg modtagere og udfyld emne og besked." };
+  if (ids.length > 500) return { success: false, error: "Der kan højst vælges 500 modtagere ad gangen." };
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
   const { data: holders, error: holderError } = await db.from("rettighedshavere").select("id,user_id,org_affiliations!inner(org_id)").eq("org_affiliations.org_id", orgId).in("id", ids);

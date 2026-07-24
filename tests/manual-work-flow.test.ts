@@ -40,7 +40,8 @@ test("AI contract data prefills the shared manual work form", () => {
     season_number: "2",
     episode_number: "",
     selected_episodes: [3, 5],
-    production_company: "Eksempel Film",
+      production_company: "Eksempel Film",
+      production_companies: [],
     director: "Test Instruktør",
     contract_id: "contract-123",
   });

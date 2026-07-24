@@ -654,7 +654,8 @@ export default function MineKontrakterClient({
       episode_number: episodeNumber,
       selected_episodes: manualWork.selected_episodes,
       director: manualWork.director.trim() || null,
-      production_companies: manualWork.production_company.trim() ? [manualWork.production_company.trim()] : [],
+      production_companies: manualWork.production_companies.map(company => company.canonicalName),
+      production_company_selections: manualWork.production_companies,
       description: null,
     };
   }
