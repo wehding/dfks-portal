@@ -81,13 +81,21 @@ if (error) throw error;
 const pending = (producers ?? []).filter(producer => !producer.dfi_company_id);
 const inspected = await mapLimit(pending, 4, async producer => {
   try {
-    const response = await fetch(`https://data.dfi.dk/v1/company?Name=${encodeURIComponent(producer.name)}`, {
-      headers: dfiHeaders,
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return { producer, status: "error", detail: `DFI HTTP ${response.status}` };
-    const payload = await response.json();
-    const results = Array.isArray(payload.CompanyList) ? payload.CompanyList : [];
+    const queries = [...new Set([producer.name, baseName(producer.name)].filter(Boolean))];
+    const resultMap = new Map();
+    for (const query of queries) {
+      const response = await fetch(`https://data.dfi.dk/v1/company?Name=${encodeURIComponent(query)}`, {
+        headers: dfiHeaders,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return { producer, status: "error", detail: `DFI HTTP ${response.status}` };
+      const payload = await response.json();
+      for (const row of Array.isArray(payload.CompanyList) ? payload.CompanyList : []) {
+        resultMap.set(String(row.Id), row);
+      }
+      if (uniqueMatch([...resultMap.values()], producer.name)) break;
+    }
+    const results = [...resultMap.values()];
     const match = uniqueMatch(results, producer.name);
     if (!match) {
       return {

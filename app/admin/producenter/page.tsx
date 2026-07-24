@@ -113,7 +113,7 @@ export default function ProducersPage() {
       const response = await fetch(`/api/cvr?cvr=${cvr}`);
       const json = await response.json();
       if (!response.ok) throw new Error(json.error);
-      updateLegalEntity(index, { legalName: json.legalName ?? "", address: json.address ?? "" });
+      updateLegalEntity(index, { legalName: json.legalName ?? "", address: json.address ?? "", contactPhone: json.contactPhone ?? "" });
     } catch (error) { toast.error(error instanceof Error ? error.message : "CVR kunne ikke hentes"); }
     finally { setCvrLoadingIndex(null); }
   };
