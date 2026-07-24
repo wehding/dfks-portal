@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { data: producer } = await db.from("employers").select("id").eq("id", id).maybeSingle();
   if (!producer) return NextResponse.json({ error: "Producent ikke fundet" }, { status: 404 });
   if (type === "legal_entities") {
-    const result = await db.from("employer_legal_entities").select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,archived_at").eq("employer_id", id).is("archived_at", null).order("is_primary", { ascending: false }).order("legal_name");
+    const result = await db.from("employer_legal_entities").select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at").eq("employer_id", id).is("archived_at", null).order("is_primary", { ascending: false }).order("legal_name");
     if (result.error) return NextResponse.json({ error: "Juridiske enheder kunne ikke hentes" }, { status: 500 });
     return NextResponse.json({ data: result.data ?? [] });
   }
@@ -38,7 +38,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json().catch(() => null) as {
     name?: string;
     dfiCompanyId?: string | number | null;
-    legalEntities?: Array<{ id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; isPrimary?: boolean }>;
+    legalEntities?: Array<{ id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean }>;
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
   if (!name) return NextResponse.json({ error: "Producentnavn er påkrævet" }, { status: 400 });
@@ -76,6 +76,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       entity_kind: "company",
       address: prepared.entity.address?.trim() || null,
       contact_phone: prepared.entity.contactPhone?.trim() || null,
+      contact_email: prepared.entity.contactEmail?.trim() || null,
+      website: prepared.entity.website?.trim() || null,
+      registration_status: prepared.entity.registrationStatus?.trim() || null,
+      industry_code: prepared.entity.industryCode?.trim() || null,
+      industry_description: prepared.entity.industryDescription?.trim() || null,
+      company_type: prepared.entity.companyType?.trim() || null,
       is_primary: Boolean(prepared.entity.isPrimary),
       updated_at: new Date().toISOString(),
     };

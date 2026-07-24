@@ -11,6 +11,11 @@ export type ProductionCompanyLegalEntity = {
   registrationStatus: string | null;
   address?: string | null;
   contactPhone?: string | null;
+  contactEmail?: string | null;
+  website?: string | null;
+  industryCode?: string | null;
+  industryDescription?: string | null;
+  companyType?: string | null;
 };
 
 export type ProductionCompanyOption = {
