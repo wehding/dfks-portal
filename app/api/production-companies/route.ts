@@ -23,6 +23,8 @@ type EmployerRow = {
     entity_kind: LegalEntityKind;
     is_primary: boolean;
     registration_status: string | null;
+    address?: string | null;
+    contact_phone?: string | null;
     archived_at: string | null;
   }> | null;
 };
@@ -43,6 +45,8 @@ function toOption(row: EmployerRow): ProductionCompanyOption {
         entityKind: entity.entity_kind,
         isPrimary: entity.is_primary,
         registrationStatus: entity.registration_status,
+        address: entity.address ?? null,
+        contactPhone: entity.contact_phone ?? null,
       })),
     isVerified: Boolean(row.is_verified),
   };
@@ -55,7 +59,7 @@ async function readCompanies() {
     .select(`
       id,name,is_verified,
       employer_aliases(alias),
-      employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,archived_at)
+      employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,archived_at)
     `)
     .is("merged_into_id", null)
     .is("archived_at", null)
@@ -109,6 +113,7 @@ export async function POST(req: NextRequest) {
     registrationNumber?: string;
     entityKind?: LegalEntityKind;
     address?: string | null;
+    contactPhone?: string | null;
     registrationStatus?: string | null;
   } | null;
   if (!body) return NextResponse.json({ error: "Ugyldige data." }, { status: 400 });
@@ -173,11 +178,12 @@ export async function POST(req: NextRequest) {
         registration_number: registration.normalized,
         entity_kind: body.entityKind ?? "company",
         address: body.address?.trim() || null,
+        contact_phone: body.contactPhone?.trim() || null,
         registration_status: body.registrationStatus?.trim() || null,
         is_primary: (count ?? 0) === 0,
         created_by: auth.userId,
       })
-      .select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status")
+      .select("id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone")
       .single();
     if (error || !data) return NextResponse.json({ error: "Den juridiske enhed kunne ikke oprettes." }, { status: 409 });
     return NextResponse.json({ data }, { status: 201 });

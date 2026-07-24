@@ -15,6 +15,7 @@ import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from 
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
+import { normalizeWorkSearchTitle, shouldMergeWorkSearchResults } from "@/lib/unified-work-search";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -1616,17 +1617,16 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   }
 
   const results: UnifiedSearchWorkResult[] = [];
-  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const normalize = normalizeWorkSearchTitle;
   const querySeasonHint = parseSeasonNumberFromTitle(q);
 
   // 1. Add Local works (parents only, deduplicated)
   localWorks.forEach(w => {
     if (w.parent_work_id) return;
-    const normTitle = normalize(cleanDfiTitle(w.title));
     const existingLocal = results.find(r => {
       if (w.dfi_id && r.dfi_id && String(r.dfi_id) === String(w.dfi_id)) return true;
       if (w.tmdb_id && r.tmdb_id && Number(r.tmdb_id) === Number(w.tmdb_id)) return true;
-      if (normalize(r.title) === normTitle && r.type === w.type && (!r.year || !w.year || Math.abs(r.year - w.year) <= 1)) return true;
+      if (shouldMergeWorkSearchResults(r, w)) return true;
       return false;
     });
 
@@ -1686,7 +1686,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
     const existingIndex = results.findIndex(r => {
       if (r.dfi_id && r.dfi_id === dfiId) return true;
-      if (normalize(r.title) === normalize(title) && r.year && year && Math.abs(r.year - year) <= 1) return true;
+      if (shouldMergeWorkSearchResults(r, { title, year, type: mappedType })) return true;
       return false;
     });
 
@@ -1698,6 +1698,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       if (!match.director && director) match.director = director;
       if (!match.poster_url) match.poster_url = extractDfiPosterUrl(film);
       if (!match.season_hint) match.season_hint = seasonHint;
+      if (!match.year && year) match.year = year;
     } else {
       results.push({
         id: `dfi-${dfiId}`,
@@ -1727,7 +1728,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
 
     const existingIndex = results.findIndex(r => {
       if (r.tmdb_id && r.tmdb_id === tmdbId) return true;
-      if (normalize(r.title) === normalize(title) && r.year && year && Math.abs(r.year - year) <= 1) return true;
+      if (shouldMergeWorkSearchResults(r, { title, year, type })) return true;
       return false;
     });
 
@@ -1738,6 +1739,7 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
       if (!match.raw_tmdb) match.raw_tmdb = item;
       if (!match.poster_url && item.poster_path) match.poster_url = `https://image.tmdb.org/t/p/w185${item.poster_path}`;
       if (!match.season_hint) match.season_hint = parseSeasonNumberFromTitle(title) ?? querySeasonHint;
+      if (!match.year && year) match.year = year;
     } else {
       results.push({
         id: `tmdb-${tmdbId}`,

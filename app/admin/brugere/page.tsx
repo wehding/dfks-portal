@@ -22,6 +22,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useI18n } from "@/lib/i18n"
+import { isStaffRole } from "@/lib/admin-roles"
 
 // ── Typer ─────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ type User = {
     full_name: string
     roles: string[]
     org_roles: string[]
+    system_roles?: string[]
     organisations: Array<{ id: string; name: string }>
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
@@ -220,7 +222,8 @@ export default function AdminBrugerePage() {
         setDetailPhone(user.phone || "")
         setDetailTitle(user.title || "")
         setDetailGender(user.gender || "")
-        setDetailRoles(user.org_roles.length > 0 ? user.org_roles.slice() : (user.roles.includes("rettighedshaver") ? [] : ["viewer"]))
+        const editableRoles = user.org_roles.filter(isStaffRole)
+        setDetailRoles(editableRoles.length > 0 ? editableRoles : (user.roles.includes("rettighedshaver") ? [] : ["viewer"]))
         setDetailIsRightsHolder(user.is_rettighedshaver)
         setDetailDirectPassword("")
         setDetailResetLink(null)
@@ -230,6 +233,25 @@ export default function AdminBrugerePage() {
         if (!detailUser) return
         setDetailSaving(true)
         try {
+            const invalidRoles = detailRoles.filter(role => !isStaffRole(role))
+            if (invalidRoles.length > 0) {
+                throw new Error(`En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`)
+            }
+
+            const roleRes = await fetch("/api/admin/users", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    action: "set-roles",
+                    userId: detailUser.id,
+                    roles: detailRoles,
+                }),
+            })
+            if (!roleRes.ok) {
+                const j = await roleRes.json()
+                throw new Error(j.error ?? "Fejl ved opdatering af roller")
+            }
+
             const profileRes = await fetch("/api/admin/users", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
@@ -245,22 +267,6 @@ export default function AdminBrugerePage() {
             if (!profileRes.ok) {
                 const j = await profileRes.json()
                 throw new Error(j.error ?? "Fejl ved opdatering af profil")
-            }
-
-            {
-                const roleRes = await fetch("/api/admin/users", {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        action: "set-roles",
-                        userId: detailUser.id,
-                        roles: detailRoles,
-                    }),
-                })
-                if (!roleRes.ok) {
-                    const j = await roleRes.json()
-                    throw new Error(j.error ?? "Fejl ved opdatering af roller")
-                }
             }
 
             if (detailIsRightsHolder !== detailUser.is_rettighedshaver) {
@@ -303,6 +309,7 @@ export default function AdminBrugerePage() {
             toast.success("Brugeroplysninger gemt")
             setDetailUser(null)
             await load()
+            window.dispatchEvent(new Event("admin-context-updated"))
         } catch (err: unknown) {
             toast.error(errorMessage(err))
         } finally {

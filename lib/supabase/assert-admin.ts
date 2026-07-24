@@ -11,10 +11,7 @@
  */
 
 import { SupabaseClient } from "@supabase/supabase-js"
-
-const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"] as const
-const SUPERADMIN_ROLES = ["superadmin", "admin"] as const
-const ROLE_RANK: Record<string, number> = { superadmin: 4, admin: 3, "org-admin": 2, jurist: 1 }
+import { ADMIN_ROLES, STAFF_ROLE_RANK, SUPERADMIN_ROLES, type StaffRole } from "@/lib/admin-roles"
 
 /**
  * Tjekker om den indloggede bruger har en admin-rolle i user_org_roles.
@@ -36,7 +33,9 @@ export async function assertAdminRole(
     // hele admin-sessionen til org'en for den HØJEST-rangerede rolle. Der er (bevidst) ingen
     // org-vælger endnu — skal multi-org-admin understøttes, skal orgId gøres til et eksplicit
     // valg/parameter i stedet for at udledes af rolle-rank her.
-    const highestRole = data?.slice().sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))[0]
+    const highestRole = data?.slice().sort(
+        (a, b) => (STAFF_ROLE_RANK[b.role as StaffRole] ?? -1) - (STAFF_ROLE_RANK[a.role as StaffRole] ?? -1)
+    )[0]
 
     if (!highestRole) return null
     return { userId: user.id, role: highestRole.role, orgId: highestRole.org_id }

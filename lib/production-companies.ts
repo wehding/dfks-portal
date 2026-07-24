@@ -9,6 +9,8 @@ export type ProductionCompanyLegalEntity = {
   entityKind: LegalEntityKind;
   isPrimary: boolean;
   registrationStatus: string | null;
+  address?: string | null;
+  contactPhone?: string | null;
 };
 
 export type ProductionCompanyOption = {

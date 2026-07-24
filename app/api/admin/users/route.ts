@@ -11,20 +11,9 @@ import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
 import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
+import { highestStaffRole, isStaffRole, STAFF_ROLES } from "@/lib/admin-roles"
 
-// Rangering: højeste rolle bestemmer user_metadata.role og admin-adgang
-const ROLE_RANK: Record<string, number> = {
-    superadmin: 4,
-    admin: 3,
-    "org-admin": 2,
-    jurist: 1,
-    viewer: 0,
-}
-const ALLOWED_STAFF_ROLES = Object.keys(ROLE_RANK)
-
-function primaryRole(roles: string[]): string {
-    return roles.reduce((best, r) => (ROLE_RANK[r] ?? -1) > (ROLE_RANK[best] ?? -1) ? r : best, "viewer")
-}
+const ALLOWED_STAFF_ROLES = [...STAFF_ROLES]
 
 function getAdmin() {
     return createAdminClient(
@@ -60,7 +49,7 @@ export async function GET() {
     const isSuperadmin = caller.role === "superadmin" || SUPERADMIN_ROLES.includes(caller.role as "superadmin" | "admin");
 
     // Hent staff-roller fra user_org_roles
-    let orgRolesQuery = admin.from("user_org_roles").select("user_id, role");
+    let orgRolesQuery = admin.from("user_org_roles").select("user_id, org_id, role");
     if (!isSuperadmin) {
         orgRolesQuery = orgRolesQuery.eq("org_id", orgId);
     }
@@ -68,10 +57,19 @@ export async function GET() {
 
     // Gruppér roller per bruger
     const rolesMap = new Map<string, string[]>()
+    const editableRolesMap = new Map<string, string[]>()
+    const systemRolesMap = new Map<string, string[]>()
     for (const row of orgRoles ?? []) {
         const existing = rolesMap.get(row.user_id) ?? []
         existing.push(row.role)
         rolesMap.set(row.user_id, existing)
+
+        if (row.org_id === orgId) {
+            const targetMap = isStaffRole(row.role) ? editableRolesMap : systemRolesMap
+            const scoped = targetMap.get(row.user_id) ?? []
+            scoped.push(row.role)
+            targetMap.set(row.user_id, scoped)
+        }
     }
 
     // Rettighedshavere med user_id — bruges til at berige staff-entries
@@ -149,10 +147,12 @@ export async function GET() {
     // Én post per bruger — kombiner roller fra user_org_roles og rettighedshavere
     const users = Array.from(allUserIds).map(userId => {
         const u = authMap.get(userId)
-        const orgRoleList = rolesMap.get(userId) ?? []
+        const allRoleList = rolesMap.get(userId) ?? []
+        const orgRoleList = editableRolesMap.get(userId) ?? []
+        const systemRoleList = systemRolesMap.get(userId) ?? []
         const rhEntry = rhByUserId.get(userId)
 
-        const roles = [...orgRoleList]
+        const roles = [...allRoleList]
         if (rhEntry) roles.push("rettighedshaver")
 
         return {
@@ -161,7 +161,8 @@ export async function GET() {
             email: rhEntry?.email ?? u?.email ?? null,
             full_name: rhEntry?.full_name ?? u?.user_metadata?.full_name ?? u?.email ?? "—",
             roles,
-            org_roles: orgRoleList,       // kun roller fra user_org_roles (bruges til rediger-dialog)
+            org_roles: orgRoleList,
+            system_roles: systemRoleList,
             organisations: Array.from(organisationsByUser.get(userId) ?? []).map(([id, name]) => ({ id, name })),
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
@@ -301,7 +302,7 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
         }
         const nextRoles = Array.from(new Set(roles))
-        const invalidRoles = nextRoles.filter(role => !ALLOWED_STAFF_ROLES.includes(role))
+        const invalidRoles = nextRoles.filter(role => !isStaffRole(role))
         if (invalidRoles.length > 0) {
             return NextResponse.json({
                 error: `En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`,
@@ -344,7 +345,7 @@ export async function PATCH(req: NextRequest) {
         }
 
         // Opdater user_metadata.role til den højeste rolle (bruges af admin layout)
-        const primary = nextRoles.length ? primaryRole(nextRoles) : "member"
+        const primary = highestStaffRole(nextRoles) ?? "member"
         await admin.auth.admin.updateUserById(userId, { user_metadata: { role: primary } })
 
         return NextResponse.json({ ok: true })

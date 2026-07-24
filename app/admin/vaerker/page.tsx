@@ -20,6 +20,7 @@ import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
 import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,7 +46,9 @@ import {
   markAdminWorkMessagesReadByWorkIds,
   markWorkRequestCommentsRead,
   mergeAdminWorks,
+  linkAdminContractToWork,
   reviewWorkDataCorrection,
+  searchAdminUnlinkedContracts,
   syncAdminSeasonAssignments,
   updateAdminWorkData,
 } from "@/app/actions/work-management";
@@ -64,6 +67,8 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { normalizeCompanyName, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
+
+type ContractLinkOption = { id: string; working_title: string | null; type: string | null; status: string | null; contract_date: string | null; rights_holder_name: string };
 
 
 const CREDIT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
@@ -774,6 +779,10 @@ export default function VaerksadministrationPage() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<WorkRow | null>(null);
+  const [contractLinkOpen, setContractLinkOpen] = useState(false);
+  const [contractLinkQuery, setContractLinkQuery] = useState("");
+  const [contractLinkResults, setContractLinkResults] = useState<ContractLinkOption[]>([]);
+  const [contractLinkLoading, setContractLinkLoading] = useState(false);
   const [editForm, setEditForm] = useState<WorkForm | null>(null);
   const [editProducerSelections, setEditProducerSelections] = useState<ProductionCompanySelection[]>([]);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
@@ -1188,6 +1197,31 @@ export default function VaerksadministrationPage() {
     ])));
     setActiveRequestId(detailedRequestWithUnread?.id ?? requestWithUnread?.id ?? null);
     setEditLookupQuery(detailedWork.title ?? "");
+  };
+
+  const findContractsToLink = async () => {
+    setContractLinkLoading(true);
+    try {
+      setContractLinkResults(await searchAdminUnlinkedContracts(contractLinkQuery) as ContractLinkOption[]);
+    } catch (error) {
+      setNotice(errorMessage(error, "Kontrakter kunne ikke hentes."));
+    } finally { setContractLinkLoading(false); }
+  };
+
+  const linkContract = async (contractId: string) => {
+    if (!editing) return;
+    setContractLinkLoading(true);
+    try {
+      await linkAdminContractToWork({ contractId, workId: editing.id });
+      setNotice("Kontrakten er tilknyttet værket.");
+      setContractLinkOpen(false);
+      setContractLinkResults([]);
+      await openEdit(editing);
+      await load();
+      notifyWorksUpdated();
+    } catch (error) {
+      setNotice(errorMessage(error, "Kontrakten kunne ikke tilknyttes."));
+    } finally { setContractLinkLoading(false); }
   };
 
   const openAdminSeasonEdit = async (group: WorkRow) => {
@@ -2606,10 +2640,7 @@ export default function VaerksadministrationPage() {
                     </div>
                     <div className="grid gap-3 rounded-md border border-dashed p-3 sm:grid-cols-[minmax(220px,1fr)_180px_auto] sm:items-end">
                       <Field label="Tilføj klipper eller medklipper">
-                        <Select value={newAssignment.rightsHolderId ?? ""} onValueChange={rightsHolderId => setNewAssignment(previous => ({ ...previous, rightsHolderId }))}>
-                          <SelectTrigger><SelectValue placeholder="Vælg rettighedshaver" /></SelectTrigger>
-                          <SelectContent>{rightsHolders.filter(holder => !seasonCreditDrafts[holder.id]).map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent>
-                        </Select>
+                        <RightsHolderAutocomplete value={newAssignment.rightsHolderId} onChange={rightsHolderId => setNewAssignment(previous => ({ ...previous, rightsHolderId }))} options={rightsHolders.filter(holder => !seasonCreditDrafts[holder.id])} />
                       </Field>
                       <Field label="Kreditering">
                         <Select value={newAssignment.role} onValueChange={role => setNewAssignment(previous => ({ ...previous, role }))}>
@@ -2671,16 +2702,7 @@ export default function VaerksadministrationPage() {
                   )}
                   <div className="grid gap-3 rounded-md border border-dashed px-3 py-3 lg:grid-cols-[minmax(240px,1fr)_180px_140px] lg:items-end">
                     <Field label="Tilføj rettighedshaver">
-                      <Select value={newAssignment.rightsHolderId ?? ""} onValueChange={rightsHolderId => setNewAssignment(prev => ({ ...prev, rightsHolderId }))}>
-                        <SelectTrigger><SelectValue placeholder="Vælg eksisterende rettighedshaver" /></SelectTrigger>
-                        <SelectContent>
-                          {rightsHolders
-                            .filter(rightsHolder => !(editing.work_assignments ?? []).some(assignment => assignment.rettighedshavere?.id === rightsHolder.id))
-                            .map(rightsHolder => (
-                              <SelectItem key={rightsHolder.id} value={rightsHolder.id}>{rightsHolder.full_name}</SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
+                      <RightsHolderAutocomplete value={newAssignment.rightsHolderId} onChange={rightsHolderId => setNewAssignment(prev => ({ ...prev, rightsHolderId }))} options={rightsHolders.filter(rightsHolder => !(editing.work_assignments ?? []).some(assignment => assignment.rettighedshavere?.id === rightsHolder.id))} />
                     </Field>
                     <Field label="Kreditering">
                       <Select value={newAssignment.role} onValueChange={role => setNewAssignment(prev => ({ ...prev, role }))}>
@@ -2699,18 +2721,18 @@ export default function VaerksadministrationPage() {
               <InfoPanel title="Tilknyttede kontrakter">
                 <button
                   type="button"
-                  onClick={() => { window.location.href = `/admin/kontrakter?new=1&work=${editing.id}`; }}
+                  onClick={() => { setContractLinkQuery(""); setContractLinkResults([]); setContractLinkOpen(true); }}
                   className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
                 >
                   {visibleContracts.length === 0
-                    ? "Ingen kontrakter tilknyttet — klik for at tilføje en kontrakt i kontraktadmin."
-                    : "Klik for at tilføje en kontrakt i kontraktadmin."}
+                    ? "Ingen kontrakter tilknyttet — klik for at finde og tilknytte en kontrakt."
+                    : "Tilføj eller tilknyt en kontrakt."}
                 </button>
                 {visibleContracts.map(contract => (
-                  <div key={contract.id} className="mt-2 rounded border px-3 py-2 text-sm">
+                  <a key={contract.id} href={`/admin/kontrakter?edit=${contract.id}`} className="mt-2 block rounded border px-3 py-2 text-sm transition-colors hover:bg-muted">
                     <div className="font-medium">{contract.rettighedshavere?.full_name ?? "Ukendt medlem"}</div>
                     <div className="text-xs text-muted-foreground">{contract.type ?? "Kontrakt"} · {contract.status ?? "ukendt status"}</div>
-                  </div>
+                  </a>
                 ))}
               </InfoPanel>
               <InfoPanel title="Hent værksdata">
@@ -2742,6 +2764,19 @@ export default function VaerksadministrationPage() {
               );
             })()
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={contractLinkOpen} onOpenChange={setContractLinkOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Tilknyt kontrakt</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Søg på rettighedshaver, arbejdstitel eller kontrakttype. Kun kontrakter uden et værk vises.</p>
+          <div className="flex gap-2"><Input value={contractLinkQuery} onChange={event => setContractLinkQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void findContractsToLink(); }} placeholder="Søg rettighedshaver eller kontrakt…" /><Button type="button" onClick={findContractsToLink} disabled={contractLinkLoading}>{contractLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</Button></div>
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {contractLinkResults.map(contract => <button key={contract.id} type="button" className="block w-full rounded-md border p-3 text-left hover:bg-muted" disabled={contractLinkLoading} onClick={() => void linkContract(contract.id)}><span className="block text-sm font-medium">{contract.rights_holder_name}</span><span className="block text-xs text-muted-foreground">{contract.working_title ?? "Kontrakt uden arbejdstitel"} · {contract.type ?? "Kontrakt"}{contract.contract_date ? ` · ${new Date(contract.contract_date).toLocaleDateString("da-DK")}` : ""}</span></button>)}
+            {!contractLinkLoading && contractLinkResults.length === 0 && <p className="py-5 text-center text-sm text-muted-foreground">Søg for at se kontrakter, der kan tilknyttes.</p>}
+          </div>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => setContractLinkOpen(false)}>Annuller</Button><Button type="button" variant="secondary" onClick={() => { window.location.href = `/admin/kontrakter?new=1&work=${editing?.id ?? ""}`; }}>Upload ny kontrakt</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -3107,10 +3142,7 @@ export default function VaerksadministrationPage() {
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
-                      <Select value={assignment.rightsHolderId ?? ""} onValueChange={rightsHolderId => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, rightsHolderId } : item))}>
-                        <SelectTrigger><SelectValue placeholder="Vælg rettighedshaver" /></SelectTrigger>
-                        <SelectContent>{rightsHolders.filter(holder => !addAssignments.some((item, itemIndex) => itemIndex !== index && item.rightsHolderId === holder.id)).map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent>
-                      </Select>
+                      <RightsHolderAutocomplete value={assignment.rightsHolderId} onChange={rightsHolderId => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, rightsHolderId } : item))} options={rightsHolders.filter(holder => !addAssignments.some((item, itemIndex) => itemIndex !== index && item.rightsHolderId === holder.id))} />
                       <Select value={assignment.role} onValueChange={role => setAddAssignments(prev => prev.map((item, itemIndex) => itemIndex === index ? { ...item, role } : item))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>{CREDIT_ROLES.map(role => <SelectItem key={role} value={role}>{role}</SelectItem>)}</SelectContent>

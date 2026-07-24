@@ -1985,3 +1985,47 @@ export async function createAndLinkWorkForContract(params: {
   revalidatePath("/portal/mine-kontrakter");
   return { success: true, workId: targetWorkId };
 }
+
+export async function searchAdminUnlinkedContracts(query: string) {
+  const { supabase } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+  const db = createServiceClient();
+  const normalized = query.trim().toLocaleLowerCase("da");
+  const { data, error } = await db
+    .from("contracts")
+    .select("id,working_title,type,status,contract_date,rights_holder_id,rettighedshavere(full_name)")
+    .eq("org_id", admin.orgId)
+    .is("work_id", null)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw new Error(error.message);
+  return (data ?? []).filter(contract => {
+    if (!normalized) return true;
+    const holder = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
+    return [holder?.full_name, contract.working_title, contract.type].some(value => value?.toLocaleLowerCase("da").includes(normalized));
+  }).slice(0, 25).map(contract => ({
+    ...contract,
+    rights_holder_name: (Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere)?.full_name ?? "Ukendt rettighedshaver",
+  }));
+}
+
+export async function linkAdminContractToWork(params: { contractId: string; workId: string }) {
+  const { supabase } = await currentUser();
+  const admin = await assertAdminRole(supabase);
+  if (!admin) throw new Error("Mangler adminrettigheder.");
+  const db = createServiceClient();
+  const [{ data: contract }, { data: work }] = await Promise.all([
+    db.from("contracts").select("id,status").eq("id", params.contractId).eq("org_id", admin.orgId).is("work_id", null).maybeSingle(),
+    db.from("works").select("id").eq("id", params.workId).eq("org_id", admin.orgId).maybeSingle(),
+  ]);
+  if (!contract || !work) throw new Error("Kontrakten eller værket findes ikke i organisationen, eller kontrakten er allerede tilknyttet.");
+  const { error } = await db.from("contracts").update({
+    work_id: work.id,
+    status: contract.status === "kladde" ? "afventer" : contract.status,
+  }).eq("id", contract.id).eq("org_id", admin.orgId).is("work_id", null);
+  if (error) throw new Error(error.message);
+  revalidatePath("/admin/vaerker");
+  revalidatePath("/admin/kontrakter");
+  return { success: true };
+}
