@@ -10,7 +10,7 @@ export function AdminContextualHelp() {
   const [open, setOpen] = useState(false);
   const { section, content } = adminHelpForPath(pathname);
   return <>
-    <HelpButton onClick={() => setOpen(true)} className="h-8 w-auto px-2 sm:px-3" />
+    <HelpButton onClick={() => setOpen(true)} className="h-9 w-auto shrink-0 gap-1 px-2 text-xs sm:h-8 sm:gap-2 sm:px-3 sm:text-sm" />
     <ContextualHelp
       {...content}
       open={open}

@@ -116,6 +116,16 @@ const PORTAL_HELP_BY_SECTION: Record<string, PortalHelpContent> = {
     intro: "Vedligehold dine kontaktoplysninger og personlige valg.",
     topics: [{ title: "Statistikvalg", body: "Det er frivilligt at bidrage med løndata. Dit valg kan ændres her, når du ønsker det." }],
   },
+  beskeder: {
+    title: "Hjælp til beskeder",
+    intro: "Læs og besvar beskeder fra DFKS.",
+    topics: [{ title: "Samtaler", body: "Åbn en tråd for at se hele samtalen. Svar i den samme tråd, så beskeden fortsat er knyttet til det relevante værk, den relevante kontrakt eller den relevante visning." }],
+  },
+  aftalelicens: {
+    title: "Hjælp til aftalelicens",
+    intro: "Se og indberet visninger, som kan være relevante for dine værker.",
+    topics: [{ title: "Kontrollér visningen", body: "Kontrollér titel, kanal, dato og tidspunkt, før du sender visningen til DFKS." }],
+  },
 };
 
 export function portalHelpForPath(pathname: string) {

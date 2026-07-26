@@ -22,11 +22,11 @@ type ContextualHelpProps = {
 
 export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-2 sm:w-auto" }: { onClick: () => void; label?: string; className?: string }) {
   const { t } = useI18n();
+  const buttonLabel = label === "Hjælp" ? t("help.button") : label;
   return (
-    <Button type="button" variant="outline" onClick={onClick} className={className}>
+    <Button type="button" variant="outline" onClick={onClick} className={className} aria-label={buttonLabel} title={buttonLabel}>
       <HelpCircle className="h-4 w-4" />
-      <span className="hidden sm:inline">{label === "Hjælp" ? t("help.button") : label}</span>
-      <span className="sr-only sm:hidden">{label === "Hjælp" ? t("help.button") : label}</span>
+      <span>{buttonLabel}</span>
     </Button>
   );
 }
@@ -44,7 +44,7 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
 
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/35"
+      className="fixed inset-0 z-50 bg-black/35 sm:pt-12"
       onClick={event => {
         if (event.target === event.currentTarget) onOpenChange(false);
       }}
