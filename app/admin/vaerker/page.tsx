@@ -17,8 +17,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
-import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view";
-import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
+import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { Badge } from "@/components/ui/badge";
@@ -772,7 +771,6 @@ export default function VaerksadministrationPage() {
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
   const [broadcasterOptions, setBroadcasterOptions] = useState<BroadcasterOption[]>(FALLBACK_BROADCASTER_OPTIONS);
   const [loading, setLoading] = useState(true);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
@@ -1979,34 +1977,11 @@ export default function VaerksadministrationPage() {
         title="Værksadministration"
         subtitle={`${filtered.length} af ${works.length} værker`}
         actions={
-          <>
             <Button className="gap-2" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" />
               Tilføj værk
             </Button>
-            <HelpButton onClick={() => setHelpOpen(true)} />
-          </>
         }
-      />
-      <ContextualHelp
-        title="Værksadministration"
-        intro="Her godkender, retter og kobler du værker til rettighedshavere og kontrakter."
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        topics={[
-          {
-            title: "Til godkendelse",
-            body: "Værker og rettelser med status Til godkendelse skal gennemgås, før data bruges som endelige værksdata.",
-          },
-          {
-            title: "Requests",
-            body: "Pending rettelser vises inde i Rediger værk. Vælg en rettelse for at se, hvilke felter brugeren foreslår ændret.",
-          },
-          {
-            title: "Rettighedshavere og andele",
-            body: "Rolle og andel gemmes på relationen mellem værket og rettighedshaveren. Andelen er informativ og behøver ikke summere til 100%.",
-          },
-        ]}
       />
 
       {notice && (
@@ -2016,18 +1991,11 @@ export default function VaerksadministrationPage() {
         </div>
       )}
 
-      <div className="hidden gap-3 sm:grid sm:grid-cols-3">
-        {[
-          { label: "Total værker", value: stats.total },
-          { label: "Med kontrakt tilknyttet", value: stats.withContract },
-          { label: "Mangler kontrakt", value: stats.missingContract },
-        ].map(item => (
-          <div key={item.label} className="rounded-lg border bg-background px-5 py-4">
-            <p className="text-sm font-medium text-muted-foreground">{item.label}</p>
-            <p className="mt-1 text-3xl font-semibold">{item.value}</p>
-          </div>
-        ))}
-      </div>
+      <SummaryGrid>
+        <SummaryCard label="Total værker" value={stats.total} />
+        <SummaryCard label="Med kontrakt" value={stats.withContract} />
+        <SummaryCard label="Mangler kontrakt" value={stats.missingContract} />
+      </SummaryGrid>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
         <div className="relative w-full lg:w-auto">

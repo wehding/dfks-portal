@@ -15,8 +15,8 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
-import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
+import { extractWordText } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 
@@ -58,9 +58,8 @@ export async function POST(req: NextRequest) {
         let text: string
         if (ext === "pdf") {
             text = await extractPdfText(buffer)
-        } else if (ext === "docx") {
-            const result = await mammoth.extractRawText({ buffer })
-            text = result.value
+        } else if (ext === "docx" || ext === "doc") {
+            text = await extractWordText(buffer, storagePath)
         } else {
             text = buffer.toString("utf-8")
         }

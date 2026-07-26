@@ -44,6 +44,7 @@ import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
+import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -439,13 +440,14 @@ export default function PortalLayout({
                 <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-2.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:h-12 sm:px-4 sm:shadow-none">
                     <SidebarTrigger className="shrink-0" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
-                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">
+                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground md:hidden">
                         {currentPageTitle}
                     </h1>
-                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">
-                        {currentPageTitle}
+                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground md:block">
+                        {brand.short_name} {t("nav.rightsPortal")}
                     </span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+                        <PortalContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>

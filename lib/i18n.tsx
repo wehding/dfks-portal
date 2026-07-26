@@ -8,6 +8,7 @@ const translations = {
     da: {
         // Navigation
         "nav.portal": "Medlemsportal",
+        "nav.rightsPortal": "rettighedsportal",
         "nav.admin": "Administration",
         "nav.userSection": "Bruger",
         "nav.adminSection": "Administrator",
@@ -164,7 +165,7 @@ const translations = {
         "auth.email": "E-mail",
         "auth.password": "Adgangskode",
         "auth.forgotPassword": "Glemt adgangskode?",
-        "auth.welcome": "Velkommen tilbage",
+        "auth.welcome": "Velkommen.",
         "auth.subtitle": "Log ind for at tilgå din portal",
         "accountAccess.inviteTitle": "Velkommen til {org}",
         "accountAccess.recoveryTitle": "Vælg en ny adgangskode",
@@ -771,6 +772,7 @@ const translations = {
     en: {
         // Navigation
         "nav.portal": "Member Portal",
+        "nav.rightsPortal": "rights portal",
         "nav.admin": "Administration",
         "nav.userSection": "User",
         "nav.adminSection": "Administrator",
@@ -927,7 +929,7 @@ const translations = {
         "auth.email": "Email",
         "auth.password": "Password",
         "auth.forgotPassword": "Forgot password?",
-        "auth.welcome": "Welcome back",
+        "auth.welcome": "Welcome.",
         "auth.subtitle": "Sign in to access your portal",
         "accountAccess.inviteTitle": "Welcome to {org}",
         "accountAccess.recoveryTitle": "Choose a new password",

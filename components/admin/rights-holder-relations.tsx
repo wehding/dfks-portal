@@ -11,17 +11,16 @@ import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-edito
 export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: string }) {
   const { locale } = useI18n();
   const da = locale === "da";
-  const [open, setOpen] = useState(false);
+  const [worksOpen, setWorksOpen] = useState(false);
+  const [contractsOpen, setContractsOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [works, setWorks] = useState<RightsHolderRelationOption[]>([]);
   const [contracts, setContracts] = useState<RightsHolderRelationOption[]>([]);
   const [editing, setEditing] = useState<{ id: string; kind: "work" | "contract"; title: string } | null>(null);
 
-  async function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (!next || loaded) return;
+  async function ensureLoaded() {
+    if (loaded || loading) return;
     setLoading(true);
     try {
       const result = await getRightsHolderRelations(rightsHolderId);
@@ -33,6 +32,26 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
     } finally {
       setLoading(false);
     }
+  }
+
+  async function reloadRelations() {
+    setLoading(true);
+    try {
+      const result = await getRightsHolderRelations(rightsHolderId);
+      setWorks(result.works);
+      setContracts(result.contracts);
+      setLoaded(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (da ? "Relationer kunne ikke opdateres" : "Relations could not be refreshed"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggle(kind: "work" | "contract") {
+    if (kind === "work") setWorksOpen(current => !current);
+    else setContractsOpen(current => !current);
+    void ensureLoaded();
   }
 
   const relationList = (rows: RightsHolderRelationOption[], kind: "work" | "contract") => (
@@ -52,18 +71,24 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
     </div>
   );
 
-  return <div className="mt-2" onClick={event => event.stopPropagation()}>
-    <Button type="button" size="sm" variant="ghost" className="h-7 px-1 text-xs" onClick={toggle}>
-      {open ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}
-      {da ? "Vis tilknyttede værker og kontrakter" : "Show linked works and contracts"}
-    </Button>
-    {open && <div className="mt-2 min-w-[280px] space-y-2 rounded-md border bg-background p-3 shadow-sm sm:min-w-[420px]">
-      {loading ? <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Indlæser relationer…" : "Loading relations…"}</div> : <>
-        <p className="text-xs font-medium">{da ? "Værker" : "Works"}</p>{relationList(works, "work")}
-        <p className="text-xs font-medium">{da ? "Kontrakter" : "Contracts"}</p>{relationList(contracts, "contract")}
-        <p className="text-[11px] text-muted-foreground">{da ? "Vælg et værk eller en kontrakt for at redigere det i en popup på denne side." : "Choose a work or contract to edit it in a dialog on this page."}</p>
-      </>}
-    </div>}
-    <LinkedRecordEditorDialog record={editing} onOpenChange={next => { if (!next) setEditing(null); }} />
+  const expansion = (kind: "work" | "contract") => {
+    const isOpen = kind === "work" ? worksOpen : contractsOpen;
+    const rows = kind === "work" ? works : contracts;
+    const title = kind === "work" ? (da ? "Værker" : "Works") : (da ? "Kontrakter" : "Contracts");
+    return <div>
+      <Button type="button" size="sm" variant="ghost" className="h-7 px-1 text-xs" onClick={() => toggle(kind)}>
+        {isOpen ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}
+        {title}{loaded ? ` (${rows.length})` : ""}
+      </Button>
+      {isOpen && <div className="mt-1 min-w-[280px] rounded-md border bg-background p-2 shadow-sm sm:min-w-[420px]">
+        {loading ? <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Indlæser…" : "Loading…"}</div> : relationList(rows, kind)}
+      </div>}
+    </div>;
+  };
+
+  return <div className="mt-2 space-y-0.5" onClick={event => event.stopPropagation()}>
+    {expansion("work")}
+    {expansion("contract")}
+    <LinkedRecordEditorDialog record={editing} onOpenChange={next => { if (!next) setEditing(null); }} onSaved={() => void reloadRelations()} />
   </div>;
 }

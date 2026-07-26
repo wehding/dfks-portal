@@ -1,8 +1,7 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
-import { useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { EditorKindIcon, SharedContractEditor, SharedWorkEditor } from "@/components/admin/shared-record-editors";
 
 type LinkedRecord = {
   id: string;
@@ -13,45 +12,29 @@ type LinkedRecord = {
 export function LinkedRecordEditorDialog({
   record,
   onOpenChange,
+  onSaved,
 }: {
   record: LinkedRecord | null;
   onOpenChange: (open: boolean) => void;
+  onSaved?: () => void;
 }) {
-  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const label = record?.kind === "work" ? "værk" : "kontrakt";
-  const src = record
-    ? record.kind === "work"
-      ? `/admin/vaerker?edit=${encodeURIComponent(record.id)}&embedded=1`
-      : `/admin/kontrakter?edit=${encodeURIComponent(record.id)}&embedded=1`
-    : undefined;
-
-  const loading = Boolean(src && loadedSrc !== src);
+  const close = () => onOpenChange(false);
+  const width = record?.kind === "work"
+    ? "sm:w-[min(1360px,calc(100vw-2rem))] sm:!max-w-none"
+    : "sm:w-full sm:max-w-4xl lg:max-w-[1180px]";
 
   return (
     <Dialog open={Boolean(record)} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[92vh] max-w-[min(96vw,1200px)] overflow-hidden p-0">
+      <DialogContent className={`flex h-[100dvh] max-h-[100dvh] max-w-none flex-col overflow-hidden rounded-none p-0 sm:h-[92vh] sm:max-h-[92vh] sm:rounded-lg ${width}`}>
         <DialogHeader className="border-b px-5 py-4 pr-12">
-          <DialogTitle>Rediger {label}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><EditorKindIcon kind={record?.kind ?? "contract"} />Rediger {label}</DialogTitle>
           <DialogDescription>
             {record?.title ?? `Det valgte ${label}`} redigeres her, uden at du forlader listen.
           </DialogDescription>
         </DialogHeader>
-        <div className="relative min-h-0 flex-1">
-          {loading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background">
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Indlæser {label}…
-            </div>
-          )}
-          {src && (
-            <iframe
-              key={src}
-              src={src}
-              title={`Rediger ${label}`}
-              className="h-full w-full border-0"
-              onLoad={() => setLoadedSrc(src)}
-            />
-          )}
-        </div>
+        {record?.kind === "work" && <SharedWorkEditor key={record.id} workId={record.id} onClose={close} onSaved={onSaved} />}
+        {record?.kind === "contract" && <SharedContractEditor key={record.id} contractId={record.id} onClose={close} onSaved={onSaved} />}
       </DialogContent>
     </Dialog>
   );

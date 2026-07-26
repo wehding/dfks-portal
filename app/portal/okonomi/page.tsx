@@ -1,13 +1,13 @@
 "use client";
 
-import { PageHeader } from "@/components/page-header";
+import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wallet, Clock, Wrench } from "lucide-react";
 
 export default function PortalOkonomiPage() {
   return (
     <div className="space-y-6 max-w-4xl">
-      <PageHeader
+      <PortalPageHeader
         title="Økonomi & Udbetalinger"
         subtitle="Oversigt over dine royalty-udbetalinger, fordelingsnøgler og Copydan-midler."
       />

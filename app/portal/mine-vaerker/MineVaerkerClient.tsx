@@ -14,11 +14,10 @@ import { useI18n } from "@/lib/i18n";
 import type { ManualWorkFormSeed } from "@/lib/manual-work";
 import { AddWorkModal } from "./components/AddWorkModal";
 import { EditWorkModal } from "./components/EditWorkModal";
-import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
-import { MINE_VAERKER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
-import { ExpandableListTrigger } from "@/components/responsive-data-view";
+import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
+import { PortalPageHeader } from "@/components/portal/portal-page-header";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -288,7 +287,6 @@ export default function MineVaerkerClient({
   const [sortDir, setSortDir]   = useState<"asc" | "desc">("desc");
   const [selected, setSelected] = useState<string[]>([]);
   const [msg, setMsg]           = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [pageSize, setPageSize] = useState(20);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
   const [expandedSeries, setExpandedSeries] = useState<Set<string>>(new Set());
@@ -644,32 +642,20 @@ export default function MineVaerkerClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="hidden text-2xl font-bold text-foreground sm:block">{t("works.title")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t("works.registeredSubtitle")}</p>
-        </div>
-        <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
-          <HelpButton onClick={() => setHelpOpen(true)} />
-          <Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
+      <PortalPageHeader
+        title={t("works.title")}
+        subtitle={t("works.registeredSubtitle")}
+        actions={<Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
             <Plus className="h-4 w-4" /> {t("works.addWork")}
-          </Button>
-        </div>
-      </div>
+          </Button>}
+      />
 
       {/* Statistik */}
-      <div className="hidden gap-3 sm:grid sm:grid-cols-3 sm:gap-4">
-        {[
-          { label: t("works.totalWorks"),  value: totalWorks },
-          { label: t("works.withContract"),  value: withContract },
-          { label: t("works.missingContract"), value: missingContract },
-        ].map(s => (
-          <div key={s.label} className="rounded-lg border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5">
-            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
-            <p className="text-2xl font-bold text-foreground sm:text-3xl">{s.value}</p>
-          </div>
-        ))}
-      </div>
+      <SummaryGrid>
+        <SummaryCard label={t("works.totalWorks")} value={totalWorks} />
+        <SummaryCard label={t("works.withContract")} value={withContract} />
+        <SummaryCard label={t("works.missingContract")} value={missingContract} />
+      </SummaryGrid>
 
       {/* Toast */}
       {msg && (
@@ -1066,15 +1052,6 @@ export default function MineVaerkerClient({
           locale={locale}
         />
       )}
-
-      <ContextualHelp
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        title="Hjælp til Mine værker"
-        intro="Sådan finder, tilføjer og retter du de værker, du har arbejdet på."
-        topics={MINE_VAERKER_HELP}
-        storageKey="dfks-help-mine-vaerker-v3"
-      />
 
       <Dialog open={removeConfirmOpen} onOpenChange={setRemoveConfirmOpen}>
         <DialogContent>

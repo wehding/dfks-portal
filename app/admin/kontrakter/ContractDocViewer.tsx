@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 import { PdfViewer } from "@/components/pdf-viewer";
 
 // Viser et kontraktdokument inline: PDF, billede (JPEG/PNG m.fl.) eller DOCX/DOC
-// (udtrukket som tekst via mammoth). Typen afgøres af filstien (pdf_url).
+// (udtrukket som tekst med den parser, der passer til Word-formatet).
 
 export function ContractDocViewer({ url, filename, highlights, activeHighlight }: { url: string | null; filename?: string | null; highlights?: string[]; activeHighlight?: string | null }) {
     const [docxText, setDocxText] = useState<string | null>(null);
@@ -15,6 +15,7 @@ export function ContractDocViewer({ url, filename, highlights, activeHighlight }
     const isPdf = /\.pdf(\?|$)/.test(name);
     const isImage = /\.(jpe?g|png|webp|gif|avif)(\?|$)/.test(name);
     const isDocx = !isPdf && !isImage && /\.(docx?|doc)(\?|$)/.test(name);
+    const isLegacyDoc = !isPdf && !isImage && /\.doc(\?|$)/.test(name);
 
     useEffect(() => {
         setDocxText(null);
@@ -24,6 +25,15 @@ export function ContractDocViewer({ url, filename, highlights, activeHighlight }
         fetch(url)
             .then(r => r.arrayBuffer())
             .then(async buf => {
+                if (isLegacyDoc) {
+                    const formData = new FormData();
+                    formData.set("file", new File([buf], filename?.split("/").pop() ?? "kontrakt.doc", { type: "application/msword" }));
+                    const response = await fetch("/api/files/extract-word", { method: "POST", body: formData });
+                    const payload = await response.json() as { text?: string; error?: string };
+                    if (!response.ok) throw new Error(payload.error ?? "DOC-filen kunne ikke læses");
+                    if (active) setDocxText(payload.text ?? "");
+                    return;
+                }
                 const mammoth = await import("mammoth");
                 const res = await mammoth.extractRawText({ arrayBuffer: buf });
                 if (active) setDocxText(res.value);
@@ -31,7 +41,7 @@ export function ContractDocViewer({ url, filename, highlights, activeHighlight }
             .catch(e => console.error("[kontrakt] DOCX-visning fejlede:", e))
             .finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [url, isDocx]);
+    }, [filename, url, isDocx, isLegacyDoc]);
 
     if (!url) {
         return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Henter dokument…</div>;

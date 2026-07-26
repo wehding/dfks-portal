@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { requireAdminApi } from "@/lib/api-auth"
-import mammoth from "mammoth"
+import { extractWordText } from "@/lib/word-text"
 
 function sb() {
     return createClient(
@@ -86,13 +86,12 @@ export async function POST(req: NextRequest) {
         // Udtræk tekst server-side baseret på filtype
         let faktiskPdfTekst = pdfTekst
         const fn = filnavn?.toLowerCase() ?? ""
-        const erDocx = fn.endsWith(".docx") || fn.endsWith(".doc")
+        const erWord = fn.endsWith(".docx") || fn.endsWith(".doc")
         if (pdfBase64 && (!faktiskPdfTekst || faktiskPdfTekst.length < 100)) {
             try {
                 const buf = Buffer.from(pdfBase64, "base64")
-                if (erDocx) {
-                    const result = await mammoth.extractRawText({ buffer: buf })
-                    faktiskPdfTekst = result.value
+                if (erWord) {
+                    faktiskPdfTekst = await extractWordText(buf, filnavn)
                 } else {
                     faktiskPdfTekst = await extractPdfText(buf)
                 }
@@ -102,7 +101,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Lønskema: udtræk strukturerede satser med Claude (kun PDF — DOCX kan ikke sendes som document-blok)
-        if (bilagType === "lønskema" && pdfBase64 && !erDocx) {
+        if (bilagType === "lønskema" && pdfBase64 && !erWord) {
             try {
                 lønskemaSatser = await udtraekLønskema(pdfBase64, overenskomst, gyldigFra)
             } catch (e) {

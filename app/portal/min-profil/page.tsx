@@ -5,7 +5,7 @@ import { useState, useEffect, type ChangeEvent } from "react"
 import { Lock, Heart, User, Save, Info, Loader2, X, RefreshCw, Film, Upload } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { PageHeader } from "@/components/page-header"
+import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -251,8 +251,7 @@ export default function MinProfilPage() {
 
     return (
         <div className="space-y-8 max-w-2xl">
-            <PageHeader
-                hideTitleOnMobile
+            <PortalPageHeader
                 title={t("profile.title")}
                 subtitle={t("profile.subtitle")}
             />

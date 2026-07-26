@@ -9,11 +9,17 @@ import { Label } from "@/components/ui/label";
 import {
   selectionKey,
   uniqueCompanySelections,
-  type LegalEntityKind,
   type ProductionCompanyOption,
   type ProductionCompanySelection,
 } from "@/lib/production-companies";
 import { useI18n } from "@/lib/i18n";
+
+type CvrSearchResult = {
+  name: string;
+  cvrNumber: string;
+  industryCode?: string | null;
+  industryDescription?: string | null;
+};
 
 type Props = {
   value: ProductionCompanySelection[];
@@ -28,29 +34,53 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
   const da = locale === "da";
   const [query, setQuery] = useState(suggestedName);
   const [options, setOptions] = useState<ProductionCompanyOption[]>([]);
+  const [cvrOptions, setCvrOptions] = useState<CvrSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [creatingCanonical, setCreatingCanonical] = useState(false);
-  const [legalFor, setLegalFor] = useState<ProductionCompanyOption | null>(null);
-  const [legalName, setLegalName] = useState("");
-  const [cvr, setCvr] = useState("");
-  const [entityKind, setEntityKind] = useState<LegalEntityKind>("company");
-  const [savingLegal, setSavingLegal] = useState(false);
+  const [savingCvr, setSavingCvr] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        setOptions([]);
+        setCvrOptions([]);
+        return;
+      }
       setLoading(true);
       try {
-        const response = await fetch(`/api/production-companies?query=${encodeURIComponent(query.trim())}`, { signal: controller.signal });
-        const json = await response.json();
-        if (!response.ok) throw new Error(json.error);
-        setOptions(json.data ?? []);
+        const localResponse = await fetch(`/api/production-companies?query=${encodeURIComponent(trimmed)}`, { signal: controller.signal });
+        const localJson = await localResponse.json();
+        if (!localResponse.ok) throw new Error(localJson.error);
+        const localOptions = (localJson.data ?? []) as ProductionCompanyOption[];
+        setOptions(localOptions);
+        if (localOptions.length > 0 || trimmed.length < 2) {
+          setCvrOptions([]);
+          return;
+        }
+
+        const digits = trimmed.replace(/\D/g, "");
+        const isCvr = /^\d{7,8}$/.test(digits) && !/[a-zæøå]/i.test(trimmed);
+        const cvrResponse = await fetch(isCvr ? `/api/cvr?cvr=${digits}` : `/api/cvr?q=${encodeURIComponent(trimmed)}`, { signal: controller.signal });
+        const cvrJson = await cvrResponse.json();
+        if (cvrResponse.status === 404) {
+          setCvrOptions([]);
+          return;
+        }
+        if (!cvrResponse.ok) throw new Error(cvrJson.error);
+        setCvrOptions(isCvr
+          ? [{ name: cvrJson.legalName ?? cvrJson.navn, cvrNumber: cvrJson.registrationNumber, industryCode: cvrJson.industryCode, industryDescription: cvrJson.industryDescription }]
+          : (cvrJson.results ?? []));
       } catch (error) {
-        if ((error as Error).name !== "AbortError") setOptions([]);
+        if ((error as Error).name !== "AbortError") {
+          setOptions([]);
+          setCvrOptions([]);
+        }
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
-    }, 250);
+    }, 350);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [query]);
 
@@ -78,69 +108,48 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       const option = json.data as ProductionCompanyOption;
       addSelection({ employerId: option.employerId, canonicalName: option.canonicalName });
       toast.success(json.existing
-        ? (da ? "Det eksisterende selskab blev valgt." : "The existing company was selected.")
-        : (da ? "Produktionsselskabet blev oprettet." : "The production company was created."));
+        ? (da ? "Den eksisterende producent blev valgt." : "The existing producer was selected.")
+        : (da ? "Producenten blev oprettet." : "The producer was created."));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : (da ? "Selskabet kunne ikke oprettes." : "The company could not be created."));
+      toast.error(error instanceof Error ? error.message : (da ? "Producenten kunne ikke oprettes." : "The producer could not be created."));
     } finally {
       setCreatingCanonical(false);
     }
   }
 
-  async function lookUpCvr() {
-    const normalized = cvr.replace(/\D/g, "");
-    if (normalized.length !== 8) {
-      toast.error(da ? "Et CVR-nummer skal bestå af 8 cifre." : "A CVR number must contain 8 digits.");
-      return;
-    }
-    try {
-      const response = await fetch(`/api/cvr?cvr=${normalized}`);
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error);
-      setLegalName(json.legalName ?? json.navn ?? legalName);
-      toast.success(da ? "CVR-oplysninger blev fundet. Kontrollér dem før lagring." : "CVR details found. Verify them before saving.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : (da ? "CVR kunne ikke slås op." : "CVR lookup failed."));
-    }
-  }
-
-  async function saveLegalEntity() {
-    if (!legalFor || !legalName.trim()) return;
-    setSavingLegal(true);
+  async function selectCvrCompany(result: CvrSearchResult) {
+    setSavingCvr(result.cvrNumber);
     try {
       const response = await fetch("/api/production-companies", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "legal_entity",
-          employerId: legalFor.employerId,
-          legalName,
-          registrationCountry: "DK",
-          registrationType: "CVR",
-          registrationNumber: cvr,
-          entityKind,
-        }),
+        body: JSON.stringify({ action: "cvr_company", cvrNumber: result.cvrNumber }),
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error);
+      const option = json.data as ProductionCompanyOption;
+      const entity = option.legalEntities.find(item => item.registrationNumber === result.cvrNumber);
       addSelection({
-        employerId: legalFor.employerId,
-        legalEntityId: json.data.id,
-        canonicalName: legalFor.canonicalName,
-        legalName: json.data.legal_name,
-        registrationNumber: json.data.registration_number ?? undefined,
+        employerId: option.employerId,
+        legalEntityId: entity?.id,
+        canonicalName: option.canonicalName,
+        legalName: entity?.legalName,
+        registrationNumber: entity?.registrationNumber ?? undefined,
+        matchMethod: "cvr",
       });
-      setLegalFor(null); setLegalName(""); setCvr(""); setEntityKind("company");
-      toast.success(da ? "Den juridiske enhed blev tilføjet." : "The legal entity was added.");
+      toast.success(json.existing
+        ? (da ? "Den eksisterende producent blev valgt." : "The existing producer was selected.")
+        : (da ? "Producenten blev hentet fra CVR-registeret." : "The producer was imported from the company register."));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : (da ? "Enheden kunne ikke tilføjes." : "The entity could not be added."));
+      toast.error(error instanceof Error ? error.message : (da ? "Producenten kunne ikke hentes fra CVR-registeret." : "The producer could not be imported."));
     } finally {
-      setSavingLegal(false);
+      setSavingCvr(null);
     }
   }
 
-  return <div className="space-y-2">
-    <Label>{label ?? (da ? "Produktionsselskaber" : "Production companies")}</Label>
+  const showResults = Boolean(query.trim() || loading);
+  return <div className="min-w-0 space-y-2">
+    <Label>{label ?? (da ? "Producent" : "Producer")}</Label>
     {value.length > 0 && <div className="space-y-2">
       {value.map(selection => <div key={selectionKey(selection)} className="flex items-start gap-2 rounded-md border bg-muted/20 p-2 text-sm">
         <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -158,45 +167,29 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
 
     <div className="relative">
       <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-      <Input value={query} disabled={disabled} onChange={event => setQuery(event.target.value)} className="pl-9" placeholder={da ? "Søg navn, navnevariant eller CVR…" : "Search name, alias or registration…"} />
+      <Input value={query} disabled={disabled} onChange={event => setQuery(event.target.value)} className="pl-9" placeholder={da ? "Tilføj producent" : "Add producer"} />
     </div>
-    {(query.trim() || loading) && <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
-      {loading && <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Søger…" : "Searching…"}</div>}
-      {!loading && options.map(option => <div key={option.employerId} className="rounded-md border p-2">
-        <div className="flex items-center gap-2">
-          <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="min-w-0 flex-1 rounded px-1 py-1 text-left hover:bg-muted disabled:opacity-60">
-            <span className="flex items-center gap-2 font-medium">{option.canonicalName}{option.isVerified && <Check className="h-3.5 w-3.5 text-emerald-600" />}</span>
-            {option.aliases.length > 0 && <span className="block truncate text-xs text-muted-foreground">{option.aliases.join(" · ")}</span>}
-            {query.trim() && option.matchScore != null && <span className="block text-xs text-muted-foreground">{option.externalMatch ? (da ? "Eksakt eksternt match" : "Exact external match") : option.matchMethod === "exact_name" ? (da ? "Eksakt navnematch" : "Exact name match") : `${da ? "Muligt fuzzy match" : "Possible fuzzy match"} · ${Math.min(100, option.matchScore)}%`}</span>}
-          </button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => { setLegalFor(option); setLegalName(""); setCvr(""); }}>
-            <Plus className="mr-1 h-3.5 w-3.5" />{da ? "CVR" : "Entity"}
-          </Button>
-        </div>
-        {option.legalEntities.map(entity => <button key={entity.id} type="button" disabled={selected.has(`${option.employerId}:${entity.id}`)} onClick={() => addSelection({ employerId: option.employerId, legalEntityId: entity.id, canonicalName: option.canonicalName, legalName: entity.legalName, registrationNumber: entity.registrationNumber ?? undefined })} className="mt-1 block w-full rounded border-l-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-60">
-          {entity.legalName}{entity.registrationNumber ? ` · ${entity.registrationType} ${entity.registrationNumber}` : ""}
+    {showResults && <div className="max-h-72 min-w-0 space-y-1 overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+      {loading && <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Søger lokalt og i CVR-registeret…" : "Searching locally and in the company register…"}</div>}
+      {!loading && options.map(option => <div key={option.employerId} className="min-w-0 rounded-md border p-1">
+        <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="block w-full min-w-0 rounded px-2 py-2 text-left hover:bg-muted disabled:opacity-60">
+          <span className="flex min-w-0 items-start gap-2 break-words font-medium"><span className="min-w-0 flex-1">{option.canonicalName}</span>{option.isVerified && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />}</span>
+          {option.aliases.length > 0 && <span className="block truncate text-xs text-muted-foreground">{option.aliases.join(" · ")}</span>}
+          {query.trim() && option.matchScore != null && <span className="block text-xs text-muted-foreground">{option.matchMethod === "exact_name" ? (da ? "Eksakt navnematch" : "Exact name match") : `${da ? "Muligt fuzzy match" : "Possible fuzzy match"} · ${Math.min(100, option.matchScore)}%`}</span>}
+        </button>
+        {option.legalEntities.map(entity => <button key={entity.id} type="button" disabled={selected.has(`${option.employerId}:${entity.id}`)} onClick={() => addSelection({ employerId: option.employerId, legalEntityId: entity.id, canonicalName: option.canonicalName, legalName: entity.legalName, registrationNumber: entity.registrationNumber ?? undefined })} className="mt-1 block w-full min-w-0 break-words rounded border-l-2 px-3 py-2 text-left text-xs hover:bg-muted disabled:opacity-60">
+          {entity.legalName}{entity.registrationNumber ? ` · CVR ${entity.registrationNumber}` : ""}
         </button>)}
       </div>)}
-      {!loading && query.trim() && <Button type="button" variant="ghost" className="w-full justify-start" disabled={creatingCanonical} onClick={createCanonical}>
+      {!loading && cvrOptions.map(result => <button key={result.cvrNumber} type="button" disabled={savingCvr !== null} onClick={() => void selectCvrCompany(result)} className="block w-full min-w-0 rounded-md border border-dashed px-3 py-2.5 text-left hover:bg-muted disabled:opacity-60">
+        <span className="flex items-center gap-2 font-medium">{savingCvr === result.cvrNumber && <Loader2 className="h-4 w-4 animate-spin" />}{result.name}</span>
+        <span className="block text-xs text-muted-foreground">CVR {result.cvrNumber}{result.industryDescription ? ` · ${result.industryDescription}` : ""}</span>
+        <span className="block text-xs text-muted-foreground">{da ? "Fundet i CVR-registeret" : "Found in the company register"}</span>
+      </button>)}
+      {!loading && query.trim() && options.length === 0 && cvrOptions.length === 0 && <Button type="button" variant="ghost" className="h-auto w-full min-w-0 justify-start whitespace-normal py-2 text-left" disabled={creatingCanonical} onClick={createCanonical}>
         {creatingCanonical ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-        {da ? `Opret nyt produktionsselskab “${query.trim()}”` : `Create production company “${query.trim()}”`}
+        {da ? `Opret ny producent “${query.trim()}”` : `Create producer “${query.trim()}”`}
       </Button>}
-    </div>}
-
-    {legalFor && <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-      <p className="text-sm font-medium">{da ? `Tilføj juridisk enhed under ${legalFor.canonicalName}` : `Add legal entity under ${legalFor.canonicalName}`}</p>
-      <Input value={cvr} onChange={event => setCvr(event.target.value.replace(/\D/g, "").slice(0, 8))} inputMode="numeric" placeholder="CVR" />
-      <Button type="button" size="sm" variant="outline" onClick={lookUpCvr}>{da ? "Slå CVR op" : "Look up CVR"}</Button>
-      <Input value={legalName} onChange={event => setLegalName(event.target.value)} placeholder={da ? "Juridisk selskabsnavn" : "Legal company name"} />
-      <select value={entityKind} onChange={event => setEntityKind(event.target.value as LegalEntityKind)} className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-        <option value="company">{da ? "Selskab" : "Company"}</option>
-        <option value="subsidiary">{da ? "Datterselskab" : "Subsidiary"}</option>
-        <option value="spv">{da ? "Projekt-/SPV-selskab" : "Project/SPV company"}</option>
-      </select>
-      <div className="flex gap-2">
-        <Button type="button" size="sm" disabled={savingLegal || !legalName.trim()} onClick={saveLegalEntity}>{savingLegal && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{da ? "Gem og vælg" : "Save and select"}</Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setLegalFor(null)}>{da ? "Annuller" : "Cancel"}</Button>
-      </div>
     </div>}
   </div>;
 }

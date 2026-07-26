@@ -3,7 +3,7 @@
 
 import { useState, useMemo } from "react"
 import { Search, Flag, Upload, CheckCircle2, Clock, X, Info, FileText, ChevronDown, ChevronUp } from "lucide-react"
-import { PageHeader } from "@/components/page-header"
+import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -227,7 +227,7 @@ export default function PortalAftalelicensPage() {
 
     return (
         <div className="space-y-8 max-w-3xl">
-            <PageHeader
+            <PortalPageHeader
                 title="Aftalelicens — mine titler"
                 subtitle="Søg i de offentliggjorte titler og markér dem du har kreditering på"
             />

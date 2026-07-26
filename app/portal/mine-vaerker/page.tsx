@@ -6,6 +6,8 @@ import { fetchMemberWorkOverview, linkApprovedCoEditorSuggestionsForRightsHolder
 import { useRouter } from "next/navigation";
 import MineVaerkerClient, { memberOverviewItemsToAssignments } from "./MineVaerkerClient";
 import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerkerClient";
+import { Button } from "@/components/ui/button";
+import { TableSkeleton } from "@/components/ui/data-skeletons";
 
 type ContractWorkIdRow = { work_id: string | null };
 
@@ -87,18 +89,16 @@ export default function MineVaerkerPage() {
 
   if (loadError) {
     return (
-      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
-        {loadError}
+      <div className="flex min-h-48 flex-col items-center justify-center rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center">
+        <p className="font-medium text-destructive">Mine værker kunne ikke indlæses</p>
+        <p className="mt-1 max-w-md text-sm text-muted-foreground">{loadError}</p>
+        <Button type="button" variant="outline" className="mt-4" onClick={() => window.location.reload()}>Prøv igen</Button>
       </div>
     );
   }
 
   if (!data) {
-    return (
-      <div className="flex items-center justify-center py-20 text-sm text-gray-500">
-        Henter dine værker...
-      </div>
-    );
+    return <TableSkeleton columns={6} rows={6} />;
   }
 
   return (

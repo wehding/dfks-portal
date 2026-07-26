@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic"
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
+import { extractWordText } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
@@ -53,13 +53,12 @@ export async function POST(req: NextRequest) {
             let text: string
             if (filename.endsWith(".pdf")) {
                 text = await extractPdfText(buffer)
-            } else if (filename.endsWith(".docx")) {
-                const result = await mammoth.extractRawText({ buffer })
-                text = result.value
+            } else if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
+                text = await extractWordText(buffer, file.name)
             } else if (filename.endsWith(".txt")) {
                 text = buffer.toString("utf-8")
             } else {
-                return NextResponse.json({ error: "Filformat ikke understøttet — brug PDF, DOCX eller TXT" }, { status: 400 })
+                return NextResponse.json({ error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" }, { status: 400 })
             }
 
             masked = maskPersonalData(text)

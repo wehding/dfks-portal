@@ -6,7 +6,7 @@ import { AlertCircle, Clock3, FileText, MessageSquare, MonitorPlay, Upload } fro
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PageHeader } from "@/components/page-header";
+import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
 
@@ -136,7 +136,7 @@ export default async function PortalDashboardPage() {
     ...(screeningClaims ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
   ];
   return <div className="space-y-6">
-    <PageHeader title={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}`} subtitle="Her er det, der kræver din opmærksomhed." />
+    <PortalPageHeader title="Overblik" subtitle={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}. Her er det, der kræver din opmærksomhed.`} />
     <div className="grid gap-6 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
