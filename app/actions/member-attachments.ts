@@ -37,8 +37,8 @@ export async function uploadMemberAttachment(contractId: string, formData: FormD
   if (file.size > MAX_ATTACHMENT_BYTES) return { success: false, error: "Filen må højst fylde 25 MB" };
 
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (!["pdf", "docx", "txt"].includes(ext)) {
-    return { success: false, error: "Filformat ikke understøttet — brug PDF, DOCX eller TXT" };
+  if (!["pdf", "doc", "docx", "txt"].includes(ext)) {
+    return { success: false, error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" };
   }
 
   const safeName = file.name.replace(/[^a-zA-Z0-9.\-_æøåÆØÅ]/g, "_");

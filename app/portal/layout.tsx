@@ -44,6 +44,7 @@ import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
+import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -446,6 +447,7 @@ export default function PortalLayout({
                         {currentPageTitle}
                     </span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+                        <PortalContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>

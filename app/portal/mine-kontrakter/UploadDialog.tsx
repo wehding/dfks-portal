@@ -149,7 +149,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     const valid = incoming.filter(f => allowed.includes(f.type) || /\.(pdf|doc|docx)$/i.test(f.name));
     const rejected = incoming.length - valid.length;
 
-    if (rejected > 0) toast.error("Kun PDF og DOCX understøttes");
+    if (rejected > 0) toast.error("Kun PDF og Word-filer (.doc og .docx) understøttes");
     if (valid.length === 0) return;
 
     const limited = valid.slice(0, MAX_FILES);
@@ -758,7 +758,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 Vælg filer
               </span>
             </label>
-            <p className="text-xs text-muted-foreground mt-2">PDF eller DOCX. Maks. {MAX_FILES} filer.</p>
+            <p className="text-xs text-muted-foreground mt-2">PDF eller Word (.doc og .docx). Maks. {MAX_FILES} filer.</p>
           </div>
           )}
 
@@ -849,8 +849,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               {/* Værkskobling */}
               {!isBatchUpload && (
               <div className="space-y-2 rounded-lg border bg-muted/40 px-3 py-3">
-                <Label className="text-sm font-medium text-muted-foreground">
-                  Vælg værk
+                <Label className="text-sm font-medium leading-5 text-foreground">
+                  Forbind kontrakten til et af de fundne værker eller indtast manuelt værksdata.
                 </Label>
                 {chosenWork && !manualMode ? (
                   <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2.5">
@@ -1133,8 +1133,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
               {/* Varighed / premieredato */}
               {!isSeries && !manualMode && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1.5">
+                <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+                  <div className="min-w-0 space-y-1.5">
                     <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                       Varighed (min)
                       {aiFields.has("duration") && <Sparkles className="h-3 w-3 text-purple-500" />}
@@ -1169,10 +1169,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                         setProductionCompanySelections(selections)
                         setProductionCompany(selections[0]?.canonicalName ?? "")
                       }}
-                      label={aiFields.has("productionCompany") ? "Produktionsselskab · AI-forslag" : "Produktionsselskab"}
+                      label="Vælg produktionsselskab"
                     />
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="min-w-0 space-y-1.5">
                     <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
                       Instruktør
                       {aiFields.has("director") && <Sparkles className="h-3 w-3 text-purple-500" />}

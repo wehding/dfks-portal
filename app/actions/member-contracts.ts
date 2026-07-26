@@ -86,8 +86,8 @@ export async function uploadMemberContract(formData: FormData) {
   }
 
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  if (!["pdf", "docx", "txt"].includes(ext)) {
-    return { success: false, error: "Filformat ikke understøttet — brug PDF, DOCX eller TXT" };
+  if (!["pdf", "doc", "docx", "txt"].includes(ext)) {
+    return { success: false, error: "Filformat ikke understøttet — brug PDF, DOC, DOCX eller TXT" };
   }
 
   // Upload til kontrakter-bucket (samme som admin)
@@ -840,6 +840,65 @@ export type AdminContractUpdate = {
   episode_numbers?: number[] | null;
   producer_selections?: ProductionCompanySelection[];
 };
+
+export async function fetchAdminContractEditorData(contractId: string) {
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+
+  const [contractResult, rightsHoldersResult, worksResult, producerResult] = await Promise.all([
+    db.from("contracts")
+      .select("id,type,overenskomst,status,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(title,year,type)")
+      .eq("id", contractId)
+      .eq("org_id", orgId)
+      .maybeSingle(),
+    db.from("rettighedshavere")
+      .select("id,full_name,org_affiliations!inner(org_id)")
+      .eq("org_affiliations.org_id", orgId)
+      .order("full_name")
+      .limit(1000),
+    db.from("works")
+      .select("id,title,year,type")
+      .eq("org_id", orgId)
+      .order("title")
+      .limit(1000),
+    db.from("contract_employers")
+      .select("employer_id,legal_entity_id,sort_order,employers(name),employer_legal_entities(legal_name,registration_number)")
+      .eq("contract_id", contractId)
+      .order("sort_order"),
+  ]);
+
+  if (contractResult.error) return { success: false, error: contractResult.error.message };
+  if (!contractResult.data) return { success: false, error: "Kontrakten blev ikke fundet" };
+  if (rightsHoldersResult.error) return { success: false, error: rightsHoldersResult.error.message };
+  if (worksResult.error) return { success: false, error: worksResult.error.message };
+
+  const contract = contractResult.data;
+  const employer = Array.isArray(contract.employers) ? contract.employers[0] : contract.employers;
+  const producerSelections: ProductionCompanySelection[] = producerResult.error
+    ? (contract.employer_id && employer?.name ? [{ employerId: contract.employer_id, canonicalName: employer.name }] : [])
+    : (producerResult.data ?? []).map(row => {
+        const producer = Array.isArray(row.employers) ? row.employers[0] : row.employers;
+        const entity = Array.isArray(row.employer_legal_entities) ? row.employer_legal_entities[0] : row.employer_legal_entities;
+        return {
+          employerId: row.employer_id,
+          legalEntityId: row.legal_entity_id ?? undefined,
+          canonicalName: producer?.name ?? "Producent",
+          legalName: entity?.legal_name ?? undefined,
+          registrationNumber: entity?.registration_number ?? undefined,
+        };
+      });
+
+  return {
+    success: true,
+    contract,
+    rightsHolders: rightsHoldersResult.data ?? [],
+    works: worksResult.data ?? [],
+    producerSelections,
+  };
+}
 
 export async function updateAdminContract(contractId: string, values: AdminContractUpdate) {
   const user = await currentUser();

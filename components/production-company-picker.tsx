@@ -139,7 +139,7 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
     }
   }
 
-  return <div className="space-y-2">
+  return <div className="min-w-0 space-y-2">
     <Label>{label ?? (da ? "Produktionsselskaber" : "Production companies")}</Label>
     {value.length > 0 && <div className="space-y-2">
       {value.map(selection => <div key={selectionKey(selection)} className="flex items-start gap-2 rounded-md border bg-muted/20 p-2 text-sm">
@@ -160,24 +160,24 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
       <Input value={query} disabled={disabled} onChange={event => setQuery(event.target.value)} className="pl-9" placeholder={da ? "Søg navn, navnevariant eller CVR…" : "Search name, alias or registration…"} />
     </div>
-    {(query.trim() || loading) && <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+    {(query.trim() || loading) && <div className="max-h-72 min-w-0 space-y-1 overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
       {loading && <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Søger…" : "Searching…"}</div>}
-      {!loading && options.map(option => <div key={option.employerId} className="rounded-md border p-2">
-        <div className="flex items-center gap-2">
-          <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="min-w-0 flex-1 rounded px-1 py-1 text-left hover:bg-muted disabled:opacity-60">
-            <span className="flex items-center gap-2 font-medium">{option.canonicalName}{option.isVerified && <Check className="h-3.5 w-3.5 text-emerald-600" />}</span>
+      {!loading && options.map(option => <div key={option.employerId} className="min-w-0 rounded-md border p-2">
+        <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+          <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="min-w-0 rounded px-2 py-2 text-left hover:bg-muted disabled:opacity-60">
+            <span className="flex min-w-0 items-start gap-2 break-words font-medium"><span className="min-w-0 flex-1">{option.canonicalName}</span>{option.isVerified && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />}</span>
             {option.aliases.length > 0 && <span className="block truncate text-xs text-muted-foreground">{option.aliases.join(" · ")}</span>}
             {query.trim() && option.matchScore != null && <span className="block text-xs text-muted-foreground">{option.externalMatch ? (da ? "Eksakt eksternt match" : "Exact external match") : option.matchMethod === "exact_name" ? (da ? "Eksakt navnematch" : "Exact name match") : `${da ? "Muligt fuzzy match" : "Possible fuzzy match"} · ${Math.min(100, option.matchScore)}%`}</span>}
           </button>
-          <Button type="button" size="sm" variant="ghost" onClick={() => { setLegalFor(option); setLegalName(""); setCvr(""); }}>
+          <Button type="button" size="sm" variant="outline" className="w-full justify-center sm:w-auto" onClick={() => { setLegalFor(option); setLegalName(""); setCvr(""); }}>
             <Plus className="mr-1 h-3.5 w-3.5" />{da ? "CVR" : "Entity"}
           </Button>
         </div>
-        {option.legalEntities.map(entity => <button key={entity.id} type="button" disabled={selected.has(`${option.employerId}:${entity.id}`)} onClick={() => addSelection({ employerId: option.employerId, legalEntityId: entity.id, canonicalName: option.canonicalName, legalName: entity.legalName, registrationNumber: entity.registrationNumber ?? undefined })} className="mt-1 block w-full rounded border-l-2 px-3 py-1.5 text-left text-xs hover:bg-muted disabled:opacity-60">
+        {option.legalEntities.map(entity => <button key={entity.id} type="button" disabled={selected.has(`${option.employerId}:${entity.id}`)} onClick={() => addSelection({ employerId: option.employerId, legalEntityId: entity.id, canonicalName: option.canonicalName, legalName: entity.legalName, registrationNumber: entity.registrationNumber ?? undefined })} className="mt-1 block w-full min-w-0 break-words rounded border-l-2 px-3 py-2 text-left text-xs hover:bg-muted disabled:opacity-60">
           {entity.legalName}{entity.registrationNumber ? ` · ${entity.registrationType} ${entity.registrationNumber}` : ""}
         </button>)}
       </div>)}
-      {!loading && query.trim() && <Button type="button" variant="ghost" className="w-full justify-start" disabled={creatingCanonical} onClick={createCanonical}>
+      {!loading && query.trim() && <Button type="button" variant="ghost" className="h-auto w-full min-w-0 justify-start whitespace-normal py-2 text-left" disabled={creatingCanonical} onClick={createCanonical}>
         {creatingCanonical ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
         {da ? `Opret nyt produktionsselskab “${query.trim()}”` : `Create production company “${query.trim()}”`}
       </Button>}

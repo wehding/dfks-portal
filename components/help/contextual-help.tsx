@@ -25,7 +25,8 @@ export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-
   return (
     <Button type="button" variant="outline" onClick={onClick} className={className}>
       <HelpCircle className="h-4 w-4" />
-      {label === "Hjælp" ? t("help.button") : label}
+      <span className="hidden sm:inline">{label === "Hjælp" ? t("help.button") : label}</span>
+      <span className="sr-only sm:hidden">{label === "Hjælp" ? t("help.button") : label}</span>
     </Button>
   );
 }
@@ -48,16 +49,16 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
         if (event.target === event.currentTarget) onOpenChange(false);
       }}
     >
-      <aside className="ml-auto mt-auto flex h-[min(92svh,42rem)] w-full flex-col rounded-t-2xl border-l bg-background text-foreground shadow-xl sm:mt-0 sm:h-full sm:max-w-md sm:rounded-none">
-        <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
+      <aside className="ml-auto mt-auto flex h-[min(92svh,42rem)] w-full flex-col rounded-t-2xl border-l bg-background pb-[env(safe-area-inset-bottom)] text-foreground shadow-xl sm:mt-0 sm:h-full sm:max-w-md sm:rounded-none sm:pb-0">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-            <p className="mt-1 text-sm text-gray-500">{intro}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{intro}</p>
           </div>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={t("help.close")}
           >
             <X className="h-5 w-5" />
@@ -68,12 +69,12 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
           {topics.map(topic => (
             <section key={topic.title} className="rounded-lg border bg-card p-4 text-card-foreground">
               <h3 className="text-sm font-semibold text-foreground">{topic.title}</h3>
-              <p className="mt-1 text-sm leading-6 text-gray-600">{topic.body}</p>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">{topic.body}</p>
               {topic.tips && topic.tips.length > 0 && (
-                <ul className="mt-3 space-y-2 text-sm text-gray-600">
+                <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
                   {topic.tips.map(tip => (
                     <li key={tip} className="flex gap-2">
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-900" />
+                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" />
                       <span>{tip}</span>
                     </li>
                   ))}

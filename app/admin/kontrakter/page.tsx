@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, Suspense, useRef } from "react"
 import dynamic from "next/dynamic"
 import {
-    Search, Trash2, Eye, Upload, MoreHorizontal, FileText,
+    Search, Trash2, Eye, Upload, FileText,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
     AlertTriangle, Clock, Archive, Sparkles,
 } from "lucide-react"
@@ -18,7 +18,6 @@ import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
-import { ContextualHelp, HelpButton } from "@/components/help/contextual-help"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,9 +29,6 @@ import {
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
-import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table"
@@ -288,7 +284,6 @@ function AdminKontrakterContent() {
     const [works, setWorks] = useState<WorkOption[]>([])
     const [orgId, setOrgId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
-    const [helpOpen, setHelpOpen] = useState(false)
     const [search, setSearch] = useState("")
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
@@ -1581,29 +1576,8 @@ function AdminKontrakterContent() {
                             <Upload className="h-4 w-4" />
                             Upload kontrakter
                         </Button>
-                        <HelpButton onClick={() => setHelpOpen(true)} />
                     </div>
                 }
-            />
-            <ContextualHelp
-                title="Kontraktadministration"
-                intro="Her validerer og kobler du kontrakter til rettighedshavere, producenter og værker."
-                open={helpOpen}
-                onOpenChange={setHelpOpen}
-                topics={[
-                    {
-                        title: "Statusser",
-                        body: "Kladde betyder, at kontrakten kræver gennemgang. Valideret betyder, at den kan bruges i systemets videre udbetalings- og statistikflow.",
-                    },
-                    {
-                        title: "Rettighedshaverfilter",
-                        body: "Når en aktiv rettighedshaver er valgt, ser du kun den persons kontrakter. Filteret deles med Værksadministration, indtil det ryddes.",
-                    },
-                    {
-                        title: "Batch-handlinger",
-                        body: "Marker flere kontrakter, når du vil validere eller rydde beskeder samlet. Permanent sletning bør kun bruges ved dubletter eller fejloprettelser.",
-                    },
-                ]}
             />
 
             {/* Filters */}
@@ -1757,24 +1731,6 @@ function AdminKontrakterContent() {
                                         {latestUnread && <p className="mt-1 line-clamp-2 text-xs text-blue-700">{latestUnread.message.split("\n")[0]}</p>}
                                     </div>
                                 </button>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-                                            <MoreHorizontal className="h-4 w-4" />
-                                        </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                        <DropdownMenuItem className="gap-2" onClick={() => openPdf(c)}>
-                                            <Eye className="h-3.5 w-3.5" />Se kontrakt
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem className="gap-2" onClick={() => openEdit(c)}>
-                                            <Pencil className="h-3.5 w-3.5" />Rediger
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem className="gap-2 text-destructive" onClick={() => setDeleteId(c.id)}>
-                                            <Trash2 className="h-3.5 w-3.5" />Slet
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
                             </div>
                             <div className="mt-4 grid gap-3 sm:grid-cols-2">
                                 <MobileMetaRow label="Klipper">{c.rights_holder_name ?? "—"}</MobileMetaRow>
@@ -1790,10 +1746,14 @@ function AdminKontrakterContent() {
                                         : c.contract_date ? new Date(c.contract_date).toLocaleDateString("da-DK") : "—"}
 	                                </span>
 	                            </div>
-	                            <div className="mt-3 lg:hidden">
+	                            <div className="mt-3 grid grid-cols-2 gap-2 lg:hidden">
 	                                <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={() => openPdf(c)}>
 	                                    <Eye className="h-3.5 w-3.5" />
 	                                    Se kontrakt
+	                                </Button>
+	                                <Button type="button" variant="outline" size="sm" className="w-full gap-2" onClick={() => openEdit(c)}>
+	                                    <Pencil className="h-3.5 w-3.5" />
+	                                    Rediger
 	                                </Button>
 	                            </div>
 	                        </MobileDataCard>
@@ -1815,7 +1775,7 @@ function AdminKontrakterContent() {
                             <TableHead><SortButton label="Overenskomst" sortId="overenskomst" /></TableHead>
                             <TableHead><SortButton label="Periode" sortId="period" /></TableHead>
                             <TableHead><SortButton label="Status" sortId="status" /></TableHead>
-                            <TableHead className="w-[60px]" />
+                            <TableHead className="w-[90px]">Dokument</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1871,26 +1831,7 @@ function AdminKontrakterContent() {
                                     <TableCell>
                                         <ContractStatusBadges contract={c} compact />
                                     </TableCell>
-                                    <TableCell>
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                    <MoreHorizontal className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem className="gap-2" onClick={() => openPdf(c)}>
-                                                    <Eye className="h-3.5 w-3.5" />Se kontrakt
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem className="gap-2" onClick={() => openEdit(c)}>
-                                                    <Pencil className="h-3.5 w-3.5" />Rediger
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem className="gap-2 text-destructive" onClick={() => setDeleteId(c.id)}>
-                                                    <Trash2 className="h-3.5 w-3.5" />Slet
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
-                                    </TableCell>
+                                    <TableCell><Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => openPdf(c)}><Eye className="h-3.5 w-3.5" />Se</Button></TableCell>
                                 </TableRow>
                                 )
                             })

@@ -1,0 +1,357 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Film, FileText, Loader2, Search } from "lucide-react";
+import { toast } from "sonner";
+import { fetchAdminWorkDetail, updateAdminWorkData } from "@/app/actions/work-management";
+import { fetchAdminContractEditorData, updateAdminContract } from "@/app/actions/member-contracts";
+import { ProductionCompanyPicker } from "@/components/production-company-picker";
+import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { WORK_TYPES } from "@/lib/work-types";
+import type { ProductionCompanySelection } from "@/lib/production-companies";
+
+type EditorFooterProps = { saving: boolean; dirty: boolean; onCancel: () => void; onSave: () => void };
+
+function EditorFooter({ saving, dirty, onCancel, onSave }: EditorFooterProps) {
+  return <div className="sticky bottom-0 z-10 -mx-4 mt-auto flex flex-col-reverse gap-2 border-t bg-background/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:flex-row sm:justify-end sm:px-6">
+    <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>Annuller</Button>
+    <Button type="button" onClick={onSave} disabled={saving || !dirty}>
+      {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+      Gem ændringer
+    </Button>
+  </div>;
+}
+
+function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="space-y-4 rounded-xl border bg-card p-4 text-card-foreground">
+    <h3 className="text-sm font-semibold">{title}</h3>
+    {children}
+  </section>;
+}
+
+function nullableNumber(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+type WorkEditorForm = {
+  title: string;
+  type: string;
+  year: string;
+  duration: string;
+  seasonCount: string;
+  episodeCount: string;
+  seasonNumber: string;
+  episodeNumber: string;
+  genre: string;
+  director: string;
+  productionCompanies: string;
+  description: string;
+  dfiId: string;
+  tmdbId: string;
+  imdbId: string;
+  posterUrl: string;
+  status: string;
+};
+
+type WorkRecord = Record<string, unknown> & {
+  id: string;
+  title?: string | null;
+  type?: string | null;
+  year?: number | null;
+  duration_minutes?: number | null;
+  season_count?: number | null;
+  episode_count?: number | null;
+  parent_work_id?: string | null;
+  season_number?: number | null;
+  episode_number?: number | null;
+  genre?: string | null;
+  director?: string | null;
+  alternative_titles?: string[] | null;
+  production_countries?: string[] | null;
+  production_companies?: string[] | null;
+  description?: string | null;
+  dfi_id?: string | null;
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
+  field_sources?: Record<string, string> | null;
+  poster_url?: string | null;
+  status?: string | null;
+};
+
+function workForm(record: WorkRecord): WorkEditorForm {
+  return {
+    title: record.title ?? "",
+    type: record.type ?? "spillefilm",
+    year: record.year?.toString() ?? "",
+    duration: record.duration_minutes?.toString() ?? "",
+    seasonCount: record.season_count?.toString() ?? "",
+    episodeCount: record.episode_count?.toString() ?? "",
+    seasonNumber: record.season_number?.toString() ?? "",
+    episodeNumber: record.episode_number?.toString() ?? "",
+    genre: record.genre ?? "",
+    director: record.director ?? "",
+    productionCompanies: (record.production_companies ?? []).join(", "),
+    description: record.description ?? "",
+    dfiId: record.dfi_id ?? "",
+    tmdbId: record.tmdb_id?.toString() ?? "",
+    imdbId: record.imdb_id ?? "",
+    posterUrl: record.poster_url ?? "",
+    status: record.status ?? "godkendt",
+  };
+}
+
+export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string; onClose: () => void; onSaved?: () => void }) {
+  const [record, setRecord] = useState<WorkRecord | null>(null);
+  const [form, setForm] = useState<WorkEditorForm | null>(null);
+  const [initial, setInitial] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void fetchAdminWorkDetail(workId).then(result => {
+      if (cancelled) return;
+      if (!result.success || !result.work) {
+        toast.error(result.error ?? "Værket kunne ikke hentes");
+        onClose();
+        return;
+      }
+      const nextRecord = result.work as WorkRecord;
+      const nextForm = workForm(nextRecord);
+      setRecord(nextRecord);
+      setForm(nextForm);
+      setInitial(JSON.stringify(nextForm));
+    }).catch(error => {
+      if (!cancelled) toast.error(error instanceof Error ? error.message : "Værket kunne ikke hentes");
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [onClose, workId]);
+
+  const dirty = Boolean(form && JSON.stringify(form) !== initial);
+  const update = <K extends keyof WorkEditorForm>(key: K, value: WorkEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
+  const cancel = () => {
+    if (dirty && !window.confirm("Du har ændringer, der ikke er gemt. Vil du lukke alligevel?")) return;
+    onClose();
+  };
+
+  const save = async () => {
+    if (!form || !record) return;
+    if (!form.title.trim()) return toast.error("Titel skal udfyldes");
+    setSaving(true);
+    try {
+      await updateAdminWorkData({
+        workId,
+        data: {
+          title: form.title.trim(),
+          type: form.type,
+          year: nullableNumber(form.year),
+          duration_minutes: nullableNumber(form.duration),
+          season_count: nullableNumber(form.seasonCount),
+          episode_count: nullableNumber(form.episodeCount),
+          parent_work_id: record.parent_work_id ?? null,
+          season_number: nullableNumber(form.seasonNumber),
+          episode_number: nullableNumber(form.episodeNumber),
+          genre: form.genre.trim() || null,
+          director: form.director.trim() || null,
+          alternative_titles: record.alternative_titles ?? [],
+          production_countries: record.production_countries ?? [],
+          production_companies: form.productionCompanies.split(",").map(value => value.trim()).filter(Boolean),
+          description: form.description.trim() || null,
+          dfi_id: form.dfiId.trim() || null,
+          tmdb_id: nullableNumber(form.tmdbId),
+          imdb_id: form.imdbId.trim() || null,
+          field_sources: { ...(record.field_sources ?? {}), title: "manual" },
+          poster_url: form.posterUrl.trim() || null,
+          status: form.status,
+        },
+      });
+      toast.success("Værket er gemt");
+      window.dispatchEvent(new Event("works-updated"));
+      onSaved?.();
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Værket kunne ikke gemmes");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading || !form) return <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Henter værksdata…</div>;
+  const series = form.type === "tv-serie" || form.type === "dokumentar-serie";
+
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-6 sm:px-6">
+      <FormSection title="Grundoplysninger">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Titel</Label><Input value={form.title} onChange={event => update("title", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Værktype</Label><Select value={form.type} onValueChange={value => update("type", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}</SelectContent></Select></div>
+          <div className="space-y-1.5"><Label>Premiereår</Label><Input inputMode="numeric" value={form.year} onChange={event => update("year", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Varighed i minutter</Label><Input inputMode="numeric" value={form.duration} onChange={event => update("duration", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Genre</Label><Input value={form.genre} onChange={event => update("genre", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Instruktør</Label><Input value={form.director} onChange={event => update("director", event.target.value)} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Produktionsselskaber</Label><Input value={form.productionCompanies} onChange={event => update("productionCompanies", event.target.value)} placeholder="Adskil flere selskaber med komma" /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Beskrivelse</Label><Textarea rows={4} value={form.description} onChange={event => update("description", event.target.value)} /></div>
+        </div>
+      </FormSection>
+      {series && <FormSection title="Serie og afsnit">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-1.5"><Label>Antal sæsoner</Label><Input inputMode="numeric" value={form.seasonCount} onChange={event => update("seasonCount", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Antal afsnit</Label><Input inputMode="numeric" value={form.episodeCount} onChange={event => update("episodeCount", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Sæson</Label><Input inputMode="numeric" value={form.seasonNumber} onChange={event => update("seasonNumber", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Afsnit</Label><Input inputMode="numeric" value={form.episodeNumber} onChange={event => update("episodeNumber", event.target.value)} /></div>
+        </div>
+      </FormSection>}
+      <FormSection title="Datakilder og status">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5"><Label>DFI-id</Label><Input value={form.dfiId} onChange={event => update("dfiId", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>TMDB-id</Label><Input value={form.tmdbId} onChange={event => update("tmdbId", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>IMDb-id</Label><Input value={form.imdbId} onChange={event => update("imdbId", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Status</Label><Select value={form.status} onValueChange={value => update("status", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="aktiv">Aktiv</SelectItem><SelectItem value="godkendt">Godkendt</SelectItem><SelectItem value="til_godkendelse">Til godkendelse</SelectItem><SelectItem value="afsluttet">Afsluttet</SelectItem><SelectItem value="arkiveret">Arkiveret</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Poster-URL</Label><Input value={form.posterUrl} onChange={event => update("posterUrl", event.target.value)} /></div>
+        </div>
+      </FormSection>
+    </div>
+    <EditorFooter saving={saving} dirty={dirty} onCancel={cancel} onSave={() => void save()} />
+  </div>;
+}
+
+type WorkOption = { id: string; title: string; year: number | null; type: string | null };
+
+function WorkAutocomplete({ options, value, onChange }: { options: WorkOption[]; value: string; onChange: (value: string) => void }) {
+  const selected = options.find(option => option.id === value);
+  const [query, setQuery] = useState(selected?.title ?? "");
+  const [open, setOpen] = useState(false);
+  const matches = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase("da");
+    return options.filter(option => !needle || option.title.toLocaleLowerCase("da").includes(needle)).slice(0, 12);
+  }, [options, query]);
+  return <div className="relative">
+    <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+    <Input value={query} className="pl-9" placeholder="Søg værk…" onFocus={() => setOpen(true)} onBlur={() => window.setTimeout(() => setOpen(false), 120)} onChange={event => { setQuery(event.target.value); setOpen(true); if (value) onChange(""); }} />
+    {open && <div className="absolute z-50 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md">{matches.length ? matches.map(option => <button type="button" key={option.id} className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-accent" onMouseDown={event => event.preventDefault()} onClick={() => { onChange(option.id); setQuery(option.title); setOpen(false); }}><span className="block font-medium">{option.title}</span><span className="text-xs text-muted-foreground">{option.year ?? "–"} · {option.type ?? "Ukendt type"}</span></button>) : <p className="p-2 text-sm text-muted-foreground">Ingen værker fundet</p>}</div>}
+  </div>;
+}
+
+type ContractEditorForm = {
+  type: string; overenskomst: string; status: string; contractDate: string; startDate: string; endDate: string;
+  rightsHolderId: string; workId: string; workingTitle: string; seasonNumber: string; episodeNumbers: string;
+};
+
+type ContractEditorPayload = {
+  contract: {
+    id: string; type: string | null; overenskomst: string | null; status: string | null; contract_date: string | null; start_date: string | null; end_date: string | null;
+    rights_holder_id: string | null; work_id: string | null; working_title: string | null; season_number: number | null; episode_numbers: number[] | null;
+  };
+  rightsHolders: Array<{ id: string; full_name: string }>;
+  works: WorkOption[];
+  producerSelections: ProductionCompanySelection[];
+};
+
+export function SharedContractEditor({ contractId, onClose, onSaved }: { contractId: string; onClose: () => void; onSaved?: () => void }) {
+  const [payload, setPayload] = useState<ContractEditorPayload | null>(null);
+  const [form, setForm] = useState<ContractEditorForm | null>(null);
+  const [producers, setProducers] = useState<ProductionCompanySelection[]>([]);
+  const [initial, setInitial] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void fetchAdminContractEditorData(contractId).then(result => {
+      if (cancelled) return;
+      if (!result.success || !result.contract) {
+        toast.error(result.error ?? "Kontrakten kunne ikke hentes");
+        onClose();
+        return;
+      }
+      const data = result as unknown as ContractEditorPayload & { success: true };
+      const contract = data.contract;
+      const nextForm: ContractEditorForm = {
+        type: contract.type ?? "a-løn", overenskomst: contract.overenskomst ?? "ingen", status: contract.status ?? "kladde",
+        contractDate: contract.contract_date ?? "", startDate: contract.start_date ?? "", endDate: contract.end_date ?? "",
+        rightsHolderId: contract.rights_holder_id ?? "", workId: contract.work_id ?? "", workingTitle: contract.working_title ?? "",
+        seasonNumber: contract.season_number?.toString() ?? "", episodeNumbers: (contract.episode_numbers ?? []).join(", "),
+      };
+      setPayload(data);
+      setForm(nextForm);
+      setProducers(data.producerSelections ?? []);
+      setInitial(JSON.stringify({ form: nextForm, producers: data.producerSelections ?? [] }));
+    }).catch(error => { if (!cancelled) toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke hentes"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [contractId, onClose]);
+
+  const dirty = Boolean(form && JSON.stringify({ form, producers }) !== initial);
+  const update = <K extends keyof ContractEditorForm>(key: K, value: ContractEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
+  const cancel = () => {
+    if (dirty && !window.confirm("Du har ændringer, der ikke er gemt. Vil du lukke alligevel?")) return;
+    onClose();
+  };
+  const save = async () => {
+    if (!form) return;
+    setSaving(true);
+    try {
+      const episodeNumbers = [...new Set(form.episodeNumbers.split(/[,;\s]+/).map(Number).filter(number => Number.isInteger(number) && number > 0))];
+      const result = await updateAdminContract(contractId, {
+        type: form.type, overenskomst: form.overenskomst === "ingen" ? null : form.overenskomst, status: form.status,
+        contract_date: form.contractDate || null, start_date: form.startDate || null, end_date: form.endDate || null,
+        employer_id: producers[0]?.employerId ?? null, rights_holder_id: form.rightsHolderId || null, work_id: form.workId || null,
+        working_title: form.workingTitle.trim() || null, season_number: nullableNumber(form.seasonNumber), episode_numbers: episodeNumbers.length ? episodeNumbers : null,
+        producer_selections: producers,
+      });
+      if (!result.success) throw new Error(result.error ?? "Kontrakten kunne ikke gemmes");
+      toast.success("Kontrakten er gemt");
+      window.dispatchEvent(new Event("contracts-updated"));
+      onSaved?.();
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke gemmes");
+    } finally { setSaving(false); }
+  };
+
+  if (loading || !form || !payload) return <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Henter kontraktdata…</div>;
+
+  return <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-6 sm:px-6">
+      <FormSection title="Produktion og parter">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+          <div className="min-w-0 space-y-1.5"><Label>Rettighedshaver</Label><RightsHolderAutocomplete options={payload.rightsHolders} value={form.rightsHolderId} onChange={value => update("rightsHolderId", value)} /></div>
+          <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Vælg produktionsselskab" /></div>
+        </div>
+      </FormSection>
+      <FormSection title="Forbind med værk">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5 sm:col-span-2"><Label>Værk</Label><WorkAutocomplete options={payload.works} value={form.workId} onChange={value => update("workId", value)} /></div>
+          <div className="space-y-1.5 sm:col-span-2"><Label>Arbejdstitel</Label><Input value={form.workingTitle} onChange={event => update("workingTitle", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Sæson</Label><Input inputMode="numeric" value={form.seasonNumber} onChange={event => update("seasonNumber", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Afsnit</Label><Input value={form.episodeNumbers} onChange={event => update("episodeNumbers", event.target.value)} placeholder="Fx 1, 2, 5" /></div>
+        </div>
+      </FormSection>
+      <FormSection title="Kontraktoplysninger">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="space-y-1.5"><Label>Kontrakttype</Label><Select value={form.type} onValueChange={value => update("type", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandør</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5"><Label>Overenskomst</Label><Select value={form.overenskomst} onValueChange={value => update("overenskomst", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5"><Label>Status</Label><Select value={form.status} onValueChange={value => update("status", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="kladde">Kladde</SelectItem><SelectItem value="valideret">Valideret</SelectItem><SelectItem value="arkiveret">Arkiveret</SelectItem></SelectContent></Select></div>
+          <div className="space-y-1.5"><Label>Kontraktdato</Label><Input type="date" value={form.contractDate} onChange={event => update("contractDate", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Startdato</Label><Input type="date" value={form.startDate} onChange={event => update("startDate", event.target.value)} /></div>
+          <div className="space-y-1.5"><Label>Slutdato</Label><Input type="date" value={form.endDate} onChange={event => update("endDate", event.target.value)} /></div>
+        </div>
+      </FormSection>
+    </div>
+    <EditorFooter saving={saving} dirty={dirty} onCancel={cancel} onSave={() => void save()} />
+  </div>;
+}
+
+export function EditorKindIcon({ kind }: { kind: "work" | "contract" }) {
+  return kind === "work" ? <Film className="h-4 w-4" /> : <FileText className="h-4 w-4" />;
+}

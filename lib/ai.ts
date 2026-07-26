@@ -239,8 +239,23 @@ export function setCaseLearnings(learnings: CaseLearning[]) {
 // ── PDF text extraction ──────────────────────────────────────
 
 export async function extractTextFromFile(file: File): Promise<string> {
-    // DOCX
-    if (file.name.endsWith(".docx") || file.name.endsWith(".doc") ||
+    const lowerName = file.name.toLowerCase()
+
+    // Ældre binære .doc-filer kan ikke læses af mammoth i browseren. Send dem
+    // til den autentificerede Node-rute, som bruger den korrekte OLE-parser.
+    if (lowerName.endsWith(".doc") || file.type === "application/msword") {
+        const formData = new FormData()
+        formData.set("file", file)
+        const response = await fetch("/api/files/extract-word", { method: "POST", body: formData })
+        const payload = await response.json() as { text?: string; error?: string }
+        if (!response.ok || !payload.text?.trim()) {
+            throw new Error(payload.error ?? "Ingen tekst fundet i Word-dokumentet")
+        }
+        return payload.text
+    }
+
+    // Moderne DOCX kan fortsat læses lokalt uden en ekstra upload-runde.
+    if (lowerName.endsWith(".docx") ||
         file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
         const mammoth = await import("mammoth")
         const arrayBuffer = await file.arrayBuffer()
@@ -250,7 +265,7 @@ export async function extractTextFromFile(file: File): Promise<string> {
     }
 
     // Plain text
-    if (!file.name.endsWith(".pdf") && file.type !== "application/pdf") {
+    if (!lowerName.endsWith(".pdf") && file.type !== "application/pdf") {
         return new Promise((res, rej) => {
             const r = new FileReader()
             r.onload = (e) => res(e.target?.result as string)

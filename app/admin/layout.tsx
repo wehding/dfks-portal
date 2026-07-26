@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useSyncExternalStore } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import { usePathname, useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
@@ -44,6 +44,7 @@ import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
+import { resolveNavigationTitle } from "@/lib/navigation-title"
 
 const ADMIN_NAV_ITEMS = [
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
@@ -80,10 +81,6 @@ const USER_NAV_ITEMS = [
     { key: "portal-aftalelicens", href: "/portal/mine-visninger",     icon: SHARED_NAV_ICONS.screenings, labelKey: "nav.mineVisninger"  },
     { key: "portal-gennemgang",   href: "/portal/kontraktgennemgang", icon: Scale,    labelKey: "nav.contractReview" },
 ]
-
-const subscribeToLocation = () => () => undefined
-const embeddedLocationSnapshot = () => new URLSearchParams(window.location.search).get("embedded") === "1"
-const embeddedServerSnapshot = () => false
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
 
@@ -153,7 +150,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [setupOpen, setSetupOpen] = useState(false)
     const [rettighedsOpen, setRettighedsOpen] = useState(true)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string }>({ logo_url: null, short_name: "DFKS" })
-    const embedded = useSyncExternalStore(subscribeToLocation, embeddedLocationSnapshot, embeddedServerSnapshot)
 
     useEffect(() => {
         const supabase = createClient()
@@ -232,6 +228,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             ...item,
             label: t(item.labelKey as Parameters<typeof t>[0]),
         }))
+    const currentPageTitle = resolveNavigationTitle(pathname, [...adminItems, ...rettighedsItems, ...setupItems, ...userNavItems], t("nav.admin"))
 
     const renderItem = (item: typeof adminItems[0]) => (
         <SidebarMenuItem key={item.key}>
@@ -270,10 +267,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </SidebarMenuButton>
         </SidebarMenuItem>
     )
-
-    if (embedded) {
-        return <main className="min-h-screen bg-background p-2 sm:p-4">{children}</main>
-    }
 
     return (
         <SidebarProvider>
@@ -361,11 +354,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </Sidebar>
 
             <SidebarInset>
-                <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur sm:px-4">
+                <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-2.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:h-12 sm:px-4 sm:shadow-none">
                     <SidebarTrigger className="-ml-1" />
-                    <Separator orientation="vertical" className="h-4" />
-                    <span className="text-sm font-medium text-muted-foreground">{t("nav.admin")}</span>
-                    <div className="ml-auto flex items-center gap-1">
+                    <Separator orientation="vertical" className="hidden h-4 sm:block" />
+                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">{currentPageTitle}</h1>
+                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{currentPageTitle}</span>
+                    <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <AdminContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />

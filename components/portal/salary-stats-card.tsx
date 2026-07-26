@@ -84,7 +84,11 @@ export function SalaryStatsCard({ points, optedOut, insufficientMembers }: {
           <MockOverlay title="Lønstatistikken er på vej">
             <p className="mt-1 text-sm text-muted-foreground">
               Statistikken vises først, når tilstrækkeligt mange medlemmer har uploadet kontrakter —
-              så er gennemsnittet både anonymt og retvisende. Dine egne kontrakter tæller allerede med.
+              så er gennemsnittet både anonymt og retvisende. Det er frivilligt, om du vil bidrage med
+              løndata fra dine kontrakter.
+            </p>
+            <p className="mt-2 text-sm">
+              Du kan til enhver tid ændre dit valg under <Link href="/portal/min-profil" className="font-medium underline underline-offset-2">Min profil</Link>.
             </p>
           </MockOverlay>
         ) : points.length === 0 ? (

@@ -136,7 +136,7 @@ export default async function PortalDashboardPage() {
     ...(screeningClaims ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
   ];
   return <div className="space-y-6">
-    <PageHeader title={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}`} subtitle="Her er det, der kræver din opmærksomhed." />
+    <PageHeader hideTitleOnMobile={false} title={`Velkommen, ${(holder.full_name ?? "").trim().split(/\s+/)[0] || holder.full_name}`} subtitle="Her er det, der kræver din opmærksomhed." />
     <div className="grid gap-6 lg:grid-cols-2">
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />

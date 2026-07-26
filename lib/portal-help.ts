@@ -1,5 +1,7 @@
 import type { HelpTopic } from "@/components/help/contextual-help";
 
+type PortalHelpContent = { title: string; intro: string; topics: HelpTopic[] };
+
 export const MINE_KONTRAKTER_HELP: HelpTopic[] = [
   {
     title: "Upload kontrakt",
@@ -73,3 +75,50 @@ export const MINE_VAERKER_HELP: HelpTopic[] = [
     ],
   },
 ];
+
+const DEFAULT_PORTAL_HELP: PortalHelpContent = {
+  title: "Hjælp til portalen",
+  intro: "Sådan bruger du den aktuelle side.",
+  topics: [{
+    title: "Find og rediger oplysninger",
+    body: "Brug søgning og filtre til at finde det, du skal arbejde med. Klik på en titel for at åbne den, og kontrollér oplysningerne før du gemmer.",
+  }],
+};
+
+const PORTAL_HELP_BY_SECTION: Record<string, PortalHelpContent> = {
+  "": {
+    title: "Hjælp til overblik",
+    intro: "Overblikket samler dine værker, kontrakter, beskeder og næste opgaver.",
+    topics: [
+      { title: "Dine næste skridt", body: "Kort og mærker viser, hvor der mangler oplysninger, en forbindelse eller et svar." },
+      { title: "Lønstatistik", body: "Det er frivilligt at bidrage med løndata. Du kan ændre dit valg under Min profil." },
+    ],
+  },
+  "mine-vaerker": { title: "Hjælp til Mine værker", intro: "Sådan finder, tilføjer og retter du de værker, du har arbejdet på.", topics: MINE_VAERKER_HELP },
+  "mine-kontrakter": { title: "Hjælp til Mine kontrakter", intro: "Sådan uploader, forbinder og følger du dine kontrakter.", topics: MINE_KONTRAKTER_HELP },
+  okonomi: {
+    title: "Hjælp til økonomi",
+    intro: "Se beregninger og udbetalinger knyttet til dine rettigheder.",
+    topics: [{ title: "Beløb og status", body: "Åbn en post for at se beregningsgrundlag og status. Kontakt DFKS via Beskeder, hvis oplysningerne ikke stemmer." }],
+  },
+  "mine-visninger": {
+    title: "Hjælp til Mine visninger",
+    intro: "Kontrollér visninger, som kan være relevante for dine værker.",
+    topics: [{ title: "Indberet en visning", body: "Kontrollér titel, kanal og tidspunkt, og indsend kun visninger for værker, du har arbejdet på." }],
+  },
+  kontraktgennemgang: {
+    title: "Hjælp til kontraktgennemgang",
+    intro: "Indsend en kontrakt og følg DFKS’ vurdering.",
+    topics: [{ title: "Før du sender", body: "Kontrollér fil og kontaktoplysninger. Du kan følge sagen og besvare spørgsmål på samme side." }],
+  },
+  "min-profil": {
+    title: "Hjælp til Min profil",
+    intro: "Vedligehold dine kontaktoplysninger og personlige valg.",
+    topics: [{ title: "Statistikvalg", body: "Det er frivilligt at bidrage med løndata. Dit valg kan ændres her, når du ønsker det." }],
+  },
+};
+
+export function portalHelpForPath(pathname: string) {
+  const section = pathname.replace(/^\/portal\/?/, "").split("/")[0] ?? "";
+  return { section, content: PORTAL_HELP_BY_SECTION[section] ?? DEFAULT_PORTAL_HELP };
+}

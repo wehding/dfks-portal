@@ -6,8 +6,8 @@
  * så internt fetch + FormData-kald undgås.
  */
 
-import mammoth from "mammoth"
 import { extractPdfText } from "@/lib/pdf-parse"
+import { extractWordText } from "@/lib/word-text"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
@@ -46,11 +46,6 @@ export function maskSensitiveData(text: string): string {
         (match, street) => `${street}[NR. MASKERET]`
     )
     return text
-}
-
-async function extractDocxText(buffer: Buffer): Promise<string> {
-    const result = await mammoth.extractRawText({ buffer })
-    return result.value
 }
 
 // ── Klassifikationstype ───────────────────────────────────────
@@ -497,9 +492,9 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     let returnText = ""
 
     if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
-        contractText = await extractDocxText(fileBuffer)
+        contractText = await extractWordText(fileBuffer, fileName)
         if (!contractText.trim()) {
-            throw new Error("Ingen tekst fundet i DOCX-filen.")
+            throw new Error("Ingen tekst fundet i Word-filen.")
         }
         returnText = contractText.slice(0, 60000)
     } else if (filename.endsWith(".txt")) {
@@ -509,7 +504,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         try { contractText = await extractPdfText(fileBuffer) } catch { /* bruger base64 til AI */ }
         returnText = contractText.slice(0, 60000)
     } else {
-        throw new Error("Ikke-understøttet filformat. Brug PDF, DOCX eller TXT.")
+        throw new Error("Ikke-understøttet filformat. Brug PDF, DOC, DOCX eller TXT.")
     }
 
     if (filename.endsWith(".pdf") && provider !== "anthropic") {

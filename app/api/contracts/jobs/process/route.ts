@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic"
 
 import { NextRequest, NextResponse } from "next/server"
-import mammoth from "mammoth"
+import { extractWordText } from "@/lib/word-text"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
@@ -159,8 +159,7 @@ async function textFromStoragePath(path: string): Promise<string> {
     const ext = path.split(".").pop()?.toLowerCase()
     if (ext === "pdf") return extractPdfText(buffer)
     if (ext === "docx" || ext === "doc") {
-        const result = await mammoth.extractRawText({ buffer })
-        return result.value
+        return extractWordText(buffer, path)
     }
     return buffer.toString("utf-8")
 }

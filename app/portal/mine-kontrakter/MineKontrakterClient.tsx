@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Plus, HelpCircle, Sparkles, Link as LinkIcon } from "lucide-react";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
@@ -15,12 +15,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ContextualHelp, HelpButton } from "@/components/help/contextual-help";
 import { MessageStatusBadge, MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MINE_KONTRAKTER_HELP } from "@/lib/portal-help";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
@@ -28,6 +26,8 @@ import { useI18n } from "@/lib/i18n";
 import { hasLinkedWork, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
 import { ManualWorkFormFields } from "@/components/works/manual-work-form";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
+import { PageHeader } from "@/components/page-header";
+import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -196,7 +196,6 @@ export default function MineKontrakterClient({
   const uploadWorkTitle = searchParams?.get("workTitle") ? decodeURIComponent(searchParams.get("workTitle")!) : undefined;
   const [search, setSearch] = useState("");
   const [msg, setMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
@@ -796,32 +795,20 @@ export default function MineKontrakterClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="hidden text-2xl font-bold text-foreground sm:block">{t("contracts.mineTitle")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t("contracts.mineSubtitle")}</p>
-        </div>
-        <div className="grid w-full gap-2 sm:flex sm:w-auto">
-          <HelpButton onClick={() => setHelpOpen(true)} className="w-full sm:w-auto" />
-          <Button onClick={() => setIsUploading(true)} className="w-full gap-2 sm:w-auto">
+      <PageHeader
+        title={t("contracts.mineTitle")}
+        subtitle={t("contracts.mineSubtitle")}
+        actions={<Button onClick={() => setIsUploading(true)} className="w-full gap-2 sm:w-auto">
             <Upload className="h-4 w-4" /> {t("contracts.upload")}
-          </Button>
-        </div>
-      </div>
+          </Button>}
+      />
 
       {/* Statistik */}
-      <div className="hidden grid-cols-3 gap-4 sm:grid">
-        {[
-          { label: t("common.total"),              value: total },
-          { label: t("common.validated"),          value: validerede },
-          { label: t("common.pendingValidation"), value: afventer },
-        ].map(s => (
-          <div key={s.label} className="rounded-lg border bg-card px-6 py-5 text-card-foreground">
-            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
-            <p className="text-3xl font-bold text-foreground">{s.value}</p>
-          </div>
-        ))}
-      </div>
+      <SummaryGrid>
+        <SummaryCard label={t("common.total")} value={total} />
+        <SummaryCard label={t("common.validated")} value={validerede} />
+        <SummaryCard label={t("common.pendingValidation")} value={afventer} />
+      </SummaryGrid>
 
       {/* Toast-besked */}
       {msg && (
@@ -1377,15 +1364,6 @@ export default function MineKontrakterClient({
           </div>
         </div>
       )}
-
-      <ContextualHelp
-        open={helpOpen}
-        onOpenChange={setHelpOpen}
-        title="Hjælp til Mine kontrakter"
-        intro="Sådan uploader, forbinder og følger du dine kontrakter."
-        topics={MINE_KONTRAKTER_HELP}
-        storageKey="dfks-help-mine-kontrakter-v3"
-      />
 
       <Dialog open={manualWorkOpen && Boolean(selectedContract)} onOpenChange={setManualWorkOpen}>
         <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
