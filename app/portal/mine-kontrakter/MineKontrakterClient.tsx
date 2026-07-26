@@ -26,7 +26,7 @@ import { useI18n } from "@/lib/i18n";
 import { hasLinkedWork, shouldShowWorkLinkBadge, unreadAdminMessageCount } from "@/lib/contract-list-status";
 import { ManualWorkFormFields } from "@/components/works/manual-work-form";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
-import { PageHeader } from "@/components/page-header";
+import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -795,7 +795,7 @@ export default function MineKontrakterClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <PageHeader
+      <PortalPageHeader
         title={t("contracts.mineTitle")}
         subtitle={t("contracts.mineSubtitle")}
         actions={<Button onClick={() => setIsUploading(true)} className="w-full gap-2 sm:w-auto">

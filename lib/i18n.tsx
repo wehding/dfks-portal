@@ -8,6 +8,7 @@ const translations = {
     da: {
         // Navigation
         "nav.portal": "Medlemsportal",
+        "nav.rightsPortal": "rettighedsportal",
         "nav.admin": "Administration",
         "nav.userSection": "Bruger",
         "nav.adminSection": "Administrator",
@@ -771,6 +772,7 @@ const translations = {
     en: {
         // Navigation
         "nav.portal": "Member Portal",
+        "nav.rightsPortal": "rights portal",
         "nav.admin": "Administration",
         "nav.userSection": "User",
         "nav.adminSection": "Administrator",

@@ -16,6 +16,7 @@ import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSear
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
+import { ADMIN_CONTRACT_UPLOAD_ACCEPT, isSupportedAdminContractFile } from "@/lib/contract-upload-format"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
@@ -730,6 +731,12 @@ function AdminKontrakterContent() {
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files ?? [])
+        const unsupported = files.filter(file => !isSupportedAdminContractFile(file.name))
+        if (unsupported.length > 0) {
+            toast.error("Kun PDF, Word-filer (.doc og .docx) og TXT understøttes")
+            e.target.value = ""
+            return
+        }
         if (files.length > 15) {
             toast.error("Du kan maks. uploade 15 kontrakter ad gangen")
             e.target.value = ""
@@ -1893,8 +1900,8 @@ function AdminKontrakterContent() {
                                 >
                                     <Upload className="h-10 w-10 text-muted-foreground mb-3" />
                                     <p className="text-sm font-medium">Klik for at vælge filer</p>
-                                    <p className="text-xs text-muted-foreground mt-1">PDF, DOCX eller TXT — maks. 15 filer ad gangen</p>
-                                    <input id="bulk-file-input" type="file" accept=".pdf,.docx,.txt" multiple className="hidden" onChange={handleFileSelect} />
+                                    <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — maks. 15 filer ad gangen</p>
+                                    <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
                                 </div>
                             </div>
                             {uploadItems.length > 0 && (

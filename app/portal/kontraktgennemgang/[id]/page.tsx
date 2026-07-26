@@ -6,7 +6,7 @@ import { ArrowLeft, FileText, Loader2, AlertCircle } from "lucide-react"
 import { format } from "date-fns"
 import { da } from "date-fns/locale"
 import { createClient } from "@/lib/supabase/client"
-import { PageHeader } from "@/components/page-header"
+import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 
@@ -113,7 +113,7 @@ export default function PortalKontraktDetalje({
                 <ArrowLeft className="h-4 w-4 mr-1" />Tilbage til oversigt
             </Button>
 
-            <PageHeader
+            <PortalPageHeader
                 title="Juristens svar"
                 subtitle="Gennemgang af din indsendte kontrakt"
             />

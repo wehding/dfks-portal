@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { PageHeader } from "@/components/page-header"
+import { PortalPageHeader } from "@/components/portal/portal-page-header"
 import { Separator } from "@/components/ui/separator"
 import type {
     ContractType,
@@ -501,8 +501,7 @@ export default function PortalKontraktgennemgangPage() {
 
     return (
         <div className="space-y-8">
-            <PageHeader
-                hideTitleOnMobile
+            <PortalPageHeader
                 title="Kontraktgennemgang"
                 subtitle="Upload din kontrakt og angiv kontekst, så vi kan give dig den bedste vurdering"
             />

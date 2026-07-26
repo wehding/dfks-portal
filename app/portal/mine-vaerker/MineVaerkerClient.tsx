@@ -17,7 +17,7 @@ import { EditWorkModal } from "./components/EditWorkModal";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
-import { PageHeader } from "@/components/page-header";
+import { PortalPageHeader } from "@/components/portal/portal-page-header";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -642,7 +642,7 @@ export default function MineVaerkerClient({
     <div className="flex flex-col gap-6">
 
       {/* Header */}
-      <PageHeader
+      <PortalPageHeader
         title={t("works.title")}
         subtitle={t("works.registeredSubtitle")}
         actions={<Button onClick={() => setIsAdding(true)} className="w-full gap-2 sm:w-auto">
