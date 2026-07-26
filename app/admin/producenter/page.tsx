@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { ChevronDown, Loader2, Pencil, Plus, Radio, RefreshCw, Search, X } from "lucide-react";
+import { ChevronDown, Loader2, Plus, Radio, RefreshCw, Search, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -343,7 +343,6 @@ export default function ProducersPage() {
     const broadcaster = Array.isArray(producer.broadcasters) ? producer.broadcasters[0] : producer.broadcasters;
     return <div className="space-y-4 border-t bg-muted/10 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" onClick={() => openEdit(producer)}><Pencil className="mr-1 h-3.5 w-3.5" />Rediger producent</Button>
         {producer.dfi_company_id && <Badge variant="outline">DFI #{producer.dfi_company_id}</Badge>}
         {broadcaster && <Badge variant="outline" className="gap-1"><Radio className="h-3.5 w-3.5" />{broadcaster.name} · broadcaster/streamer</Badge>}
       </div>
