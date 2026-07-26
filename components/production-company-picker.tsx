@@ -164,9 +164,10 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       {loading && <div className="flex items-center gap-2 p-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Søger…" : "Searching…"}</div>}
       {!loading && options.map(option => <div key={option.employerId} className="rounded-md border p-2">
         <div className="flex items-center gap-2">
-          <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName })} className="min-w-0 flex-1 rounded px-1 py-1 text-left hover:bg-muted disabled:opacity-60">
+          <button type="button" disabled={selected.has(`${option.employerId}:canonical`)} onClick={() => addSelection({ employerId: option.employerId, canonicalName: option.canonicalName, matchScore: option.matchScore, matchMethod: "admin" })} className="min-w-0 flex-1 rounded px-1 py-1 text-left hover:bg-muted disabled:opacity-60">
             <span className="flex items-center gap-2 font-medium">{option.canonicalName}{option.isVerified && <Check className="h-3.5 w-3.5 text-emerald-600" />}</span>
             {option.aliases.length > 0 && <span className="block truncate text-xs text-muted-foreground">{option.aliases.join(" · ")}</span>}
+            {query.trim() && option.matchScore != null && <span className="block text-xs text-muted-foreground">{option.externalMatch ? (da ? "Eksakt eksternt match" : "Exact external match") : option.matchMethod === "exact_name" ? (da ? "Eksakt navnematch" : "Exact name match") : `${da ? "Muligt fuzzy match" : "Possible fuzzy match"} · ${Math.min(100, option.matchScore)}%`}</span>}
           </button>
           <Button type="button" size="sm" variant="ghost" onClick={() => { setLegalFor(option); setLegalName(""); setCvr(""); }}>
             <Plus className="mr-1 h-3.5 w-3.5" />{da ? "CVR" : "Entity"}

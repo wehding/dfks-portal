@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react"
 import {
-    Shield, Mail, Plus, Pencil, Loader2, Clock, MoreHorizontal,
+    Shield, Mail, Plus, Pencil, Loader2, Clock,
     KeyRound, Link, UserX, UserCheck, Search, Users, Scale, UserCog,
     Check, CircleAlert, Trash2,
 } from "lucide-react"
@@ -18,9 +18,6 @@ import {
 import {
     Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog"
-import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { useI18n } from "@/lib/i18n"
 import { isStaffRole } from "@/lib/admin-roles"
 

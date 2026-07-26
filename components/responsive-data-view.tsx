@@ -1,4 +1,29 @@
 import { cn } from "@/lib/utils"
+import { ChevronDown, ChevronRight } from "lucide-react"
+
+export function ExpandableListTrigger({
+    expanded,
+    onToggle,
+    label,
+    className,
+}: {
+    expanded: boolean
+    onToggle: () => void
+    label: string
+    className?: string
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={expanded}
+            aria-label={label}
+            className={cn("shrink-0 text-muted-foreground", className)}
+        >
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+    )
+}
 
 export function ResponsiveTableFrame({
     children,

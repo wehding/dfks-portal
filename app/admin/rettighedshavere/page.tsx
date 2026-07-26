@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
-import { useRouter } from "next/navigation"
-import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Eye, FileText, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
+import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import {
@@ -134,7 +133,6 @@ export default function RettighedshavereAdminPage() {
     const [orgId, setOrgId] = useState<string | null>(null)
     const [rows, setRows] = useState<AdminRightsHolderListItem[]>([])
     const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
-    const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
     const [hasMore, setHasMore] = useState(false)
@@ -841,12 +839,6 @@ export default function RettighedshavereAdminPage() {
                                         <DropdownMenuItem onClick={() => openEdit(rh)}>
                                             <Pencil className="h-3.5 w-3.5 mr-2" />Rediger
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => router.push(`/admin/kontrakter?rh=${rh.id}`)}>
-                                            <FileText className="h-3.5 w-3.5 mr-2" />Se alle kontrakter
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem onClick={() => router.push(`/admin/vaerker?rh=${rh.id}`)}>
-                                            <Eye className="h-3.5 w-3.5 mr-2" />Se alle værker
-                                        </DropdownMenuItem>
                                         <DropdownMenuItem onClick={() => toggleMember(rh)}>
                                             {aff?.is_member
                                                 ? <><UserX className="h-3.5 w-3.5 mr-2 text-amber-500" />Udmeld</>
@@ -966,12 +958,6 @@ export default function RettighedshavereAdminPage() {
                                             <DropdownMenuContent align="end">
                                                 <DropdownMenuItem onClick={() => openEdit(rh)}>
                                                     <Pencil className="h-3.5 w-3.5 mr-2" />Rediger
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem onClick={() => router.push(`/admin/kontrakter?rh=${rh.id}`)}>
-                                                    <FileText className="h-3.5 w-3.5 mr-2" />Se alle kontrakter
-                                                </DropdownMenuItem>
-                                                <DropdownMenuItem onClick={() => router.push(`/admin/vaerker?rh=${rh.id}`)}>
-                                                    <Eye className="h-3.5 w-3.5 mr-2" />Se alle værker
                                                 </DropdownMenuItem>
                                                 <DropdownMenuItem onClick={() => toggleMember(rh)}>
                                                     {aff?.is_member
