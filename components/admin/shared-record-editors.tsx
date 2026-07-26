@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Film, FileText, Loader2, Search } from "lucide-react";
+import { Film, FileText, Loader2, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
-import { fetchAdminWorkDetail, updateAdminWorkData } from "@/app/actions/work-management";
+import { createAdminWork, fetchAdminWorkDetail, updateAdminWorkData } from "@/app/actions/work-management";
 import { fetchAdminContractEditorData, updateAdminContract } from "@/app/actions/member-contracts";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
+import { ManualWorkFormFields } from "@/components/works/manual-work-form";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { WORK_TYPES } from "@/lib/work-types";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 
 type EditorFooterProps = { saving: boolean; dirty: boolean; onCancel: () => void; onSave: () => void };
 
@@ -263,6 +265,8 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
   const [initial, setInitial] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm());
 
   useEffect(() => {
     let cancelled = false;
@@ -285,13 +289,14 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       setPayload(data);
       setForm(nextForm);
       setProducers(data.producerSelections ?? []);
+      setManualWork(emptyManualWorkForm({ title: contract.working_title ?? "", contract_id: contract.id }));
       setInitial(JSON.stringify({ form: nextForm, producers: data.producerSelections ?? [] }));
     }).catch(error => { if (!cancelled) toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke hentes"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [contractId, onClose]);
 
-  const dirty = Boolean(form && JSON.stringify({ form, producers }) !== initial);
+  const dirty = Boolean(form && (manualMode || JSON.stringify({ form, producers }) !== initial));
   const update = <K extends keyof ContractEditorForm>(key: K, value: ContractEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
   const cancel = () => {
     if (dirty && !window.confirm("Du har ændringer, der ikke er gemt. Vil du lukke alligevel?")) return;
@@ -299,13 +304,48 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
   };
   const save = async () => {
     if (!form) return;
+    if (manualMode) {
+      const validationError = validateManualWork(manualWork, "da");
+      if (validationError) return toast.error(validationError);
+    }
     setSaving(true);
     try {
+      let workId = form.workId || null;
+      if (manualMode) {
+        const created = await createAdminWork({
+          data: {
+            title: manualWork.title.trim(),
+            type: manualWork.type,
+            year: nullableNumber(manualWork.year),
+            duration_minutes: nullableNumber(manualWork.duration_minutes),
+            season_count: null,
+            episode_count: nullableNumber(manualWork.episode_count),
+            parent_work_id: null,
+            season_number: nullableNumber(manualWork.season_number),
+            episode_number: nullableNumber(manualWork.episode_number),
+            genre: null,
+            director: manualWork.director.trim() || null,
+            alternative_titles: [],
+            production_countries: [],
+            production_companies: manualWork.production_companies.map(company => company.canonicalName),
+            description: null,
+            dfi_id: null,
+            tmdb_id: null,
+            poster_url: null,
+          },
+          seasonNumber: nullableNumber(manualWork.season_number),
+          selectedEpisodes: manualWork.selected_episodes,
+          productionCompanies: manualWork.production_companies,
+          status: "godkendt",
+        });
+        workId = created.workId;
+        if (!workId) throw new Error("Værket kunne ikke oprettes");
+      }
       const episodeNumbers = [...new Set(form.episodeNumbers.split(/[,;\s]+/).map(Number).filter(number => Number.isInteger(number) && number > 0))];
       const result = await updateAdminContract(contractId, {
         type: form.type, overenskomst: form.overenskomst === "ingen" ? null : form.overenskomst, status: form.status,
         contract_date: form.contractDate || null, start_date: form.startDate || null, end_date: form.endDate || null,
-        employer_id: producers[0]?.employerId ?? null, rights_holder_id: form.rightsHolderId || null, work_id: form.workId || null,
+        employer_id: producers[0]?.employerId ?? null, rights_holder_id: form.rightsHolderId || null, work_id: workId,
         working_title: form.workingTitle.trim() || null, season_number: nullableNumber(form.seasonNumber), episode_numbers: episodeNumbers.length ? episodeNumbers : null,
         producer_selections: producers,
       });
@@ -326,12 +366,26 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       <FormSection title="Produktion og parter">
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
           <div className="min-w-0 space-y-1.5"><Label>Rettighedshaver</Label><RightsHolderAutocomplete options={payload.rightsHolders} value={form.rightsHolderId} onChange={value => update("rightsHolderId", value)} /></div>
-          <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Vælg produktionsselskab" /></div>
+          <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Producent" /></div>
         </div>
       </FormSection>
       <FormSection title="Forbind med værk">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5 sm:col-span-2"><Label>Værk</Label><WorkAutocomplete options={payload.works} value={form.workId} onChange={value => update("workId", value)} /></div>
+          {!manualMode && <div className="space-y-1.5 sm:col-span-2"><Label>Værk</Label><WorkAutocomplete options={payload.works} value={form.workId} onChange={value => update("workId", value)} /></div>}
+          <div className="sm:col-span-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => {
+              setManualMode(current => !current);
+              if (!manualMode) {
+                update("workId", "");
+                setManualWork(current => ({ ...current, title: current.title || form.workingTitle }));
+              }
+            }}>
+              {manualMode ? "Tilbage til søgning" : <><Plus className="mr-1.5 h-4 w-4" />Indtast manuelt</>}
+            </Button>
+          </div>
+          {manualMode && <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
+            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" />
+          </div>}
           <div className="space-y-1.5 sm:col-span-2"><Label>Arbejdstitel</Label><Input value={form.workingTitle} onChange={event => update("workingTitle", event.target.value)} /></div>
           <div className="space-y-1.5"><Label>Sæson</Label><Input inputMode="numeric" value={form.seasonNumber} onChange={event => update("seasonNumber", event.target.value)} /></div>
           <div className="space-y-1.5"><Label>Afsnit</Label><Input value={form.episodeNumbers} onChange={event => update("episodeNumbers", event.target.value)} placeholder="Fx 1, 2, 5" /></div>

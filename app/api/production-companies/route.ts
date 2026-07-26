@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSessionApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
+import { formatApiCvrAddress, lookupApiCvr } from "@/lib/api-cvr-mcp";
 import {
   companyMatchScore,
   normalizeCompanyName,
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
   const auth = await requireSessionApi();
   if (!auth.ok) return auth.response;
   const body = await req.json().catch(() => null) as {
-    action?: "canonical" | "legal_entity";
+    action?: "canonical" | "legal_entity" | "cvr_company";
     name?: string;
     employerId?: string;
     legalName?: string;
@@ -158,10 +159,84 @@ export async function POST(req: NextRequest) {
     industryDescription?: string | null;
     companyType?: string | null;
     registrationStatus?: string | null;
+    cvrNumber?: string;
   } | null;
   if (!body) return NextResponse.json({ error: "Ugyldige data." }, { status: 400 });
 
   const db = createServiceClient();
+  if (body.action === "cvr_company") {
+    const cvrNumber = body.cvrNumber?.replace(/\D/g, "") ?? "";
+    if (!/^\d{8}$/.test(cvrNumber)) return NextResponse.json({ error: "Angiv et gyldigt CVR-nummer på 8 cifre." }, { status: 400 });
+
+    try {
+      const company = await lookupApiCvr(cvrNumber);
+      if (!company) return NextResponse.json({ error: "Virksomheden blev ikke fundet i CVR-registeret." }, { status: 404 });
+
+      let companies = await readCompanies();
+      const withRegistration = companies.find(option => option.legalEntities.some(entity => entity.registrationNumber === company.cvrNumber));
+      if (withRegistration) return NextResponse.json({ data: withRegistration, existing: true });
+
+      const nameMatch = companies
+        .map(option => ({ option, score: companyMatchScore(option, company.name) }))
+        .filter(result => result.score >= 68)
+        .sort((left, right) => right.score - left.score)[0]?.option;
+
+      let employerId = nameMatch?.employerId ?? null;
+      if (!employerId) {
+        let { data: created, error } = await db
+          .from("employers")
+          .insert({ name: company.name, status: "active", is_verified: false })
+          .select("id")
+          .single();
+        if (error && (error.code === "42703" || /schema cache|column/i.test(error.message))) {
+          const legacy = await db.from("employers").insert({ name: company.name }).select("id").single();
+          created = legacy.data as typeof created;
+          error = legacy.error;
+        }
+        if (error || !created?.id) return NextResponse.json({ error: "Producenten kunne ikke oprettes." }, { status: 409 });
+        employerId = created.id;
+      }
+
+      const { count } = await db
+        .from("employer_legal_entities")
+        .select("id", { count: "exact", head: true })
+        .eq("employer_id", employerId)
+        .is("archived_at", null);
+      const { error: legalError } = await db.from("employer_legal_entities").insert({
+        employer_id: employerId,
+        legal_name: company.name,
+        registration_country: "DK",
+        registration_type: "CVR",
+        registration_number: company.cvrNumber,
+        entity_kind: "company",
+        address: formatApiCvrAddress(company),
+        contact_phone: company.phone,
+        contact_email: company.email,
+        website: company.website,
+        industry_code: company.industryCode,
+        industry_description: company.industryDescription,
+        company_type: company.companyType,
+        registration_status: company.status,
+        is_primary: (count ?? 0) === 0,
+        created_by: auth.userId,
+      });
+      if (legalError) {
+        companies = await readCompanies();
+        const raced = companies.find(option => option.legalEntities.some(entity => entity.registrationNumber === company.cvrNumber));
+        if (raced) return NextResponse.json({ data: raced, existing: true });
+        return NextResponse.json({ error: "CVR-oplysningerne kunne ikke gemmes på producenten." }, { status: 409 });
+      }
+
+      companies = await readCompanies();
+      const saved = companies.find(option => option.employerId === employerId);
+      if (!saved) return NextResponse.json({ error: "Producenten blev oprettet, men kunne ikke genindlæses." }, { status: 500 });
+      return NextResponse.json({ data: saved, existing: false }, { status: 201 });
+    } catch (error) {
+      console.error("[production-companies] CVR-oprettelse fejlede", error);
+      return NextResponse.json({ error: error instanceof Error ? error.message : "CVR-opslaget fejlede." }, { status: 502 });
+    }
+  }
+
   if (body.action === "canonical") {
     const name = body.name?.trim().replace(/\s+/g, " ");
     if (!name || name.length > 200) return NextResponse.json({ error: "Angiv et gyldigt selskabsnavn." }, { status: 400 });

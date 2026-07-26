@@ -853,22 +853,39 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   Forbind kontrakten til et af de fundne værker eller indtast manuelt værksdata.
                 </Label>
                 {chosenWork && !manualMode ? (
-                  <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2.5">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">{chosenWork.title}</p>
-                      {chosenWork.year && <p className="text-xs text-muted-foreground">{chosenWork.year}</p>}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{chosenWork.title}</p>
+                        {chosenWork.year && <p className="text-xs text-muted-foreground">{chosenWork.year}</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedWorkId("");
+                          setPickedUnifiedResult(null);
+                          setWorkPickerOpen(true);
+                        }}
+                        className="ml-2 shrink-0 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                    <button
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
+                        setManualWork(emptyManualWorkForm(buildManualSeed()));
+                        setManualMode(true);
                         setSelectedWorkId("");
                         setPickedUnifiedResult(null);
                         setWorkPickerOpen(true);
                       }}
-                      className="ml-2 shrink-0 text-muted-foreground hover:text-foreground"
+                      className="w-full sm:w-auto"
                     >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                      Indtast manuelt
+                    </Button>
                   </div>
                 ) : !workPickerOpen ? (
                   <Button type="button" variant="outline" size="sm" onClick={openWorkPicker} disabled={saving || screening} className="w-full">
@@ -1169,7 +1186,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                         setProductionCompanySelections(selections)
                         setProductionCompany(selections[0]?.canonicalName ?? "")
                       }}
-                      label="Vælg produktionsselskab"
+                      label="Producent"
                     />
                   </div>
                   <div className="min-w-0 space-y-1.5">

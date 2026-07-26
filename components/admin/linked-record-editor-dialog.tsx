@@ -18,10 +18,13 @@ export function LinkedRecordEditorDialog({
 }) {
   const label = record?.kind === "work" ? "værk" : "kontrakt";
   const close = () => onOpenChange(false);
+  const width = record?.kind === "work"
+    ? "sm:w-[min(1360px,calc(100vw-2rem))] sm:!max-w-none"
+    : "sm:w-full sm:max-w-4xl lg:max-w-[1180px]";
 
   return (
     <Dialog open={Boolean(record)} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[100dvh] max-h-[100dvh] max-w-none flex-col overflow-hidden rounded-none p-0 sm:h-[92vh] sm:max-h-[92vh] sm:max-w-[min(96vw,1040px)] sm:rounded-lg">
+      <DialogContent className={`flex h-[100dvh] max-h-[100dvh] max-w-none flex-col overflow-hidden rounded-none p-0 sm:h-[92vh] sm:max-h-[92vh] sm:rounded-lg ${width}`}>
         <DialogHeader className="border-b px-5 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2"><EditorKindIcon kind={record?.kind ?? "contract"} />Rediger {label}</DialogTitle>
           <DialogDescription>

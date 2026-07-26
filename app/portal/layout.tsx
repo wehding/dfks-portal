@@ -444,7 +444,7 @@ export default function PortalLayout({
                         {currentPageTitle}
                     </h1>
                     <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">
-                        {currentPageTitle}
+                        {brand.short_name} rettighedsportal
                     </span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <PortalContextualHelp />

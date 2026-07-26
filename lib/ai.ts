@@ -241,9 +241,12 @@ export function setCaseLearnings(learnings: CaseLearning[]) {
 export async function extractTextFromFile(file: File): Promise<string> {
     const lowerName = file.name.toLowerCase()
 
-    // Ældre binære .doc-filer kan ikke læses af mammoth i browseren. Send dem
-    // til den autentificerede Node-rute, som bruger den korrekte OLE-parser.
-    if (lowerName.endsWith(".doc") || file.type === "application/msword") {
+    // Alle Word-filer sendes til Node-ruten, som ser på filens signatur og
+    // vælger OLE-parser til DOC eller Mammoth til DOCX. Det håndterer også
+    // filer med forkert eller manglende MIME-type uden at gætte i browseren.
+    if (lowerName.endsWith(".doc") || lowerName.endsWith(".docx") ||
+        file.type === "application/msword" ||
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
         const formData = new FormData()
         formData.set("file", file)
         const response = await fetch("/api/files/extract-word", { method: "POST", body: formData })
@@ -252,16 +255,6 @@ export async function extractTextFromFile(file: File): Promise<string> {
             throw new Error(payload.error ?? "Ingen tekst fundet i Word-dokumentet")
         }
         return payload.text
-    }
-
-    // Moderne DOCX kan fortsat læses lokalt uden en ekstra upload-runde.
-    if (lowerName.endsWith(".docx") ||
-        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-        const mammoth = await import("mammoth")
-        const arrayBuffer = await file.arrayBuffer()
-        const result = await mammoth.extractRawText({ arrayBuffer })
-        if (!result.value.trim()) throw new Error("Ingen tekst fundet i Word-dokumentet")
-        return result.value
     }
 
     // Plain text

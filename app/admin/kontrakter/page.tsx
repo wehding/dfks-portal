@@ -2175,7 +2175,7 @@ function AdminKontrakterContent() {
                                             setEditProducerSelections(selections)
                                             setEditForm(form => form && ({ ...form, employer_id: selections[0]?.employerId ?? "" }))
                                         }}
-                                        label="Producent / juridisk kontraktpart"
+                                        label="Producent"
                                     />
                                     {(() => {
                                         const validation = editContract?.validation_data

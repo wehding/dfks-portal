@@ -358,7 +358,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
                     <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">{currentPageTitle}</h1>
-                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{currentPageTitle}</span>
+                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{brand.short_name} administration</span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <AdminContextualHelp />
                         <LanguageToggle />
