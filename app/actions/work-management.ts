@@ -1152,6 +1152,7 @@ export async function updateAdminWorkData(params: {
   workId: string;
   data: AdminWorkData;
   assignments?: { id?: string; rightsHolderId?: string; role: string; sharePercent?: number | null }[];
+  replaceAssignments?: boolean;
   broadcaster?: string | null;
   distributions?: WorkDistributionInput[];
   productionCompanies?: ProductionCompanySelection[];
@@ -1188,6 +1189,21 @@ export async function updateAdminWorkData(params: {
 
   if (params.distributions) await updateWorkDistributions(db, params.workId, orgId, params.distributions);
   else await updateWorkBroadcaster(db, params.workId, params.broadcaster);
+
+  if (params.replaceAssignments) {
+    const retainedIds = new Set((params.assignments ?? []).map(assignment => assignment.id).filter((id): id is string => Boolean(id)));
+    const { data: existingAssignments, error: existingAssignmentsError } = await db
+      .from("work_assignments")
+      .select("id")
+      .eq("work_id", params.workId)
+      .eq("org_id", orgId);
+    if (existingAssignmentsError) throw new Error(existingAssignmentsError.message);
+    const removedIds = (existingAssignments ?? []).map(assignment => assignment.id).filter(id => !retainedIds.has(id));
+    if (removedIds.length > 0) {
+      const { error: removeError } = await db.from("work_assignments").delete().eq("work_id", params.workId).eq("org_id", orgId).in("id", removedIds);
+      if (removeError) throw new Error(removeError.message);
+    }
+  }
 
   for (const assignment of params.assignments ?? []) {
     const role = cleanText(assignment.role);

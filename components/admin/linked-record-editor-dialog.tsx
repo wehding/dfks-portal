@@ -12,9 +12,11 @@ type LinkedRecord = {
 export function LinkedRecordEditorDialog({
   record,
   onOpenChange,
+  onSaved,
 }: {
   record: LinkedRecord | null;
   onOpenChange: (open: boolean) => void;
+  onSaved?: () => void;
 }) {
   const label = record?.kind === "work" ? "værk" : "kontrakt";
   const close = () => onOpenChange(false);
@@ -31,8 +33,8 @@ export function LinkedRecordEditorDialog({
             {record?.title ?? `Det valgte ${label}`} redigeres her, uden at du forlader listen.
           </DialogDescription>
         </DialogHeader>
-        {record?.kind === "work" && <SharedWorkEditor key={record.id} workId={record.id} onClose={close} />}
-        {record?.kind === "contract" && <SharedContractEditor key={record.id} contractId={record.id} onClose={close} />}
+        {record?.kind === "work" && <SharedWorkEditor key={record.id} workId={record.id} onClose={close} onSaved={onSaved} />}
+        {record?.kind === "contract" && <SharedContractEditor key={record.id} contractId={record.id} onClose={close} onSaved={onSaved} />}
       </DialogContent>
     </Dialog>
   );

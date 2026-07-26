@@ -34,6 +34,20 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
     }
   }
 
+  async function reloadRelations() {
+    setLoading(true);
+    try {
+      const result = await getRightsHolderRelations(rightsHolderId);
+      setWorks(result.works);
+      setContracts(result.contracts);
+      setLoaded(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (da ? "Relationer kunne ikke opdateres" : "Relations could not be refreshed"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function toggle(kind: "work" | "contract") {
     if (kind === "work") setWorksOpen(current => !current);
     else setContractsOpen(current => !current);
@@ -75,6 +89,6 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
   return <div className="mt-2 space-y-0.5" onClick={event => event.stopPropagation()}>
     {expansion("work")}
     {expansion("contract")}
-    <LinkedRecordEditorDialog record={editing} onOpenChange={next => { if (!next) setEditing(null); }} />
+    <LinkedRecordEditorDialog record={editing} onOpenChange={next => { if (!next) setEditing(null); }} onSaved={() => void reloadRelations()} />
   </div>;
 }

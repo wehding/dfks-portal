@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
@@ -42,17 +43,17 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 bg-black/35 sm:pt-12"
+      className="fixed inset-x-0 bottom-0 top-14 z-[60] bg-black/35"
       onClick={event => {
         if (event.target === event.currentTarget) onOpenChange(false);
       }}
     >
-      <aside className="ml-auto mt-auto flex h-[min(92svh,42rem)] w-full flex-col rounded-t-2xl border-l bg-background pb-[env(safe-area-inset-bottom)] text-foreground shadow-xl sm:mt-0 sm:h-full sm:max-w-md sm:rounded-none sm:pb-0">
+      <aside role="dialog" aria-modal="true" aria-labelledby="contextual-help-title" className="absolute bottom-0 right-0 flex h-[min(72dvh,42rem)] w-full flex-col overflow-hidden rounded-t-2xl border border-b-0 bg-background pb-[env(safe-area-inset-bottom)] text-foreground shadow-2xl sm:inset-y-0 sm:h-full sm:max-w-md sm:rounded-none sm:border-y-0 sm:border-r-0 sm:pb-0">
         <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+            <h2 id="contextual-help-title" className="text-lg font-semibold text-foreground">{title}</h2>
             <p className="mt-1 text-sm text-muted-foreground">{intro}</p>
           </div>
           <button
@@ -84,6 +85,7 @@ export function ContextualHelp({ title, intro, topics, open, onOpenChange, stora
           ))}
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

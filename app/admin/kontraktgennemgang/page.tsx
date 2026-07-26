@@ -16,6 +16,7 @@ import {
     Archive, Send, Pencil, Eye, BookMarked,
     ThumbsUp, ThumbsDown, Star, Search,
     User, FileText, ChevronDown, RotateCcw,
+    Trash2,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -223,6 +224,7 @@ function Indbakke() {
     const [reanalysingIds, setReanalysingIds] = useState<Set<string>>(new Set())
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
     const [bulkUpdating, setBulkUpdating] = useState(false)
+    const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
 
     const fetchReviews = useCallback(async () => {
         setLoading(true)
@@ -283,6 +285,24 @@ function Indbakke() {
                     )
                 }
             )
+            .on(
+                "postgres_changes",
+                { event: "DELETE", schema: "public", table: "contract_reviews" },
+                payload => {
+                    const deletedId = (payload.old as { id?: string }).id
+                    if (!deletedId) return
+                    setReviews(previous => {
+                        const existed = previous.some(review => review.id === deletedId)
+                        if (existed) setTotalCount(count => Math.max(0, count - 1))
+                        return previous.filter(review => review.id !== deletedId)
+                    })
+                    setSelectedIds(previous => {
+                        const next = new Set(previous)
+                        next.delete(deletedId)
+                        return next
+                    })
+                }
+            )
             .subscribe()
 
         return () => { supabase.removeChannel(channel) }
@@ -319,6 +339,34 @@ function Indbakke() {
         setSelectedIds(new Set())
         await fetchReviews()
         setBulkUpdating(false)
+    }
+    const deleteSelected = async () => {
+        const ids = [...selectedIds]
+        if (!ids.length) return
+        setBulkUpdating(true)
+        try {
+            const response = await fetch("/api/admin/contracts", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ids }),
+            })
+            const result = await response.json() as { error?: string; deletedIds?: string[]; failed?: Array<{ id: string; error: string }> }
+            if (!response.ok) throw new Error(result.error ?? "Sletning fejlede")
+            const deletedIds = result.deletedIds ?? []
+            const failedIds = new Set((result.failed ?? []).map(item => item.id))
+            setReviews(previous => previous.filter(review => !deletedIds.includes(review.id)))
+            setSelectedIds(new Set(ids.filter(id => failedIds.has(id))))
+            setTotalCount(previous => Math.max(0, previous - deletedIds.length))
+            if (deletedIds.length) toast.success(`${deletedIds.length} kontraktgennemgang${deletedIds.length === 1 ? "" : "e"} blev slettet`)
+            if (failedIds.size) toast.error(`${failedIds.size} kunne ikke slettes og er fortsat valgt`)
+            setDeleteSelectedOpen(false)
+            await fetchReviews()
+            window.dispatchEvent(new CustomEvent("contract-reviews-updated"))
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Kontraktgennemgangene kunne ikke slettes")
+        } finally {
+            setBulkUpdating(false)
+        }
     }
 
     return (
@@ -404,9 +452,27 @@ function Indbakke() {
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("claim")}>Tag valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("release")}>Frigiv valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("complete")}>Markér afsluttet</Button>
+                    <Button size="sm" variant="destructive" disabled={bulkUpdating} onClick={() => setDeleteSelectedOpen(true)}><Trash2 className="mr-1.5 h-4 w-4" />Slet valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
                 </div>
             </div>}
+
+            <Dialog open={deleteSelectedOpen} onOpenChange={open => !bulkUpdating && setDeleteSelectedOpen(open)}>
+                <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Slet valgte kontraktgennemgange?</DialogTitle>
+                        <DialogDescription>
+                            {selectedIds.size} gennemgang{selectedIds.size === 1 ? "" : "e"}, AI-resultater, juristsvar og uploadede reviewfiler slettes permanent. Tilknyttede kontrakter i Kontraktadmin bevares.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" disabled={bulkUpdating} onClick={() => setDeleteSelectedOpen(false)}>Annuller</Button>
+                        <Button type="button" variant="destructive" disabled={bulkUpdating} onClick={() => void deleteSelected()}>
+                            {bulkUpdating ? "Sletter…" : "Slet permanent"}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {loading ? (
                 <div className="rounded-lg border px-4 py-8 text-center text-sm text-muted-foreground">{t("admin.reviewQueue.loading")}</div>

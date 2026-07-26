@@ -850,7 +850,7 @@ export async function fetchAdminContractEditorData(contractId: string) {
 
   const [contractResult, rightsHoldersResult, worksResult, producerResult] = await Promise.all([
     db.from("contracts")
-      .select("id,type,overenskomst,status,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(title,year,type)")
+      .select("id,type,overenskomst,status,pdf_url,contract_date,start_date,end_date,employer_id,rights_holder_id,work_id,working_title,season_number,episode_numbers,employers(name),rettighedshavere(full_name),works(title,year,type),contract_comments(*),contract_attachments(*)")
       .eq("id", contractId)
       .eq("org_id", orgId)
       .maybeSingle(),
