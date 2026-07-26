@@ -21,6 +21,7 @@ import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { resolveAnker, bygFeedbackPayload } from "@/lib/resolveAnker"
 import { PageHeader } from "@/components/page-header"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
@@ -220,6 +221,8 @@ function Indbakke() {
     const [productionTypeFilter, setProductionTypeFilter] = useState<string[]>([])
     const [search, setSearch] = useState("")
     const [reanalysingIds, setReanalysingIds] = useState<Set<string>>(new Set())
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+    const [bulkUpdating, setBulkUpdating] = useState(false)
 
     const fetchReviews = useCallback(async () => {
         setLoading(true)
@@ -286,6 +289,37 @@ function Indbakke() {
     }, []) // Ét kanal for hele komponentens levetid
 
     const mineCount = reviews.filter(r => r.status !== "afsluttet").length
+    const visibleIds = reviews.map(review => review.id)
+    const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
+    const toggleSelected = (id: string) => setSelectedIds(current => {
+        const next = new Set(current)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+    })
+    const toggleAllVisible = () => setSelectedIds(current => {
+        if (allVisibleSelected) return new Set([...current].filter(id => !visibleIds.includes(id)))
+        return new Set([...current, ...visibleIds])
+    })
+    const openReview = (id: string) => router.push(`/admin/kontraktgennemgang/${id}`)
+    const runBulkAction = async (action: "claim" | "release" | "complete") => {
+        const ids = [...selectedIds]
+        if (!ids.length) return
+        if (action === "complete" && !window.confirm(`Markér ${ids.length} valgte kontraktgennemgang${ids.length === 1 ? "" : "e"} som afsluttet?`)) return
+        setBulkUpdating(true)
+        const body = action === "complete" ? { status: "afsluttet" } : { action }
+        const results = await Promise.allSettled(ids.map(async id => {
+            const response = await fetch(`/api/admin/contracts/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+            if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error ?? "Opdatering fejlede")
+        }))
+        const succeeded = results.filter(result => result.status === "fulfilled").length
+        const failed = results.length - succeeded
+        if (succeeded) toast.success(`${succeeded} kontraktgennemgang${succeeded === 1 ? "" : "e"} blev opdateret`)
+        if (failed) toast.error(`${failed} kunne ikke opdateres`)
+        setSelectedIds(new Set())
+        await fetchReviews()
+        setBulkUpdating(false)
+    }
 
     return (
         <div className="space-y-4">
@@ -306,14 +340,14 @@ function Indbakke() {
             </div>
 
             {/* Filters */}
-            <div className="flex flex-wrap gap-2 items-center">
-                <div className="relative">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative w-full sm:w-auto">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                     <Input
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         placeholder={t("admin.reviewQueue.search")}
-                        className="pl-8 h-8 text-xs w-60"
+                        className="h-8 w-full pl-8 text-xs sm:w-60"
                     />
                 </div>
 
@@ -321,7 +355,7 @@ function Indbakke() {
                     value={statusFilter.join(",") || "alle"}
                     onValueChange={v => setStatusFilter(v === "alle" ? [] : v.split(","))}
                 >
-                    <SelectTrigger className="h-8 text-xs w-44">
+                    <SelectTrigger className="h-8 w-full text-xs sm:w-44">
                         <SelectValue placeholder="Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -337,7 +371,7 @@ function Indbakke() {
                     value={productionTypeFilter.join(",") || "alle"}
                     onValueChange={v => setProductionTypeFilter(v === "alle" ? [] : v.split(","))}
                 >
-                    <SelectTrigger className="h-8 text-xs w-44">
+                    <SelectTrigger className="h-8 w-full text-xs sm:w-44">
                         <SelectValue placeholder="Produktionstype" />
                     </SelectTrigger>
                     <SelectContent>
@@ -353,25 +387,68 @@ function Indbakke() {
 
                 <button
                     onClick={fetchReviews}
-                    className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    className="flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground sm:ml-auto sm:border-0 sm:px-0 sm:py-0"
                 >
                     <RotateCcw className="h-3.5 w-3.5" />
                     {t("common.refresh")}
                 </button>
             </div>
 
-            {/* Tabel */}
-            <div className="rounded-lg border overflow-hidden">
-                {loading ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">{t("admin.reviewQueue.loading")}</div>
-                ) : reviews.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                        {tab === "mine" ? t("admin.reviewQueue.emptyMine") : t("admin.reviewQueue.empty")}
-                    </div>
-                ) : (
+            <Button type="button" variant="outline" className="w-full md:hidden" onClick={toggleAllVisible} disabled={!reviews.length}>
+                {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
+            </Button>
+
+            {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                <span className="text-sm font-medium">{selectedIds.size} valgt</span>
+                <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("claim")}>Tag valgte</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("release")}>Frigiv valgte</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("complete")}>Markér afsluttet</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
+                </div>
+            </div>}
+
+            {loading ? (
+                <div className="rounded-lg border px-4 py-8 text-center text-sm text-muted-foreground">{t("admin.reviewQueue.loading")}</div>
+            ) : reviews.length === 0 ? (
+                <div className="rounded-lg border px-4 py-8 text-center text-sm text-muted-foreground">
+                    {tab === "mine" ? t("admin.reviewQueue.emptyMine") : t("admin.reviewQueue.empty")}
+                </div>
+            ) : <>
+                <MobileCardList>
+                    {reviews.map(r => {
+                        const statusCfg = STATUS_CONFIG[r.status] ?? STATUS_CONFIG.afventer
+                        return <MobileDataCard key={r.id}>
+                            <div className="flex items-start gap-3">
+                                <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} aria-label={`Vælg ${r.file_name ?? r.member_name ?? "kontrakt"}`} />
+                                <div className="min-w-0 flex-1 space-y-1.5">
+                                    <button type="button" className="flex max-w-full items-center gap-1.5 text-left font-medium hover:underline" onClick={() => openReview(r.id)}>
+                                        <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                        <span className="truncate">{r.member_name ?? "Ukendt"}</span>
+                                    </button>
+                                    <button type="button" className="flex max-w-full items-center gap-1.5 text-left text-sm text-muted-foreground hover:text-foreground hover:underline" onClick={() => openReview(r.id)}>
+                                        <FileText className="h-3.5 w-3.5 shrink-0" />
+                                        <span className="truncate">{r.file_name ?? "—"}</span>
+                                    </button>
+                                </div>
+                                <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusCfg.class}`}>
+                                    {r.status === "afventer" ? t("admin.reviewQueue.unassigned") : r.status === "behandling" ? t("admin.reviewQueue.processing") : t("admin.reviewQueue.completed")}
+                                </span>
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-2">
+                                <MobileMetaRow label={t("admin.reviewQueue.submitted")}>{relativeTime(r.reviewed_at, locale)}</MobileMetaRow>
+                                <MobileMetaRow label={t("common.type")}>{r.production_type ? PRODUCTION_TYPE_LABELS[r.production_type] ?? r.production_type : "—"}</MobileMetaRow>
+                                <MobileMetaRow label={t("admin.producers.producer")}>{r.producer_name ?? "—"}</MobileMetaRow>
+                                <MobileMetaRow label={t("admin.reviewQueue.assigned")}>{r.assigned_to ? t("admin.reviewQueue.assigned") : t("admin.reviewQueue.unassigned")}</MobileMetaRow>
+                            </div>
+                        </MobileDataCard>
+                    })}
+                </MobileCardList>
+                <ResponsiveTableFrame>
                     <table className="w-full text-xs">
                         <thead>
                             <tr className="border-b bg-muted/30">
+                                <th className="w-10 px-4 py-2.5"><input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} aria-label="Vælg alle synlige kontraktgennemgange" /></th>
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.submitted")}</th>
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.member")}</th>
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.file")}</th>
@@ -379,7 +456,6 @@ function Indbakke() {
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.producers.producer")}</th>
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("common.status")}</th>
                                 <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">{t("admin.reviewQueue.assigned")}</th>
-                                <th className="px-4 py-2.5" />
                             </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -387,22 +463,23 @@ function Indbakke() {
                                 const statusCfg = STATUS_CONFIG[r.status] ?? STATUS_CONFIG.afventer
                                 return (
                                     <tr key={r.id} className="hover:bg-muted/20 transition-colors">
+                                        <td className="px-4 py-3"><input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelected(r.id)} aria-label={`Vælg ${r.file_name ?? r.member_name ?? "kontrakt"}`} /></td>
                                         <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                                             {relativeTime(r.reviewed_at, locale)}
                                         </td>
                                         <td className="px-4 py-3">
-                                            <div className="flex items-center gap-1.5">
+                                            <button type="button" className="flex items-center gap-1.5 text-left hover:underline" onClick={() => openReview(r.id)}>
                                                 <User className="h-3 w-3 text-muted-foreground shrink-0" />
                                                 <span>{r.member_name ?? "Ukendt"}</span>
-                                            </div>
+                                            </button>
                                         </td>
                                         <td className="px-4 py-3 max-w-[160px] truncate">
-                                            <div className="flex items-center gap-1.5">
+                                            <button type="button" className="flex max-w-full items-center gap-1.5 text-left hover:underline" onClick={() => openReview(r.id)}>
                                                 <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
                                                 <span className="truncate" title={r.file_name ?? undefined}>
                                                     {r.file_name ?? "—"}
                                                 </span>
-                                            </div>
+                                            </button>
                                         </td>
                                         <td className="px-4 py-3">
                                             {r.production_type ? (
@@ -481,27 +558,13 @@ function Indbakke() {
                                         <td className="px-4 py-3 text-muted-foreground">
                                             {r.assigned_to ? t("admin.reviewQueue.assigned") : t("admin.reviewQueue.unassigned")}
                                         </td>
-                                        <td className="px-4 py-3">
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                className="h-6 text-[11px] px-2.5"
-                                                onClick={() => {
-                                                    console.log("[Åbn] r.id:", r.id, "review:", r)
-                                                    router.push(`/admin/kontraktgennemgang/${r.id}`)
-                                                }}
-                                            >
-                                                {t("common.open")}
-                                                <ChevronRight className="h-3 w-3 ml-0.5" />
-                                            </Button>
-                                        </td>
                                     </tr>
                                 )
                             })}
                         </tbody>
                     </table>
-                )}
-            </div>
+                </ResponsiveTableFrame>
+            </>}
         </div>
     )
 }

@@ -210,6 +210,10 @@ export default function ProducersPage() {
   };
 
   const allSelected = producers.length > 0 && producers.every(producer => selected.includes(producer.id));
+  const activeCount = producers.filter(producer => producer.status === "active").length;
+  const attentionCount = producers.filter(producer => producer.status === "attention").length;
+  const totalWorks = producers.reduce((sum, producer) => sum + producer.work_count, 0);
+  const totalContracts = producers.reduce((sum, producer) => sum + producer.contract_count, 0);
   const statusLabel = (value: Producer["status"]) => t(`admin.producers.status.${value}` as Parameters<typeof t>[0]);
   const detailKey = (id: string, type: DetailType) => `${id}:${type}`;
   const loadDetails = async (id: string, type: DetailType, force = false) => {
@@ -285,6 +289,18 @@ export default function ProducersPage() {
 
   return <div className="space-y-6">
     <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Tilføj producent</Button>} />
+    {!loading && <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-5">
+      {[
+        { label: "Viste producenter", value: producers.length },
+        { label: "Aktive", value: activeCount },
+        { label: "Kræver opmærksomhed", value: attentionCount },
+        { label: "Tilknyttede værker", value: totalWorks },
+        { label: "Tilknyttede kontrakter", value: totalContracts },
+      ].map(item => <div key={item.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
+        <p className="mb-1 text-sm font-medium text-muted-foreground">{item.label}</p>
+        <p className="text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+      </div>)}
+    </div>}
     <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
       <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
@@ -292,7 +308,8 @@ export default function ProducersPage() {
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
     </div>
-    <div className="flex flex-wrap items-center gap-2"><Button variant="outline" size="sm" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>{selected.length > 0 && <><span className="text-sm text-muted-foreground">{t("common.selectedCount", { count: selected.length })}</span>{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}<Button variant="ghost" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></>}</div>
+    <Button variant="outline" className="w-full md:hidden" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>
+    {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
 
     {loading ? <TableSkeleton columns={7} rows={8} /> : <>
       <MobileCardList>{producers.length ? producers.map(producer => {
