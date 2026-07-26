@@ -12,12 +12,13 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const query = (searchParams.get("query") ?? "").trim().toLocaleLowerCase("da");
   const status = searchParams.get("status") as ProducerStatus | null;
+  const associationGroup = searchParams.get("associationGroup");
   const rightsHolderId = searchParams.get("rightsHolderId");
   const sort = searchParams.get("sort") ?? "name";
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
 
   const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult, broadcasterResult] = await Promise.all([
-    db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
+    db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),producer_association_memberships(id,group_code,group_label,membership_type,source_name,owner_ceo_text,website,address,postal_city,source_url,is_active,verified_on,last_seen_at),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
     db.from("contracts").select("id,employer_id,status,created_at,rights_holder_id").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("works").select("id,employer_id,status,created_at").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("work_assignments").select("rights_holder_id,work_id,works(employer_id)").eq("org_id", auth.orgId),
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
     }
     const legacy = await db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr");
     if (legacy.error) return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
-    employerRows = (legacy.data ?? []).map(row => ({ ...row, broadcaster_id: null, broadcasters: [], status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [] })) as unknown as typeof employerRows;
+    employerRows = (legacy.data ?? []).map(row => ({ ...row, broadcaster_id: null, broadcasters: [], status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [], producer_association_memberships: [] })) as unknown as typeof employerRows;
   }
 
   const relationWorkIds = (workOrgResult.data ?? []).map(row => row.work_id);
@@ -99,6 +100,7 @@ export async function GET(req: NextRequest) {
     return {
       ...employer,
       legal_entities: (employer.employer_legal_entities ?? []).filter(entity => !entity.archived_at),
+      association_memberships: (employer.producer_association_memberships ?? []).filter(membership => membership.is_active),
       aliases: (employer.employer_aliases ?? []).map(alias => alias.alias),
       parent_name: employer.parent_id ? names.get(employer.parent_id) ?? null : null,
       contract_count: employerContracts.length,
@@ -116,6 +118,10 @@ export async function GET(req: NextRequest) {
     ...row.legal_entities.flatMap(entity => [entity.legal_name, entity.registration_number ?? ""]),
   ].join(" ").toLocaleLowerCase("da").includes(query));
   if (status && ["attention", "active", "inactive"].includes(status)) rows = rows.filter(row => row.status === status);
+  if (associationGroup === "member") rows = rows.filter(row => row.association_memberships.length > 0);
+  else if (associationGroup && ["documentary", "fiction", "tv", "advertising", "dubbing", "animation"].includes(associationGroup)) {
+    rows = rows.filter(row => row.association_memberships.some(membership => membership.group_code === associationGroup));
+  }
   if (rightsHolderId) rows = rows.filter(row => row.rights_holder_ids.includes(rightsHolderId));
   rows.sort((a, b) => {
     const values: Record<string, [string | number, string | number]> = {
