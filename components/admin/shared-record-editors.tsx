@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ExternalLink, Film, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { archiveAdminWorks, createAdminWork, deleteAdminWorkPermanently, fetchAdminRightsHolders, fetchAdminWorkDetail, updateAdminWorkData } from "@/app/actions/work-management";
@@ -128,6 +128,11 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
   const [assignments, setAssignments] = useState<WorkAssignmentDraft[]>([]);
   const [rightsHolders, setRightsHolders] = useState<Array<{ id: string; full_name: string }>>([]);
   const [newRightsHolderId, setNewRightsHolderId] = useState("");
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +141,7 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
       if (cancelled) return;
       if (!result.success || !result.work) {
         toast.error(result.error ?? "Værket kunne ikke hentes");
-        onClose();
+        onCloseRef.current();
         return;
       }
       const nextRecord = result.work as WorkRecord;
@@ -157,7 +162,7 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
       if (!cancelled) toast.error(error instanceof Error ? error.message : "Værket kunne ikke hentes");
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [onClose, workId]);
+  }, [workId]);
 
   const dirty = Boolean(form && JSON.stringify({ form, assignments }) !== initial);
   const update = <K extends keyof WorkEditorForm>(key: K, value: WorkEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
@@ -357,6 +362,11 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
   const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm());
   const [reply, setReply] = useState("");
   const [replySaving, setReplySaving] = useState(false);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -365,7 +375,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       if (cancelled) return;
       if (!result.success || !result.contract) {
         toast.error(result.error ?? "Kontrakten kunne ikke hentes");
-        onClose();
+        onCloseRef.current();
         return;
       }
       const data = result as unknown as ContractEditorPayload & { success: true };
@@ -385,7 +395,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
     }).catch(error => { if (!cancelled) toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke hentes"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [contractId, onClose]);
+  }, [contractId]);
 
   const dirty = Boolean(form && (manualMode || JSON.stringify({ form, producers }) !== initial));
   const update = <K extends keyof ContractEditorForm>(key: K, value: ContractEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
