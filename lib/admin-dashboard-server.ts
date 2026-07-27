@@ -32,17 +32,23 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
     db.from("work_change_request_comments").select("id,request_id,author_role,created_at,work_change_requests!inner(org_id)").eq("work_change_requests.org_id", orgId),
     db.from("screening_claim_comments").select("id,claim_id,author_role,created_at,screening_claims!inner(org_id)").eq("screening_claims.org_id", orgId),
     db.from("member_message_threads").select("id,member_messages(id,author_role,created_at),member_message_participants(user_id,last_read_at)").eq("org_id", orgId),
-    db.from("contract_reviews").select("id,reviewed_at,jurist_response_at").eq("org_id", orgId),
-    db.from("work_change_requests").select("id,created_at").eq("org_id", orgId),
-    db.from("screening_claims").select("id,created_at").eq("org_id", orgId),
+    db.from("contract_reviews").select("id,status,reviewed_at,updated_at,jurist_response_at").eq("org_id", orgId),
+    db.from("work_change_requests").select("id,status,created_at,reviewed_at").eq("org_id", orgId),
+    db.from("screening_claims").select("id,status,created_at,reviewed_at").eq("org_id", orgId),
   ]);
 
   const events: ResponseEvent[] = [];
   for (const row of contractMessages.data ?? []) events.push({ threadId: `contract-${row.contract_id}`, role: row.author_role === "member" ? "member" : "staff", createdAt: row.created_at });
   for (const row of workMessages.data ?? []) events.push({ threadId: `work-${row.request_id}`, role: row.author_role === "member" ? "member" : "staff", createdAt: row.created_at });
   for (const row of screeningMessages.data ?? []) events.push({ threadId: `screening-${row.claim_id}`, role: row.author_role === "member" ? "member" : "staff", createdAt: row.created_at });
-  for (const row of workRequestRows.data ?? []) events.push({ threadId: `work-${row.id}`, role: "member", createdAt: row.created_at });
-  for (const row of screeningClaimRows.data ?? []) events.push({ threadId: `screening-${row.id}`, role: "member", createdAt: row.created_at });
+  for (const row of workRequestRows.data ?? []) {
+    events.push({ threadId: `work-${row.id}`, role: "member", createdAt: row.created_at });
+    if (row.status !== "pending" && row.reviewed_at) events.push({ threadId: `work-${row.id}`, role: "staff", createdAt: row.reviewed_at });
+  }
+  for (const row of screeningClaimRows.data ?? []) {
+    events.push({ threadId: `screening-${row.id}`, role: "member", createdAt: row.created_at });
+    if (row.status !== "pending" && row.reviewed_at) events.push({ threadId: `screening-${row.id}`, role: "staff", createdAt: row.reviewed_at });
+  }
 
   let inboxUnread = 0;
   for (const thread of directThreads.data ?? []) {
@@ -57,6 +63,7 @@ export async function loadAdminDashboardMetrics(orgId: string, userId: string): 
   for (const review of reviewRows.data ?? []) {
     events.push({ threadId: `review-${review.id}`, role: "member", createdAt: review.reviewed_at });
     if (review.jurist_response_at) events.push({ threadId: `review-${review.id}`, role: "staff", createdAt: review.jurist_response_at });
+    else if (!["afventer", "behandling"].includes(review.status) && review.updated_at) events.push({ threadId: `review-${review.id}`, role: "staff", createdAt: review.updated_at });
   }
 
   return {

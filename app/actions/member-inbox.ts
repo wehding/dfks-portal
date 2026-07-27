@@ -231,19 +231,23 @@ export async function fetchAdminInbox() {
 
   const [{ data: workRequests }, { data: claims }, { data: reviews }] = await Promise.all([
     db.from("work_change_requests")
-      .select("id,work_id,requested_by_rights_holder_id,created_at,works(title),rettighedshavere(full_name,email),work_change_request_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+      .select("id,work_id,requested_by_rights_holder_id,status,created_at,reviewed_at,works(title),rettighedshavere(full_name,email),work_change_request_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
       .eq("org_id", orgId),
     db.from("screening_claims")
-      .select("id,profile_id,title,channel,created_at,screening_claim_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+      .select("id,profile_id,title,channel,status,created_at,reviewed_at,screening_claim_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
       .eq("org_id", orgId),
     db.from("contract_reviews")
-      .select("id,member_name,member_email,file_name,notes,status,reviewed_at,jurist_response,jurist_response_at")
+      .select("id,member_name,member_email,file_name,notes,status,reviewed_at,updated_at,jurist_response,jurist_response_at")
       .eq("org_id", orgId),
   ]);
 
   for (const request of workRequests ?? []) {
     const comments = [{ id: `work-request-${request.id}`, author_user_id: "", author_role: "member", message: "Der er indsendt en rettelse til værket.", created_at: request.created_at }, ...((request.work_change_request_comments ?? []) as any[])]
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (request.status !== "pending" && request.reviewed_at) {
+      comments.push({ id: `work-reviewed-${request.id}`, author_user_id: "", author_role: "admin", message: "Værksanmodningen er behandlet.", created_at: request.reviewed_at });
+      comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    }
     const work = Array.isArray(request.works) ? request.works[0] : request.works;
     const holder = Array.isArray(request.rettighedshavere) ? request.rettighedshavere[0] : request.rettighedshavere;
     unifiedThreads.push(decorate({
@@ -262,6 +266,10 @@ export async function fetchAdminInbox() {
   for (const claim of claims ?? []) {
     const comments = [{ id: `screening-request-${claim.id}`, author_user_id: "", author_role: "member", message: "Der er indsendt en visningsindberetning.", created_at: claim.created_at }, ...((claim.screening_claim_comments ?? []) as any[])]
       .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (claim.status !== "pending" && claim.reviewed_at) {
+      comments.push({ id: `screening-reviewed-${claim.id}`, author_user_id: "", author_role: "admin", message: "Visningsindberetningen er behandlet.", created_at: claim.reviewed_at });
+      comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    }
     unifiedThreads.push(decorate({
       id: `screening-${claim.id}`, source_type: "screening", category_label: "Visning", context_title: `Visning: ${claim.title}${claim.channel ? ` · ${claim.channel}` : ""}`,
       subject: `Visningsbesked: ${claim.title}`, updated_at: comments.at(-1)?.created_at ?? claim.created_at,
@@ -273,6 +281,7 @@ export async function fetchAdminInbox() {
   for (const review of reviews ?? []) {
     const messages = [{ id: `review-request-${review.id}`, author_user_id: "", author_role: "member", body: review.notes || "Kontrakten afventer juridisk gennemgang.", created_at: review.reviewed_at }];
     if (review.jurist_response_at) messages.push({ id: `review-response-${review.id}`, author_user_id: "", author_role: "admin", body: review.jurist_response || "Gennemgangen er besvaret.", created_at: review.jurist_response_at });
+    else if (!["afventer", "behandling"].includes(review.status) && review.updated_at) messages.push({ id: `review-closed-${review.id}`, author_user_id: "", author_role: "admin", body: "Kontraktgennemgangen er afsluttet.", created_at: review.updated_at });
     unifiedThreads.push(decorate({
       id: `review-${review.id}`, source_type: "review", category_label: "Kontraktgennemgang", context_title: review.file_name || "Kontraktgennemgang",
       subject: review.file_name || "Kontraktgennemgang", updated_at: review.jurist_response_at || review.reviewed_at, created_at: review.reviewed_at,
