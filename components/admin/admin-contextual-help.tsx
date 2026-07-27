@@ -15,6 +15,7 @@ export function AdminContextualHelp() {
       {...content}
       open={open}
       onOpenChange={setOpen}
+      autoOpenOnFirstVisit={false}
     />
   </>;
 }
