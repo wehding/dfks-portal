@@ -49,6 +49,7 @@ import {
     type EmployerInput,
 } from "@/lib/db/employers"
 import { readFirstWorksheetRows } from "@/lib/excel/read-workbook"
+import { AiUsageModelsTab } from "@/components/admin/ai-usage-models-tab"
 
 // ── Shared types ───────────────────────────────────────────────
 
@@ -2371,13 +2372,16 @@ function ProducenterTab() {
 
 export default function AiKontrolrumPage() {
     return (
-        <div className="space-y-6 max-w-3xl">
+        <div className="space-y-6 max-w-7xl">
             <PageHeader
                 title="AI Videns-kontrolrum"
                 subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
             />
-            <Tabs defaultValue="overenskomster">
+            <Tabs defaultValue="forbrug">
                 <TabsList className="flex flex-wrap h-auto gap-1 justify-start">
+                    <TabsTrigger value="forbrug" className="gap-1.5 text-xs whitespace-nowrap">
+                        <TrendingUp className="h-3.5 w-3.5 shrink-0" />Forbrug & modeller
+                    </TabsTrigger>
                     <TabsTrigger value="overenskomster" className="gap-1.5 text-xs whitespace-nowrap">
                         <ScrollText className="h-3.5 w-3.5 shrink-0" />Overenskomster
                     </TabsTrigger>
@@ -2400,6 +2404,7 @@ export default function AiKontrolrumPage() {
                         <FlaskConical className="h-3.5 w-3.5 shrink-0" />Kvalitet
                     </TabsTrigger>
                 </TabsList>
+                <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
                 <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
                 <TabsContent value="producenter" className="mt-4"><ProducenterTab /></TabsContent>

@@ -23,7 +23,7 @@ type ContractJob = {
 async function runAttachmentJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob) {
     if (!job.attachment_id || !job.pdf_url) throw new Error("Allongen mangler fil eller reference")
     const maskedText = maskPersonalData(await textFromStoragePath(job.pdf_url))
-    const extractResult = await runContractExtraction(maskedText)
+    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron" })
     if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning af allonge fejlede")
     const { data: validation } = await admin.from("contract_validations").select("extracted_data").eq("contract_id", job.contract_id).maybeSingle()
     const { extracted, changes } = attachmentChanges((validation?.extracted_data ?? {}) as Record<string, unknown>, (extractResult.data ?? {}) as Record<string, unknown>)
@@ -176,7 +176,7 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
 
     // Kald udtræks-kernen direkte (ingen HTTP-runde), så batch-læsningen ikke
     // afhænger af den nu-autentificerede /api/contracts/extract-rute.
-    const extractResult = await runContractExtraction(maskedText)
+    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron" })
     if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning fejlede")
     const ext = extractResult.data ?? {}
     const extractedTitle = String(ext.workTitle ?? ext.title ?? "").trim() || null
