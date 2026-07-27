@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   decodeAuditCursor,
   encodeAuditCursor,
+  AUDIT_DETAIL_ENTITY_TYPES,
   sanitizeAuditSearch,
   type AuditAction,
   type AuditChange,
@@ -91,6 +92,7 @@ export async function fetchAuditEvents(
   if (filters.role) query = query.eq("actor_role", filters.role);
   if (filters.action) query = query.eq("action", filters.action);
   if (filters.entityType) query = query.eq("entity_type", filters.entityType);
+  else query = query.not("entity_type", "in", `(${AUDIT_DETAIL_ENTITY_TYPES.join(",")})`);
   if (filters.source) query = query.eq("source", filters.source);
   if (requestedOrg) query = query.eq("audit_event_organisations.org_id", requestedOrg);
   const search = filters.query ? sanitizeAuditSearch(filters.query) : "";

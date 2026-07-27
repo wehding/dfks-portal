@@ -13,6 +13,7 @@ export function createServiceClient(options: { audit?: AuditContext } = {}) {
     "x-dfks-actor-role": audit.actorRole ?? "",
     "x-dfks-audit-source": audit.source,
     "x-dfks-correlation-id": audit.correlationId ?? "",
+    "x-dfks-audit-mode": audit.mode ?? "row",
   } : undefined;
   return createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false },
