@@ -23,6 +23,7 @@ type ResponseData = {
 const ACTION_LABELS: Record<string, string> = {
   create: "Oprettet", update: "Rettet", delete: "Slettet", archive: "Arkiveret",
   restore: "Gendannet", validate: "Valideret", approve: "Godkendt", merge: "Sammenlagt",
+  link: "Tilknyttet", unlink: "Tilknytning fjernet",
   invite: "Invitation", reset_link: "Nulstillingslink", export: "Eksport", download: "Download",
   import: "Import", sync: "Synkronisering", job: "Systemjob", security_failure: "Afvist handling",
   retention: "Opbevaring",
@@ -31,6 +32,7 @@ const ACTION_LABELS: Record<string, string> = {
 const ACTION_LABELS_EN: Record<string, string> = {
   create: "Created", update: "Updated", delete: "Deleted", archive: "Archived",
   restore: "Restored", validate: "Validated", approve: "Approved", merge: "Merged",
+  link: "Linked", unlink: "Unlinked",
   invite: "Invitation", reset_link: "Reset link", export: "Export", download: "Download",
   import: "Import", sync: "Sync", job: "System job", security_failure: "Rejected action",
   retention: "Retention",
@@ -38,7 +40,12 @@ const ACTION_LABELS_EN: Record<string, string> = {
 
 function eventSummary(event: AuditEvent, labels: Record<string, string>, locale: "da" | "en") {
   if (!event.changes.length) return labels[event.action] ?? event.action;
-  const fields = event.changes.slice(0, 3).map(change => change.field).join(", ");
+  const fieldLabels: Record<string, { da: string; en: string }> = {
+    work: { da: "værk", en: "work" },
+    season: { da: "sæson", en: "season" },
+    episodes: { da: "afsnit", en: "episodes" },
+  };
+  const fields = event.changes.slice(0, 3).map(change => fieldLabels[change.field]?.[locale] ?? change.field).join(", ");
   return locale === "da"
     ? `${event.changes.length} felt${event.changes.length === 1 ? "" : "er"}: ${fields}`
     : `${event.changes.length} field${event.changes.length === 1 ? "" : "s"}: ${fields}`;
@@ -127,7 +134,7 @@ export function AuditLogClient() {
           <DialogHeader><DialogTitle>{selected?.entityLabel || selected?.entityType}</DialogTitle><DialogDescription>{selected ? `${actionLabels[selected.action] ?? selected.action} · ${dateFormat.format(new Date(selected.occurredAt))}` : ""}</DialogDescription></DialogHeader>
           {selected && <div className="space-y-4 text-sm">
             <dl className="grid grid-cols-[8rem_1fr] gap-2"><dt className="text-muted-foreground">{t("audit.actor")}</dt><dd>{selected.actorDisplayName || selected.actorEmail || t("audit.system")}</dd><dt className="text-muted-foreground">{t("audit.role")}</dt><dd>{selected.actorRole || "—"}</dd><dt className="text-muted-foreground">{t("audit.source")}</dt><dd>{selected.source}</dd><dt className="text-muted-foreground">{t("audit.organisation")}</dt><dd>{selected.organisations.map(org => org.name).join(", ") || "—"}</dd><dt className="text-muted-foreground">{t("audit.correlation")}</dt><dd className="break-all font-mono text-xs">{selected.correlationId || "—"}</dd></dl>
-            <div><h3 className="mb-2 font-medium">{t("audit.changedFields")}</h3>{selected.changes.length === 0 ? <p className="text-muted-foreground">{t("audit.noFieldValues")}</p> : <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr className="border-b"><th className="p-2">{t("audit.field")}</th><th className="p-2">{t("audit.before")}</th><th className="p-2">{t("audit.after")}</th></tr></thead><tbody>{selected.changes.map(change => <tr key={change.field} className="border-b last:border-0"><td className="p-2 font-medium">{change.field}</td><td className="max-w-48 break-words p-2 text-muted-foreground">{change.redacted ? t("audit.redacted") : String(change.old ?? "—")}</td><td className="max-w-48 break-words p-2">{change.redacted ? t("audit.redacted") : String(change.new ?? "—")}</td></tr>)}</tbody></table></div>}</div>
+            <div><h3 className="mb-2 font-medium">{t("audit.changedFields")}</h3>{selected.changes.length === 0 ? <p className="text-muted-foreground">{t("audit.noFieldValues")}</p> : <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr className="border-b"><th className="p-2">{t("audit.field")}</th><th className="p-2">{t("audit.before")}</th><th className="p-2">{t("audit.after")}</th></tr></thead><tbody>{selected.changes.map(change => <tr key={change.field} className="border-b last:border-0"><td className="p-2 font-medium">{({ work: locale === "da" ? "Værk" : "Work", season: locale === "da" ? "Sæson" : "Season", episodes: locale === "da" ? "Afsnit" : "Episodes" } as Record<string, string>)[change.field] ?? change.field}</td><td className="max-w-48 break-words p-2 text-muted-foreground">{change.redacted ? t("audit.redacted") : String(change.old ?? "—")}</td><td className="max-w-48 break-words p-2">{change.redacted ? t("audit.redacted") : String(change.new ?? "—")}</td></tr>)}</tbody></table></div>}</div>
             {auditEntityHref(selected) && <Button asChild variant="outline"><Link href={auditEntityHref(selected)!}>{t("audit.openEntity")}</Link></Button>}
           </div>}
         </DialogContent>

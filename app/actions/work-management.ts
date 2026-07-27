@@ -13,6 +13,8 @@ import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
+import { recordAuditEvent } from "@/lib/audit-log-server";
+import type { AuditContext } from "@/lib/audit-log";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -1899,21 +1901,37 @@ export async function createAndLinkWorkForContract(params: {
   rightsHolderId?: string | null;
   role?: string | null;
 }) {
-  const db = createServiceClient();
+  const { user } = await currentUser();
+  const lookupDb = createServiceClient();
   const { contractId, result, seasonNumber, selectedEpisodes, rightsHolderId, role } = params;
-  const { data: contract } = await db
+  const { data: contract } = await lookupDb
     .from("contracts")
-    .select("org_id")
+    .select("org_id,working_title,work_id")
     .eq("id", contractId)
     .single();
   if (!contract?.org_id) return { success: false, error: "Kontrakten mangler organisation." };
   const orgId = contract.org_id as string;
+  const { data: staffRoles } = await lookupDb.from("user_org_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .eq("org_id", orgId);
+  const staffRole = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
+    .find(candidate => staffRoles?.some(row => row.role === candidate)) ?? null;
+  const auditContext: AuditContext = {
+    actorUserId: user.id,
+    actorOrgId: orgId,
+    actorRole: staffRole ?? "member",
+    source: staffRole ? "admin" : "portal",
+    correlationId: crypto.randomUUID(),
+    mode: "summary",
+  };
+  const db = createServiceClient({ audit: auditContext });
 
   let activeRightsHolderId = rightsHolderId;
   if (!activeRightsHolderId) {
     try {
-      const userRes = await currentUser().catch(() => null);
-      if (userRes && userRes.user) {
+      const userRes = { user };
+      if (userRes.user) {
         const { data: rh } = await db
           .from("rettighedshavere")
           .select("id")
@@ -2064,6 +2082,27 @@ export async function createAndLinkWorkForContract(params: {
 
   if (updateErr) {
     return { success: false, error: `Fejl ved tilknytning til kontrakt: ${updateErr.message}` };
+  }
+
+  try {
+    await recordAuditEvent({
+      context: auditContext,
+      action: "link",
+      entityType: "contracts",
+      entityId: contractId,
+      entityLabel: contract.working_title || result.title,
+      orgIds: [orgId],
+      changes: [
+        { field: "work", old: contract.work_id ? "Tidligere tilknyttet værk" : null, new: result.title },
+        ...(isSeries ? [
+          { field: "season", old: null, new: activeSeason },
+          { field: "episodes", old: null, new: `${activeEpisodes.length} afsnit` },
+        ] : []),
+      ],
+      metadata: { workId: targetWorkId, episodeCount: activeEpisodes.length },
+    });
+  } catch (auditError) {
+    console.error("[audit] Kunne ikke registrere samlet værktilknytning", auditError instanceof Error ? auditError.message : "Ukendt fejl");
   }
 
   revalidatePath("/admin/kontrakter");

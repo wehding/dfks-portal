@@ -1,9 +1,19 @@
 export const AUDIT_ACTIONS = [
   "create", "update", "delete", "archive", "restore", "validate", "approve", "merge",
-  "invite", "reset_link", "export", "download", "import", "sync", "job", "security_failure", "retention",
+  "link", "unlink", "invite", "reset_link", "export", "download", "import", "sync", "job", "security_failure", "retention",
 ] as const;
 
 export const AUDIT_SOURCES = ["portal", "admin", "api", "cron", "import", "database"] as const;
+
+/** Low-level relation rows stay available for forensic filtering, but are hidden from the default overview. */
+export const AUDIT_DETAIL_ENTITY_TYPES = [
+  "contract_episodes",
+  "contract_employers",
+  "work_assignments",
+  "work_employers",
+  "work_external_ids",
+  "work_production_numbers",
+] as const;
 
 export type AuditAction = typeof AUDIT_ACTIONS[number];
 export type AuditSource = typeof AUDIT_SOURCES[number];
@@ -15,6 +25,8 @@ export type AuditContext = {
   actorRole?: string | null;
   source: AuditSource;
   correlationId?: string | null;
+  /** Service-role only: suppress row triggers while one semantic summary event is recorded. */
+  mode?: "row" | "summary";
 };
 
 export type AuditChange = {
