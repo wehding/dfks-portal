@@ -15,6 +15,9 @@ import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import type { AuditContext } from "@/lib/audit-log";
+import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
+import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
+import { identityLevel } from "@/lib/work-identity";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -37,6 +40,7 @@ type WorkCorrectionData = {
   dfi_id?: string | null;
   tmdb_id?: number | null;
   imdb_id?: string | null;
+  wikidata_id?: string | null;
   field_sources?: Record<string, string>;
 };
 
@@ -123,6 +127,7 @@ const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
   "dfi_id",
   "tmdb_id",
   "imdb_id",
+  "wikidata_id",
   "field_sources",
 ];
 
@@ -187,6 +192,7 @@ function normalizeData(data: WorkCorrectionData): WorkCorrectionData {
     dfi_id: cleanText(data.dfi_id),
     tmdb_id: data.tmdb_id ?? null,
     imdb_id: cleanText(data.imdb_id),
+    wikidata_id: cleanText(data.wikidata_id),
     field_sources: data.field_sources ?? {},
   };
 }
@@ -197,6 +203,7 @@ function normalizeAdminData(data: AdminWorkData): AdminWorkData {
     dfi_id: cleanText(data.dfi_id),
     tmdb_id: data.tmdb_id,
     imdb_id: cleanText(data.imdb_id),
+    wikidata_id: cleanText(data.wikidata_id),
     field_sources: data.field_sources ?? {},
     poster_url: cleanText(data.poster_url),
     status: cleanText(data.status) ?? "godkendt",
@@ -224,7 +231,10 @@ function isMissingWorkMetadataColumnError(error: { message?: string; code?: stri
 }
 
 function withoutOptionalWorkMetadata<T extends Record<string, unknown>>(payload: T) {
-  const { imdb_id: _imdbId, wikidata_id: _wikidataId, dfi_metadata: _dfiMetadata, ...rest } = payload;
+  const rest: Record<string, unknown> = { ...payload };
+  delete rest.imdb_id;
+  delete rest.wikidata_id;
+  delete rest.dfi_metadata;
   return rest;
 }
 
@@ -1163,17 +1173,44 @@ export async function updateAdminWorkData(params: {
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
-  const normalized = normalizeAdminData(params.data);
+  let normalized = normalizeAdminData(params.data);
   if (!normalized.title) throw new Error("Titel må ikke være tom.");
   if (!normalized.type) throw new Error("Type må ikke være tom.");
+
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  let identityParent: { title: string; imdbId?: string | null; tmdbId?: number | null; wikidataId?: string | null; dfiId?: string | null } | null = null;
+  if (normalized.parent_work_id) {
+    const { data: parent } = await db.from("works").select("title,imdb_id,tmdb_id,wikidata_id,dfi_id").eq("id", normalized.parent_work_id).maybeSingle();
+    if (parent) identityParent = { title: parent.title, imdbId: parent.imdb_id, tmdbId: parent.tmdb_id, wikidataId: parent.wikidata_id, dfiId: parent.dfi_id };
+  }
+  const identity = await resolveWorkIdentity({
+    title: normalized.title,
+    alternativeTitles: normalized.alternative_titles,
+    year: normalized.year,
+    type: normalized.type,
+    imdbId: normalized.imdb_id === identityParent?.imdbId ? null : normalized.imdb_id,
+    tmdbId: normalized.tmdb_id === identityParent?.tmdbId ? null : normalized.tmdb_id,
+    wikidataId: normalized.wikidata_id === identityParent?.wikidataId ? null : normalized.wikidata_id,
+    dfiId: normalized.dfi_id === identityParent?.dfiId ? null : normalized.dfi_id,
+    parent: identityParent,
+    seasonNumber: normalized.season_number,
+    episodeNumber: normalized.episode_number,
+  });
+  const identityCandidate = identity.status === "matched" ? identity.candidates[0] : null;
+  if (identityCandidate) normalized = {
+    ...normalized,
+    imdb_id: identityCandidate.imdbId,
+    wikidata_id: identityCandidate.wikidataId ?? normalized.wikidata_id,
+    dfi_id: identityCandidate.dfiId ?? normalized.dfi_id,
+    tmdb_id: identityParent ? null : Number(identityCandidate.tmdbId ?? normalized.tmdb_id ?? 0) || normalized.tmdb_id,
+  };
 
   const updates = ADMIN_EDITABLE_KEYS.reduce<Partial<AdminWorkData>>((acc, key) => {
     acc[key] = normalized[key] as never;
     return acc;
   }, {});
 
-  const db = createServiceClient();
-  const orgId = await currentOrgId(db, user.id);
   const { error } = await db
     .from("works")
     .update(updates)
@@ -1181,6 +1218,12 @@ export async function updateAdminWorkData(params: {
     .eq("org_id", orgId);
 
   if (error) throw new Error(error.message);
+  if (identityCandidate) await storeWorkExternalIdentity(db, {
+    orgId,
+    workId: params.workId,
+    level: identityLevel(normalized.type, identityParent),
+    candidate: identityCandidate,
+  });
   await syncWorkProducerRelations(db, {
     workId: params.workId,
     orgId,
@@ -1283,12 +1326,31 @@ export async function createAdminWork(params: {
   const admin = await assertAdminRole(supabase);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
-  const normalized = normalizeData(params.data);
+  let normalized = normalizeData(params.data);
   if (!normalized.title) throw new Error("Titel må ikke være tom.");
   if (!normalized.type) throw new Error("Type må ikke være tom.");
 
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
+  const identity = await resolveWorkIdentity({
+    title: normalized.title,
+    alternativeTitles: normalized.alternative_titles,
+    year: normalized.year,
+    type: normalized.type,
+    imdbId: normalized.imdb_id,
+    tmdbId: normalized.tmdb_id,
+    wikidataId: normalized.wikidata_id,
+    dfiId: normalized.dfi_id,
+  });
+  const identityCandidate = identity.status === "matched" ? identity.candidates[0] : null;
+  if (identityCandidate) {
+    normalized = {
+      ...normalized,
+      imdb_id: identityCandidate.imdbId,
+      tmdb_id: Number(identityCandidate.tmdbId ?? normalized.tmdb_id ?? 0) || normalized.tmdb_id,
+      wikidata_id: identityCandidate.wikidataId ?? normalized.wikidata_id,
+    };
+  }
   let workId: string | null = null;
   let existingPosterUrl: string | null = null;
 
@@ -1373,6 +1435,9 @@ export async function createAdminWork(params: {
   }
 
   if (!workId) throw new Error("Kunne ikke finde eller oprette værk.");
+  if (identityCandidate) {
+    await storeWorkExternalIdentity(db, { orgId, workId, level: identityLevel(normalized.type), candidate: identityCandidate });
+  }
   await syncWorkProducerRelations(db, {
     workId,
     orgId,
