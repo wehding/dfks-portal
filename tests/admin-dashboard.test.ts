@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateResponseTimeStats, formatResponseDuration } from "../lib/admin-dashboard";
+import { calculateResponseTimeStats, calculateThreadResponseState, formatResponseDuration } from "../lib/admin-dashboard";
 
 test("måler første staffsvar efter en sammenhængende medlemshenvendelse", () => {
   const stats = calculateResponseTimeStats([
@@ -16,6 +16,18 @@ test("måler første staffsvar efter en sammenhængende medlemshenvendelse", () 
   assert.equal(stats.medianMs, 60 * 60 * 1000);
   assert.equal(stats.p90Ms, 2 * 60 * 60 * 1000);
   assert.equal(stats.oldestUnansweredAt, "2026-07-02T08:00:00Z");
+  assert.equal(stats.oldestUnansweredThreadId, "a");
+});
+
+test("trådstatus forbliver ubesvaret efter læsning og nulstilles først af et staffsvar", () => {
+  assert.deepEqual(calculateThreadResponseState([
+    { role: "member", createdAt: "2026-07-01T08:00:00Z" },
+    { role: "member", createdAt: "2026-07-01T09:00:00Z" },
+  ]), { requiresReply: true, waitingSince: "2026-07-01T08:00:00Z" });
+  assert.deepEqual(calculateThreadResponseState([
+    { role: "member", createdAt: "2026-07-01T08:00:00Z" },
+    { role: "staff", createdAt: "2026-07-01T10:00:00Z" },
+  ]), { requiresReply: false, waitingSince: null });
 });
 
 test("formaterer svartid på dansk og engelsk", () => {

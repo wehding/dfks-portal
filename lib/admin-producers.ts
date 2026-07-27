@@ -1,4 +1,19 @@
 export type ProducerStatus = "attention" | "active" | "inactive";
+export type ProducerAssociationStatus = "ordinary" | "associate" | "unknown" | "none";
+
+export function resolveProducerAssociationStatus(types: readonly string[]): ProducerAssociationStatus {
+  if (types.includes("ordinary")) return "ordinary";
+  if (types.includes("associate")) return "associate";
+  if (types.length) return "unknown";
+  return "none";
+}
+
+export function producerAssociationLabel(status: ProducerAssociationStatus) {
+  if (status === "ordinary") return "Medlem af Producentforeningen";
+  if (status === "associate") return "Associeret medlem af Producentforeningen";
+  if (status === "unknown") return "Medlemsstatus ikke klassificeret";
+  return "Ikke medlem af Producentforeningen";
+}
 
 export type CvrLegalEntityDraft = {
   id?: string;

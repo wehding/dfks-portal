@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
 
-export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: string }) {
+export function RightsHolderRelations({ rightsHolderId, workCount, contractCount }: { rightsHolderId: string; workCount?: number; contractCount?: number }) {
   const { locale } = useI18n();
   const da = locale === "da";
   const [worksOpen, setWorksOpen] = useState(false);
@@ -75,10 +75,11 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
     const isOpen = kind === "work" ? worksOpen : contractsOpen;
     const rows = kind === "work" ? works : contracts;
     const title = kind === "work" ? (da ? "Værker" : "Works") : (da ? "Kontrakter" : "Contracts");
+    const knownCount = kind === "work" ? workCount : contractCount;
     return <div>
       <Button type="button" size="sm" variant="ghost" className="h-7 px-1 text-xs" onClick={() => toggle(kind)}>
         {isOpen ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}
-        {title}{loaded ? ` (${rows.length})` : ""}
+        {title}{loaded ? ` (${rows.length})` : knownCount !== undefined ? ` (${knownCount})` : ""}
       </Button>
       {isOpen && <div className="mt-1 min-w-[280px] rounded-md border bg-background p-2 shadow-sm sm:min-w-[420px]">
         {loading ? <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Indlæser…" : "Loading…"}</div> : relationList(rows, kind)}
@@ -86,7 +87,7 @@ export function RightsHolderRelations({ rightsHolderId }: { rightsHolderId: stri
     </div>;
   };
 
-  return <div className="mt-2 space-y-0.5" onClick={event => event.stopPropagation()}>
+  return <div className="grid gap-2 sm:grid-cols-2" onClick={event => event.stopPropagation()}>
     {expansion("work")}
     {expansion("contract")}
     <LinkedRecordEditorDialog record={editing} onOpenChange={next => { if (!next) setEditing(null); }} onSaved={() => void reloadRelations()} />
