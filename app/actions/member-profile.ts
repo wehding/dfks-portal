@@ -77,3 +77,34 @@ export async function completeOnboarding(formData: FormData) {
   revalidatePath("/portal/min-profil");
   return { success: true };
 }
+
+export async function updateSensitiveMemberProfile(formData: FormData) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+
+  const cpr = ((formData.get("cpr") as string) ?? "").trim();
+  const bankAccount = ((formData.get("bank_account") as string) ?? "").trim();
+  const validationError = [
+    validateOnboardingField("cpr", cpr),
+    validateOnboardingField("bank_account", bankAccount),
+  ].find(Boolean);
+  if (validationError) return { success: false, error: validationError };
+
+  const updates: { cpr_no?: string | null; bank_account?: string | null } = {};
+  if (cpr) updates.cpr_no = encryptValue(normalizeCpr(cpr));
+  if (bankAccount) updates.bank_account = encryptValue(normalizeBankAccount(bankAccount));
+  if (!Object.keys(updates).length) return { success: true, updated: false };
+
+  const { error } = await supabase
+    .from("rettighedshavere")
+    .update(updates)
+    .eq("user_id", user.id);
+  if (error) {
+    console.error("Profil: følsomme oplysninger kunne ikke gemmes", error);
+    return { success: false, error: "CPR- eller bankoplysningerne kunne ikke gemmes." };
+  }
+
+  revalidatePath("/portal/min-profil");
+  return { success: true, updated: true };
+}

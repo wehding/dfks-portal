@@ -19,6 +19,7 @@ interface DfiImportWizardProps {
   dfiPersonId: number | null;
   onImportComplete: (message: string, success: boolean) => void;
   reloadAssignments: () => Promise<void>;
+  autoSearch?: boolean;
 }
 
 export function DfiImportWizard({
@@ -28,6 +29,7 @@ export function DfiImportWizard({
   dfiPersonId,
   onImportComplete,
   reloadAssignments,
+  autoSearch = false,
 }: DfiImportWizardProps) {
   const { locale, t } = useI18n();
 
@@ -151,7 +153,7 @@ export function DfiImportWizard({
       setWizardSkippedExistingCount(0);
       setWizardDfiPersonId(dfiPersonId);
       setWizardTmdbPersonId(null);
-      if (dfiPersonId) {
+      if (dfiPersonId || autoSearch) {
         setWizardStep("credits");
         loadWizardCredits(userName);
       } else {
@@ -161,7 +163,7 @@ export function DfiImportWizard({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, userName, dfiPersonId, loadWizardCredits]);
+  }, [isOpen, userName, dfiPersonId, autoSearch, loadWizardCredits]);
 
   const handleWizardSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -310,7 +312,13 @@ export function DfiImportWizard({
                           <button
                             type="button"
                             className="text-sm font-medium text-foreground"
-                            onClick={() => setExpandedSeries(prev => ({ ...prev, [c.id]: !prev[c.id] }))}
+                            onClick={() => {
+                              const willExpand = !expandedSeries[c.id];
+                              setExpandedSeries(prev => ({ ...prev, [c.id]: willExpand }));
+                              if (willExpand && displayOptionsForCredit(c).length === 0 && !wizardEpisodeLoading[c.id]) {
+                                void loadEpisodesForSeason(c, seriesSeasons[c.id] ?? seasonForCredit(c));
+                              }
+                            }}
                           >
                             {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
                           </button>

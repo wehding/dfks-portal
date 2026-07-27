@@ -216,7 +216,11 @@ export async function findTMDBPoster(title: string, year?: number | null) {
   }
 }
 
-export async function findTMDBMatch(title: string, year?: number | null) {
+export async function findTMDBMatch(
+  title: string,
+  year?: number | null,
+  preferredMediaType?: "tv" | "movie"
+) {
   if (!process.env.TMDB_API_KEY || !title.trim()) return { poster_url: null, tmdb_id: null };
 
   const encodedTitle = encodeURIComponent(title.trim());
@@ -241,21 +245,31 @@ export async function findTMDBMatch(title: string, year?: number | null) {
 
     if (!results.length) return { poster_url: null, tmdb_id: null };
 
-    // Find et match baseret på år
-    let match = results[0];
-    if (year) {
-      const exactYear = results.find(item => {
-        const date = typeof item.release_date === "string" ? item.release_date : item.first_air_date;
-        return typeof date === "string" && date.startsWith(String(year));
-      });
-      if (exactYear) match = exactYear;
-    }
+    const normalizedQuery = title.trim().toLocaleLowerCase("da-DK");
+    const mediaTypeFor = (item: TMDBSearchItem) => item.first_air_date ? "tv" : "movie";
+    const titleFor = (item: TMDBSearchItem) => String(item.name ?? item.title ?? "").trim().toLocaleLowerCase("da-DK");
+    const yearFor = (item: TMDBSearchItem) => {
+      const date = item.release_date || item.first_air_date || "";
+      return Number.parseInt(date.substring(0, 4), 10) || null;
+    };
+    const scored = results.map((item, index) => {
+      const itemTitle = titleFor(item);
+      const itemYear = yearFor(item);
+      let score = Math.max(0, 10 - index);
+      if (itemTitle === normalizedQuery) score += 100;
+      else if (itemTitle.includes(normalizedQuery) || normalizedQuery.includes(itemTitle)) score += 25;
+      if (year && itemYear === year) score += 40;
+      else if (year && itemYear && Math.abs(itemYear - year) <= 1) score += 10;
+      if (preferredMediaType && mediaTypeFor(item) === preferredMediaType) score += 80;
+      return { item, score };
+    }).sort((a, b) => b.score - a.score);
+    const match = scored[0].item;
 
     const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
     return {
       poster_url: match.poster_path ? `${TMDB_IMG_W185}${match.poster_path}` : null,
       tmdb_id: match.id ?? null,
-      media_type: match.media_type ?? (match.first_air_date ? "tv" : "movie"),
+      media_type: match.media_type ?? mediaTypeFor(match),
     };
   } catch (err) {
     console.error("TMDB match lookup error:", err);

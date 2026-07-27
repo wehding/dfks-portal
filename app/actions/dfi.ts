@@ -1201,7 +1201,7 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
     if (!tmdbId) {
       for (const candidate of seriesLookupTitleVariants(credit.title)) {
-        const match = await findTMDBMatch(candidate, credit.year);
+        const match = await findTMDBMatch(candidate, credit.year, "tv");
         if (match.tmdb_id && match.media_type === "tv") {
           tmdbId = Number(match.tmdb_id);
           break;
@@ -1300,7 +1300,7 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
     if (!tmdbId) {
       for (const candidate of seriesLookupTitleVariants(credit.title)) {
-        const match = await findTMDBMatch(candidate, credit.year);
+        const match = await findTMDBMatch(candidate, credit.year, "tv");
         if (match.tmdb_id && match.media_type === "tv") {
           tmdbId = Number(match.tmdb_id);
           break;
