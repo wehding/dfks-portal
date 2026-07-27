@@ -104,7 +104,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       updated_at: new Date().toISOString(),
     };
     let restoredEntityId: string | null = null;
-    if (!prepared.entity.id && prepared.registrationNumber) {
+    if (prepared.registrationNumber) {
       const archivedMatch = await db.from("employer_legal_entities")
         .select("id")
         .eq("employer_id", id)
@@ -116,7 +116,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (archivedMatch.error) return NextResponse.json({ error: archivedMatch.error.message }, { status: 409 });
       restoredEntityId = archivedMatch.data?.id ?? null;
     }
-    const entityId = prepared.entity.id ?? restoredEntityId;
+    if (prepared.entity.id && restoredEntityId && prepared.entity.id !== restoredEntityId) {
+      const archivePlaceholder = await db.from("employer_legal_entities").update({
+        archived_at: new Date().toISOString(),
+        is_primary: false,
+        updated_at: new Date().toISOString(),
+      }).eq("id", prepared.entity.id).eq("employer_id", id).is("archived_at", null);
+      if (archivePlaceholder.error) return NextResponse.json({ error: archivePlaceholder.error.message }, { status: 409 });
+    }
+    const entityId = restoredEntityId ?? prepared.entity.id;
     const result = entityId
       ? await db.from("employer_legal_entities").update({ ...payload, archived_at: null }).eq("id", entityId).eq("employer_id", id)
       : await db.from("employer_legal_entities").insert({ ...payload, created_by: auth.userId });

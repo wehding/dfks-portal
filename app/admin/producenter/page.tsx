@@ -449,7 +449,7 @@ export default function ProducersPage() {
             {cvrResults.length > 0 && <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">{cvrResults.map(result => <button key={result.cvrNumber} type="button" className="block w-full rounded px-2 py-2 text-left hover:bg-muted" onClick={() => void selectCvrCompany(result)}><span className="block text-sm font-medium">{result.name}</span><span className="block text-xs text-muted-foreground">CVR {result.cvrNumber}{result.industryDescription ? ` · ${result.industryDescription}` : ""}</span></button>)}</div>}
           </div>
           <div className="space-y-3 border-t pt-4">
-            <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">Juridiske enheder og CVR</h3><p className="text-xs text-muted-foreground">En kanonisk producent kan have flere CVR-numre.</p></div><Button type="button" size="sm" variant="outline" onClick={() => setEditor({ ...editor, legalEntities: [...editor.legalEntities, emptyLegalEntity()] })}><Plus className="mr-1 h-3.5 w-3.5" />Tilføj CVR</Button></div>
+            <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">Juridiske enheder og CVR</h3><p className="text-xs text-muted-foreground">En kanonisk producent kan have flere CVR-numre.</p></div><Button type="button" size="sm" variant="outline" onClick={() => setEditor({ ...editor, legalEntities: [...editor.legalEntities, emptyLegalEntity()] })}><Plus className="mr-1 h-3.5 w-3.5" />Tilføj juridisk enhed</Button></div>
             {editor.legalEntities.map((entity, index) => <div key={entity.id ?? `new-${index}`} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
               <div className="flex items-center justify-between gap-3 sm:col-span-2"><p className="text-sm font-medium">Juridisk enhed {index + 1}</p><Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => removeLegalEntity(index)}><Trash2 className="mr-1.5 h-4 w-4" />Slet enhed</Button></div>
               <div className="space-y-1.5 sm:col-span-2"><Label>Juridisk selskabsnavn</Label><Input value={entity.legalName} onChange={event => updateLegalEntity(index, { legalName: event.target.value })} /></div>
@@ -464,7 +464,7 @@ export default function ProducersPage() {
               <div className="space-y-1.5"><Label>Branche</Label><Input value={entity.industryDescription} onChange={event => updateLegalEntity(index, { industryDescription: event.target.value })} /></div>
               <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={entity.isPrimary} onChange={event => setEditor({ ...editor, legalEntities: editor.legalEntities.map((row, rowIndex) => ({ ...row, isPrimary: event.target.checked && rowIndex === index })) })} />Primær juridisk enhed</label>
             </div>)}
-            {editor.legalEntities.length === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Producenten har ingen juridiske enheder. Brug CVR-søgningen eller “Tilføj CVR” for at tilføje en.</p>}
+            {editor.legalEntities.length === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Producenten har ingen juridiske enheder. Brug CVR-søgningen eller “Tilføj juridisk enhed” for at tilføje en.</p>}
           </div>
           {editingProducer && <div className="space-y-2 border-t pt-4">
             {(["works", "contracts"] as const).map(type => {
