@@ -55,7 +55,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     preparedEntities.push({ entity, legalName, registrationNumber: registration.normalized });
   }
 
-  const db = createServiceClient();
+  const db = createServiceClient({ audit: {
+    actorUserId: auth.userId,
+    actorOrgId: auth.orgId,
+    actorRole: auth.role,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
   const deletedLegalEntityIds = [...new Set((body?.deletedLegalEntityIds ?? []).filter(value => typeof value === "string" && value))];
   if (deletedLegalEntityIds.some(deletedId => preparedEntities.some(prepared => prepared.entity.id === deletedId))) {
     return NextResponse.json({ error: "En juridisk enhed kan ikke både gemmes og slettes" }, { status: 400 });

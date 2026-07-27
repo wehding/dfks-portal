@@ -4,8 +4,42 @@
 
 begin;
 
+select plan(1);
+
 do $$
 begin
+  if not exists (
+    select 1 from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'audit_events'
+      and relation.relrowsecurity
+  ) or not exists (
+    select 1 from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'audit_event_organisations'
+      and relation.relrowsecurity
+  ) then
+    raise exception 'RLS regression: audit log tables are missing or RLS is disabled';
+  end if;
+
+  if has_table_privilege('anon', 'public.audit_events', 'SELECT')
+    or has_table_privilege('anon', 'public.audit_event_organisations', 'SELECT') then
+    raise exception 'RLS regression: anon has audit log access';
+  end if;
+
+  if not has_table_privilege('authenticated', 'public.audit_events', 'SELECT')
+    or has_table_privilege('authenticated', 'public.audit_events', 'INSERT')
+    or has_table_privilege('authenticated', 'public.audit_events', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.audit_events', 'DELETE') then
+    raise exception 'RLS regression: authenticated audit privileges are not read-only';
+  end if;
+
+  if has_function_privilege('authenticated', 'public.purge_expired_audit_events(interval,integer)', 'EXECUTE') then
+    raise exception 'RLS regression: authenticated can purge the audit log';
+  end if;
+
   if exists (
     select 1 from (values
       ('notification_deliveries'),
@@ -47,6 +81,14 @@ begin
       and (
         coalesce(qual, '') in ('true', '(true)')
         or coalesce(with_check, '') in ('true', '(true)')
+      )
+      -- Værkkataloget og produktionsnumrene er bevidst fælles på tværs af
+      -- organisationer. Undtag kun deres skrivebeskyttede SELECT-policies.
+      and not (
+        tablename in ('works', 'work_production_numbers')
+        and cmd = 'SELECT'
+        and coalesce(qual, '') in ('true', '(true)')
+        and coalesce(with_check, '') = ''
       )
   ) then
     raise exception 'RLS regression: unconditional policy found';
@@ -105,6 +147,39 @@ begin
       and namespace_row.nspname = 'public'
   ) then
     raise exception 'Extension regression: vector is installed in public';
+  end if;
+end $$;
+
+do $$
+declare
+  audit_id uuid;
+  sanitized jsonb;
+  update_blocked boolean := false;
+begin
+  sanitized := private.audit_sanitize_row(jsonb_build_object(
+    'status', 'valideret',
+    'email', 'person@example.com',
+    'cpr_encrypted', 'ciphertext',
+    'message_text', 'fortrolig besked',
+    'updated_at', now()
+  ));
+  if sanitized->>'status' <> 'valideret'
+    or sanitized->'email'->>'redacted' <> 'true'
+    or sanitized->'cpr_encrypted'->>'redacted' <> 'true'
+    or sanitized->'message_text'->>'redacted' <> 'true'
+    or sanitized ? 'updated_at' then
+    raise exception 'Audit regression: sensitive or technical fields are not sanitized';
+  end if;
+
+  insert into public.audit_events(action, entity_type, source)
+  values ('create', 'rls_test', 'database') returning id into audit_id;
+  begin
+    update public.audit_events set entity_type = 'tampered' where id = audit_id;
+  exception when others then
+    update_blocked := true;
+  end;
+  if not update_blocked then
+    raise exception 'Audit regression: append-only event could be updated';
   end if;
 end $$;
 
@@ -241,4 +316,6 @@ begin
   end if;
 end $$;
 
+select pass('RLS- og audit-sikkerhedsassertions bestod');
+select * from finish();
 rollback;
