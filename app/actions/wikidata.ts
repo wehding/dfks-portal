@@ -114,6 +114,19 @@ export async function imdbFromWikidataByTmdb(tmdbId: number, mediaType: string) 
   }
 }
 
+export async function getWikidataExternalIds(wikidataId: string) {
+  if (!/^Q\d+$/.test(wikidataId)) return { imdb_id: null, wikidata_id: null };
+  const query = `SELECT ?imdb WHERE { OPTIONAL { wd:${wikidataId} wdt:P345 ?imdb. } } LIMIT 1`;
+  try {
+    const res = await wikidataFetch(`https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(query)}`);
+    if (!res.ok) return { imdb_id: null, wikidata_id: wikidataId };
+    const data = await res.json() as SparqlResponse;
+    return { imdb_id: firstBindingValue(data, "imdb"), wikidata_id: wikidataId };
+  } catch {
+    return { imdb_id: null, wikidata_id: wikidataId };
+  }
+}
+
 export async function enrichFromWikidata(input: { imdbId?: string | null; title?: string | null; year?: number | null }) {
   const empty: WikidataEnrichment = {
     wikidata_id: null,
