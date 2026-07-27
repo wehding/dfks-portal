@@ -659,7 +659,13 @@ export async function saveContractValidation(params: { contractId: string; extra
   const prevEd = (existing?.extracted_data ?? {}) as Record<string, unknown>;
   const mergedEd = { ...prevEd, ...ed };
 
-  const { error } = await db.from("contract_validations").upsert(
+  const writeDb = createServiceClient({ audit: {
+    actorUserId: user.id,
+    actorOrgId: contract.org_id,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
+  const { error } = await writeDb.from("contract_validations").upsert(
     {
       contract_id: params.contractId,
       org_id: contract.org_id,
@@ -702,6 +708,14 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
     if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
   }
 
+  const actorOrgId = await requireOrgId(db, user.id);
+  const writeDb = createServiceClient({ audit: {
+    actorUserId: user.id,
+    actorOrgId,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
+
   // Masse-sletning af mere end 20 kontrakter kræver superadmin (server-side spærre)
   if (found.length > 20) {
     const { data: superRows } = await db
@@ -716,13 +730,13 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
   }
 
   const pdfs = found.map(row => row.pdf_url).filter((url): url is string => Boolean(url));
-  if (pdfs.length > 0) await db.storage.from(BUCKET).remove(pdfs);
+  if (pdfs.length > 0) await writeDb.storage.from(BUCKET).remove(pdfs);
 
   // Slet i batches så store cascade-sletninger ikke rammer statement-timeout
   const foundIds = found.map(row => row.id);
   for (let i = 0; i < foundIds.length; i += 50) {
     const chunk = foundIds.slice(i, i + 50);
-    const { error } = await db.from("contracts").delete().in("id", chunk);
+    const { error } = await writeDb.from("contracts").delete().in("id", chunk);
     if (error) return { success: false, error: error.message };
   }
 
@@ -752,7 +766,14 @@ export async function addMemberContractComment(contractId: string, message: stri
     .single();
   if (!contract || contract.rights_holder_id !== rh.id) return { success: false, error: "Kontrakt ikke fundet" };
 
-  const { data: comment, error } = await db
+  const writeDb = createServiceClient({ audit: {
+    actorUserId: user.id,
+    actorOrgId: contract.org_id,
+    actorRole: "member",
+    source: "portal",
+    correlationId: crypto.randomUUID(),
+  } });
+  const { data: comment, error } = await writeDb
     .from("contract_comments")
     .insert({
       org_id: contract.org_id,
@@ -787,7 +808,13 @@ export async function addAdminContractComment(contractId: string, message: strin
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
   if (!(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
 
-  const { data: comment, error } = await db
+  const writeDb = createServiceClient({ audit: {
+    actorUserId: user.id,
+    actorOrgId: contract.org_id,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
+  const { data: comment, error } = await writeDb
     .from("contract_comments")
     .insert({
       org_id: contract.org_id,
@@ -908,12 +935,18 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
   const { data: existing } = await db.from("contracts").select("id,status,org_id").eq("id", contractId).eq("org_id", orgId).maybeSingle();
   if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
+  const writeDb = createServiceClient({ audit: {
+    actorUserId: user.id,
+    actorOrgId: orgId,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
   const { producer_selections: producerSelections, ...contractValues } = values;
-  const { error } = await db.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
+  const { error } = await writeDb.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
   if (error) return { success: false, error: error.message };
   if (producerSelections) {
     try {
-      await syncContractProducerRelations(db, contractId, producerSelections, "admin");
+      await syncContractProducerRelations(writeDb, contractId, producerSelections, "admin");
     } catch (relationError) {
       return { success: false, error: relationError instanceof Error ? relationError.message : "Producentrelationer kunne ikke gemmes" };
     }
@@ -943,7 +976,13 @@ export async function validateAdminContracts(contractIds: string[]) {
   if ((contracts ?? []).some(contract => !contract.work_id)) return { success: false, error: "Alle valgte kontrakter skal have et tilknyttet værk." };
   const toValidate = (contracts ?? []).filter(contract => contract.status !== "valideret");
   if (toValidate.length) {
-    const { error } = await db.from("contracts").update({ status: "valideret" }).eq("org_id", orgId).in("id", toValidate.map(contract => contract.id));
+    const writeDb = createServiceClient({ audit: {
+      actorUserId: user.id,
+      actorOrgId: orgId,
+      source: "admin",
+      correlationId: crypto.randomUUID(),
+    } });
+    const { error } = await writeDb.from("contracts").update({ status: "valideret" }).eq("org_id", orgId).in("id", toValidate.map(contract => contract.id));
     if (error) return { success: false, error: error.message };
   }
   for (const contract of toValidate) {

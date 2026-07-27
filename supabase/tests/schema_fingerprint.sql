@@ -1,6 +1,9 @@
 -- Deterministic, data-free schema fingerprint for baseline verification.
 -- Compare the output from --linked and --local.
 
+begin;
+select plan(1);
+
 with fingerprints as (
   select
     'columns'::text as category,
@@ -88,11 +91,18 @@ with fingerprints as (
     routine_schema || '.' || routine_name || ':' || grantee || ':' || privilege_type || ':' || is_grantable
   from information_schema.role_routine_grants
   where routine_schema in ('public', 'private')
+), results as (
+  select
+    category,
+    count(*) as item_count,
+    md5(string_agg(item, E'\n' order by item)) as fingerprint
+  from fingerprints
+  group by category
 )
-select
-  category,
-  count(*) as item_count,
-  md5(string_agg(item, E'\n' order by item)) as fingerprint
-from fingerprints
-group by category
+select diag(category || ': ' || item_count::text || ' ' || fingerprint)
+from results
 order by category;
+
+select pass('Deterministisk schema-fingerprint blev beregnet');
+select * from finish();
+rollback;
