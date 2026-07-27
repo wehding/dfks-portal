@@ -17,6 +17,7 @@ export function PortalContextualHelp() {
       open={open}
       onOpenChange={setOpen}
       storageKey={`dfks-portal-help-${section || "overblik"}-v1`}
+      autoOpenOnFirstVisit
     />
   </>;
 }
