@@ -153,7 +153,7 @@ export default function MinProfilPage() {
             // Opdater rettighedshaver
             const { error } = await supabase
                 .from("rettighedshavere")
-                .update({ full_name: name, email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
+                .update({ email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
 
@@ -316,7 +316,8 @@ export default function MinProfilPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
                             <Label>{t("profile.name")}</Label>
-                            <Input value={name} onChange={e => setName(e.target.value)} />
+                            <Input value={name} readOnly aria-readonly="true" className="bg-muted/50" />
+                            <p className="text-[11px] text-muted-foreground">{t("profile.invitedNameLocked")}</p>
                         </div>
                         <div className="space-y-1.5">
                             <Label className="flex items-center gap-1.5">

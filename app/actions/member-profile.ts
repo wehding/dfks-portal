@@ -13,10 +13,16 @@ export async function completeOnboarding(formData: FormData) {
 
   if (!user) return { success: false, error: "Ikke logget ind" };
 
-  // full_name kombineres af fornavn + efternavn
-  const firstName = (formData.get("first_name") as string)?.trim() ?? "";
-  const lastName = (formData.get("last_name") as string)?.trim() ?? "";
-  const fullName = [firstName, lastName].filter(Boolean).join(" ");
+  // Rettighedshaverens navn er fastlagt af invitationen. Formularfelter og
+  // user_metadata må ikke kunne overskrive den kanoniske identitet.
+  const { data: invitedProfile, error: profileError } = await supabase
+    .from("rettighedshavere")
+    .select("full_name")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  if (profileError) return { success: false, error: "Det inviterede navn kunne ikke kontrolleres." };
+  const fullName = invitedProfile?.full_name?.trim() ?? "";
+  if (!fullName) return { success: false, error: "Der mangler et navn på invitationen. Kontakt DFKS." };
   const loginEmail = user.email?.trim() ?? "";
   const phone = ((formData.get("phone") as string) ?? "").trim();
   const cpr = ((formData.get("cpr") as string) ?? "").trim();
@@ -37,7 +43,6 @@ export async function completeOnboarding(formData: FormData) {
   let { error } = await supabase
     .from("rettighedshavere")
     .update({
-      full_name: fullName || undefined,
       email: loginEmail,
       phone: phone || null,
       address,
@@ -54,7 +59,6 @@ export async function completeOnboarding(formData: FormData) {
     const retry = await supabase
       .from("rettighedshavere")
       .update({
-        full_name: fullName || undefined,
         email: loginEmail,
         phone: phone || null,
         address,

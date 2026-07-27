@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
             const name = isStaff ? String(body.name ?? "") : holder?.full_name
             const phone = isStaff ? String(body.phone ?? "") : holder?.phone
             if (!email) return NextResponse.json({ error: "Der mangler email på brugeren" }, { status: 400 })
+            if (!isStaff && !name?.trim()) return NextResponse.json({ error: "Der mangler navn på rettighedshaveren. Tilføj navnet før invitationen sendes." }, { status: 400 })
 
             const requestedRoles = Array.isArray(body.roles)
                 ? body.roles

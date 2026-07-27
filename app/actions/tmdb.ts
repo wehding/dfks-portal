@@ -243,10 +243,21 @@ export async function findTMDBMatch(
       results.push(...(data.results ?? []));
     }
 
+    const mediaTypeFor = (item: TMDBSearchItem) => item.first_air_date ? "tv" : "movie";
+    const hasPreferredResult = !preferredMediaType || results.some(item => mediaTypeFor(item) === preferredMediaType);
+    if (year && preferredMediaType && !hasPreferredResult) {
+      const fallbackRes = await tmdbFetch(`/search/${preferredMediaType}?query=${encodedTitle}&language=da-DK`).catch(() => null);
+      if (fallbackRes?.ok) {
+        const fallbackData = await fallbackRes.json() as TMDBSearchResponse;
+        for (const item of fallbackData.results ?? []) {
+          if (!results.some(existing => existing.id === item.id && mediaTypeFor(existing) === mediaTypeFor(item))) results.push(item);
+        }
+      }
+    }
+
     if (!results.length) return { poster_url: null, tmdb_id: null };
 
     const normalizedQuery = title.trim().toLocaleLowerCase("da-DK");
-    const mediaTypeFor = (item: TMDBSearchItem) => item.first_air_date ? "tv" : "movie";
     const titleFor = (item: TMDBSearchItem) => String(item.name ?? item.title ?? "").trim().toLocaleLowerCase("da-DK");
     const yearFor = (item: TMDBSearchItem) => {
       const date = item.release_date || item.first_air_date || "";

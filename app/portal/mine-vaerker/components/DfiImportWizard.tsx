@@ -91,7 +91,12 @@ export function DfiImportWizard({
     if (wizardEpisodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setWizardEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
-      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
+      setSeriesEpisodes(prev => {
+        if (Object.prototype.hasOwnProperty.call(prev, credit.id)) return prev;
+        const available = new Set(result.options.map(option => option.number));
+        const suggested = season === seasonForCredit(credit) ? credit.suggested_episodes ?? [] : [];
+        return { ...prev, [credit.id]: suggested.filter(number => available.has(number)) };
+      });
     } else {
       setWizardEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
       setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
@@ -109,7 +114,11 @@ export function DfiImportWizard({
   };
 
   const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
-    return seriesEpisodes[credit.id] ?? displayOptionsForCredit(credit).map(option => option.number);
+    if (Object.prototype.hasOwnProperty.call(seriesEpisodes, credit.id)) return seriesEpisodes[credit.id];
+    const currentSeason = seriesSeasons[credit.id] ?? seasonForCredit(credit);
+    const suggested = currentSeason === seasonForCredit(credit) ? credit.suggested_episodes ?? [] : [];
+    const available = new Set(displayOptionsForCredit(credit).map(option => option.number));
+    return suggested.filter(number => available.has(number));
   };
 
   const loadWizardCredits = useCallback(async (query: string) => {
@@ -148,6 +157,8 @@ export function DfiImportWizard({
       setExpandedSeries({});
       setSeriesSeasons({});
       setSeriesEpisodes({});
+      setWizardEpisodeOptions({});
+      setWizardEpisodeErrors({});
       setWizardError(null);
       setWizardValidationError(null);
       setWizardSkippedExistingCount(0);
@@ -315,7 +326,7 @@ export function DfiImportWizard({
                             onClick={() => {
                               const willExpand = !expandedSeries[c.id];
                               setExpandedSeries(prev => ({ ...prev, [c.id]: willExpand }));
-                              if (willExpand && displayOptionsForCredit(c).length === 0 && !wizardEpisodeLoading[c.id]) {
+                              if (willExpand && !Object.prototype.hasOwnProperty.call(wizardEpisodeOptions, c.id) && !wizardEpisodeLoading[c.id]) {
                                 void loadEpisodesForSeason(c, seriesSeasons[c.id] ?? seasonForCredit(c));
                               }
                             }}
@@ -339,6 +350,9 @@ export function DfiImportWizard({
                                 error={wizardEpisodeErrors[c.id]}
                                 label="Vælg afsnit"
                               />
+                              {c.suggested_episodes?.length ? (
+                                <p className="text-xs text-muted-foreground">DFI-krediterede afsnit er foreslået. Du kan rette valget.</p>
+                              ) : null}
                             </div>
                           )}
                         </div>
