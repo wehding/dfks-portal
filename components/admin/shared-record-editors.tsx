@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, ExternalLink, Film, FileText, Loader2, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
-import { archiveAdminWorks, createAdminWork, deleteAdminWorkPermanently, fetchAdminRightsHolders, fetchAdminWorkDetail, updateAdminWorkData } from "@/app/actions/work-management";
+import { archiveAdminWorks, createAdminWork, deleteAdminWorkPermanently, fetchAdminRightsHolders, fetchAdminWorkDetail, linkAdminContractToWork, searchAdminUnlinkedContracts, updateAdminWorkData } from "@/app/actions/work-management";
 import { addAdminContractComment, deleteAdminContractsPermanently, fetchAdminContractEditorData, getContractSignedUrl, markContractCommentsRead, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WORK_TYPES } from "@/lib/work-types";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
@@ -96,6 +97,7 @@ type WorkRecord = Record<string, unknown> & {
 };
 
 type WorkAssignmentDraft = { id?: string; rightsHolderId: string; name: string; role: string; sharePercent: string };
+type ContractLinkOption = { id: string; working_title: string | null; type: string | null; status: string | null; contract_date: string | null; rights_holder_name: string };
 
 function workForm(record: WorkRecord): WorkEditorForm {
   return {
@@ -128,6 +130,15 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
   const [assignments, setAssignments] = useState<WorkAssignmentDraft[]>([]);
   const [rightsHolders, setRightsHolders] = useState<Array<{ id: string; full_name: string }>>([]);
   const [newRightsHolderId, setNewRightsHolderId] = useState("");
+  const [contractLinkOpen, setContractLinkOpen] = useState(false);
+  const [contractLinkQuery, setContractLinkQuery] = useState("");
+  const [contractLinkResults, setContractLinkResults] = useState<ContractLinkOption[]>([]);
+  const [contractLinkLoading, setContractLinkLoading] = useState(false);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +147,7 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
       if (cancelled) return;
       if (!result.success || !result.work) {
         toast.error(result.error ?? "Værket kunne ikke hentes");
-        onClose();
+        onCloseRef.current();
         return;
       }
       const nextRecord = result.work as WorkRecord;
@@ -157,7 +168,7 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
       if (!cancelled) toast.error(error instanceof Error ? error.message : "Værket kunne ikke hentes");
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [onClose, workId]);
+  }, [workId]);
 
   const dirty = Boolean(form && JSON.stringify({ form, assignments }) !== initial);
   const update = <K extends keyof WorkEditorForm>(key: K, value: WorkEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);
@@ -242,6 +253,38 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
     finally { setSaving(false); }
   };
 
+  const findContractsToLink = async () => {
+    setContractLinkLoading(true);
+    try {
+      setContractLinkResults(await searchAdminUnlinkedContracts(contractLinkQuery) as ContractLinkOption[]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kontrakter kunne ikke hentes");
+    } finally {
+      setContractLinkLoading(false);
+    }
+  };
+
+  const linkContract = async (contractId: string) => {
+    setContractLinkLoading(true);
+    try {
+      await linkAdminContractToWork({ contractId, workId });
+      const refreshed = await fetchAdminWorkDetail(workId);
+      if (!refreshed.success || !refreshed.work) throw new Error(refreshed.error ?? "Værket kunne ikke genindlæses");
+      setRecord(refreshed.work as WorkRecord);
+      setContractLinkOpen(false);
+      setContractLinkQuery("");
+      setContractLinkResults([]);
+      toast.success("Kontrakten er tilknyttet værket");
+      window.dispatchEvent(new Event("contracts-updated"));
+      window.dispatchEvent(new Event("works-updated"));
+      onSaved?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke tilknyttes");
+    } finally {
+      setContractLinkLoading(false);
+    }
+  };
+
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="flex-1 space-y-4 overflow-y-auto px-4 pb-6 sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 p-3">
@@ -291,7 +334,18 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
         </div>
       </FormSection>
       <FormSection title="Tilknyttede kontrakter">
-        <div className="space-y-2">{(record?.contracts ?? []).length ? record?.contracts?.map(contract => <div key={contract.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><div><p className="font-medium">{contract.rettighedshavere?.full_name ?? "Ukendt medlem"}</p><p className="text-xs text-muted-foreground">{contract.type ?? "Kontrakt"}</p></div><Badge variant="outline">{contract.status ?? "ukendt"}</Badge></div>) : <p className="text-sm text-muted-foreground">Ingen kontrakter er tilknyttet værket.</p>}</div>
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => { setContractLinkQuery(""); setContractLinkResults([]); setContractLinkOpen(true); }}
+            className="w-full rounded-md border border-dashed px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-muted"
+          >
+            {(record?.contracts ?? []).length === 0
+              ? "Ingen kontrakter tilknyttet — klik for at finde og tilknytte en kontrakt."
+              : "Tilføj eller tilknyt en kontrakt."}
+          </button>
+          {(record?.contracts ?? []).map(contract => <div key={contract.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><div><p className="font-medium">{contract.rettighedshavere?.full_name ?? "Ukendt medlem"}</p><p className="text-xs text-muted-foreground">{contract.type ?? "Kontrakt"}</p></div><Badge variant="outline">{contract.status ?? "ukendt"}</Badge></div>)}
+        </div>
       </FormSection>
       {(record?.work_change_requests ?? []).length > 0 && <FormSection title="Kommentarer og requests">
         <div className="space-y-2">{record?.work_change_requests?.map(request => <div key={request.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><div><p className="font-medium">{request.rettighedshavere?.full_name ?? "Ukendt medlem"}</p><p className="text-xs text-muted-foreground">{request.source} · {new Date(request.created_at).toLocaleDateString("da-DK")}</p></div><Badge variant="outline">{request.status}</Badge></div>)}</div>
@@ -307,6 +361,23 @@ export function SharedWorkEditor({ workId, onClose, onSaved }: { workId: string;
       </FormSection>
     </div>
     <EditorFooter saving={saving} dirty={dirty} onCancel={cancel} onSave={() => void save()} />
+    <Dialog open={contractLinkOpen} onOpenChange={setContractLinkOpen}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Tilknyt kontrakt</DialogTitle>
+          <DialogDescription>Søg på rettighedshaver, arbejdstitel eller kontrakttype. Kun kontrakter uden et værk vises.</DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-2">
+          <Input value={contractLinkQuery} onChange={event => setContractLinkQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void findContractsToLink(); }} placeholder="Søg rettighedshaver eller kontrakt…" />
+          <Button type="button" onClick={() => void findContractsToLink()} disabled={contractLinkLoading} aria-label="Søg efter kontrakter">{contractLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}</Button>
+        </div>
+        <div className="max-h-80 space-y-2 overflow-y-auto">
+          {contractLinkResults.map(contract => <button key={contract.id} type="button" className="block w-full rounded-md border p-3 text-left hover:bg-muted" disabled={contractLinkLoading} onClick={() => void linkContract(contract.id)}><span className="block text-sm font-medium">{contract.rights_holder_name}</span><span className="block text-xs text-muted-foreground">{contract.working_title ?? "Kontrakt uden arbejdstitel"} · {contract.type ?? "Kontrakt"}{contract.contract_date ? ` · ${new Date(contract.contract_date).toLocaleDateString("da-DK")}` : ""}</span></button>)}
+          {!contractLinkLoading && contractLinkResults.length === 0 && <p className="py-5 text-center text-sm text-muted-foreground">Søg for at se kontrakter, der kan tilknyttes.</p>}
+        </div>
+        <DialogFooter><Button type="button" variant="outline" onClick={() => setContractLinkOpen(false)}>Annuller</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>;
 }
 
@@ -357,6 +428,11 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
   const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm());
   const [reply, setReply] = useState("");
   const [replySaving, setReplySaving] = useState(false);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -365,7 +441,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       if (cancelled) return;
       if (!result.success || !result.contract) {
         toast.error(result.error ?? "Kontrakten kunne ikke hentes");
-        onClose();
+        onCloseRef.current();
         return;
       }
       const data = result as unknown as ContractEditorPayload & { success: true };
@@ -385,7 +461,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
     }).catch(error => { if (!cancelled) toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke hentes"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [contractId, onClose]);
+  }, [contractId]);
 
   const dirty = Boolean(form && (manualMode || JSON.stringify({ form, producers }) !== initial));
   const update = <K extends keyof ContractEditorForm>(key: K, value: ContractEditorForm[K]) => setForm(current => current ? { ...current, [key]: value } : current);

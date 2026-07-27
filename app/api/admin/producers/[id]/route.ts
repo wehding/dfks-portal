@@ -3,6 +3,8 @@ import { requireAdminApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { validateRegistrationNumber } from "@/lib/production-companies";
 
+type LegalEntityInput = { id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean };
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAdminApi();
   if (!auth.ok) return auth.response;
@@ -39,11 +41,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     name?: string;
     dfiCompanyId?: string | number | null;
     broadcasterId?: string | null;
-    legalEntities?: Array<{ id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean }>;
+    deletedLegalEntityIds?: string[];
+    legalEntities?: LegalEntityInput[];
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
   if (!name) return NextResponse.json({ error: "Producentnavn er påkrævet" }, { status: 400 });
-  const preparedEntities = [];
+  const preparedEntities: Array<{ entity: LegalEntityInput; legalName: string; registrationNumber: string | null }> = [];
   for (const entity of body?.legalEntities ?? []) {
     const legalName = entity.legalName?.trim();
     if (!legalName) continue;
@@ -59,6 +62,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
+  const deletedLegalEntityIds = [...new Set((body?.deletedLegalEntityIds ?? []).filter(value => typeof value === "string" && value))];
+  if (deletedLegalEntityIds.some(deletedId => preparedEntities.some(prepared => prepared.entity.id === deletedId))) {
+    return NextResponse.json({ error: "En juridisk enhed kan ikke både gemmes og slettes" }, { status: 400 });
+  }
   const parsedDfiId = body?.dfiCompanyId ? Number(body.dfiCompanyId) : null;
   const employerUpdate = await db.from("employers").update({
     name,
@@ -68,6 +75,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     updated_at: new Date().toISOString(),
   }).eq("id", id).is("merged_into_id", null);
   if (employerUpdate.error) return NextResponse.json({ error: employerUpdate.error.message }, { status: 409 });
+
+  if (deletedLegalEntityIds.length > 0) {
+    const archiveResult = await db.from("employer_legal_entities").update({
+      archived_at: new Date().toISOString(),
+      is_primary: false,
+      updated_at: new Date().toISOString(),
+    }).eq("employer_id", id).is("archived_at", null).in("id", deletedLegalEntityIds);
+    if (archiveResult.error) return NextResponse.json({ error: archiveResult.error.message }, { status: 409 });
+  }
 
   if (preparedEntities.some(prepared => prepared.entity.isPrimary)) {
     const clearPrimary = await db.from("employer_legal_entities").update({ is_primary: false }).eq("employer_id", id).is("archived_at", null);
@@ -93,8 +109,30 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       is_primary: Boolean(prepared.entity.isPrimary),
       updated_at: new Date().toISOString(),
     };
-    const result = prepared.entity.id
-      ? await db.from("employer_legal_entities").update(payload).eq("id", prepared.entity.id).eq("employer_id", id)
+    let restoredEntityId: string | null = null;
+    if (prepared.registrationNumber) {
+      const archivedMatch = await db.from("employer_legal_entities")
+        .select("id")
+        .eq("employer_id", id)
+        .eq("registration_country", "DK")
+        .eq("registration_type", "CVR")
+        .eq("registration_number", prepared.registrationNumber)
+        .not("archived_at", "is", null)
+        .maybeSingle();
+      if (archivedMatch.error) return NextResponse.json({ error: archivedMatch.error.message }, { status: 409 });
+      restoredEntityId = archivedMatch.data?.id ?? null;
+    }
+    if (prepared.entity.id && restoredEntityId && prepared.entity.id !== restoredEntityId) {
+      const archivePlaceholder = await db.from("employer_legal_entities").update({
+        archived_at: new Date().toISOString(),
+        is_primary: false,
+        updated_at: new Date().toISOString(),
+      }).eq("id", prepared.entity.id).eq("employer_id", id).is("archived_at", null);
+      if (archivePlaceholder.error) return NextResponse.json({ error: archivePlaceholder.error.message }, { status: 409 });
+    }
+    const entityId = restoredEntityId ?? prepared.entity.id;
+    const result = entityId
+      ? await db.from("employer_legal_entities").update({ ...payload, archived_at: null }).eq("id", entityId).eq("employer_id", id)
       : await db.from("employer_legal_entities").insert({ ...payload, created_by: auth.userId });
     if (result.error) return NextResponse.json({ error: result.error.message }, { status: 409 });
   }
