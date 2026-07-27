@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { ChevronDown, Loader2, Plus, Radio, RefreshCw, Search, X } from "lucide-react";
+import { ChevronDown, Loader2, Plus, Radio, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
+import { mergeCvrLegalEntity } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
 type BroadcasterOption = { id: string; name: string; logo_path: string | null; content_type: string | null };
@@ -26,7 +27,7 @@ type ContractDetail = { id: string; working_title: string | null; type: string; 
 type DetailState = { loading: boolean; error: string | null; rows: Array<WorkDetail | ContractDetail | LegalEntitySummary> };
 type DetailType = "works" | "contracts" | "legal_entities";
 type LegalEntityDraft = { id?: string; legalName: string; registrationNumber: string; address: string; contactPhone: string; contactEmail: string; website: string; registrationStatus: string; industryCode: string; industryDescription: string; companyType: string; isPrimary: boolean };
-type ProducerDraft = { id?: string; name: string; dfiCompanyId: string; isBroadcaster: boolean; broadcasterId: string; affectedWorkCount: number; legalEntities: LegalEntityDraft[] };
+type ProducerDraft = { id?: string; name: string; dfiCompanyId: string; isBroadcaster: boolean; broadcasterId: string; affectedWorkCount: number; legalEntities: LegalEntityDraft[]; deletedLegalEntityIds: string[] };
 type CvrSearchResult = { name: string; cvrNumber: string; industryCode: string | null; industryDescription: string | null; score?: number };
 type SyncCandidate = { id: string; name: string; score: number; matchMethod: string };
 type SyncGroup = { groupCode: string; groupLabel: string; membershipType: "ordinary" | "associate" | "unknown"; sourceName: string; ownerCeoText: string | null; website: string | null; address: string | null; postalCity: string | null; sourceUrl: string };
@@ -107,7 +108,7 @@ export default function ProducersPage() {
     setCvrQuery("");
     setCvrResults([]);
     setEditorRelationsOpen(new Set());
-    setEditor({ name: "", dfiCompanyId: "", isBroadcaster: false, broadcasterId: "", affectedWorkCount: 0, legalEntities: [{ ...emptyLegalEntity(), isPrimary: true }] });
+    setEditor({ name: "", dfiCompanyId: "", isBroadcaster: false, broadcasterId: "", affectedWorkCount: 0, legalEntities: [{ ...emptyLegalEntity(), isPrimary: true }], deletedLegalEntityIds: [] });
   };
   const openEdit = (producer: Producer) => {
     setDfiResults([]);
@@ -121,6 +122,7 @@ export default function ProducersPage() {
       isBroadcaster: Boolean(producer.broadcaster_id),
       broadcasterId: producer.broadcaster_id ?? "",
       affectedWorkCount: producer.work_count,
+      deletedLegalEntityIds: [],
       legalEntities: producer.legal_entities.length ? producer.legal_entities.map(entity => ({
         id: entity.id,
         legalName: entity.legal_name,
@@ -206,15 +208,30 @@ export default function ProducersPage() {
         industryDescription: json.industryDescription ?? result.industryDescription ?? "",
         companyType: json.companyType ?? "",
       };
-      const emptyIndex = editor.legalEntities.findIndex(row => !row.id && !row.registrationNumber && !row.legalName.trim());
-      const legalEntities = emptyIndex >= 0
-        ? editor.legalEntities.map((row, index) => index === emptyIndex ? { ...entity, isPrimary: row.isPrimary } : row)
-        : [...editor.legalEntities, { ...entity, isPrimary: editor.legalEntities.length === 0 }];
+      const legalEntities = mergeCvrLegalEntity(editor.legalEntities, entity);
       setEditor({ ...editor, name: editor.name.trim() || result.name, legalEntities });
       setCvrQuery(result.cvrNumber);
       setCvrResults([]);
     } catch (error) { toast.error(error instanceof Error ? error.message : "CVR-data kunne ikke hentes"); }
     finally { setCvrSearching(false); }
+  };
+  const removeLegalEntity = (index: number) => {
+    if (!editor) return;
+    const entity = editor.legalEntities[index];
+    if (!entity) return;
+    const label = entity.legalName.trim() || entity.registrationNumber || "den juridiske enhed";
+    if (!window.confirm(`Slet “${label}” fra producenten? Historiske tilknytninger bevares.`)) return;
+    const remaining = editor.legalEntities.filter((_, rowIndex) => rowIndex !== index);
+    const legalEntities = entity.isPrimary && remaining.length > 0 && !remaining.some(row => row.isPrimary)
+      ? remaining.map((row, rowIndex) => ({ ...row, isPrimary: rowIndex === 0 }))
+      : remaining;
+    setEditor({
+      ...editor,
+      legalEntities,
+      deletedLegalEntityIds: entity.id
+        ? [...new Set([...editor.deletedLegalEntityIds, entity.id])]
+        : editor.deletedLegalEntityIds,
+    });
   };
   const saveEditor = async () => {
     if (!editor?.name.trim()) return;
@@ -434,6 +451,7 @@ export default function ProducersPage() {
           <div className="space-y-3 border-t pt-4">
             <div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">Juridiske enheder og CVR</h3><p className="text-xs text-muted-foreground">En kanonisk producent kan have flere CVR-numre.</p></div><Button type="button" size="sm" variant="outline" onClick={() => setEditor({ ...editor, legalEntities: [...editor.legalEntities, emptyLegalEntity()] })}><Plus className="mr-1 h-3.5 w-3.5" />Tilføj CVR</Button></div>
             {editor.legalEntities.map((entity, index) => <div key={entity.id ?? `new-${index}`} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
+              <div className="flex items-center justify-between gap-3 sm:col-span-2"><p className="text-sm font-medium">Juridisk enhed {index + 1}</p><Button type="button" size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => removeLegalEntity(index)}><Trash2 className="mr-1.5 h-4 w-4" />Slet enhed</Button></div>
               <div className="space-y-1.5 sm:col-span-2"><Label>Juridisk selskabsnavn</Label><Input value={entity.legalName} onChange={event => updateLegalEntity(index, { legalName: event.target.value })} /></div>
               <div className="space-y-1.5"><Label>CVR</Label><div className="flex gap-2"><Input inputMode="numeric" value={entity.registrationNumber} onChange={event => updateLegalEntity(index, { registrationNumber: event.target.value })} /><Button type="button" variant="outline" disabled={cvrLoadingIndex === index} onClick={() => lookupCvr(index)}>{cvrLoadingIndex === index ? <Loader2 className="h-4 w-4 animate-spin" /> : "Hent"}</Button></div></div>
               <div className="space-y-1.5"><Label>Telefonnummer</Label><Input type="tel" value={entity.contactPhone} onChange={event => updateLegalEntity(index, { contactPhone: event.target.value })} /></div>
@@ -446,6 +464,7 @@ export default function ProducersPage() {
               <div className="space-y-1.5"><Label>Branche</Label><Input value={entity.industryDescription} onChange={event => updateLegalEntity(index, { industryDescription: event.target.value })} /></div>
               <label className="flex items-center gap-2 text-sm sm:col-span-2"><input type="checkbox" checked={entity.isPrimary} onChange={event => setEditor({ ...editor, legalEntities: editor.legalEntities.map((row, rowIndex) => ({ ...row, isPrimary: event.target.checked && rowIndex === index })) })} />Primær juridisk enhed</label>
             </div>)}
+            {editor.legalEntities.length === 0 && <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Producenten har ingen juridiske enheder. Brug CVR-søgningen eller “Tilføj CVR” for at tilføje en.</p>}
           </div>
           {editingProducer && <div className="space-y-2 border-t pt-4">
             {(["works", "contracts"] as const).map(type => {
