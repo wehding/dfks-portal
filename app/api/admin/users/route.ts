@@ -6,7 +6,8 @@
  */
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { createServiceClient } from "@/lib/supabase/service"
+import type { AuditContext } from "@/lib/audit-log"
 import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
@@ -15,12 +16,8 @@ import { highestStaffRole, isStaffRole, STAFF_ROLES } from "@/lib/admin-roles"
 
 const ALLOWED_STAFF_ROLES = [...STAFF_ROLES]
 
-function getAdmin() {
-    return createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+function getAdmin(audit?: AuditContext) {
+    return createServiceClient({ audit })
 }
 
 async function ensureTargetUserInOrg(admin: ReturnType<typeof getAdmin>, userId: string, orgId: string) {
@@ -232,7 +229,13 @@ export async function PATCH(req: NextRequest) {
     const orgId = patchCaller.orgId
 
     const body = await req.json()
-    const admin = getAdmin()
+    const admin = getAdmin({
+        actorUserId: patchCaller.userId,
+        actorOrgId: patchCaller.orgId,
+        actorRole: patchCaller.role,
+        source: "admin",
+        correlationId: crypto.randomUUID(),
+    })
 
     // ── Slet post uden organisationstilknytning ─────────────
     if (body.action === "delete-unassigned") {

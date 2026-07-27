@@ -17,17 +17,16 @@ import { NextRequest, NextResponse } from "next/server"
 import { sendEmail, inviteEmailHtml } from "@/lib/email"
 import { resolveBranding, resolveEmailSenderName, resolveReplyToEmail } from "@/lib/branding"
 import { createClient as createServerClient } from "@/lib/supabase/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { createServiceClient } from "@/lib/supabase/service"
+import { recordAuditEvent } from "@/lib/audit-log-server"
+import type { AuditContext } from "@/lib/audit-log"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
 import { buildAccountAccessUrl } from "@/lib/auth/account-access"
 import { invitationAccessType, inviteSentAtAfterMail, isNewUserLimitReached } from "@/lib/auth/invitation-policy"
 
-function getAdmin() {
-    const url  = process.env.NEXT_PUBLIC_SUPABASE_URL!
-    const key  = process.env.SUPABASE_SERVICE_ROLE_KEY!
-    if (!url || !key) throw new Error("Supabase admin credentials mangler")
-    return createAdminClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } })
+function getAdmin(audit?: AuditContext) {
+    return createServiceClient({ audit })
 }
 
 async function findAuthUserByEmail(admin: ReturnType<typeof getAdmin>, email: string) {
@@ -97,7 +96,15 @@ export async function POST(req: NextRequest) {
         if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
         const body = await req.json()
-        const admin = getAdmin()
+        const correlationId = crypto.randomUUID()
+        const auditContext: AuditContext = {
+            actorUserId: caller.userId,
+            actorOrgId: caller.orgId,
+            actorRole: caller.role,
+            source: "admin",
+            correlationId,
+        }
+        const admin = getAdmin(auditContext)
 
         // ── Invite / reminder: opret eller gensend link ──────────
         if (body.action === "invite" || body.action === "reminder") {
@@ -238,6 +245,20 @@ export async function POST(req: NextRequest) {
                 if (sentAtError) console.error("[admin/user] Invitationsmailen blev sendt, men invite_sent_at kunne ikke opdateres.")
             }
 
+            await recordAuditEvent({
+                context: auditContext,
+                action: "invite",
+                entityType: isStaff ? "auth_users" : "rettighedshavere",
+                entityId: isStaff ? newUserId : String(rhId),
+                entityLabel: name || (isStaff ? "Medarbejder" : "Rettighedshaver"),
+                orgIds: [orgId],
+                metadata: {
+                    reminder: body.action === "reminder",
+                    linkType: accessType,
+                    emailDelivered: mail.ok,
+                },
+            })
+
             return NextResponse.json({
                 ok: true,
                 user_id: newUserId,
@@ -279,6 +300,15 @@ export async function POST(req: NextRequest) {
                 linkData.properties.hashed_token,
                 "recovery"
             )
+
+            await recordAuditEvent({
+                context: auditContext,
+                action: "reset_link",
+                entityType: body.rhId ? "rettighedshavere" : "auth_users",
+                entityId: String(body.rhId ?? body.userId ?? linkData.user.id),
+                entityLabel: "Nulstillingslink",
+                orgIds: [caller.orgId],
+            })
 
             return NextResponse.json({
                 ok: true,

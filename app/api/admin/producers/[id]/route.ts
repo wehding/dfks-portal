@@ -52,7 +52,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     preparedEntities.push({ entity, legalName, registrationNumber: registration.normalized });
   }
 
-  const db = createServiceClient();
+  const db = createServiceClient({ audit: {
+    actorUserId: auth.userId,
+    actorOrgId: auth.orgId,
+    actorRole: auth.role,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
   const parsedDfiId = body?.dfiCompanyId ? Number(body.dfiCompanyId) : null;
   const employerUpdate = await db.from("employers").update({
     name,

@@ -139,7 +139,13 @@ export async function POST(req: NextRequest) {
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
   if (!name) return NextResponse.json({ error: "Producentnavn er påkrævet" }, { status: 400 });
-  const db = createServiceClient();
+  const db = createServiceClient({ audit: {
+    actorUserId: auth.userId,
+    actorOrgId: auth.orgId,
+    actorRole: auth.role,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
   const { data: existing } = await db.from("employers").select("id,name").ilike("name", name).is("merged_into_id", null).limit(20);
   if ((existing ?? []).some(row => normalizeCompanyName(row.name) === normalizeCompanyName(name))) {
     return NextResponse.json({ error: "Producenten findes allerede" }, { status: 409 });

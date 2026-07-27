@@ -21,6 +21,7 @@ import {
     ShieldCheck,
     ChevronRight,
     Home,
+    FileClock,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -61,6 +62,7 @@ const ADMIN_NAV_ITEMS = [
 const SETUP_NAV_ITEMS = [
     { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
+    { key: "logning",             href: "/admin/logning",             icon: FileClock,   labelKey: "nav.auditLog"         },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
     { key: "min-profil",          href: "/admin/min-profil",          icon: UserCog,     labelKey: "nav.minProfil"        },
     { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },

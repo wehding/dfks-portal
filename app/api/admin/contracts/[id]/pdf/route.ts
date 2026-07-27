@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { requireAdminApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
+import { createServiceClient } from "@/lib/supabase/service"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 /**
  * GET /api/admin/contracts/[id]/pdf
@@ -18,11 +19,14 @@ export async function GET(
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
 
-    const admin = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+    const auditContext = {
+        actorUserId: auth.userId,
+        actorOrgId: auth.orgId,
+        actorRole: auth.role,
+        source: "admin" as const,
+        correlationId: crypto.randomUUID(),
+    }
+    const admin = createServiceClient({ audit: auditContext })
 
     let review: { storage_path: string | null }
     try {
@@ -39,6 +43,15 @@ export async function GET(
     if (signErr || !data?.signedUrl) {
         return NextResponse.json({ error: "Kunne ikke generere download-link" }, { status: 500 })
     }
+
+    await recordAuditEvent({
+        context: auditContext,
+        action: "download",
+        entityType: "contract_reviews",
+        entityId: id,
+        entityLabel: "Kontraktdokument",
+        orgIds: [auth.orgId],
+    })
 
     return NextResponse.json({ url: data.signedUrl })
 }
