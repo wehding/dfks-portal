@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Loader2, Search, Send } from "lucide-react";
 import { toast } from "sonner";
 import { createAdminInboxMessage, fetchAdminInbox, fetchAdminInboxRecipients, markInboxThreadRead, sendInboxReply } from "@/app/actions/member-inbox";
@@ -14,7 +16,7 @@ import { filterInboxRecipients, selectVisibleRecipientIds } from "@/lib/inbox-re
 
 type Recipient = { id: string; full_name: string; email: string | null };
 type Message = { id: string; author_role: string; body: string; created_at: string };
-type Thread = { id: string; subject: string; updated_at: string; rettighedshavere: { full_name: string } | null; member_messages: Message[] };
+type Thread = { id: string; subject: string; updated_at: string; rettighedshavere: { full_name: string } | null; member_messages: Message[]; category_label?: string; context_title?: string; requiresReply?: boolean; waitingSince?: string | null; can_reply?: boolean; action_href?: string };
 
 /**
  * Medlemsbeskeder for admin — ny besked (enkelt eller fælles) + tråde med svar.
@@ -22,6 +24,7 @@ type Thread = { id: string; subject: string; updated_at: string; rettighedshaver
  */
 export function AdminInboxPanel() {
   const { t, locale } = useI18n();
+  const router = useRouter();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
@@ -35,7 +38,12 @@ export function AdminInboxPanel() {
 
   const load = useCallback(async () => {
     const [inbox, recipientResult] = await Promise.all([fetchAdminInbox(), fetchAdminInboxRecipients()]);
-    if (!inbox.success) toast.error(inbox.error); else setThreads((inbox.threads ?? []) as Thread[]);
+    if (!inbox.success) toast.error(inbox.error); else {
+      const nextThreads = (inbox.threads ?? []) as Thread[];
+      setThreads(nextThreads);
+      const requestedThread = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("thread");
+      if (requestedThread && nextThreads.some(thread => thread.id === requestedThread)) setSelectedThread(requestedThread);
+    }
     if (!recipientResult.success) toast.error(recipientResult.error); else setRecipients((recipientResult.recipients ?? []) as Recipient[]);
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -66,7 +74,7 @@ export function AdminInboxPanel() {
     if (!active || !reply.trim()) return;
     setBusy(true); const result = await sendInboxReply(active.id, reply); setBusy(false);
     if (!result.success) return toast.error(result.error);
-    setReply(""); await load();
+    setReply(""); await load(); router.refresh();
   };
 
   return <div className="grid gap-6 xl:grid-cols-2">
@@ -82,27 +90,28 @@ export function AdminInboxPanel() {
       <div><label htmlFor="message-subject" className="text-sm font-medium">{t("admin.inbox.subject")}</label><Input id="message-subject" value={subject} onChange={event => setSubject(event.target.value)} maxLength={200} /></div><div><label htmlFor="message-body" className="text-sm font-medium">{t("admin.inbox.message")}</label><Textarea id="message-body" value={body} onChange={event => setBody(event.target.value)} maxLength={10000} rows={6} /></div><Button type="button" disabled={busy || !selectedRecipients.length} onClick={requestSend}>{busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}{t("admin.inbox.send")}</Button>
     </CardContent></Card>
     <Card><CardHeader><CardTitle>{t("admin.inbox.threads")}</CardTitle></CardHeader><CardContent className="space-y-4"><div className="max-h-52 space-y-2 overflow-auto">{threads.length ? threads.map(thread => {
-      const categoryLabel = (thread as any).category_label ?? "Generelt";
+      const categoryLabel = thread.category_label ?? "Generelt";
       const categoryText = categoryLabel === "Kontrakt" ? t("inbox.category.contract") : categoryLabel === "Værk" ? t("inbox.category.work") : categoryLabel === "Visning" ? t("inbox.category.screening") : t("inbox.category.general");
-      const contextTitle = (thread as any).context_title ?? thread.subject;
+      const contextTitle = thread.context_title ?? thread.subject;
       const badgeClass =
         categoryLabel === "Kontrakt" ? "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
         : categoryLabel === "Værk" ? "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300"
         : categoryLabel === "Visning" ? "bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300"
+        : categoryLabel === "Kontraktgennemgang" ? "bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300"
         : "bg-muted text-muted-foreground";
 
       return (
-        <button type="button" key={thread.id} onClick={() => setSelectedThread(thread.id)} className={`w-full rounded-md border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring ${selectedThread === thread.id ? "border-primary bg-primary/5" : "hover:bg-muted"}`}>
+        <button type="button" key={thread.id} onClick={() => setSelectedThread(thread.id)} className={`w-full rounded-md border p-3 text-left transition-colors focus-visible:ring-2 focus-visible:ring-ring ${thread.requiresReply ? "border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/20 dark:hover:bg-amber-950/35" : "hover:bg-muted"} ${selectedThread === thread.id ? thread.requiresReply ? "ring-2 ring-amber-500" : "border-primary bg-primary/5 ring-1 ring-primary" : ""}`}>
           <div className="flex items-center justify-between gap-2 mb-1">
             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeClass}`}>
               {categoryText}
             </span>
-            <span className="text-xs font-semibold text-foreground truncate">{thread.rettighedshavere?.full_name ?? "Medlem"}</span>
+            <span className="text-xs font-semibold text-foreground truncate">{thread.requiresReply && <span className="mr-1 text-amber-700">Afventer svar ·</span>}{thread.rettighedshavere?.full_name ?? "Medlem"}</span>
           </div>
           <span className="block text-xs font-medium text-muted-foreground truncate">{contextTitle}</span>
         </button>
       );
-    }) : <p className="text-sm text-muted-foreground">{t("admin.inbox.noThreads")}</p>}</div>{active && <div className="space-y-3 border-t pt-4"><div className="flex items-center gap-2"><span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-muted">{(active as any).category_label === "Kontrakt" ? t("inbox.category.contract") : (active as any).category_label === "Værk" ? t("inbox.category.work") : (active as any).category_label === "Visning" ? t("inbox.category.screening") : t("inbox.category.general")}</span><h3 className="font-semibold text-sm">{(active as any).context_title ?? active.subject}</h3></div><div className="max-h-72 space-y-2 overflow-auto">{[...active.member_messages].sort((a,b) => a.created_at.localeCompare(b.created_at)).map(message => <div key={message.id} className={`rounded-md p-2 text-sm ${message.author_role === "admin" ? "bg-primary/10" : "bg-muted"}`}><p className="whitespace-pre-wrap">{message.body}</p><span className="text-xs text-muted-foreground">{message.author_role === "admin" ? "DFKS" : t("admin.inbox.member")} · {new Date(message.created_at).toLocaleString(locale === "da" ? "da-DK" : "en-GB")}</span></div>)}</div><Textarea aria-label={t("admin.inbox.replyLabel")} value={reply} onChange={event => setReply(event.target.value)} /><Button type="button" onClick={sendReply} disabled={busy || !reply.trim()}>{t("admin.inbox.sendReply")}</Button></div>}</CardContent></Card>
+    }) : <p className="text-sm text-muted-foreground">{t("admin.inbox.noThreads")}</p>}</div>{active && <div className="space-y-3 border-t pt-4"><div className="flex items-center gap-2"><span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-muted">{active.category_label === "Kontrakt" ? t("inbox.category.contract") : active.category_label === "Værk" ? t("inbox.category.work") : active.category_label === "Visning" ? t("inbox.category.screening") : active.category_label === "Kontraktgennemgang" ? "Kontraktgennemgang" : t("inbox.category.general")}</span><h3 className="font-semibold text-sm">{active.context_title ?? active.subject}</h3></div><div className="max-h-72 space-y-2 overflow-auto">{[...active.member_messages].sort((a,b) => a.created_at.localeCompare(b.created_at)).map(message => <div key={message.id} className={`rounded-md p-2 text-sm ${message.author_role === "admin" ? "bg-primary/10" : "bg-muted"}`}><p className="whitespace-pre-wrap">{message.body}</p><span className="text-xs text-muted-foreground">{message.author_role === "admin" ? "DFKS" : t("admin.inbox.member")} · {new Date(message.created_at).toLocaleString(locale === "da" ? "da-DK" : "en-GB")}</span></div>)}</div>{active.can_reply !== false ? <><Textarea aria-label={t("admin.inbox.replyLabel")} value={reply} onChange={event => setReply(event.target.value)} /><Button type="button" onClick={sendReply} disabled={busy || !reply.trim()}>{t("admin.inbox.sendReply")}</Button></> : active.action_href ? <Button asChild><Link href={active.action_href}>Åbn gennemgang</Link></Button> : null}</div>}</CardContent></Card>
 
     <Dialog open={confirmOpen} onOpenChange={open => { if (!busy) setConfirmOpen(open); }}>
       <DialogContent className="max-w-md">

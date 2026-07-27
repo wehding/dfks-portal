@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeCvrLegalEntity, resolveProducerStatus } from "../lib/admin-producers";
+import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus, resolveProducerStatus } from "../lib/admin-producers";
+
+test("Producentforeningen skelner ordinære og associerede medlemmer", () => {
+  assert.equal(resolveProducerAssociationStatus(["associate"]), "associate");
+  assert.equal(producerAssociationLabel("associate"), "Associeret medlem af Producentforeningen");
+  assert.equal(resolveProducerAssociationStatus(["associate", "ordinary"]), "ordinary");
+  assert.equal(producerAssociationLabel("ordinary"), "Medlem af Producentforeningen");
+  assert.equal(resolveProducerAssociationStatus([]), "none");
+});
 
 test("producentstatus prioriterer kladder over øvrig aktivitet", () => {
   assert.equal(resolveProducerStatus(["valideret", "kladde"], 2), "attention");

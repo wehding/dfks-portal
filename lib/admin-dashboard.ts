@@ -10,6 +10,12 @@ export type ResponseTimeStats = {
   answeredCount: number;
   unansweredCount: number;
   oldestUnansweredAt: string | null;
+  oldestUnansweredThreadId: string | null;
+};
+
+export type ThreadResponseState = {
+  requiresReply: boolean;
+  waitingSince: string | null;
 };
 
 export type AdminDashboardMetrics = {
@@ -36,7 +42,19 @@ function percentile(sorted: number[], fraction: number) {
   return sorted[index];
 }
 
-export function calculateResponseTimeStats(events: ResponseEvent[]): ResponseTimeStats {
+export function calculateThreadResponseState(events: Pick<ResponseEvent, "role" | "createdAt">[]): ThreadResponseState {
+  const rows = events
+    .filter(event => Number.isFinite(new Date(event.createdAt).getTime()))
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  let waitingSince: string | null = null;
+  for (const row of rows) {
+    if (row.role === "member") waitingSince ??= row.createdAt;
+    else if (waitingSince) waitingSince = null;
+  }
+  return { requiresReply: Boolean(waitingSince), waitingSince };
+}
+
+export function calculateResponseTimeStats(events: ResponseEvent[], responseWindowStart?: string): ResponseTimeStats {
   const threads = new Map<string, ResponseEvent[]>();
   for (const event of events) {
     if (!Number.isFinite(new Date(event.createdAt).getTime())) continue;
@@ -46,28 +64,32 @@ export function calculateResponseTimeStats(events: ResponseEvent[]): ResponseTim
   }
 
   const answered: number[] = [];
-  const unanswered: string[] = [];
-  for (const rows of threads.values()) {
+  const unanswered: Array<{ threadId: string; waitingSince: string }> = [];
+  for (const [threadId, rows] of threads) {
     rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     let waitingSince: string | null = null;
     for (const row of rows) {
       if (row.role === "member") {
         waitingSince ??= row.createdAt;
       } else if (waitingSince) {
-        answered.push(new Date(row.createdAt).getTime() - new Date(waitingSince).getTime());
+        if (!responseWindowStart || waitingSince >= responseWindowStart) {
+          answered.push(new Date(row.createdAt).getTime() - new Date(waitingSince).getTime());
+        }
         waitingSince = null;
       }
     }
-    if (waitingSince) unanswered.push(waitingSince);
+    if (waitingSince) unanswered.push({ threadId, waitingSince });
   }
 
   answered.sort((a, b) => a - b);
+  unanswered.sort((a, b) => a.waitingSince.localeCompare(b.waitingSince));
   return {
     medianMs: percentile(answered, 0.5),
     p90Ms: percentile(answered, 0.9),
     answeredCount: answered.length,
     unansweredCount: unanswered.length,
-    oldestUnansweredAt: unanswered.sort()[0] ?? null,
+    oldestUnansweredAt: unanswered[0]?.waitingSince ?? null,
+    oldestUnansweredThreadId: unanswered[0]?.threadId ?? null,
   };
 }
 

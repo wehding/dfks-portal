@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
-import { mergeCvrLegalEntity } from "@/lib/admin-producers";
+import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
 type BroadcasterOption = { id: string; name: string; logo_path: string | null; content_type: string | null };
@@ -28,6 +28,12 @@ type DetailState = { loading: boolean; error: string | null; rows: Array<WorkDet
 type DetailType = "works" | "contracts" | "legal_entities";
 type LegalEntityDraft = { id?: string; legalName: string; registrationNumber: string; address: string; contactPhone: string; contactEmail: string; website: string; registrationStatus: string; industryCode: string; industryDescription: string; companyType: string; isPrimary: boolean };
 type ProducerDraft = { id?: string; name: string; dfiCompanyId: string; isBroadcaster: boolean; broadcasterId: string; affectedWorkCount: number; legalEntities: LegalEntityDraft[]; deletedLegalEntityIds: string[] };
+
+function ProducerAssociationBadge({ memberships }: { memberships: AssociationMembership[] }) {
+  const status = resolveProducerAssociationStatus(memberships.map(membership => membership.membership_type));
+  if (status === "none") return null;
+  return <Badge variant="outline" className={status === "ordinary" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : status === "associate" ? "border-sky-300 bg-sky-50 text-sky-800" : "text-muted-foreground"}>{producerAssociationLabel(status)}</Badge>;
+}
 type CvrSearchResult = { name: string; cvrNumber: string; industryCode: string | null; industryDescription: string | null; score?: number };
 type SyncCandidate = { id: string; name: string; score: number; matchMethod: string };
 type SyncGroup = { groupCode: string; groupLabel: string; membershipType: "ordinary" | "associate" | "unknown"; sourceName: string; ownerCeoText: string | null; website: string | null; address: string | null; postalCity: string | null; sourceUrl: string };
@@ -291,7 +297,11 @@ export default function ProducersPage() {
   const attentionCount = producers.filter(producer => producer.status === "attention").length;
   const totalWorks = producers.reduce((sum, producer) => sum + producer.work_count, 0);
   const totalContracts = producers.reduce((sum, producer) => sum + producer.contract_count, 0);
-  const associationMemberCount = producers.filter(producer => producer.association_memberships.length > 0).length;
+  const associationCounts = producers.reduce((counts, producer) => {
+    const associationStatus = resolveProducerAssociationStatus(producer.association_memberships.map(membership => membership.membership_type));
+    if (associationStatus !== "none") counts[associationStatus] += 1;
+    return counts;
+  }, { ordinary: 0, associate: 0, unknown: 0 });
   const statusLabel = (value: Producer["status"]) => t(`admin.producers.status.${value}` as Parameters<typeof t>[0]);
   const detailKey = (id: string, type: DetailType) => `${id}:${type}`;
   const loadDetails = async (id: string, type: DetailType, force = false) => {
@@ -374,12 +384,14 @@ export default function ProducersPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void previewAssociationSync()}><RefreshCw className="mr-2 h-4 w-4" />Hent fra Producentforeningen</Button><Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Tilføj producent</Button></div>} />
     {lastSync && <p className="-mt-4 text-xs text-muted-foreground">Producentforeningen: seneste {lastSync.status === "applied" ? "gennemførte" : "forsøgte"} synkronisering {new Date(lastSync.applied_at ?? lastSync.created_at).toLocaleString("da-DK")}</p>}
-    {!loading && <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-6">
+    {!loading && <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
       {[
         { label: "Viste producenter", value: producers.length },
         { label: "Aktive", value: activeCount },
         { label: "Kræver opmærksomhed", value: attentionCount },
-        { label: "Medlem af Producentforeningen", value: associationMemberCount },
+        { label: "Medlem af Producentforeningen", value: associationCounts.ordinary },
+        { label: "Associeret medlem", value: associationCounts.associate },
+        { label: "Uklassificeret medlemsstatus", value: associationCounts.unknown },
         { label: "Tilknyttede værker", value: totalWorks },
         { label: "Tilknyttede kontrakter", value: totalContracts },
       ].map(item => <div key={item.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
@@ -390,7 +402,7 @@ export default function ProducersPage() {
     <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
       <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
-      <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producentforeningen" /></SelectTrigger><SelectContent><SelectItem value="all">Alle medlemsgrupper</SelectItem><SelectItem value="member">Medlem af Producentforeningen</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="fiction">Spillefilm - fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem></SelectContent></Select>
+      <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producentforeningen" /></SelectTrigger><SelectContent><SelectItem value="all">Alle medlemsgrupper</SelectItem><SelectItem value="ordinary">Medlem af Producentforeningen</SelectItem><SelectItem value="associate">Associeret medlem</SelectItem><SelectItem value="unknown">Uklassificeret medlemsstatus</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="fiction">Spillefilm - fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem></SelectContent></Select>
       <Select value={rightsHolderId} onValueChange={setRightsHolderId}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder={t("admin.producers.rightsHolder")} /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allRightsHolders")}</SelectItem>{rightsHolders.map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent></Select>
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
@@ -406,7 +418,7 @@ export default function ProducersPage() {
           <div className="flex items-start gap-3">
             <input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} />
             <ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleProducer(producer.id)} label={isExpanded ? `Skjul detaljer for ${producer.name}` : `Vis detaljer for ${producer.name}`} className="mt-0.5" />
-            <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(producer)}><p className="font-medium hover:underline">{producer.name}</p><div className="mt-1 flex flex-wrap items-center gap-1.5">{producer.association_memberships.length > 0 && <Badge variant="outline">Producentforeningen</Badge>}<span className="text-sm text-muted-foreground">{broadcaster ? `${broadcaster.name} · broadcaster/streamer` : producer.parent_name ?? "—"}</span></div></button>
+            <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(producer)}><p className="font-medium hover:underline">{producer.name}</p><div className="mt-1 flex flex-wrap items-center gap-1.5"><ProducerAssociationBadge memberships={producer.association_memberships} /><span className="text-sm text-muted-foreground">{broadcaster ? `${broadcaster.name} · broadcaster/streamer` : producer.parent_name ?? "—"}</span></div></button>
             <Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-2"><MobileMetaRow label={t("admin.producers.works")}>{producer.work_count}</MobileMetaRow><MobileMetaRow label={t("admin.producers.contracts")}>{producer.contract_count}</MobileMetaRow></div>
@@ -416,7 +428,7 @@ export default function ProducersPage() {
       <ResponsiveTableFrame><Table><TableHeader><TableRow><TableHead className="w-10"><input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label={t("common.selectAll")} /></TableHead>{[["name","admin.producers.producer"],["parent","admin.producers.parent"],["status","common.status"],["works","admin.producers.works"],["contracts","admin.producers.contracts"],["latest","admin.producers.latest"]].map(([key,label]) => <TableHead key={key}><button type="button" onClick={() => changeSort(key)}>{t(label as Parameters<typeof t>[0])}{mark(key)}</button></TableHead>)}</TableRow></TableHeader><TableBody>{producers.length ? producers.map(producer => {
         const isExpanded = open.has(producer.id);
         const broadcaster = Array.isArray(producer.broadcasters) ? producer.broadcasters[0] : producer.broadcasters;
-        return <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium"><div className="flex items-center gap-2"><ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleProducer(producer.id)} label={isExpanded ? `Skjul detaljer for ${producer.name}` : `Vis detaljer for ${producer.name}`} /><button type="button" className="text-left hover:underline" onClick={() => openEdit(producer)}>{producer.name}</button>{producer.dfi_company_id && <span className="text-xs font-normal text-muted-foreground">DFI #{producer.dfi_company_id}</span>}{producer.association_memberships.length > 0 && <Badge variant="outline">Producentforeningen</Badge>}</div></TableCell><TableCell>{broadcaster ? <Badge variant="outline" className="gap-1"><Radio className="h-3 w-3" />{broadcaster.name}</Badge> : producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell>{producer.work_count}</TableCell><TableCell>{producer.contract_count}</TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{isExpanded && <TableRow><TableCell colSpan={7} className="p-0"><ProducerDetails producer={producer} /></TableCell></TableRow>}</Fragment>;
+        return <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium"><div className="flex items-center gap-2"><ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleProducer(producer.id)} label={isExpanded ? `Skjul detaljer for ${producer.name}` : `Vis detaljer for ${producer.name}`} /><button type="button" className="text-left hover:underline" onClick={() => openEdit(producer)}>{producer.name}</button>{producer.dfi_company_id && <span className="text-xs font-normal text-muted-foreground">DFI #{producer.dfi_company_id}</span>}<ProducerAssociationBadge memberships={producer.association_memberships} /></div></TableCell><TableCell>{broadcaster ? <Badge variant="outline" className="gap-1"><Radio className="h-3 w-3" />{broadcaster.name}</Badge> : producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell>{producer.work_count}</TableCell><TableCell>{producer.contract_count}</TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{isExpanded && <TableRow><TableCell colSpan={7} className="p-0"><ProducerDetails producer={producer} /></TableCell></TableRow>}</Fragment>;
       }) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
     </>}
 
@@ -435,7 +447,7 @@ export default function ProducersPage() {
             <p className="text-xs text-muted-foreground">DFI leverer ikke CVR-oplysninger. CVR-data vedligeholdes separat nedenfor.</p>
           </div>
           <div className="space-y-3 rounded-lg border p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold">Medlem af Producentforeningen</h3><p className="text-xs text-muted-foreground">Oplysningerne kommer fra Producentforeningens offentlige medlemslister.</p></div>{editingProducer?.association_memberships.length ? <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800">Bekræftet medlem</Badge> : <Badge variant="outline">Ikke bekræftet</Badge>}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-semibold">Producentforeningen</h3><p className="text-xs text-muted-foreground">Oplysningerne kommer fra Producentforeningens offentlige medlemslister.</p></div>{editingProducer?.association_memberships.length ? <ProducerAssociationBadge memberships={editingProducer.association_memberships} /> : <Badge variant="outline">Ikke bekræftet</Badge>}</div>
             {editingProducer?.association_memberships.length ? <div className="space-y-3">
               <div className="flex flex-wrap gap-1.5">{editingProducer.association_memberships.map(membership => <Badge key={membership.id} variant="secondary">{membership.group_label}{membership.membership_type === "associate" ? " · associeret" : membership.membership_type === "ordinary" ? " · ordinært" : ""}</Badge>)}</div>
               {editingProducer.association_memberships.find(membership => membership.owner_ceo_text)?.owner_ceo_text && <div><p className="text-xs font-medium text-muted-foreground">Ejere / CEO</p><p className="text-sm">{editingProducer.association_memberships.find(membership => membership.owner_ceo_text)?.owner_ceo_text}</p></div>}

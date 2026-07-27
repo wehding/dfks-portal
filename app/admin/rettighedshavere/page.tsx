@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import type { ReactNode } from "react"
+import { Fragment, type ReactNode } from "react"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -12,7 +12,7 @@ import {
 } from "@/lib/db/rettighedshavere"
 import { createRettighedshaverSecure, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
+import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -135,6 +135,7 @@ export default function RettighedshavereAdminPage() {
     const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
+    const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
     const [search, setSearch] = useState("")
     useEffect(() => { setSearch(new URLSearchParams(window.location.search).get("search") ?? "") }, [])
@@ -813,6 +814,7 @@ export default function RettighedshavereAdminPage() {
                     const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                     const hasLogin = !!rh.user_id
                     const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
+                    const relationsExpanded = expandedRightsHolderId === rh.id
                     return (
                         <MobileDataCard key={rh.id}>
                             <div className="flex items-start justify-between gap-3">
@@ -824,6 +826,7 @@ export default function RettighedshavereAdminPage() {
                                         onChange={event => toggleSelected(rh.id, event.target.checked)}
                                         aria-label={`Vælg ${rh.full_name}`}
                                     />
+                                    <ExpandableListTrigger expanded={relationsExpanded} onToggle={() => setExpandedRightsHolderId(current => current === rh.id ? null : rh.id)} label={relationsExpanded ? `Skjul værker og kontrakter for ${rh.full_name}` : `Vis værker og kontrakter for ${rh.full_name}`} className="mt-0.5" />
                                     <button className="min-w-0 text-left" onClick={() => openEdit(rh)}>
                                         <p className="truncate font-medium">{rh.full_name}</p>
                                         <p className="mt-1 truncate text-sm text-muted-foreground">{rh.email ?? "Ingen email"}</p>
@@ -868,7 +871,7 @@ export default function RettighedshavereAdminPage() {
                                         : <span className="text-muted-foreground">Ingen adgang</span>}
                                 </MobileMetaRow>
                             </div>
-                            <RightsHolderRelations rightsHolderId={rh.id} />
+                            {relationsExpanded && <div className="mt-4 border-t pt-3"><RightsHolderRelations rightsHolderId={rh.id} workCount={counts.works} contractCount={counts.contracts} /></div>}
                         </MobileDataCard>
                     )
                 })}
@@ -908,8 +911,10 @@ export default function RettighedshavereAdminPage() {
                             const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
                             const hasLogin = !!rh.user_id
                             const counts = countsByRightsHolder[rh.id] ?? { contracts: 0, works: 0, allContractsValidated: false }
+                            const relationsExpanded = expandedRightsHolderId === rh.id
                             return (
-                                <TableRow key={rh.id}>
+                                <Fragment key={rh.id}>
+                                <TableRow>
                                     <TableCell>
                                         <input
                                             type="checkbox"
@@ -918,7 +923,7 @@ export default function RettighedshavereAdminPage() {
                                             aria-label={`Vælg ${rh.full_name}`}
                                         />
                                     </TableCell>
-                                    <TableCell className="font-medium"><button type="button" className="text-left hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</button><RightsHolderRelations rightsHolderId={rh.id} /></TableCell>
+                                    <TableCell className="font-medium"><div className="flex items-center gap-2"><ExpandableListTrigger expanded={relationsExpanded} onToggle={() => setExpandedRightsHolderId(current => current === rh.id ? null : rh.id)} label={relationsExpanded ? `Skjul værker og kontrakter for ${rh.full_name}` : `Vis værker og kontrakter for ${rh.full_name}`} /><button type="button" className="text-left hover:text-blue-600 hover:underline" onClick={() => openEdit(rh)}>{rh.full_name}</button></div></TableCell>
                                     {canSeeAllOrganisations && <TableCell className="text-sm text-muted-foreground">{rh.organisation_names.join(", ") || "Uden tilknytning"}</TableCell>}
                                     <TableCell className="text-muted-foreground text-sm">{rh.email ?? "—"}</TableCell>
                                     <TableCell className="text-muted-foreground text-sm">{rh.phone ?? "—"}</TableCell>
@@ -1031,6 +1036,8 @@ export default function RettighedshavereAdminPage() {
                                         </DropdownMenu>
                                     </TableCell>
                                 </TableRow>
+                                {relationsExpanded && <TableRow><TableCell colSpan={canSeeAllOrganisations ? 12 : 11} className="bg-muted/10 p-4"><RightsHolderRelations rightsHolderId={rh.id} workCount={counts.works} contractCount={counts.contracts} /></TableCell></TableRow>}
+                                </Fragment>
                             )
                         })}
                     </TableBody>

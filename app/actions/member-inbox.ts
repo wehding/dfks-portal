@@ -8,6 +8,8 @@ import { requireOrgId } from "@/lib/org";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { addMemberContractComment, addAdminContractComment, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addScreeningClaimComment, markScreeningClaimCommentsRead } from "@/app/actions/screenings";
+import { addAdminWorkRequestComment, markWorkRequestCommentsRead } from "@/app/actions/work-management";
+import { calculateThreadResponseState } from "@/lib/admin-dashboard";
 
 // De sammensatte tråd-id'er fra fetchMemberInbox/fetchAdminInbox: "contract-<uuid>" og
 // "screening-<uuid>" peger IKKE på member_message_threads. Denne helper afkoder kilden, så
@@ -15,10 +17,14 @@ import { addScreeningClaimComment, markScreeningClaimCommentsRead } from "@/app/
 type InboxThreadRef =
   | { kind: "direct"; id: string }
   | { kind: "contract"; id: string }
+  | { kind: "work"; id: string }
+  | { kind: "review"; id: string }
   | { kind: "screening"; id: string };
 
 function parseInboxThreadId(threadId: string): InboxThreadRef {
   if (threadId.startsWith("contract-")) return { kind: "contract", id: threadId.slice("contract-".length) };
+  if (threadId.startsWith("work-")) return { kind: "work", id: threadId.slice("work-".length) };
+  if (threadId.startsWith("review-")) return { kind: "review", id: threadId.slice("review-".length) };
   if (threadId.startsWith("screening-")) return { kind: "screening", id: threadId.slice("screening-".length) };
   return { kind: "direct", id: threadId };
 }
@@ -177,11 +183,15 @@ export async function fetchAdminInbox() {
     .eq("org_id", orgId).order("updated_at", { ascending: false });
   if (error) return { success: false, error: error.message, threads: [] };
 
-  const unifiedThreads: any[] = (directThreads ?? []).map(t => ({
-    ...t,
-    source_type: "direct",
-    category_label: "Generelt",
-    context_title: t.subject,
+  const decorate = (thread: any) => {
+    const state = calculateThreadResponseState((thread.member_messages ?? []).map((message: any) => ({
+      role: message.author_role === "member" ? "member" as const : "staff" as const,
+      createdAt: message.created_at,
+    })));
+    return { ...thread, ...state };
+  };
+  const unifiedThreads: any[] = (directThreads ?? []).map(t => decorate({
+    ...t, source_type: "direct", category_label: "Generelt", context_title: t.subject, can_reply: true,
   }));
 
   // Kontraktkommentarer for admin
@@ -196,7 +206,7 @@ export async function fetchAdminInbox() {
     const lastComment = comments.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
     const unread = comments.some(m => m.author_role === "member" && !m.admin_read_at);
     const rh = Array.isArray(c.rettighedshavere) ? c.rettighedshavere[0] : c.rettighedshavere;
-    unifiedThreads.push({
+    unifiedThreads.push(decorate({
       id: `contract-${c.id}`,
       contract_id: c.id,
       source_type: "contract",
@@ -215,10 +225,74 @@ export async function fetchAdminInbox() {
         created_at: m.created_at,
       })),
       member_message_participants: [{ user_id: user.id, last_read_at: unread ? null : new Date().toISOString() }],
-    });
+      can_reply: true,
+    }));
   });
 
-  unifiedThreads.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  const [{ data: workRequests }, { data: claims }, { data: reviews }] = await Promise.all([
+    db.from("work_change_requests")
+      .select("id,work_id,requested_by_rights_holder_id,status,created_at,reviewed_at,works(title),rettighedshavere(full_name,email),work_change_request_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+      .eq("org_id", orgId),
+    db.from("screening_claims")
+      .select("id,profile_id,title,channel,status,created_at,reviewed_at,screening_claim_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+      .eq("org_id", orgId),
+    db.from("contract_reviews")
+      .select("id,member_name,member_email,file_name,notes,status,reviewed_at,updated_at,jurist_response,jurist_response_at")
+      .eq("org_id", orgId),
+  ]);
+
+  for (const request of workRequests ?? []) {
+    const comments = [{ id: `work-request-${request.id}`, author_user_id: "", author_role: "member", message: "Der er indsendt en rettelse til værket.", created_at: request.created_at }, ...((request.work_change_request_comments ?? []) as any[])]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (request.status !== "pending" && request.reviewed_at) {
+      comments.push({ id: `work-reviewed-${request.id}`, author_user_id: "", author_role: "admin", message: "Værksanmodningen er behandlet.", created_at: request.reviewed_at });
+      comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    }
+    const work = Array.isArray(request.works) ? request.works[0] : request.works;
+    const holder = Array.isArray(request.rettighedshavere) ? request.rettighedshavere[0] : request.rettighedshavere;
+    unifiedThreads.push(decorate({
+      id: `work-${request.id}`, source_type: "work", category_label: "Værk", context_title: `Værk: ${work?.title ?? "Rettelse"}`,
+      subject: `Værkbesked: ${work?.title ?? "Rettelse"}`, updated_at: comments.at(-1)?.created_at ?? request.created_at,
+      created_at: comments[0]?.created_at ?? request.created_at, rettighedshavere: holder, can_reply: true,
+      member_messages: comments.map(message => ({ ...message, body: message.message })),
+    }));
+  }
+
+  const profileIds = [...new Set((claims ?? []).map(claim => claim.profile_id))];
+  const { data: screeningHolders } = profileIds.length
+    ? await db.from("rettighedshavere").select("user_id,full_name,email").in("user_id", profileIds)
+    : { data: [] as any[] };
+  const holderByUserId = new Map((screeningHolders ?? []).map(holder => [holder.user_id, holder]));
+  for (const claim of claims ?? []) {
+    const comments = [{ id: `screening-request-${claim.id}`, author_user_id: "", author_role: "member", message: "Der er indsendt en visningsindberetning.", created_at: claim.created_at }, ...((claim.screening_claim_comments ?? []) as any[])]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (claim.status !== "pending" && claim.reviewed_at) {
+      comments.push({ id: `screening-reviewed-${claim.id}`, author_user_id: "", author_role: "admin", message: "Visningsindberetningen er behandlet.", created_at: claim.reviewed_at });
+      comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    }
+    unifiedThreads.push(decorate({
+      id: `screening-${claim.id}`, source_type: "screening", category_label: "Visning", context_title: `Visning: ${claim.title}${claim.channel ? ` · ${claim.channel}` : ""}`,
+      subject: `Visningsbesked: ${claim.title}`, updated_at: comments.at(-1)?.created_at ?? claim.created_at,
+      created_at: comments[0]?.created_at ?? claim.created_at, rettighedshavere: holderByUserId.get(claim.profile_id) ?? null, can_reply: true,
+      member_messages: comments.map(message => ({ ...message, body: message.message })),
+    }));
+  }
+
+  for (const review of reviews ?? []) {
+    const messages = [{ id: `review-request-${review.id}`, author_user_id: "", author_role: "member", body: review.notes || "Kontrakten afventer juridisk gennemgang.", created_at: review.reviewed_at }];
+    if (review.jurist_response_at) messages.push({ id: `review-response-${review.id}`, author_user_id: "", author_role: "admin", body: review.jurist_response || "Gennemgangen er besvaret.", created_at: review.jurist_response_at });
+    else if (!["afventer", "behandling"].includes(review.status) && review.updated_at) messages.push({ id: `review-closed-${review.id}`, author_user_id: "", author_role: "admin", body: "Kontraktgennemgangen er afsluttet.", created_at: review.updated_at });
+    unifiedThreads.push(decorate({
+      id: `review-${review.id}`, source_type: "review", category_label: "Kontraktgennemgang", context_title: review.file_name || "Kontraktgennemgang",
+      subject: review.file_name || "Kontraktgennemgang", updated_at: review.jurist_response_at || review.reviewed_at, created_at: review.reviewed_at,
+      rettighedshavere: { full_name: review.member_name || "Medlem", email: review.member_email }, member_messages: messages,
+      can_reply: false, action_href: `/admin/kontraktgennemgang/${review.id}`,
+    }));
+  }
+
+  unifiedThreads.sort((a, b) => Number(b.requiresReply) - Number(a.requiresReply) || (a.requiresReply
+    ? String(a.waitingSince).localeCompare(String(b.waitingSince))
+    : new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()));
   return { success: true, threads: unifiedThreads };
 }
 
@@ -297,6 +371,17 @@ export async function sendInboxReply(threadId: string, bodyValue: string) {
     const res = await addScreeningClaimComment({ claimId: ref.id, message: body, authorRole: isAdmin ? "admin" : "member" });
     return res.success ? { success: true } : { success: false, error: res.error };
   }
+  if (ref.kind === "work") {
+    const isAdmin = Boolean(await assertAdminRole(supabase));
+    if (!isAdmin) return { success: false, error: "Værksbeskeder besvares fra værksformularen." };
+    try {
+      await addAdminWorkRequestComment({ requestId: ref.id, message: body });
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : "Beskeden kunne ikke sendes" };
+    }
+  }
+  if (ref.kind === "review") return { success: false, error: "Åbn kontraktgennemgangen for at behandle den." };
 
   const db = createServiceClient();
   const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", ref.id).maybeSingle();
@@ -320,14 +405,17 @@ export async function markInboxThreadRead(threadId: string) {
   if (!user) return { success: false };
 
   const ref = parseInboxThreadId(threadId);
-  if (ref.kind === "contract" || ref.kind === "screening") {
+  if (ref.kind === "contract" || ref.kind === "screening" || ref.kind === "work") {
     const isAdmin = Boolean(await assertAdminRole(supabase));
     const viewerRole = isAdmin ? "admin" : "member";
     const res = ref.kind === "contract"
       ? await markContractCommentsRead(ref.id, viewerRole)
-      : await markScreeningClaimCommentsRead(ref.id, viewerRole);
+      : ref.kind === "screening"
+        ? await markScreeningClaimCommentsRead(ref.id, viewerRole)
+        : await markWorkRequestCommentsRead(ref.id, viewerRole);
     return { success: Boolean(res?.success) };
   }
+  if (ref.kind === "review") return { success: true };
 
   const db = createServiceClient();
   const { data: thread } = await db.from("member_message_threads").select("id,org_id,rights_holder_id").eq("id", ref.id).maybeSingle();

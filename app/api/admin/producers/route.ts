@@ -118,7 +118,9 @@ export async function GET(req: NextRequest) {
     ...row.legal_entities.flatMap(entity => [entity.legal_name, entity.registration_number ?? ""]),
   ].join(" ").toLocaleLowerCase("da").includes(query));
   if (status && ["attention", "active", "inactive"].includes(status)) rows = rows.filter(row => row.status === status);
-  if (associationGroup === "member") rows = rows.filter(row => row.association_memberships.length > 0);
+  if (associationGroup === "ordinary" || associationGroup === "member") rows = rows.filter(row => row.association_memberships.some(membership => membership.membership_type === "ordinary"));
+  else if (associationGroup === "associate") rows = rows.filter(row => !row.association_memberships.some(membership => membership.membership_type === "ordinary") && row.association_memberships.some(membership => membership.membership_type === "associate"));
+  else if (associationGroup === "unknown") rows = rows.filter(row => !row.association_memberships.some(membership => ["ordinary", "associate"].includes(membership.membership_type)) && row.association_memberships.length > 0);
   else if (associationGroup && ["documentary", "fiction", "tv", "advertising", "dubbing", "animation"].includes(associationGroup)) {
     rows = rows.filter(row => row.association_memberships.some(membership => membership.group_code === associationGroup));
   }
