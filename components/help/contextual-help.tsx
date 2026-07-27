@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { HelpCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useI18n } from "@/lib/i18n";
+import { shouldAutoOpenContextualHelp } from "@/lib/contextual-help";
 
 export type HelpTopic = {
   title: string;
@@ -19,6 +20,7 @@ type ContextualHelpProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   storageKey?: string;
+  autoOpenOnFirstVisit?: boolean;
 };
 
 export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-2 sm:w-auto" }: { onClick: () => void; label?: string; className?: string }) {
@@ -32,14 +34,15 @@ export function HelpButton({ onClick, label = "Hjælp", className = "w-full gap-
   );
 }
 
-export function ContextualHelp({ title, intro, topics, open, onOpenChange, storageKey }: ContextualHelpProps) {
+export function ContextualHelp({ title, intro, topics, open, onOpenChange, storageKey, autoOpenOnFirstVisit = false }: ContextualHelpProps) {
   const { t } = useI18n();
   useEffect(() => {
-    if (!storageKey || typeof window === "undefined") return;
-    if (window.localStorage.getItem(storageKey) === "seen") return;
+    if (typeof window === "undefined") return;
+    const seen = storageKey ? window.localStorage.getItem(storageKey) === "seen" : false;
+    if (!storageKey || !shouldAutoOpenContextualHelp({ autoOpenOnFirstVisit, storageKey, seen })) return;
     window.localStorage.setItem(storageKey, "seen");
     onOpenChange(true);
-  }, [onOpenChange, storageKey]);
+  }, [autoOpenOnFirstVisit, onOpenChange, storageKey]);
 
   if (!open) return null;
 
