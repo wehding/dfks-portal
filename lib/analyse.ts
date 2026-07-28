@@ -8,8 +8,9 @@
 
 import { extractPdfText } from "@/lib/pdf-parse"
 import { extractWordText } from "@/lib/word-text"
-import { callAi } from "@/lib/ai-client"
-import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
+import { callAiDetailed } from "@/lib/ai-client"
+import { getAiRuntimeConfig } from "@/lib/ai-runtime"
+import { createAiUsageRun, finishAiUsageRun, type AiUsageContext } from "@/lib/ai-usage"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { hentKontekst } from "@/lib/retrieval"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
@@ -69,25 +70,14 @@ export type Klassifikation = {
 
 async function klassificerKontrakt(
     kontraktTekst: string,
-    apiKey: string,
-    model: string
+    provider: string,
+    model: string,
+    usageContext: AiUsageContext
 ): Promise<Klassifikation> {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-            model,
-            max_tokens: 500,
-            system: `Du klassificerer danske filmkontrakter.
+    const system = `Du klassificerer danske filmkontrakter.
 Returnér KUN valid JSON — ingen tekst før eller efter.
-Brug null hvis et felt ikke kan bestemmes.`,
-            messages: [{
-                role: "user",
-                content: `Klassificér denne kontrakt:\n\n${kontraktTekst.slice(0, 4000)}
+Brug null hvis et felt ikke kan bestemmes.`
+    const userMessage = `Klassificér denne kontrakt:\n\n${kontraktTekst.slice(0, 4000)}
 
 Returnér JSON med disse felter:
 {
@@ -103,10 +93,7 @@ Returnér JSON med disse felter:
   "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" (ved 'total fee', 'fixed fee', 'lump sum', 'flat fee', 'fast honorar', 'samlet honorar') ELLER "ukendt",
   "loen_valuta": "DKK" ELLER "USD" (ved $) ELLER "EUR" (ved €) ELLER "GBP" (ved £) ELLER "other",
   "produktionstype": "spillefilm" ELLER "tvserie" ELLER "dokumentar" ELLER "kortfilm" ELLER "ukendt"
-}`,
-            }],
-        }),
-    })
+}`
 
     const defaultKlassifikation: Klassifikation = {
         kontrakttype: "hybrid",
@@ -123,14 +110,12 @@ Returnér JSON med disse felter:
         produktionstype: "ukendt",
     }
 
-    if (!response.ok) {
-        const err = await response.text()
-        logWarn("analyse", "Klassifikation fejlede", { status: response.status, error: err.slice(0, 120) })
+    let raw = "{}"
+    try {
+        raw = (await callAiDetailed({ provider, model, system, userMessage, maxTokens: 500, responseJson: true, usageContext })).text
+    } catch {
         return defaultKlassifikation
     }
-
-    const data = await response.json()
-    const raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? "{}"
     const first = raw.indexOf("{")
     const last = raw.lastIndexOf("}")
     if (first === -1 || last === -1) {
@@ -453,9 +438,10 @@ export type AnalyseInput = {
     orgId?: string | null
     memberId?: string | null
     memberEmail?: string | null
-    // existingReviewId fjernet — DB-persistering er ruternes ansvar, ikke analyserKontrakt's
-    provider?: string
-    model?: string
+    entityId?: string | null
+    actorUserId?: string | null
+    source?: "portal" | "admin" | "api" | "cron" | "import"
+    // Provider og model bestemmes altid server-side fra ai_runtime_settings.
 }
 
 export type AnalyseOutput = {
@@ -481,9 +467,13 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         focusAreas = [],
         notes,
         orgId,
-        provider = AI_CONFIG_DEFAULTS.kontrakt.provider,
-        model = AI_CONFIG_DEFAULTS.kontrakt.model,
+        entityId,
+        actorUserId,
+        source,
     } = input
+
+    const runtimeConfig = await getAiRuntimeConfig("contract_advice")
+    const { provider, model } = runtimeConfig
 
     const filename = fileName.toLowerCase()
 
@@ -507,9 +497,11 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         throw new Error("Ikke-understøttet filformat. Brug PDF, DOC, DOCX eller TXT.")
     }
 
-    if (filename.endsWith(".pdf") && provider !== "anthropic") {
-        throw new Error("PDF-analyse kræver Anthropic som AI-udbyder. Skift i Stamdata → Indstillinger, eller upload som DOCX/TXT.")
+    if (filename.endsWith(".pdf") && !contractText.trim() && provider === "google" && fileBuffer.length > 20 * 1024 * 1024) {
+        throw new Error("Den scannede PDF er for stor til Gemini. Komprimér filen til under 20 MB eller vælg Claude.")
     }
+
+    const runId = await createAiUsageRun({ orgId, operationType: "contract_advice", entityType: "contract_review", entityId, actorUserId, source: source ?? "api" })
 
     // ── Hent reference docs (brug admin-klient — ingen cookie-kontekst nødvendig) ──
     const supabaseAdmin = createAdminClient(
@@ -522,23 +514,19 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         .eq("archived", false)
         .not("content_text", "is", null)
 
-    // ── Trin 1: Klassificér (Anthropic-only) ─────────────────
+    // ── Trin 1: Klassificér med den valgte rådgivningsmodel ──
     let klassifikation: Klassifikation | null = null
-    const apiKey = process.env.ANTHROPIC_API_KEY
-
-    if (provider === "anthropic" && apiKey) {
-        const ALLOWED = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"]
-        const safeModel = ALLOWED.includes(model) ? model : AI_CONFIG_DEFAULTS.kontrakt.model
-        const tekstTilKlassifikation = contractText || (filename.endsWith(".pdf") ? "[PDF — se dokumentblok]" : "")
-        try {
-            klassifikation = await klassificerKontrakt(tekstTilKlassifikation, apiKey, safeModel)
-            logInfo("analyse", "Klassifikation gennemført", {
-                kontrakttype: klassifikation.kontrakttype,
-                overenskomst: klassifikation.er_overenskomst,
-            })
-        } catch (e) {
-            logWarn("analyse", "Klassifikation fejlede, fortsætter uden", { error: errorMessage(e) })
-        }
+    const tekstTilKlassifikation = contractText || (filename.endsWith(".pdf") ? "[Scannet PDF]" : "")
+    try {
+        klassifikation = await klassificerKontrakt(tekstTilKlassifikation, provider, model, {
+            runId, orgId, useCase: "contract_advice", stage: "classification",
+        })
+        logInfo("analyse", "Klassifikation gennemført", {
+            kontrakttype: klassifikation.kontrakttype,
+            overenskomst: klassifikation.er_overenskomst,
+        })
+    } catch (e) {
+        logWarn("analyse", "Klassifikation fejlede, fortsætter uden", { error: errorMessage(e) })
     }
 
     // ── Hent DB-satser baseret på klassifikation ──────────────
@@ -712,7 +700,9 @@ anbefalinger og juridiske referencer — leveres på engelsk.
         try {
             if (!orgId) throw new Error("Kontraktanalyse kræver en organisation.")
             const resolvedOrgId = orgId
-            const kontekst = await hentKontekst(ragText, resolvedOrgId)
+            const kontekst = await hentKontekst(ragText, resolvedOrgId, {
+                runId, orgId: resolvedOrgId, useCase: "contract_advice", stage: "embedding",
+            })
 
             if (kontekst.kategorier.length > 0) {
                 activeSystemPrompt +=
@@ -798,36 +788,32 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     // ── Trin 2: Kald AI ───────────────────────────────────────
-    let raw: string
-    if (provider === "anthropic") {
-        if (!apiKey) throw new Error("ANTHROPIC_API_KEY er ikke konfigureret")
-        const ALLOWED = ["claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6"]
-        const safeModel = ALLOWED.includes(model) ? model : AI_CONFIG_DEFAULTS.kontrakt.model
-        const response = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "x-api-key": apiKey,
-                "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-                model: safeModel,
-                max_tokens: 16000,
-                system: activeSystemPrompt,
-                messages: [{ role: "user", content: messageContent }],
-            }),
-        })
-        if (!response.ok) {
-            const err = await response.text()
-            logWarn("analyse", "Anthropic-kald fejlede", { status: response.status, error: err.slice(0, 120) })
-            throw new Error(`Claude API fejl ${response.status}`)
+    const textBlock = messageContent.find((block: { type: string; text?: string }) => block.type === "text")
+    const userMessage = textBlock?.text ?? "Gennemgå den vedhæftede kontrakt og returner JSON."
+    const googleParts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = []
+    for (const block of messageContent as Array<{ type: string; text?: string; source?: { data?: string } }>) {
+        if (block.type === "text") googleParts.push({ text: block.text ?? "" })
+        if (block.type === "document" && block.source?.data) {
+            googleParts.push({ inline_data: { mime_type: "application/pdf", data: block.source.data } })
         }
-        const data = await response.json()
-        raw = data.content?.find((b: { type: string; text?: string }) => b.type === "text")?.text ?? ""
-    } else {
-        const textBlock = messageContent.find((b: { type: string; text?: string }) => b.type === "text")
-        const userMessage = textBlock?.text ?? ""
-        raw = await callAi({ provider, model, system: activeSystemPrompt, userMessage, maxTokens: 16000 })
+    }
+    let raw: string
+    try {
+        raw = (await callAiDetailed({
+            provider,
+            model,
+            system: activeSystemPrompt,
+            userMessage,
+            anthropicContent: messageContent,
+            googleParts,
+            maxTokens: 16000,
+            responseJson: true,
+            promptCaching: runtimeConfig.promptCachingEnabled,
+            usageContext: { runId, orgId, useCase: "contract_advice", stage: "advice" },
+        })).text
+    } catch (error) {
+        await finishAiUsageRun(runId, "failed", error instanceof Error ? error.message : "provider_error")
+        throw error
     }
 
     // ── Parse JSON ────────────────────────────────────────────
@@ -847,6 +833,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
         }
         if (!parsed) {
             logWarn("analyse", "AI returnerede ugyldigt JSON", { rawLength: raw.length })
+            await finishAiUsageRun(runId, "failed", "invalid_json")
             throw new Error("AI returnerede ugyldigt svar — prøv igen")
         }
     }
@@ -897,6 +884,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
             .trim()
     }
 
+    await finishAiUsageRun(runId, "succeeded")
     return {
         result: parsed,
         contractText: returnText,

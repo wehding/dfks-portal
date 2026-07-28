@@ -9,11 +9,13 @@
  * Forudsætter at teksten allerede er maskeret (personoplysninger fjernet).
  */
 
-import { getApiKey } from "@/lib/ai-key-store"
 import { createClient } from "@supabase/supabase-js"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources } from "@/lib/ai-sources"
-import { buildContractExtractionPrompt, CONTRACT_EXTRACTION_MODEL } from "@/lib/contract-extraction-prompt"
+import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
+import { callAiDetailed } from "@/lib/ai-client"
+import { getAiRuntimeConfig } from "@/lib/ai-runtime"
+import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage"
 
 export type ContractExtractionResult = {
     ok: boolean
@@ -26,29 +28,23 @@ export type ContractExtractionResult = {
 // afkortes (rettighedsklausuler står ofte til sidst — se advarsel nedenfor).
 const CONTRACT_TEXT_LIMIT = 40000
 
-async function callAnthropic(maskedText: string, apiKey: string, systemPrompt: string): Promise<string> {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-            model: CONTRACT_EXTRACTION_MODEL,
-            max_tokens: 4096,
-            system: systemPrompt,
-            messages: [{ role: "user", content: `---KONTRAKT---\n${maskedText.slice(0, CONTRACT_TEXT_LIMIT)}` }],
-        }),
-    })
-    if (!res.ok) throw new Error(`Anthropic fejl: ${res.status}`)
-    const data = await res.json()
-    return data.content?.[0]?.text ?? ""
+export type ContractExtractionContext = {
+    orgId?: string | null
+    entityId?: string | null
+    actorUserId?: string | null
+    source?: "portal" | "admin" | "api" | "cron" | "import"
 }
 
-export async function runContractExtraction(maskedText: string): Promise<ContractExtractionResult> {
-    const apiKey = getApiKey("anthropic")
-    if (!apiKey) return { ok: false, error: "Anthropic API-nøgle mangler" }
+export async function runContractExtraction(maskedText: string, context: ContractExtractionContext = {}): Promise<ContractExtractionResult> {
+    const config = await getAiRuntimeConfig("contract_extraction")
+    const runId = await createAiUsageRun({
+        orgId: context.orgId,
+        operationType: "contract_extraction",
+        entityType: "contract",
+        entityId: context.entityId,
+        actorUserId: context.actorUserId,
+        source: context.source,
+    })
 
     // Hent overenskomsttekster som baggrundsviden til prompten
     let systemPrompt = buildContractExtractionPrompt()
@@ -68,13 +64,38 @@ export async function runContractExtraction(maskedText: string): Promise<Contrac
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
     }
 
-    const raw = await callAnthropic(maskedText, apiKey, systemPrompt)
+    let raw: string
+    try {
+        const response = await callAiDetailed({
+            provider: config.provider,
+            model: config.model,
+            maxTokens: 4096,
+            system: systemPrompt,
+            userMessage: `---KONTRAKT---\n${maskedText.slice(0, CONTRACT_TEXT_LIMIT)}`,
+            responseJson: true,
+            promptCaching: config.promptCachingEnabled,
+            usageContext: { runId, orgId: context.orgId, useCase: "contract_extraction", stage: "extraction" },
+        })
+        raw = response.text
+    } catch (error) {
+        await finishAiUsageRun(runId, "failed", error instanceof Error ? error.message : "provider_error")
+        return { ok: false, error: error instanceof Error ? error.message : "AI-aflæsning fejlede" }
+    }
 
     // Udtræk JSON mellem første { og sidste } (håndterer prose-wrapping)
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return { ok: false, error: "Kunne ikke parse AI-svar" }
+    if (!jsonMatch) {
+        await finishAiUsageRun(runId, "failed", "invalid_json")
+        return { ok: false, error: "Kunne ikke parse AI-svar" }
+    }
 
-    const extracted = JSON.parse(jsonMatch[0]) as Record<string, unknown>
+    let extracted: Record<string, unknown>
+    try {
+        extracted = JSON.parse(jsonMatch[0]) as Record<string, unknown>
+    } catch {
+        await finishAiUsageRun(runId, "failed", "invalid_json")
+        return { ok: false, error: "Kunne ikke parse AI-svar" }
+    }
     if (extracted._sources && typeof extracted._sources === "object") {
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
     }
@@ -98,5 +119,6 @@ export async function runContractExtraction(maskedText: string): Promise<Contrac
         }
     }
 
+    await finishAiUsageRun(runId, "succeeded")
     return { ok: true, data: extracted, navneTjek }
 }

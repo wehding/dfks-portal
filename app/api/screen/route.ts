@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { callAi } from "@/lib/ai-client"
-import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
+import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { errorMessage, logWarn } from "@/lib/server-log"
 import { requireSessionApi } from "@/lib/api-auth"
 
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     const auth = await requireSessionApi()
     if (!auth.ok) return auth.response
     try {
-        const { system, userMessage, provider, model } = await req.json()
+        const { system, userMessage } = await req.json()
 
         if (!system || !userMessage) {
             return NextResponse.json(
@@ -26,10 +26,9 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        const aiProvider = provider ?? AI_CONFIG_DEFAULTS.kontrakt.provider
-        const aiModel    = model    ?? AI_CONFIG_DEFAULTS.kontrakt.model
+        const runtime = await getAiRuntimeConfig("contract_advice")
 
-        const text = await callAi({ provider: aiProvider, model: aiModel, system, userMessage, maxTokens: 6000 })
+        const text = await callAi({ provider: runtime.provider, model: runtime.model, system, userMessage, maxTokens: 6000, responseJson: true, promptCaching: runtime.promptCachingEnabled })
 
         // Parse JSON on server side so client receives a clean object
         const clean = text

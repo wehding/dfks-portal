@@ -45,7 +45,7 @@ export function getApiKey(provider: "anthropic" | "openai" | "google"): string |
     const fromEnv = {
         anthropic: process.env.ANTHROPIC_API_KEY,
         openai:    process.env.OPENAI_API_KEY,
-        google:    process.env.GOOGLE_AI_API_KEY,
+        google:    process.env.GOOGLE_AI_API_KEY ?? process.env.GOOGLE_API_KEY,
     }[provider]
     if (fromEnv) return fromEnv
 
@@ -67,7 +67,7 @@ export function getKeyStatus(provider: "anthropic" | "openai" | "google"): {
     const fromEnv = {
         anthropic: process.env.ANTHROPIC_API_KEY,
         openai:    process.env.OPENAI_API_KEY,
-        google:    process.env.GOOGLE_AI_API_KEY,
+        google:    process.env.GOOGLE_AI_API_KEY ?? process.env.GOOGLE_API_KEY,
     }[provider]
 
     if (fromEnv) return { configured: true, source: "env", masked: maskKey(fromEnv) }

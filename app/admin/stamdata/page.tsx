@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
+import NextLink from "next/link"
 
 function MasterDataTable({
     type,
@@ -1116,11 +1117,13 @@ function AiModelSettings() {
                 title="Grovsortering (batch)"
                 description="Bruges til at klassificere hundredvis af titler ad gangen. Hastighed og pris er vigtig."
             />
-            <AiProviderPicker
-                useCase="kontrakt"
-                title="Kontraktanalyse & validering"
-                description="Bruges til gennemgang og screening af kontrakter. Præcision er vigtig. Bemærk: PDF-filer kræver Anthropic."
-            />
+            <div className="rounded-lg border p-5 space-y-3">
+                <div>
+                    <h3 className="text-sm font-medium">Kontraktanalyse & validering</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">Kontraktmodeller gemmes permanent og styres nu i AI-kontrolrummet.</p>
+                </div>
+                <Button asChild size="sm" variant="outline"><NextLink href="/admin/ai-kontrolrum">Åbn forbrug & modeller</NextLink></Button>
+            </div>
         </div>
     )
 }
