@@ -12,8 +12,8 @@ import { useState, useRef, useEffect, use } from "react"
 import { useRouter } from "next/navigation"
 import {
     ArrowLeft, Sparkles, Mail, Copy, CheckCircle2, AlertTriangle, Info,
-    ChevronRight, Archive, Send, Pencil, Eye, BookMarked, ThumbsUp,
-    ThumbsDown, Star, FileText, RotateCcw, X,
+    ChevronRight, Pencil, Eye, ThumbsUp,
+    ThumbsDown, FileText, RotateCcw,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
@@ -68,6 +68,15 @@ interface ReviewResult {
 interface ReviewAssignee {
     id: string
     label: string
+}
+
+interface EmailSource {
+    subject: string | null
+    from_address: string | null
+    to_addresses: string[]
+    cc_addresses: string[]
+    received_at: string | null
+    body_text: string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -199,6 +208,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [mailText, setMailText] = useState("")
     const [mailSubject, setMailSubject] = useState("")
     const [mailEditMode, setMailEditMode] = useState(false)
+    const [emailSource, setEmailSource] = useState<EmailSource | null>(null)
     const [activeQuote, setActiveQuote] = useState<string | null>(null)
     const [activeFpId, setActiveFpId] = useState<string | null>(null)
     const [reanalysing, setReanalysing] = useState(false)
@@ -224,13 +234,17 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                 setReview(r)
                 setAssignees(Array.isArray(json.assignees) ? json.assignees : [])
                 setCanAssign(Boolean(json.canAssign))
+                setEmailSource(json.emailSource ?? null)
                 if (r?.risk_level) setRiskLevel(r.risk_level)
                 if (r?.should_escalate != null) setShouldEscalate(r.should_escalate)
                 if (r?.ai_result && Object.keys(r.ai_result).length > 0) {
                     const res = r.ai_result as unknown as ReviewResult
                     setResult(res)
-                    setMailText(res.feedbackmail?.tekst ?? "")
-                    setMailSubject(res.feedbackmail?.emne ?? "")
+                    setMailText(r.response_draft ?? res.feedbackmail?.tekst ?? "")
+                    setMailSubject(r.response_draft_subject ?? res.feedbackmail?.emne ?? "")
+                } else {
+                    setMailText(r.response_draft ?? "")
+                    setMailSubject(r.response_draft_subject ?? "")
                 }
             })
             .catch(() => toast.error("Kunne ikke hente kontrakt"))
@@ -252,7 +266,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         if (mark) mark.scrollIntoView({ behavior: "smooth", block: "center" })
     }, [activeQuote])
 
-    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string; action?: "claim" | "release" | "assign" }) => {
+    const updateReview = async (updates: { status?: string; assignedTo?: string; jurist_response?: string; responseDraft?: string; responseDraftSubject?: string; action?: "claim" | "release" | "assign" }) => {
         const resp = await fetch(`/api/admin/contracts/${id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -324,12 +338,6 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
         ).join("<br/><br/>")
         await copyAsRichText(gulHtml)
         toast.success("Producent-tekst kopieret")
-    }
-
-    const handleOpenMail = () => {
-        const cleanedText = cleanMailText(mailText)
-        const to = review?.member_email ? encodeURIComponent(review.member_email) : ""
-        window.location.href = `mailto:${to}?subject=${encodeURIComponent(mailSubject)}&body=${encodeURIComponent(cleanedText)}`
     }
 
     // ── Afslut og sæt status ──────────────────────────────────
@@ -646,7 +654,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                 <div className="rounded-lg border flex flex-col min-h-0">
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-xs font-medium">Feedback-mail</span>
+                        <span className="text-xs font-medium">AI-svarudkast</span>
                         <div className="ml-auto flex items-center gap-1">
                             <button
                                 onClick={() => setMailEditMode(m => !m)}
@@ -654,14 +662,25 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             >
                                 {mailEditMode ? <><Eye className="h-3 w-3" /> Vis</> : <><Pencil className="h-3 w-3" /> Rediger</>}
                             </button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={async () => { await copyAsRichText(mailText); toast.success("Mail kopieret") }}>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér svarudkast" onClick={async () => { await copyAsRichText(mailText); toast.success("Svarudkast kopieret") }}>
                                 <Copy className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Åbn i mailprogram" onClick={handleOpenMail}>
-                                <Send className="h-3 w-3" />
                             </Button>
                         </div>
                     </div>
+                    <div className="border-b bg-amber-50 px-4 py-2 text-[11px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                        AI-forslag — skal kontrolleres af en jurist. Systemet sender ikke mail.
+                    </div>
+                    {emailSource && (
+                        <details className="border-b px-4 py-2 text-xs">
+                            <summary className="cursor-pointer font-medium">Mail og spørgsmål fra medlemmet</summary>
+                            <div className="mt-2 space-y-1 text-muted-foreground">
+                                <p><span className="text-foreground">Fra:</span> {emailSource.from_address ?? "Ukendt"}</p>
+                                <p><span className="text-foreground">Emne:</span> {emailSource.subject ?? "Uden emne"}</p>
+                                {emailSource.received_at && <p><span className="text-foreground">Modtaget:</span> {new Date(emailSource.received_at).toLocaleString("da-DK")}</p>}
+                                <div className="mt-2 whitespace-pre-wrap rounded border bg-muted/30 p-2 text-foreground">{emailSource.body_text || "Mailen indeholdt ingen læsbar tekst."}</div>
+                            </div>
+                        </details>
+                    )}
                     <div className="border-b px-4 py-2.5 shrink-0">
                         <div className="flex items-center gap-2">
                             <span className="text-[10px] text-muted-foreground w-12 shrink-0">Emne:</span>
@@ -681,13 +700,9 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             Kopiér til producent
                         </Button>
                         <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={() => {
-                            handleOpenMail()
-                            // Gem jurist_response (renset tekst uden risikovurdering) + sæt status
-                            const cleanedText = cleanMailText(mailText)
-                            updateReview({ status: "afsluttet", jurist_response: cleanedText })
+                            updateReview({ responseDraft: cleanMailText(mailText), responseDraftSubject: mailSubject })
                         }}>
-                            <Send className="h-3.5 w-3.5" />
-                            Send og afslut
+                            Gem kladde
                         </Button>
                     </div>
                 </div>

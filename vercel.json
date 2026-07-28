@@ -15,6 +15,10 @@
     {
       "path": "/api/admin/audit-retention",
       "schedule": "0 2 1 * *"
+    },
+    {
+      "path": "/api/admin/gmail/contracts/watch",
+      "schedule": "0 3 * * *"
     }
   ]
 }
