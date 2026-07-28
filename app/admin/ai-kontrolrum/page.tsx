@@ -2372,13 +2372,14 @@ function ProducenterTab() {
 
 export default function AiKontrolrumPage() {
     return (
-        <div className="space-y-6 max-w-7xl">
+        <div className="min-w-0 max-w-7xl space-y-4 sm:space-y-6">
             <PageHeader
                 title="AI Videns-kontrolrum"
                 subtitle="Videnbase, noteringer, lærte mønstre og kvalitetsmonitor"
             />
-            <Tabs defaultValue="forbrug">
-                <TabsList className="flex flex-wrap h-auto gap-1 justify-start">
+            <Tabs defaultValue="forbrug" className="min-w-0">
+                <div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+                <TabsList className="h-9 w-max flex-nowrap justify-start gap-1 md:h-auto md:flex-wrap">
                     <TabsTrigger value="forbrug" className="gap-1.5 text-xs whitespace-nowrap">
                         <TrendingUp className="h-3.5 w-3.5 shrink-0" />Forbrug & modeller
                     </TabsTrigger>
@@ -2404,6 +2405,7 @@ export default function AiKontrolrumPage() {
                         <FlaskConical className="h-3.5 w-3.5 shrink-0" />Kvalitet
                     </TabsTrigger>
                 </TabsList>
+                </div>
                 <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
                 <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
