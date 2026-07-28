@@ -53,7 +53,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         }
     }
 
-    return NextResponse.json({ data, assignees, canAssign })
+    let emailSource = null
+    if (data.gmail_contract_message_id) {
+        const { data: source } = await admin
+            .from("gmail_contract_messages")
+            .select("subject,from_address,to_addresses,cc_addresses,received_at,body_text")
+            .eq("id", data.gmail_contract_message_id)
+            .eq("org_id", auth.orgId)
+            .maybeSingle()
+        emailSource = source ?? null
+    }
+
+    return NextResponse.json({ data, assignees, canAssign, emailSource })
 }
 
 // PATCH /api/admin/contracts/[id]
@@ -120,6 +131,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.jurist_response !== undefined) {
         updates.jurist_response = body.jurist_response || null
         updates.jurist_response_at = body.jurist_response ? new Date().toISOString() : null
+    }
+    if (body.responseDraft !== undefined) {
+        if (typeof body.responseDraft !== "string" || body.responseDraft.length > 50_000) {
+            return NextResponse.json({ error: "Svarudkastet er ugyldigt eller for langt" }, { status: 400 })
+        }
+        updates.response_draft = body.responseDraft.trim() || null
+        updates.response_draft_updated_at = new Date().toISOString()
+    }
+    if (body.responseDraftSubject !== undefined) {
+        if (typeof body.responseDraftSubject !== "string" || body.responseDraftSubject.length > 500) {
+            return NextResponse.json({ error: "Emnet er ugyldigt eller for langt" }, { status: 400 })
+        }
+        updates.response_draft_subject = body.responseDraftSubject.trim() || null
+        updates.response_draft_updated_at = new Date().toISOString()
     }
 
     if (Object.keys(updates).length === 0) {

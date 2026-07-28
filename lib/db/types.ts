@@ -211,6 +211,11 @@ export interface DbContractReview {
     updated_at: string | null
     jurist_response: string | null
     jurist_response_at: string | null
+    gmail_contract_message_id: string | null
+    gmail_attachment_id: string | null
+    response_draft_subject: string | null
+    response_draft: string | null
+    response_draft_updated_at: string | null
     risk_level: "LAV" | "MELLEM" | "HØJ" | null
     should_escalate: boolean | null
     ai_status: "analyserer" | "klar" | "fejl"
