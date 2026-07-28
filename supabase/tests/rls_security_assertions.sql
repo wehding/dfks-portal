@@ -316,6 +316,30 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'work_identity_resolutions'
+      and relation.relrowsecurity
+  ) then
+    raise exception 'RLS failure: public.work_identity_resolutions is missing or RLS is disabled';
+  end if;
+  if has_table_privilege('anon', 'public.work_identity_resolutions', 'SELECT') then
+    raise exception 'RLS failure: anon can read work identity candidates';
+  end if;
+  if not has_table_privilege('authenticated', 'public.work_identity_resolutions', 'SELECT') then
+    raise exception 'RLS failure: authenticated role lacks the policy-gated SELECT grant';
+  end if;
+  if has_table_privilege('authenticated', 'public.work_identity_resolutions', 'INSERT')
+    or has_table_privilege('authenticated', 'public.work_identity_resolutions', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.work_identity_resolutions', 'DELETE') then
+    raise exception 'RLS failure: authenticated can mutate work identity resolutions';
+  end if;
+end $$;
+
 select pass('RLS- og audit-sikkerhedsassertions bestod');
 select * from finish();
 rollback;

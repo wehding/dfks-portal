@@ -21,6 +21,7 @@ import {
     BrainCircuit,
     ShieldCheck,
     Home,
+    BadgeCheck,
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useI18n } from "@/lib/i18n"
@@ -66,14 +67,15 @@ const SETUP_ADMIN_NAV_ITEMS = [
     { key: "organisation",       href: "/admin/organisation",       icon: Building2,   labelKey: "nav.organisation"     },
     { key: "brugere",            href: "/admin/brugere",            icon: Users2,      labelKey: "nav.users"            },
     { key: "organisationer",     href: "/admin/organisationer",     icon: ShieldCheck, labelKey: "nav.organisations"    },
+    { key: "imdb-kontrol",       href: "/admin/imdb-kontrol",       icon: BadgeCheck,  labelKey: "nav.imdbControl"      },
 ]
 
 const ADMIN_KEYS = [...ALL_ADMIN_NAV_ITEMS, ...SETUP_ADMIN_NAV_ITEMS].map(i => i.key)
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ADMIN_KEYS,
-    admin:       ADMIN_KEYS.filter(k => k !== "organisationer"),
-    "org-admin": ADMIN_KEYS.filter(k => k !== "stamdata" && k !== "brugere"),
+    admin:       ADMIN_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
+    "org-admin": ADMIN_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "imdb-kontrol"),
     jurist:      ["kontrakter", "kontraktgennemgang"],
     viewer:      ["kontrakter", "statistik"],
 }

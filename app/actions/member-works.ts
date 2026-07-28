@@ -16,6 +16,9 @@ import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 import { normalizeWorkSearchTitle, shouldMergeWorkSearchResults } from "@/lib/unified-work-search";
+import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
+import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
+import { identityLevel } from "@/lib/work-identity";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -640,6 +643,21 @@ export async function addWorkForMember(params: {
   } catch {
     // Wikidata er kun berigelse.
   }
+  const identity = await resolveWorkIdentity({
+    title: params.workData.title,
+    year: params.workData.year,
+    type: params.workData.type,
+    imdbId,
+    tmdbId,
+    wikidataId,
+    dfiId: params.workData.dfi_id,
+  });
+  const identityCandidate = identity.status === "matched" ? identity.candidates[0] : null;
+  if (identityCandidate) {
+    imdbId = identityCandidate.imdbId;
+    tmdbId = Number(identityCandidate.tmdbId ?? tmdbId ?? 0) || tmdbId;
+    wikidataId = identityCandidate.wikidataId ?? wikidataId;
+  }
 
   // Opret nyt værk hvis ikke fundet
   if (!workId) {
@@ -680,6 +698,10 @@ export async function addWorkForMember(params: {
       { onConflict: "work_id,rights_holder_id,role" }
     );
   if (assignErr) return { success: false, error: assignErr.message };
+
+  if (identityCandidate) {
+    await storeWorkExternalIdentity(db, { orgId, workId: workId!, level: identityLevel(params.workData.type), candidate: identityCandidate });
+  }
 
   // Hent det oprettede assignment
   const { data: fresh } = await db
@@ -983,6 +1005,21 @@ export async function addWorkForMemberWithApproval(params: {
   } catch {
     // Wikidata er kun en berigelse.
   }
+  const identity = await resolveWorkIdentity({
+    title: params.workData.title,
+    year: params.workData.year,
+    type: params.workData.type,
+    imdbId,
+    tmdbId,
+    wikidataId,
+    dfiId: params.workData.dfi_id,
+  });
+  const identityCandidate = identity.status === "matched" ? identity.candidates[0] : null;
+  if (identityCandidate) {
+    imdbId = identityCandidate.imdbId;
+    tmdbId = Number(identityCandidate.tmdbId ?? tmdbId ?? 0) || tmdbId;
+    wikidataId = identityCandidate.wikidataId ?? wikidataId;
+  }
   const enrichedWorkData = {
     ...params.workData,
     tmdb_id: tmdbId,
@@ -1162,6 +1199,10 @@ export async function addWorkForMemberWithApproval(params: {
     if (assignErr) return { success: false, error: assignErr.message };
 
     finalWorkId = workId;
+  }
+
+  if (identityCandidate) {
+    await storeWorkExternalIdentity(db, { orgId, workId: finalWorkId, level: identityLevel(params.workData.type), candidate: identityCandidate });
   }
 
   await syncWorkProducerRelations(db, {

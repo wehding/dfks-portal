@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { analyserKontrakt } from "@/lib/analyse"
-import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 
 // POST /api/admin/contracts/[id]/reanalyse
 //
@@ -61,8 +60,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     // Kald analyserKontrakt direkte — al analyselogik ligger i lib/analyse.ts
-    const provider = AI_CONFIG_DEFAULTS.kontrakt.provider
-    const model    = AI_CONFIG_DEFAULTS.kontrakt.model
     let analysisResult
     try {
         analysisResult = await analyserKontrakt({
@@ -81,8 +78,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             orgId:                review.org_id,
             memberId:             review.member_id      ?? undefined,
             memberEmail:          review.member_email   ?? undefined,
-            provider,
-            model,
+            entityId:             id,
+            actorUserId:          user.id,
+            source:               "admin",
         })
     } catch (err: any) {
         return NextResponse.json({ error: err.message ?? "Analyse fejlede" }, { status: 500 })

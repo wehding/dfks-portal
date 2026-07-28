@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding, getEmbeddingWithFallback } from "./embedding-provider"
+import { estimateEmbeddingTokens } from "./ai-cost"
+import { recordAiUsage, type AiUsageContext } from "./ai-usage"
 
 const MATCH_THRESHOLD = 0.65
 const MATCH_COUNT = 6
@@ -109,9 +111,10 @@ async function hentOverenskomstKategorier(
 export async function hentRelevanteRegler(
     kontraktTekst: string,
     maxResultater = MATCH_COUNT,
-    orgId?: string
+    orgId?: string,
+    precomputedEmbedding?: number[]
 ): Promise<KnowledgeChunk[]> {
-    const embedding = await getEmbeddingWithFallback(kontraktTekst)
+    const embedding = precomputedEmbedding ?? await getEmbeddingWithFallback(kontraktTekst)
     const supabase = getSupabaseAdmin()
 
     const { data, error } = await supabase.rpc("match_knowledge_chunks", {
@@ -142,9 +145,44 @@ export interface KontekstResultat {
     detekteredeOverenskomster: string[]
 }
 
-export async function hentKontekst(kontraktTekst: string, orgId?: string): Promise<KontekstResultat> {
+export async function hentKontekst(
+    kontraktTekst: string,
+    orgId?: string,
+    usageContext?: AiUsageContext
+): Promise<KontekstResultat> {
     const supabase = getSupabaseAdmin()
-    const embedding = await getEmbedding(kontraktTekst, false)
+    const embeddingInput = kontraktTekst.slice(0, 8_000)
+    const embeddingStartedAt = Date.now()
+    let embedding: number[]
+    try {
+        embedding = await getEmbedding(embeddingInput, false)
+        if ((process.env.EMBEDDING_PROVIDER || "google") === "google") {
+            await recordAiUsage({
+                context: usageContext,
+                provider: "google",
+                model: "gemini-embedding-001",
+                usage: { inputTokens: estimateEmbeddingTokens(embeddingInput), outputTokens: 0 },
+                inputChars: embeddingInput.length,
+                latencyMs: Date.now() - embeddingStartedAt,
+                status: "succeeded",
+                usageEstimated: true,
+            })
+        }
+    } catch (error) {
+        if ((process.env.EMBEDDING_PROVIDER || "google") === "google") {
+            await recordAiUsage({
+                context: usageContext,
+                provider: "google",
+                model: "gemini-embedding-001",
+                inputChars: embeddingInput.length,
+                latencyMs: Date.now() - embeddingStartedAt,
+                status: "failed",
+                usageEstimated: true,
+                errorCode: "embedding_failed",
+            })
+        }
+        throw error
+    }
     const detekterede = detekterOverenskomst(kontraktTekst)
     const kontraktdato = detekterKontraktdato(kontraktTekst)
 
@@ -156,7 +194,7 @@ export async function hentKontekst(kontraktTekst: string, orgId?: string): Promi
         baggrundRes,
     ] = await Promise.all([
         // 1. Lovtekster — semantisk RAG
-        hentRelevanteRegler(kontraktTekst, MATCH_COUNT, orgId),
+        hentRelevanteRegler(kontraktTekst, MATCH_COUNT, orgId, embedding),
 
         // 2. Overenskomst kategori-match — præcise satser, dato-baseret
         hentOverenskomstKategorier(detekterede, kontraktdato),

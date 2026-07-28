@@ -22,6 +22,7 @@ import {
     ChevronRight,
     Home,
     FileClock,
+    BadgeCheck,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -63,6 +64,7 @@ const SETUP_NAV_ITEMS = [
     { key: "ai-kontrolrum",       href: "/admin/ai-kontrolrum",       icon: BrainCircuit, labelKey: "nav.aiKontrolrum"    },
     { key: "organisation",        href: "/admin/organisation",        icon: Building2,   labelKey: "nav.organisation"     },
     { key: "logning",             href: "/admin/logning",             icon: FileClock,   labelKey: "nav.auditLog"         },
+    { key: "imdb-kontrol",        href: "/admin/imdb-kontrol",        icon: BadgeCheck,  labelKey: "nav.imdbControl"      },
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
     { key: "min-profil",          href: "/admin/min-profil",          icon: UserCog,     labelKey: "nav.minProfil"        },
     { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
@@ -94,8 +96,8 @@ const MENU_BADGE_GODKEND = `${MENU_BADGE_BASE} bg-amber-100 text-amber-800`
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
-    admin:       ALL_KEYS.filter(k => k !== "organisationer"),
-    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer"),
+    admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
+    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol"),
     jurist:      ["overblik", "kontrakter", "kontraktgennemgang"],
     viewer:      ["overblik", "kontrakter", "statistik"],
 }

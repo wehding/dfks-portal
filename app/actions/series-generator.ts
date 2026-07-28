@@ -5,6 +5,9 @@ import { getTMDBEpisodeExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/
 import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { parseDfiEpisodeTitleInfo, extractDfiDirectors, extractDfiPremiereYear, extractDfiPosterUrl } from "@/lib/dfi-metadata";
 import type { DbWork } from "@/lib/db/types";
+import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
+import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
+import type { IdentityCandidate } from "@/lib/work-identity";
 
 type EpisodeInsert = {
   org_id: string;
@@ -59,7 +62,10 @@ function isMissingWorkMetadataColumnError(error: { message?: string; code?: stri
 }
 
 function stripOptionalWorkMetadata(episode: EpisodeInsert): EpisodeInsert {
-  const { imdb_id: _imdbId, wikidata_id: _wikidataId, dfi_metadata: _dfiMetadata, ...rest } = episode;
+  const rest = { ...episode };
+  delete rest.imdb_id;
+  delete rest.wikidata_id;
+  delete rest.dfi_metadata;
   return rest;
 }
 
@@ -101,7 +107,18 @@ export async function generateEpisodesForSeries(params: {
   }
 
   const episodesToInsert: EpisodeInsert[] = [];
+  const episodeIdentities = new Map<number, IdentityCandidate>();
   const sStr = String(seasonNumber).padStart(2, "0");
+  const parentMetadata = typeof parentWork.dfi_metadata === "object" && parentWork.dfi_metadata !== null
+    ? parentWork.dfi_metadata as Record<string, unknown>
+    : {};
+  const dfiChildren = Array.isArray(parentMetadata.Children)
+    ? parentMetadata.Children.map(asDfiChild).filter((child): child is DfiChildMetadata => child !== null)
+    : [];
+  const dfiChildByEpisode = new Map(dfiChildren.map((child, index) => {
+    const parsed = parseDfiEpisodeTitleInfo(child.Title);
+    return [parsed?.episodeNumber ?? index + 1, child] as const;
+  }));
 
   // 2. Forsøg at hente afsnitsdata fra TMDB, hvis tmdb_id findes
   if (parentWork.tmdb_id) {
@@ -110,12 +127,33 @@ export async function generateEpisodesForSeries(params: {
       if (tmdbRes.success && tmdbRes.episodes && tmdbRes.episodes.length > 0) {
         for (const ep of tmdbRes.episodes) {
           const externalIds = await getTMDBEpisodeExternalIds(parentWork.tmdb_id, seasonNumber, ep.episode_number);
+          const dfiChild = dfiChildByEpisode.get(ep.episode_number);
           const eStr = String(ep.episode_number).padStart(2, "0");
           const subtitle = ep.name ? String(ep.name).trim() : "";
           const title = subtitle 
             ? `${parentWork.title} - S${sStr}E${eStr}: ${subtitle}` 
             : `${parentWork.title} - S${sStr}E${eStr}`;
 
+          const resolution = await resolveWorkIdentity({
+            title,
+            alternativeTitles: [subtitle, textOrNull(dfiChild?.Title)].filter((value): value is string => Boolean(value)),
+            type: parentWork.type,
+            year: ep.air_date ? parseInt(ep.air_date.substring(0, 4)) : parentWork.year,
+            imdbId: externalIds.imdb_id,
+            wikidataId: externalIds.wikidata_id,
+            dfiId: dfiChild?.Id ? String(dfiChild.Id) : null,
+            parent: {
+              title: parentWork.title,
+              imdbId: parentWork.imdb_id,
+              tmdbId: parentWork.tmdb_id,
+              wikidataId: parentWork.wikidata_id,
+              dfiId: parentWork.dfi_id,
+            },
+            seasonNumber,
+            episodeNumber: ep.episode_number,
+          });
+          const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
+          if (candidate) episodeIdentities.set(ep.episode_number, candidate);
           episodesToInsert.push({
             org_id: parentWork.org_id,
             parent_work_id: parentWork.id,
@@ -130,10 +168,9 @@ export async function generateEpisodesForSeries(params: {
             description: ep.overview || null,
             poster_url: parentWork.poster_url,
             status: parentWork.status,
-            tmdb_id: parentWork.tmdb_id,
-            dfi_id: parentWork.dfi_id,
-            imdb_id: externalIds.imdb_id,
-            wikidata_id: externalIds.wikidata_id,
+            dfi_id: dfiChild?.Id ? String(dfiChild.Id) : null,
+            imdb_id: candidate?.imdbId ?? externalIds.imdb_id,
+            wikidata_id: candidate?.wikidataId ?? externalIds.wikidata_id,
           });
         }
       }
@@ -144,12 +181,7 @@ export async function generateEpisodesForSeries(params: {
 
   // 3. Forsøg at hente afsnitsdata fra DFI Children, hvis TMDB fejlede eller ikke findes
   if (episodesToInsert.length === 0 && parentWork.dfi_metadata) {
-    const metadata = typeof parentWork.dfi_metadata === "object" && parentWork.dfi_metadata !== null
-      ? parentWork.dfi_metadata as Record<string, unknown>
-      : {};
-    const children = Array.isArray(metadata.Children)
-      ? metadata.Children.map(asDfiChild).filter((child): child is DfiChildMetadata => child !== null)
-      : [];
+    const children = dfiChildren;
 
     const childEpisodeRows = children
       .map((child, index) => {
@@ -195,6 +227,24 @@ export async function generateEpisodesForSeries(params: {
         const description = textOrNull(fullChild.Synopsis) || textOrNull(fullChild.ShortSynopsis) || parentWork.description;
         const duration = fullChild.Duration ? Number(fullChild.Duration) : parentWork.duration_minutes;
 
+        const resolution = await resolveWorkIdentity({
+          title,
+          alternativeTitles: [subtitle],
+          type: parentWork.type,
+          year,
+          dfiId: child.Id ? String(child.Id) : null,
+          parent: {
+            title: parentWork.title,
+            imdbId: parentWork.imdb_id,
+            tmdbId: parentWork.tmdb_id,
+            wikidataId: parentWork.wikidata_id,
+            dfiId: parentWork.dfi_id,
+          },
+          seasonNumber,
+          episodeNumber,
+        });
+        const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
+        if (candidate) episodeIdentities.set(episodeNumber, candidate);
         episodesToInsert.push({
           org_id: parentWork.org_id,
           parent_work_id: parentWork.id,
@@ -210,6 +260,8 @@ export async function generateEpisodesForSeries(params: {
           poster_url: extractDfiPosterUrl(fullChild) || parentWork.poster_url,
           status: parentWork.status,
           dfi_id: child.Id ? String(child.Id) : null,
+          imdb_id: candidate?.imdbId ?? null,
+          wikidata_id: candidate?.wikidataId ?? null,
           dfi_metadata: fullChild,
         });
       }
@@ -235,8 +287,6 @@ export async function generateEpisodesForSeries(params: {
         description: parentWork.description,
         poster_url: parentWork.poster_url,
         status: parentWork.status,
-        dfi_id: parentWork.dfi_id,
-        tmdb_id: parentWork.tmdb_id,
       });
     }
   }
@@ -254,6 +304,16 @@ export async function generateEpisodesForSeries(params: {
   if (insertErr) {
     console.error("Fejl ved indsættelse af afsnit:", insertErr);
     return { success: false, error: insertErr.message };
+  }
+
+  if (episodeIdentities.size) {
+    const { data: insertedRows } = await db.from("works").select("id,episode_number")
+      .eq("parent_work_id", parentWork.id).eq("season_number", seasonNumber)
+      .in("episode_number", [...episodeIdentities.keys()]);
+    for (const row of insertedRows ?? []) {
+      const candidate = episodeIdentities.get(Number(row.episode_number));
+      if (candidate) await storeWorkExternalIdentity(db, { orgId: parentWork.org_id, workId: row.id, level: "episode", candidate });
+    }
   }
 
   // Opdater parent_work.episode_count og season_count, hvis de er ændret

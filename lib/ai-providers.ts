@@ -42,8 +42,9 @@ export const AI_PROVIDERS: AiProviderDef[] = [
         id: "google",
         label: "Google (Gemini)",
         models: [
-            { id: "gemini-2.0-flash",   label: "Gemini 2.0 Flash", description: "Hurtig og effektiv" },
-            { id: "gemini-2.5-pro",     label: "Gemini 2.5 Pro",   description: "Præcis med langt kontekstvindue" },
+            { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", description: "Hurtig og billig til struktureret dokumentbehandling" },
+            { id: "gemini-3.6-flash",      label: "Gemini 3.6 Flash",      description: "Stærk reasoning til komplekse vurderinger" },
+            { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro",        description: "Præcis med langt kontekstvindue" },
         ],
     },
 ]

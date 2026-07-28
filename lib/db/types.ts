@@ -309,6 +309,21 @@ export interface DbWork {
     created_at: string
 }
 
+export interface DbWorkIdentityResolution {
+    work_id: string
+    status: "unresolved" | "matched" | "review_required" | "not_found" | "error"
+    input_fingerprint: string
+    confidence: number | null
+    candidates: Record<string, unknown>[]
+    sources: string[]
+    last_attempted_at: string | null
+    error_code: string | null
+    reviewed_by: string | null
+    reviewed_at: string | null
+    created_at: string
+    updated_at: string
+}
+
 export interface DbWorkProductionNumber {
     id: string
     work_id: string

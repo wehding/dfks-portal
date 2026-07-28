@@ -44,9 +44,11 @@ export async function POST(req: NextRequest) {
         const admin = createServiceClient()
 
         let storagePath = pdfPath
+        let orgId: string | null = null
         if (!storagePath && contractId) {
-            const { data: contract } = await admin.from("contracts").select("pdf_url").eq("id", contractId).single()
+            const { data: contract } = await admin.from("contracts").select("pdf_url,org_id").eq("id", contractId).single()
             storagePath = contract?.pdf_url
+            orgId = contract?.org_id ?? null
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
@@ -66,7 +68,7 @@ export async function POST(req: NextRequest) {
 
         const masked = maskPersonalData(text)
 
-        const result = await runContractExtraction(masked)
+        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin" })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })

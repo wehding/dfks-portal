@@ -8,7 +8,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { analyserKontrakt } from "@/lib/analyse"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 import { requireInternalSecretApi } from "@/lib/api-auth"
@@ -21,10 +20,7 @@ export async function POST(req: NextRequest) {
         const isInternal = requireInternalSecretApi(req)
         const formData = await req.formData()
         const file       = formData.get("file")       as File | null
-        const provider   = (formData.get("provider") as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.provider
-        const model      = (formData.get("model")    as string | null) ?? AI_CONFIG_DEFAULTS.kontrakt.model
-
-        logInfo("gennemgang", "FormData parset", { hasFile: Boolean(file), provider })
+        logInfo("gennemgang", "FormData parset", { hasFile: Boolean(file) })
 
         // Hent brugerens navn fra Auth — fallback til formData-navn → "Ukendt"
         // Brug try/catch: kaldet kan mangle cookie-kontekst ved interne server-kald
@@ -91,7 +87,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Organisationen kunne ikke bestemmes" }, { status: 400 })
         }
 
-        logInfo("gennemgang", "Starter kontraktanalyse", { provider, model })
+        logInfo("gennemgang", "Starter kontraktanalyse")
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
@@ -108,8 +104,9 @@ export async function POST(req: NextRequest) {
                 orgId: resolvedOrgId,
                 memberId: portalUserId,
                 memberEmail: portalEmail,
-                provider,
-                model,
+                entityId: existingReviewId,
+                actorUserId: sessionUser?.id ?? portalUserId,
+                source: isInternal ? "portal" : "admin",
             })
         } catch (err: unknown) {
             const msg = errorMessage(err, "Analyse fejlede")

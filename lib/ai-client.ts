@@ -7,6 +7,8 @@
  */
 
 import { getApiKey } from "@/lib/ai-key-store"
+import { recordAiUsage, type AiTokenUsage, type AiUsageContext } from "@/lib/ai-usage"
+import { normalizeAnthropicUsage, normalizeGoogleUsage } from "@/lib/ai-cost"
 
 export interface AiCallOptions {
     provider: string
@@ -15,18 +17,33 @@ export interface AiCallOptions {
     userMessage: string
     maxTokens?: number
     enableWebSearch?: boolean
+    responseJson?: boolean
+    promptCaching?: boolean
+    usageContext?: AiUsageContext
+    anthropicContent?: unknown[]
+    googleParts?: unknown[]
 }
 
 export async function callAi(opts: AiCallOptions): Promise<string> {
+    return (await callAiDetailed(opts)).text
+}
+
+export type AiCallResult = {
+    text: string
+    usage: AiTokenUsage
+    providerRequestId: string | null
+}
+
+export async function callAiDetailed(opts: AiCallOptions): Promise<AiCallResult> {
     const { provider, model, system, userMessage, maxTokens = 4096, enableWebSearch = false } = opts
 
     switch (provider) {
         case "anthropic":
-            return callAnthropic(model, system, userMessage, maxTokens, enableWebSearch)
+            return callAnthropic(model, system, userMessage, maxTokens, enableWebSearch, opts)
         case "openai":
-            return callOpenAi(model, system, userMessage, maxTokens)
+            return callOpenAi(model, system, userMessage, maxTokens, opts)
         case "google":
-            return callGoogle(model, system, userMessage, maxTokens)
+            return callGoogle(model, system, userMessage, maxTokens, opts)
         default:
             throw new Error(`Ukendt AI-udbyder: ${provider}`)
     }
@@ -34,7 +51,7 @@ export async function callAi(opts: AiCallOptions): Promise<string> {
 
 // ── Anthropic ─────────────────────────────────────────────────
 
-async function callAnthropic(model: string, system: string, userMessage: string, maxTokens: number, enableWebSearch = false): Promise<string> {
+async function callAnthropic(model: string, system: string, userMessage: string, maxTokens: number, enableWebSearch = false, opts?: AiCallOptions): Promise<AiCallResult> {
     const apiKey = getApiKey("anthropic")
     if (!apiKey) throw new Error("Anthropic API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
 
@@ -55,14 +72,19 @@ async function callAnthropic(model: string, system: string, userMessage: string,
     type ContentBlock = { type: string; text?: string; id?: string; name?: string; input?: unknown; content?: unknown }
     type Message = { role: string; content: string | ContentBlock[] }
 
-    const messages: Message[] = [{ role: "user", content: userMessage }]
+    const messages: Message[] = [{ role: "user", content: (opts?.anthropicContent as ContentBlock[] | undefined) ?? userMessage }]
+    const totalUsage: AiTokenUsage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
+    let providerRequestId: string | null = null
+    const startedAt = Date.now()
 
     // Multi-turn loop for web search tool use (max 5 rounds)
     for (let i = 0; i < 5; i++) {
         const body: Record<string, unknown> = {
             model: safeModel,
             max_tokens: maxTokens,
-            system,
+            system: opts?.promptCaching
+                ? [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "5m" } }]
+                : system,
             messages,
             ...(tools ? { tools } : {}),
         }
@@ -73,8 +95,26 @@ async function callAnthropic(model: string, system: string, userMessage: string,
             body: JSON.stringify(body),
         })
 
-        if (!res.ok) throw new Error(`Anthropic API fejl: ${res.status} — ${await res.text()}`)
+        providerRequestId = res.headers.get("request-id") ?? res.headers.get("x-request-id")
+        if (!res.ok) {
+            await recordAiUsage({
+                context: opts?.usageContext,
+                provider: "anthropic",
+                model: safeModel,
+                inputChars: system.length + userMessage.length,
+                latencyMs: Date.now() - startedAt,
+                providerRequestId,
+                status: "failed",
+                errorCode: `http_${res.status}`,
+            })
+            throw new Error(`Anthropic API fejl: ${res.status}`)
+        }
         const data = await res.json()
+        const currentUsage = normalizeAnthropicUsage(data.usage)
+        totalUsage.inputTokens += currentUsage.inputTokens
+        totalUsage.outputTokens += currentUsage.outputTokens
+        totalUsage.cacheWriteTokens = Number(totalUsage.cacheWriteTokens ?? 0) + Number(currentUsage.cacheWriteTokens ?? 0)
+        totalUsage.cacheReadTokens = Number(totalUsage.cacheReadTokens ?? 0) + Number(currentUsage.cacheReadTokens ?? 0)
 
         const stopReason: string = data.stop_reason
         const content: ContentBlock[] = data.content ?? []
@@ -82,7 +122,19 @@ async function callAnthropic(model: string, system: string, userMessage: string,
         // Done — return the last text block (web search may produce multiple text blocks)
         if (stopReason !== "tool_use") {
             const textBlocks = content.filter(b => b.type === "text" && b.text)
-            return textBlocks[textBlocks.length - 1]?.text ?? ""
+            const text = textBlocks[textBlocks.length - 1]?.text ?? ""
+            await recordAiUsage({
+                context: opts?.usageContext,
+                provider: "anthropic",
+                model: safeModel,
+                usage: totalUsage,
+                inputChars: system.length + userMessage.length,
+                outputChars: text.length,
+                latencyMs: Date.now() - startedAt,
+                providerRequestId,
+                status: "succeeded",
+            })
+            return { text, usage: totalUsage, providerRequestId }
         }
 
         // Model called a tool — append its turn and provide tool results
@@ -99,12 +151,14 @@ async function callAnthropic(model: string, system: string, userMessage: string,
         messages.push({ role: "user", content: toolResults })
     }
 
-    return ""
+    await recordAiUsage({ context: opts?.usageContext, provider: "anthropic", model: safeModel, usage: totalUsage, inputChars: system.length + userMessage.length, latencyMs: Date.now() - startedAt, providerRequestId, status: "failed", errorCode: "tool_round_limit" })
+    return { text: "", usage: totalUsage, providerRequestId }
 }
 
 // ── OpenAI ────────────────────────────────────────────────────
 
-async function callOpenAi(model: string, system: string, userMessage: string, maxTokens: number): Promise<string> {
+async function callOpenAi(model: string, system: string, userMessage: string, maxTokens: number, _opts?: AiCallOptions): Promise<AiCallResult> {
+    void _opts
     const apiKey = getApiKey("openai")
     if (!apiKey) throw new Error("OpenAI API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
 
@@ -127,33 +181,49 @@ async function callOpenAi(model: string, system: string, userMessage: string, ma
         }),
     })
 
-    if (!res.ok) throw new Error(`OpenAI API fejl: ${res.status} — ${await res.text()}`)
+    if (!res.ok) throw new Error(`OpenAI API fejl: ${res.status}`)
     const data = await res.json()
-    return data.choices?.[0]?.message?.content ?? ""
+    return {
+        text: data.choices?.[0]?.message?.content ?? "",
+        usage: { inputTokens: Number(data.usage?.prompt_tokens ?? 0), outputTokens: Number(data.usage?.completion_tokens ?? 0) },
+        providerRequestId: res.headers.get("x-request-id"),
+    }
 }
 
 // ── Google Gemini ─────────────────────────────────────────────
 
-async function callGoogle(model: string, system: string, userMessage: string, maxTokens: number): Promise<string> {
+async function callGoogle(model: string, system: string, userMessage: string, maxTokens: number, opts?: AiCallOptions): Promise<AiCallResult> {
     const apiKey = getApiKey("google")
     if (!apiKey) throw new Error("Google AI API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
 
-    const ALLOWED = ["gemini-2.0-flash", "gemini-2.5-pro"]
-    const safeModel = ALLOWED.includes(model) ? model : "gemini-2.0-flash"
+    const ALLOWED = ["gemini-2.0-flash", "gemini-2.5-pro", "gemini-3.5-flash-lite", "gemini-3.6-flash"]
+    const safeModel = ALLOWED.includes(model) ? model : "gemini-3.5-flash-lite"
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${safeModel}:generateContent?key=${apiKey}`
 
+    const startedAt = Date.now()
     const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             system_instruction: { parts: [{ text: system }] },
-            contents: [{ role: "user", parts: [{ text: userMessage }] }],
-            generationConfig: { maxOutputTokens: maxTokens },
+            contents: [{ role: "user", parts: opts?.googleParts ?? [{ text: userMessage }] }],
+            generationConfig: {
+                maxOutputTokens: maxTokens,
+                ...(opts?.responseJson ? { responseMimeType: "application/json" } : {}),
+            },
         }),
     })
 
-    if (!res.ok) throw new Error(`Google AI API fejl: ${res.status} — ${await res.text()}`)
+    const providerRequestId = res.headers.get("x-request-id") ?? res.headers.get("x-guploader-uploadid")
+    if (!res.ok) {
+        await recordAiUsage({ context: opts?.usageContext, provider: "google", model: safeModel, inputChars: system.length + userMessage.length, latencyMs: Date.now() - startedAt, providerRequestId, status: "failed", errorCode: `http_${res.status}` })
+        throw new Error(`Google AI API fejl: ${res.status}`)
+    }
     const data = await res.json()
-    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+    const text = (data.candidates?.[0]?.content?.parts ?? []).map((part: { text?: string }) => part.text ?? "").join("")
+    const metadata = data.usageMetadata ?? data.usage_metadata ?? {}
+    const usage = normalizeGoogleUsage(metadata)
+    await recordAiUsage({ context: opts?.usageContext, provider: "google", model: safeModel, usage, inputChars: system.length + userMessage.length, outputChars: text.length, latencyMs: Date.now() - startedAt, providerRequestId, status: "succeeded" })
+    return { text, usage, providerRequestId }
 }
