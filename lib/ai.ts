@@ -495,6 +495,7 @@ Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
 Regler:
 - creditedRole: returner ALTID præcis ét af de listede rollnavne — kopiér stavningen nøjagtigt. Vigtigt: "Editor", "Film Editor", "Supervising Editor", "Monteur", "Montage", "Cutter", "Picture Editor" er alle synonymer for "Klipper" — vælg altid "Klipper" for disse funktioner uanset om kontrakten er på dansk, engelsk eller fransk
 - productionType baseres på værkets type: spillefilm/feature film → feature, tv-serie/dramaserie → tvSeries, dokumentarfilm → documentary, dokumentarserie → docSeries, kortfilm → short, tv-show/underholdning → tvEntertainment, reality → reality, sport → sport
+- productionType skal udfyldes, når typen fremgår eller med høj sandsynlighed kan udledes af titel, sæson-/afsnitsoplysninger eller kontraktens øvrige beskrivelse. Returner kun null, når typen reelt ikke kan bestemmes
 - productionCompany skal være selve produktionsselskabet/producerende selskab, ikke personens arbejdsgiver hvis det tydeligt er noget andet
 - director skal kun udfyldes hvis instruktøren fremgår tydeligt
 - seasonNumber skal kun udfyldes for serier, når sæsonen fremgår tydeligt af kontrakten
@@ -531,7 +532,12 @@ export async function screenPortalContract(contractText: string, availableRoles:
     }
     const data = await resp.json()
     if (data.error) throw new Error(data.error)
-    return data.result as PortalScreeningResult
+    const result = data.result as PortalScreeningResult & { category?: string | null }
+    return {
+        ...result,
+        // Ældre eller cachede modelsvar kan stadig bruge det tidligere feltnavn.
+        productionType: result.productionType ?? result.category ?? null,
+    }
 }
 
 // ── Main screening function ──────────────────────────────────
