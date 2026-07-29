@@ -11,6 +11,7 @@ import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { analyserKontrakt } from "@/lib/analyse"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 import { requireInternalSecretApi } from "@/lib/api-auth"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024
 
@@ -87,13 +88,48 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Organisationen kunne ikke bestemmes" }, { status: 400 })
         }
 
+        const admin = createAdminClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!
+        )
+        let effectiveMemberName = memberName
+        let effectiveMemberEmail = portalEmail
+        let effectiveMemberId = portalUserId
+        if (existingReviewId) {
+            if (!isInternal) {
+                return NextResponse.json({ error: "Eksisterende sager kan kun opdateres via det interne flow" }, { status: 403 })
+            }
+            const { data: existingReview, error: existingError } = await admin
+                .from("contract_reviews")
+                .select("id,org_id,member_id,member_name,member_email")
+                .eq("id", existingReviewId)
+                .maybeSingle()
+            if (existingError || !existingReview) {
+                return NextResponse.json({ error: "Kontraktgennemgangen blev ikke fundet" }, { status: 404 })
+            }
+            if (existingReview.org_id !== resolvedOrgId) {
+                await recordAuditEvent({
+                    context: { source: "api", actorUserId: sessionUser?.id ?? null, actorOrgId: resolvedOrgId },
+                    action: "security_failure",
+                    entityType: "contract_reviews",
+                    entityId: existingReviewId,
+                    entityLabel: "Afvist opdatering på tværs af organisationer",
+                    orgIds: [resolvedOrgId, existingReview.org_id],
+                }).catch(() => undefined)
+                return NextResponse.json({ error: "Kontraktgennemgangen tilhører en anden organisation" }, { status: 403 })
+            }
+            effectiveMemberName = existingReview.member_name ?? memberName
+            effectiveMemberEmail = existingReview.member_email ?? null
+            effectiveMemberId = existingReview.member_id ?? null
+        }
+
         logInfo("gennemgang", "Starter kontraktanalyse")
         let analysisResult
         try {
             analysisResult = await analyserKontrakt({
                 fileBuffer,
                 fileName: file.name,
-                memberName,
+                memberName: effectiveMemberName,
                 contractType,
                 productionType,
                 distributionChannels,
@@ -102,10 +138,10 @@ export async function POST(req: NextRequest) {
                 focusAreas,
                 notes: uploadNotes,
                 orgId: resolvedOrgId,
-                memberId: portalUserId,
-                memberEmail: portalEmail,
+                memberId: effectiveMemberId,
+                memberEmail: effectiveMemberEmail,
                 entityId: existingReviewId,
-                actorUserId: sessionUser?.id ?? portalUserId,
+                actorUserId: sessionUser?.id ?? effectiveMemberId,
                 source: isInternal ? "portal" : "admin",
             })
         } catch (err: unknown) {
@@ -121,29 +157,26 @@ export async function POST(req: NextRequest) {
         const { result: parsed, contractText: returnText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
 
         // ── Gem fil i Supabase Storage ────────────────────────
-        const admin = createAdminClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
-        )
-
         let storagePath: string | null = null
-        try {
-            const ts = Date.now()
-            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-            storagePath = `${resolvedOrgId}/${ts}_${safeName}`
-            const { error: storageErr } = await admin.storage
-                .from("contract-reviews")
-                .upload(storagePath, fileBuffer, {
-                    contentType: file.type || "application/octet-stream",
-                    upsert: false,
-                })
-            if (storageErr) {
-                logWarn("gennemgang", "Storage upload fejlede", { error: storageErr.message })
+        if (!existingReviewId) {
+            try {
+                const ts = Date.now()
+                const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
+                storagePath = `${resolvedOrgId}/${ts}_${safeName}`
+                const { error: storageErr } = await admin.storage
+                    .from("contract-reviews")
+                    .upload(storagePath, fileBuffer, {
+                        contentType: file.type || "application/octet-stream",
+                        upsert: false,
+                    })
+                if (storageErr) {
+                    logWarn("gennemgang", "Storage upload fejlede", { error: storageErr.message })
+                    storagePath = null
+                }
+            } catch (storageEx) {
+                logWarn("gennemgang", "Storage upload exception", { error: errorMessage(storageEx) })
                 storagePath = null
             }
-        } catch (storageEx) {
-            logWarn("gennemgang", "Storage upload exception", { error: errorMessage(storageEx) })
-            storagePath = null
         }
 
         // ── Gem i contract_reviews ────────────────────────────
@@ -161,6 +194,7 @@ export async function POST(req: NextRequest) {
                         ...(storagePath ? { storage_path: storagePath } : {}),
                     })
                     .eq("id", existingReviewId)
+                    .eq("org_id", resolvedOrgId)
                 if (updateErr) {
                     logWarn("gennemgang", "Update af contract_reviews fejlede", { error: updateErr.message })
                 } else {
@@ -200,6 +234,7 @@ export async function POST(req: NextRequest) {
                     .select()
                     .single()
                 if (insertError) {
+                    if (storagePath) await admin.storage.from("contract-reviews").remove([storagePath])
                     logWarn("gennemgang", "Insert i contract_reviews fejlede", { error: insertError.message })
                 } else {
                     logInfo("gennemgang", "Gemt i contract_reviews", { reviewId: savedReview?.id ?? null, hasStorage: Boolean(storagePath) })

@@ -340,6 +340,57 @@ begin
   end if;
 end $$;
 
+-- Ordinary organisation membership is not staff authorization.
+do $$
+declare
+  test_user uuid := gen_random_uuid();
+  own_org uuid;
+  foreign_org uuid;
+  holder_id uuid;
+begin
+  insert into auth.users (id, email, aud, role, created_at, updated_at)
+  values (test_user, 'staff-access-' || test_user::text || '@example.invalid', 'authenticated', 'authenticated', now(), now());
+  insert into public.organisations (name) values ('Staff access A') returning id into own_org;
+  insert into public.organisations (name) values ('Staff access B') returning id into foreign_org;
+  insert into public.rettighedshavere (user_id, full_name, email)
+  values (test_user, 'Staff access fixture', 'staff-access-' || test_user::text || '@example.invalid')
+  returning id into holder_id;
+  perform set_config('request.jwt.claim.sub', test_user::text, true);
+  perform set_config('request.jwt.claims', json_build_object('sub', test_user)::text, true);
+
+  insert into public.user_org_roles (user_id, org_id, role) values (test_user, own_org, 'member');
+  if public.current_user_can_admin_org(own_org) or public.current_user_can_review_org(own_org) then
+    raise exception 'RLS failure: member role granted staff access';
+  end if;
+  if not public.current_user_is_member_owner(holder_id) then
+    raise exception 'RLS failure: member ownership was rejected';
+  end if;
+
+  delete from public.user_org_roles where user_id = test_user;
+  insert into public.user_org_roles (user_id, org_id, role) values (test_user, own_org, 'jurist');
+  if not public.current_user_can_review_org(own_org) or public.current_user_can_admin_org(own_org) then
+    raise exception 'RLS failure: jurist permissions are incorrect';
+  end if;
+  if public.current_user_can_review_org(foreign_org) then
+    raise exception 'RLS failure: jurist crossed organisation boundary';
+  end if;
+
+  delete from public.user_org_roles where user_id = test_user;
+  insert into public.user_org_roles (user_id, org_id, role) values (test_user, own_org, 'admin');
+  if not public.current_user_can_admin_org(own_org) or not public.current_user_can_review_org(own_org) then
+    raise exception 'RLS failure: organisation admin was rejected';
+  end if;
+  if public.current_user_can_admin_org(foreign_org) then
+    raise exception 'RLS failure: organisation admin crossed boundary';
+  end if;
+
+  delete from public.user_org_roles where user_id = test_user;
+  insert into public.user_org_roles (user_id, org_id, role) values (test_user, own_org, 'superadmin');
+  if not public.current_user_is_global_staff() or not public.current_user_can_admin_org(foreign_org) then
+    raise exception 'RLS failure: superadmin global access was rejected';
+  end if;
+end $$;
+
 select pass('RLS- og audit-sikkerhedsassertions bestod');
 select * from finish();
 rollback;
