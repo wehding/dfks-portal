@@ -251,6 +251,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         }
         if (result.productionType && CONTRACT_CATEGORY_TO_WORK_TYPE[result.productionType]) {
           setProductionType(result.productionType);
+          setTypeFilter(CONTRACT_CATEGORY_TO_WORK_TYPE[result.productionType]);
           filled.add("productionType");
         }
         let screenedRole = "Klipper";
@@ -319,8 +320,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       const results = result.results ?? [];
       setUnifiedResults(results);
       setTypeFilter(preferredTypeOverride
-        ? (results.some(item => item.type === preferredTypeOverride) ? preferredTypeOverride : "all")
-        : contractWorkTypeFilter(productionType, results));
+        ? preferredTypeOverride
+        : contractWorkTypeFilter(productionType));
     } catch (error) {
       console.error("Værkssøgning i kontraktupload fejlede", error);
       setSearchError("Søgningen mislykkedes. Prøv igen.");
