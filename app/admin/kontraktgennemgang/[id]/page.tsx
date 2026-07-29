@@ -417,13 +417,13 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                         </p>
                     </div>
                     {review.focus_areas && review.focus_areas.length > 0 && (
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <p className="text-muted-foreground mb-0.5">Fokusområder</p>
                             <p className="font-medium">{review.focus_areas.join(" · ")}</p>
                         </div>
                     )}
                     {review.notes && (
-                        <div className="col-span-2 sm:col-span-4">
+                        <div className="sm:col-span-4">
                             <p className="text-muted-foreground mb-0.5">Bemærkning fra medlem</p>
                             <p className="italic text-foreground/80">"{review.notes}"</p>
                         </div>
@@ -432,7 +432,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
 
                 {/* Status og tildeling */}
                 <div className="flex flex-wrap gap-3 items-center pt-2 border-t">
-                    <div className="flex items-center gap-2">
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                         <span className="text-xs text-muted-foreground">{t("common.status")}:</span>
                         <Badge variant="outline" className={statusCfg.class}>{review.status === "afventer" ? t("admin.reviewQueue.unassigned") : review.status === "behandling" ? t("admin.reviewQueue.processing") : t("admin.reviewQueue.completed")}</Badge>
                         {!review.assigned_to && review.status !== "afsluttet" && <Button size="sm" className="h-7 text-xs" onClick={() => updateReview({ action: "claim" })}>{t("admin.reviewDetail.claim")}</Button>}
@@ -442,7 +442,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                                 value={review.assigned_to ?? undefined}
                                 onValueChange={assignedTo => updateReview({ action: "assign", assignedTo })}
                             >
-                                <SelectTrigger className="h-7 w-48 text-xs" aria-label={t("admin.reviewDetail.assignTo")}>
+                                <SelectTrigger className="h-7 w-full text-xs sm:w-48" aria-label={t("admin.reviewDetail.assignTo")}>
                                     <SelectValue placeholder={t("admin.reviewDetail.assignTo")} />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -454,7 +454,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                         )}
                     </div>
 
-                    <div className="flex items-center gap-2 ml-auto">
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
                         <Button
                             size="sm"
                             variant="outline"

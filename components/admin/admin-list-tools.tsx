@@ -35,17 +35,17 @@ export function AdminListTools({ pageKey, title, columns }: { pageKey: string; t
     window.print();
     window.setTimeout(() => { document.title = previous; }, 100);
   };
-  return <div data-explicit-admin-list-tools className="flex flex-wrap justify-end gap-2 print:hidden">
-    <details className="relative">
-      <summary className="list-none"><Button type="button" variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
-      <div className="absolute right-0 z-30 mt-2 min-w-56 space-y-1 rounded-md border bg-popover p-2 text-sm shadow-lg">
+  return <div data-explicit-admin-list-tools className="grid grid-cols-2 gap-2 print:hidden sm:flex sm:flex-wrap sm:justify-end">
+    <details className="relative min-w-0">
+      <summary className="list-none [&>span]:w-full"><Button type="button" variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
+      <div className="absolute left-0 right-0 z-30 mt-2 max-h-[60vh] min-w-56 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-lg sm:left-auto">
         {columns.map(column => <label key={column.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-muted">
           <input type="checkbox" checked={visible.has(column.id)} disabled={column.required} onChange={() => toggle(column)} />
           {column.label}
         </label>)}
       </div>
     </details>
-    <Button type="button" variant="outline" size="sm" onClick={print}><Printer className="mr-2 h-4 w-4" />Udskriv / PDF</Button>
+    <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" onClick={print}><Printer className="mr-2 h-4 w-4" />Udskriv / PDF</Button>
     {hiddenRules && <style>{hiddenRules}</style>}
   </div>;
 }
@@ -90,11 +90,11 @@ export function AdminListAutoTools() {
       return next;
     });
   };
-  return <div className="fixed bottom-4 right-20 z-40 flex gap-2 rounded-lg border bg-background p-2 shadow-lg print:hidden">
-    <details className="relative"><summary className="list-none"><Button variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
-      <div className="absolute bottom-full right-0 mb-2 min-w-56 space-y-1 rounded-md border bg-popover p-2 text-sm shadow-lg">{columns.map(column => <label key={column.id} className="flex items-center gap-2 px-2 py-1"><input type="checkbox" checked={visible.has(column.id)} disabled={column.required} onChange={() => toggle(column)} />{column.label}</label>)}</div>
+  return <div className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-2 gap-2 rounded-lg border bg-background p-2 shadow-lg print:hidden sm:inset-x-auto sm:bottom-4 sm:right-20 sm:flex">
+    <details className="relative min-w-0"><summary className="list-none [&>span]:w-full"><Button variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
+      <div className="absolute bottom-full left-0 right-0 mb-2 max-h-[60vh] min-w-56 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-lg sm:left-auto">{columns.map(column => <label key={column.id} className="flex items-center gap-2 px-2 py-1"><input type="checkbox" checked={visible.has(column.id)} disabled={column.required} onChange={() => toggle(column)} />{column.label}</label>)}</div>
     </details>
-    <Button variant="outline" size="sm" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />Udskriv / PDF</Button>
+    <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />Udskriv / PDF</Button>
     {hiddenRules && <style>{hiddenRules}</style>}
   </div>;
 }
