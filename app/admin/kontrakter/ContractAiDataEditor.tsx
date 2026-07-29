@@ -42,6 +42,10 @@ const FIELD_TO_SOURCE_KEY: Record<string, string> = {
     personalSupplement: "supplements",
     otherSupplements: "otherSupplements",
     contractDate: "dates",
+    signatureStatus: "signature",
+    signatureDate: "signature",
+    signatureEvidence: "signature",
+    signaturePage: "signature",
     startDate: "dates",
     endDate: "dates",
     workingWeeks: "workingWeeks",
@@ -82,6 +86,10 @@ const GROUPS: { title: string; fields: Field[] }[] = [
         { key: "collectiveAgreement", label: "Overenskomst inkorporeret", type: "bool" },
         { key: "collectiveAgreementByReference", label: "Inkorporeret ved reference", type: "bool" },
         { key: "isFreelanceContract", label: "Freelance-kontrakt", type: "bool" },
+        { key: "signatureStatus", label: "Underskriftsstatus (yes/no/unknown)", type: "text" },
+        { key: "signatureDate", label: "Underskriftsdato", type: "date" },
+        { key: "signatureEvidence", label: "Evidens for underskrift", type: "textarea" },
+        { key: "signaturePage", label: "Side for underskrift", type: "number" },
         { key: "contractDate", label: "Kontraktdato", type: "date" },
         { key: "startDate", label: "Startdato", type: "date" },
         { key: "endDate", label: "Slutdato", type: "date" },
@@ -108,13 +116,14 @@ const GROUPS: { title: string; fields: Field[] }[] = [
         { key: "royaltyPercent", label: "Royalty %", type: "number" },
         { key: "aiDataMiningClause", label: "AI-data mining-forbehold", type: "bool" },
         { key: "futureRightsReservation", label: "Fremtidige rettigheder-forbehold", type: "bool" },
+        { key: "rightsNotApplicable", label: "Copydan/streaming er ikke relevant", type: "bool" },
         ...RIGHT_OVERVIEW_FIELDS,
         { key: "distribution", label: "Distribution (komma-sep.)", type: "text" },
     ]},
 ];
 
 const ARRAY_KEYS = new Set(["creditedRoles", "distribution", "productionCompanies", "productionCountries"]);
-const NUMBER_KEYS = new Set(["duration", "premiereYear", "seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate"]);
+const NUMBER_KEYS = new Set(["duration", "premiereYear", "seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage"]);
 
 type LinkedEpisode = {
     id: string;
