@@ -20,8 +20,10 @@ export async function GET(req: NextRequest) {
   const gender = ALLOWED_GENDERS.has(params.get("gender") ?? "") ? params.get("gender") : null;
   const category = ALLOWED_CATEGORIES.has(params.get("category") ?? "") ? params.get("category") : null;
   const contractType = ALLOWED_CONTRACT_TYPES.has(params.get("contractType") ?? "") ? params.get("contractType") : null;
+  const producerId = /^[0-9a-f-]{36}$/i.test(params.get("producerId") ?? "") ? params.get("producerId") : null;
+  const professionType = params.get("professionType")?.trim().slice(0, 120) || null;
   try {
-    const data = await getAdminStatistics(caller.orgId, { year, gender, category, contractType });
+    const data = await getAdminStatistics(caller.orgId, { year, gender, category, contractType, producerId, professionType });
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("[admin-statistics] Aggregation failed", error instanceof Error ? error.message : "Unknown error");

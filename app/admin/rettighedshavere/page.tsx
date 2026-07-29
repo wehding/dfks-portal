@@ -12,6 +12,7 @@ import {
 } from "@/lib/db/rettighedshavere"
 import { createRettighedshaverSecure, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
+import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -877,6 +878,7 @@ export default function RettighedshavereAdminPage() {
                 })}
             </MobileCardList>
 
+            <AdminListTools pageKey="rights-holders" title="Rettighedshavere" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Navn",index:2,required:true},...(canSeeAllOrganisations?[{id:"organisation",label:"Organisation",index:3}]:[]),{id:"email",label:"E-mail",index:canSeeAllOrganisations?4:3},{id:"phone",label:"Telefon",index:canSeeAllOrganisations?5:4},{id:"member",label:"Medlemsnr.",index:canSeeAllOrganisations?6:5},{id:"contracts",label:"Kontrakter",index:canSeeAllOrganisations?7:6},{id:"works",label:"Værker",index:canSeeAllOrganisations?8:7},{id:"status",label:"Status",index:canSeeAllOrganisations?9:8},{id:"portal",label:"Portaladgang",index:canSeeAllOrganisations?10:9},{id:"onboarding",label:"Onboarding",index:canSeeAllOrganisations?11:10}]} />
             <ResponsiveTableFrame className="rounded-md">
                 <Table>
                     <TableHeader>

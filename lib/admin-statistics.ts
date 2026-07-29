@@ -5,9 +5,9 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 export const MIN_STATISTICS_MEMBERS = 10;
 
-type Filters = { year?: number | null; gender?: string | null; category?: string | null; contractType?: string | null };
+type Filters = { year?: number | null; gender?: string | null; category?: string | null; contractType?: string | null; producerId?: string | null; professionType?: string | null };
 type ContractRow = {
-  id: string; rightsHolderId: string; type: string; startDate: string | null; contractDate: string | null;
+  id: string; rightsHolderId: string; employerId: string | null; type: string; startDate: string | null; contractDate: string | null;
   year: number; data: Record<string, unknown>;
 };
 
@@ -39,7 +39,7 @@ export async function getAdminStatistics(orgId: string, filters: Filters) {
   if (!allowedHolderIds.length) return { suppressed: true, minimum: MIN_STATISTICS_MEMBERS, memberCount: null, years: [] };
 
   const { data: contracts, error: contractError } = await db.from("contracts")
-    .select("id,type,contract_date,start_date,rights_holder_id")
+    .select("id,type,contract_date,start_date,rights_holder_id,employer_id")
     .eq("org_id", orgId)
     .in("rights_holder_id", allowedHolderIds)
     .in("status", ["valideret", "kladde"]);
@@ -56,7 +56,7 @@ export async function getAdminStatistics(orgId: string, filters: Filters) {
     const rawDate = data.startDate ?? contract.start_date ?? data.contractDate ?? contract.contract_date ?? null;
     const date = typeof rawDate === "string" ? rawDate : null;
     const year = date && !Number.isNaN(Date.parse(date)) ? new Date(date).getFullYear() : new Date().getFullYear();
-    return [{ id: contract.id, rightsHolderId: contract.rights_holder_id, type: contract.type, startDate: contract.start_date, contractDate: contract.contract_date, year, data }];
+    return [{ id: contract.id, rightsHolderId: contract.rights_holder_id, employerId: contract.employer_id, type: contract.type, startDate: contract.start_date, contractDate: contract.contract_date, year, data }];
   });
   const years = [...new Set(sourceRows.map(row => row.year))].sort((a, b) => b - a);
   const rows = sourceRows.filter(row => {
@@ -64,6 +64,9 @@ export async function getAdminStatistics(orgId: string, filters: Filters) {
     if (filters.gender && row.data.gender !== filters.gender) return false;
     if (filters.category && row.data.productionType !== filters.category) return false;
     if (filters.contractType && row.type !== filters.contractType) return false;
+    if (filters.producerId && row.employerId !== filters.producerId) return false;
+    const profession = String(row.data.professionType ?? row.data.role ?? "").trim().toLocaleLowerCase("da");
+    if (filters.professionType && profession !== filters.professionType.trim().toLocaleLowerCase("da")) return false;
     return true;
   });
   const memberCount = new Set(rows.map(row => row.rightsHolderId)).size;
