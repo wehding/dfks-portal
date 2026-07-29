@@ -161,7 +161,7 @@ export async function saveUploadedContract(params: {
   memberName: string;
   workTitle?: string;
   workId?: string;
-  category: string;
+  productionType: string;
   roles: string[];
   duration?: number;
   premiereDate?: string;
@@ -169,6 +169,7 @@ export async function saveUploadedContract(params: {
   episodes?: { number: number; role: string }[];
   coversWholeSeason?: boolean;
   deferAiJob?: boolean;
+  producerSelections?: ProductionCompanySelection[];
 }) {
   const db = createServiceClient();
   const user = await currentUser();
@@ -215,7 +216,7 @@ export async function saveUploadedContract(params: {
       memberName: rh.full_name ?? params.memberName,
       workTitle: params.workTitle,
       workId: params.workId,
-      productionType: params.category || undefined,
+      productionType: params.productionType || undefined,
       creditedRoles: params.roles,
       duration: params.duration,
       premiereDate: params.premiereDate,
@@ -229,6 +230,19 @@ export async function saveUploadedContract(params: {
     await db.from("contracts").delete().eq("id", saved.id);
     await db.storage.from(BUCKET).remove([params.filePath]);
     return { success: false, error: validationError.message };
+  }
+
+  if (params.producerSelections?.length) {
+    try {
+      await syncContractProducerRelations(db, saved.id, params.producerSelections, "member_upload");
+    } catch (producerError) {
+      await db.from("contracts").delete().eq("id", saved.id).eq("org_id", orgId);
+      await db.storage.from(BUCKET).remove([params.filePath]);
+      return {
+        success: false,
+        error: producerError instanceof Error ? producerError.message : "Producenten kunne ikke tilknyttes kontrakten",
+      };
+    }
   }
 
   if (!params.deferAiJob) {

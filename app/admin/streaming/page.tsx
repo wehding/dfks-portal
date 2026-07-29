@@ -178,7 +178,7 @@ function typeLabel(type: ProductionType): string {
         tv_series_original: "TV Serie · Original",
         tv_series_licensed: "TV Serie · Licenseret",
         short_original: "Kortfilm · Original",
-        documentary_original: "Dokumentar · Original",
+        documentary_original: "Dokumentarfilm · Original",
     }
     return map[type] ?? type
 }

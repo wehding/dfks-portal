@@ -11,11 +11,12 @@ import {
 import { inferSeriesWorkFields } from "../lib/series-episodes";
 
 test("contract type filters automatic work search when matching results exist", () => {
-  assert.equal(contractWorkTypeFilter("tvSeries", [{ type: "spillefilm" }, { type: "tv-serie" }]), "tv-serie");
+  assert.equal(contractWorkTypeFilter("tvSeries"), "tv-serie");
 });
 
-test("automatic work search shows all types when the extracted type has no match", () => {
-  assert.equal(contractWorkTypeFilter("docSeries", [{ type: "dokumentarfilm" }]), "all");
+test("automatic work search keeps the AI type selected even when there are no matching results", () => {
+  assert.equal(contractWorkTypeFilter("docSeries"), "dokumentar-serie");
+  assert.equal(contractWorkTypeFilter(null), "all");
 });
 
 test("AI contract data prefills the shared manual work form", () => {

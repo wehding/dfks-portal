@@ -5,6 +5,7 @@ import {
   companyMatches,
   normalizeCompanyName,
   normalizeRegistrationNumber,
+  singleHighConfidenceCompanyMatch,
   uniqueCompanySelections,
   validateRegistrationNumber,
   type ProductionCompanyOption,
@@ -58,4 +59,14 @@ test("bevarer flere CVR-enheder under samme kanoniske selskab uden dubletvalg", 
   ]);
   assert.equal(selections.length, 2);
   assert.deepEqual(selections.map(selection => selection.legalEntityId), ["legal-1", "legal-2"]);
+});
+
+test("vælger kun automatisk ved ét producenthit med høj sikkerhed", () => {
+  assert.equal(singleHighConfidenceCompanyMatch([{ ...option, matchMethod: "exact_name", matchScore: 110 }])?.employerId, option.employerId);
+  assert.equal(singleHighConfidenceCompanyMatch([{ ...option, matchMethod: "fuzzy_name", matchScore: 96 }])?.employerId, option.employerId);
+  assert.equal(singleHighConfidenceCompanyMatch([{ ...option, matchMethod: "fuzzy_name", matchScore: 95 }]), null);
+  assert.equal(singleHighConfidenceCompanyMatch([
+    { ...option, matchMethod: "exact_name", matchScore: 110 },
+    { ...option, employerId: "other", canonicalName: "Nordisk Film ApS", matchMethod: "fuzzy_name", matchScore: 96 },
+  ]), null);
 });

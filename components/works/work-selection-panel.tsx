@@ -33,6 +33,7 @@ type Props = {
   manualExtra?: ReactNode;
   renderSelectedDetails?: (result: UnifiedSearchWorkResult) => ReactNode;
   autoFocus?: boolean;
+  autoSelectManualProducer?: boolean;
 };
 
 function typeLabel(type: string, locale: string) {
@@ -68,6 +69,7 @@ export function WorkSelectionPanel({
   manualExtra,
   renderSelectedDetails,
   autoFocus = false,
+  autoSelectManualProducer = false,
 }: Props) {
   const { t } = useI18n();
   const filteredResults = results.filter(item => typeFilter === "all" || item.type === typeFilter);
@@ -170,7 +172,7 @@ export function WorkSelectionPanel({
               {t("works.backToSearch")}
             </Button>
           </div>
-          <ManualWorkFormFields value={manualWork} onChange={onManualWorkChange} locale={locale} />
+          <ManualWorkFormFields value={manualWork} onChange={onManualWorkChange} locale={locale} autoSelectProducer={autoSelectManualProducer} />
           {manualExtra}
         </div>
       )}

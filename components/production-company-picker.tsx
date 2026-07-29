@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   selectionKey,
+  singleHighConfidenceCompanyMatch,
   uniqueCompanySelections,
   type ProductionCompanyOption,
   type ProductionCompanySelection,
@@ -27,9 +28,10 @@ type Props = {
   disabled?: boolean;
   label?: string;
   suggestedName?: string;
+  autoSelectHighConfidence?: boolean;
 };
 
-export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "" }: Props) {
+export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", autoSelectHighConfidence = false }: Props) {
   const { locale } = useI18n();
   const da = locale === "da";
   const [query, setQuery] = useState(suggestedName);
@@ -85,6 +87,20 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
   }, [query]);
 
   const selected = useMemo(() => new Set(value.map(selectionKey)), [value]);
+
+  useEffect(() => {
+    if (!autoSelectHighConfidence || disabled || value.length > 0 || loading) return;
+    const option = singleHighConfidenceCompanyMatch(options);
+    if (!option) return;
+    onChange([{
+      employerId: option.employerId,
+      canonicalName: option.canonicalName,
+      matchScore: option.matchScore,
+      matchMethod: option.matchMethod,
+    }]);
+    setQuery("");
+  }, [autoSelectHighConfidence, disabled, loading, onChange, options, value.length]);
+
   const addSelection = (selection: ProductionCompanySelection) => {
     onChange(uniqueCompanySelections([...value, selection]));
     setQuery("");

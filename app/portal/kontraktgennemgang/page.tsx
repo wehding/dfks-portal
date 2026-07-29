@@ -47,7 +47,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
 }
 
 const PRODUCTION_LABELS: Record<string, string> = {
-    dokumentar: "Dokumentar", fiktion: "Fiktion / drama", reklame: "Reklame",
+    dokumentar: "Dokumentarfilm", fiktion: "Fiktion / drama", reklame: "Reklame",
     streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
 }
 
@@ -286,7 +286,7 @@ function formatBytes(bytes: number) {
 // ── Konstanter ───────────────────────────────────────────────
 
 const PRODUCTION_TYPES: { value: ProductionType; label: string }[] = [
-    { value: "dokumentar",  label: "Dokumentar" },
+    { value: "dokumentar",  label: "Dokumentarfilm" },
     { value: "fiktion",     label: "Fiktion / drama" },
     { value: "tv_program",  label: "TV-program" },
     { value: "reklame",     label: "Reklame / branded content" },
