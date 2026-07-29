@@ -147,6 +147,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [pendingReviewCount, setPendingReviewCount] = useState<number>(0)
     const [pendingScreeningCount, setPendingScreeningCount] = useState<number>(0)
     const [isAssociationMember, setIsAssociationMember] = useState(false)
+    const [activeOrgId, setActiveOrgId] = useState("")
+    const [organisations, setOrganisations] = useState<Array<{ id: string; name: string }>>([])
 
     // Kollaps-tilstand per sektion. Opsætning er lukket som standard.
     const [brugerOpen, setBrugerOpen] = useState(true)
@@ -169,10 +171,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 role: string
                 isAssociationMember: boolean
                 brand: { logo_url: string | null; short_name: string }
+                organisations: Array<{ id: string; name: string }>
             }
             setUserRole(context.role)
             setIsAssociationMember(context.isAssociationMember)
             setBrand(context.brand)
+            setActiveOrgId(context.orgId)
+            setOrganisations(context.organisations ?? [])
             const orgId = context.orgId
 
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes, reviewsRes, screeningsRes] = await Promise.all([
@@ -209,6 +214,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const supabase = createClient()
         await supabase.auth.signOut()
         router.push("/")
+        router.refresh()
+    }
+
+    const handleOrganisationChange = async (orgId: string) => {
+        const response = await fetch("/api/admin/context", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ orgId }),
+        })
+        if (!response.ok) return
+        setActiveOrgId(orgId)
+        window.dispatchEvent(new Event("admin-context-updated"))
         router.refresh()
     }
 
@@ -364,6 +381,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">{currentPageTitle}</h1>
                     <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{brand.short_name} administration</span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+                        {organisations.length > 1 && (
+                            <label className="flex items-center gap-1.5">
+                                <Building2 className="hidden h-4 w-4 text-muted-foreground sm:block" />
+                                <span className="sr-only">Aktiv organisation</span>
+                                <select
+                                    aria-label="Aktiv organisation"
+                                    value={activeOrgId}
+                                    onChange={event => void handleOrganisationChange(event.target.value)}
+                                    className="h-8 max-w-32 rounded-md border bg-background px-2 text-xs sm:max-w-52 sm:text-sm"
+                                >
+                                    {organisations.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
+                                </select>
+                            </label>
+                        )}
                         <AdminContextualHelp />
                         <LanguageToggle />
                         <ThemeToggle />

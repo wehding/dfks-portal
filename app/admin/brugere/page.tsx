@@ -32,6 +32,7 @@ type User = {
     org_roles: string[]
     system_roles?: string[]
     organisations: Array<{ id: string; name: string }>
+    jurist_organisation_ids?: string[]
     is_rettighedshaver: boolean
     onboarding_completed: boolean | null
     gender: string | null
@@ -55,6 +56,7 @@ type UsersResponse = {
     error?: string
     callerRole?: string
     callerUserId?: string
+    availableOrganisations?: Array<{ id: string; name: string }>
     unassigned?: UnassignedRecord[]
 }
 
@@ -208,6 +210,8 @@ export default function AdminBrugerePage() {
     const [detailTitle, setDetailTitle] = useState("")
     const [detailGender, setDetailGender] = useState("")
     const [detailRoles, setDetailRoles] = useState<string[]>([])
+    const [detailJuristOrganisationIds, setDetailJuristOrganisationIds] = useState<string[]>([])
+    const [availableOrganisations, setAvailableOrganisations] = useState<Array<{ id: string; name: string }>>([])
     const [detailIsRightsHolder, setDetailIsRightsHolder] = useState(false)
     const [detailDirectPassword, setDetailDirectPassword] = useState("")
     const [detailResetLink, setDetailResetLink] = useState<string | null>(null)
@@ -221,6 +225,7 @@ export default function AdminBrugerePage() {
         setDetailGender(user.gender || "")
         const editableRoles = user.org_roles.filter(isStaffRole)
         setDetailRoles(editableRoles.length > 0 ? editableRoles : (user.roles.includes("rettighedshaver") ? [] : ["viewer"]))
+        setDetailJuristOrganisationIds(user.jurist_organisation_ids ?? [])
         setDetailIsRightsHolder(user.is_rettighedshaver)
         setDetailDirectPassword("")
         setDetailResetLink(null)
@@ -242,6 +247,7 @@ export default function AdminBrugerePage() {
                     action: "set-roles",
                     userId: detailUser.id,
                     roles: detailRoles,
+                    organisationIds: detailRoles.includes("jurist") ? detailJuristOrganisationIds : [],
                 }),
             })
             if (!roleRes.ok) {
@@ -364,6 +370,7 @@ export default function AdminBrugerePage() {
         const json = await res.json() as UsersResponse
         if (res.ok) {
             setCallerRole(json.callerRole ?? "")
+            setAvailableOrganisations(json.availableOrganisations ?? [])
             setUnassigned(json.unassigned ?? [])
             // Brug merged users hvis tilgængeligt, ellers bagudkompatibel sammensætning
             if (json.users) {
@@ -1127,6 +1134,26 @@ export default function AdminBrugerePage() {
                                     />
                                 ))}
                             </div>
+                            {callerRole === "superadmin" && detailRoles.includes("jurist") && (
+                                <div className="space-y-2 rounded-md border p-3">
+                                    <Label>Juristadgang til organisationer</Label>
+                                    <p className="text-xs text-muted-foreground">Juristen får kun adgang til rettighedshavere, kontrakter, beskeder og kontraktgennemgange i de valgte organisationer.</p>
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                        {availableOrganisations.map(org => (
+                                            <label key={org.id} className="flex items-center gap-2 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={detailJuristOrganisationIds.includes(org.id)}
+                                                    onChange={event => setDetailJuristOrganisationIds(current => event.target.checked
+                                                        ? [...new Set([...current, org.id])]
+                                                        : current.filter(id => id !== org.id))}
+                                                />
+                                                <span>{org.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
                                 <input type="checkbox" className="mt-0.5 h-4 w-4" checked={detailIsRightsHolder} onChange={event => setDetailIsRightsHolder(event.target.checked)} />
                                 <span><span className="block text-sm font-medium">{t("admin.users.rightsHolder")}</span><span className="block text-xs text-muted-foreground">{t("admin.users.rightsHolderHelp")}</span></span>

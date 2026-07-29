@@ -11,7 +11,9 @@
  */
 
 import { SupabaseClient } from "@supabase/supabase-js"
-import { ADMIN_ROLES, STAFF_ROLE_RANK, SUPERADMIN_ROLES, type StaffRole } from "@/lib/admin-roles"
+import { ADMIN_ROLES, SUPERADMIN_ROLES } from "@/lib/admin-roles"
+import { readActiveOrgId } from "@/lib/active-org-context"
+import { resolveStaffAccess } from "@/lib/staff-access"
 
 /**
  * Tjekker om den indloggede bruger har en admin-rolle i user_org_roles.
@@ -21,25 +23,9 @@ export async function assertAdminRole(
     supabase: SupabaseClient,
     roles: readonly string[] = ADMIN_ROLES
 ): Promise<{ userId: string; role: string; orgId: string } | null> {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-
-    const { data } = await supabase
-        .from("user_org_roles")
-        .select("role, org_id")
-        .eq("user_id", user.id)
-        .in("role", roles)
-    // ANTAGELSE: "én admin = én org". Har en bruger admin-roller i flere organisationer, bindes
-    // hele admin-sessionen til org'en for den HØJEST-rangerede rolle. Der er (bevidst) ingen
-    // org-vælger endnu — skal multi-org-admin understøttes, skal orgId gøres til et eksplicit
-    // valg/parameter i stedet for at udledes af rolle-rank her.
-    const highestRole = data?.slice().sort(
-        (a, b) => (STAFF_ROLE_RANK[b.role as StaffRole] ?? -1) - (STAFF_ROLE_RANK[a.role as StaffRole] ?? -1)
-            || String(a.org_id).localeCompare(String(b.org_id))
-    )[0]
-
-    if (!highestRole) return null
-    return { userId: user.id, role: highestRole.role, orgId: highestRole.org_id }
+    const access = await resolveStaffAccess(supabase, await readActiveOrgId())
+    if (!access || !roles.includes(access.activeRole)) return null
+    return { userId: access.userId, role: access.activeRole, orgId: access.activeOrgId }
 }
 
 export { ADMIN_ROLES, SUPERADMIN_ROLES }

@@ -161,6 +161,7 @@ export async function GET() {
             org_roles: orgRoleList,
             system_roles: systemRoleList,
             organisations: Array.from(organisationsByUser.get(userId) ?? []).map(([id, name]) => ({ id, name })),
+            jurist_organisation_ids: (orgRoles ?? []).filter(row => row.user_id === userId && row.role === "jurist").map(row => row.org_id),
             is_rettighedshaver: !!rhEntry,
             onboarding_completed: rhEntry?.onboarding_completed ?? null,
             gender: rhEntry?.gender ?? null,
@@ -219,7 +220,10 @@ export async function GET() {
             .sort((left, right) => left.full_name.localeCompare(right.full_name, "da"))
     }
 
-    return NextResponse.json({ users, staff, portal, unassigned, callerRole: caller.role, callerUserId: caller.userId })
+    const { data: availableOrganisations } = caller.role === "superadmin"
+        ? await admin.from("organisations").select("id,name").order("name")
+        : await admin.from("organisations").select("id,name").eq("id", orgId)
+    return NextResponse.json({ users, staff, portal, unassigned, availableOrganisations: availableOrganisations ?? [], callerRole: caller.role, callerUserId: caller.userId })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -300,7 +304,7 @@ export async function PATCH(req: NextRequest) {
 
     // ── Opdater roller ────────────────────────────────────────
     if (body.action === "set-roles") {
-        const { userId, roles }: { userId: string; roles: string[] } = body
+        const { userId, roles, organisationIds }: { userId: string; roles: string[]; organisationIds?: string[] } = body
         if (!userId || !Array.isArray(roles)) {
             return NextResponse.json({ error: "userId og roles er påkrævet" }, { status: 400 })
         }
@@ -311,8 +315,20 @@ export async function PATCH(req: NextRequest) {
                 error: `En eller flere roller er ugyldige: ${invalidRoles.join(", ")}`,
             }, { status: 400 })
         }
-        const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
-        if (targetError) return targetError
+        if (patchCaller.role === "superadmin") {
+            const { data: targetUser } = await admin.auth.admin.getUserById(userId)
+            if (!targetUser.user) return NextResponse.json({ error: "Brugeren findes ikke" }, { status: 404 })
+        } else {
+            const targetError = await ensureTargetUserInOrg(admin, userId, orgId)
+            if (targetError) return targetError
+        }
+
+        const juristOrganisationIds = [...new Set((organisationIds ?? []).filter((id): id is string => typeof id === "string"))]
+        if (nextRoles.includes("jurist") && patchCaller.role === "superadmin") {
+            if (juristOrganisationIds.length === 0) return NextResponse.json({ error: "Vælg mindst én organisation til juristen" }, { status: 400 })
+            const { count } = await admin.from("organisations").select("id", { count: "exact", head: true }).in("id", juristOrganisationIds)
+            if ((count ?? 0) !== juristOrganisationIds.length) return NextResponse.json({ error: "En organisation er ugyldig" }, { status: 400 })
+        }
 
         const { data: currentRoleRows } = await admin
             .from("user_org_roles")
@@ -338,12 +354,18 @@ export async function PATCH(req: NextRequest) {
         // Redigér kun staffroller. Systemrollen `member` styres separat af
         // rettighedshaverkontakten og må ikke forsvinde ved almindelig rolleændring.
         await admin.from("user_org_roles").delete().eq("user_id", userId).eq("org_id", orgId).in("role", ALLOWED_STAFF_ROLES)
+        if (patchCaller.role === "superadmin") {
+            await admin.from("user_org_roles").delete().eq("user_id", userId).eq("role", "jurist")
+        }
 
         // Indsæt nye roller
         if (nextRoles.length > 0) {
-            const { error: insertErr } = await admin.from("user_org_roles").insert(
-                nextRoles.map(role => ({ user_id: userId, org_id: orgId, role }))
-            )
+            const scopedRows = nextRoles.filter(role => role !== "jurist" || patchCaller.role !== "superadmin")
+                .map(role => ({ user_id: userId, org_id: orgId, role }))
+            const juristRows = patchCaller.role === "superadmin" && nextRoles.includes("jurist")
+                ? juristOrganisationIds.map(targetOrgId => ({ user_id: userId, org_id: targetOrgId, role: "jurist" }))
+                : []
+            const { error: insertErr } = await admin.from("user_org_roles").insert([...scopedRows, ...juristRows])
             if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
         }
 
