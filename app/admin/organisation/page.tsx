@@ -22,6 +22,7 @@ type FormState = {
   welcome_message_text: string;
   coeditor_word: string;
   role_labels: string[];
+  producer_categories: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
   foreninglet_base_url: string;
@@ -46,6 +47,7 @@ const emptyForm: FormState = {
   welcome_message_text: "",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
+  producer_categories: [],
   onboarding_keywords: ["klip", "edit"],
   contract_review_retention_months: 24,
   foreninglet_base_url: "https://foreninglet.dk/api/members",
@@ -83,6 +85,7 @@ export default function OrganisationSettingsPage() {
           welcome_message_text: settings.welcome_message_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
+          producer_categories: settings.producer_categories,
           onboarding_keywords: settings.onboarding_keywords,
           contract_review_retention_months: settings.contract_review_retention_months,
           foreninglet_base_url: settings.foreninglet.base_url,
@@ -154,6 +157,7 @@ export default function OrganisationSettingsPage() {
           welcome_message_text: form.welcome_message_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
+          producer_categories: form.producer_categories,
           onboarding_keywords: form.onboarding_keywords,
           contract_review_retention_months: form.contract_review_retention_months,
           foreninglet_base_url: form.foreninglet_base_url || null,
@@ -468,7 +472,8 @@ export default function OrganisationSettingsPage() {
             <Input value={form.coeditor_word} onChange={event => setForm(f => ({ ...f, coeditor_word: event.target.value }))} placeholder="medskaber" />
           </div>
           <div className="space-y-2">
-            <Label>Rollebetegnelser</Label>
+            <Label>Faggruppetyper</Label>
+            <p className="text-xs text-muted-foreground">De faggrupper, organisationens rettighedshavere kan tilknyttes, fx klipper og medklipper.</p>
             <div className="space-y-2">
               {form.role_labels.map((role, index) => (
                 <div key={index} className="flex gap-2">
@@ -482,6 +487,24 @@ export default function OrganisationSettingsPage() {
             <Button type="button" variant="outline" size="sm" onClick={() => setForm(f => ({ ...f, role_labels: [...f.role_labels, ""] }))}>
               <Plus className="mr-2 h-4 w-4" />
               Tilføj rolle
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Label>Producenttyper</Label>
+            <p className="text-xs text-muted-foreground">Organisationens egne kategorier, fx filmproducent, teater eller broadcaster.</p>
+            <div className="space-y-2">
+              {form.producer_categories.map((category, index) => (
+                <div key={index} className="flex gap-2">
+                  <Input value={category} onChange={event => setForm(current => ({ ...current, producer_categories: current.producer_categories.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} />
+                  <Button type="button" variant="outline" size="icon" onClick={() => setForm(current => ({ ...current, producer_categories: current.producer_categories.filter((_, itemIndex) => itemIndex !== index) }))}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => setForm(current => ({ ...current, producer_categories: [...current.producer_categories, ""] }))}>
+              <Plus className="mr-2 h-4 w-4" />
+              Tilføj producenttype
             </Button>
           </div>
           <div className="space-y-2">

@@ -27,6 +27,7 @@ type OrganisationSettingsPayload = {
   welcome_message_text: string | null;
   coeditor_word: string;
   role_labels: string[];
+  producer_categories: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
   foreninglet_base_url?: string | null;
@@ -78,6 +79,12 @@ export async function getOrganisationSettings() {
   const terminology = (data.terminology ?? {}) as OrgTerminology;
 
   const foreninglet = await getForeningLetIntegration(db, orgId);
+  const [{ data: professionRows }, { data: producerRows }] = await Promise.all([
+    db.from("organisation_profession_types").select("display_order,profession_types(name)").eq("org_id", orgId).order("display_order"),
+    db.from("organisation_producer_categories").select("display_order,producer_categories(name)").eq("org_id", orgId).order("display_order"),
+  ]);
+  const professionTypes = (professionRows ?? []).map(row => (row.profession_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
+  const producerCategories = (producerRows ?? []).map(row => (row.producer_categories as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
 
   return {
     id: data.id as string,
@@ -92,9 +99,10 @@ export async function getOrganisationSettings() {
     primary_color: branding.primary_color ?? "#111827",
     coeditor_word: terminology.coeditor_word ?? "medskaber",
     member_word: terminology.member_word ?? "medlem",
-    role_labels: terminology.role_labels?.length
+    role_labels: professionTypes.length ? professionTypes : terminology.role_labels?.length
       ? terminology.role_labels
       : ["Medskaber"],
+    producer_categories: producerCategories,
     onboarding_keywords: terminology.onboarding_keywords?.length
       ? terminology.onboarding_keywords
       : ["klip", "edit"],
@@ -114,6 +122,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const longName = cleanString(payload.long_name);
   const coeditorWord = cleanString(payload.coeditor_word);
   const roleLabels = normalizeRoles(payload.role_labels);
+  const producerCategories = normalizeRoles(payload.producer_categories);
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
   const retentionMonths = Number(payload.contract_review_retention_months);
@@ -162,6 +171,25 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     .eq("id", orgId);
 
   if (error) throw new Error(error.message);
+
+  async function replaceOrganisationTypes(table: "profession_types" | "producer_categories", relationTable: "organisation_profession_types" | "organisation_producer_categories", foreignKey: "profession_type_id" | "producer_category_id", names: string[]) {
+    const ids: string[] = [];
+    for (const name of names) {
+      const { data: typeRow, error: typeError } = await db.from(table)
+        .upsert({ name }, { onConflict: "normalized_name" })
+        .select("id").single();
+      if (typeError || !typeRow) throw new Error(typeError?.message ?? "Typen kunne ikke gemmes.");
+      ids.push(typeRow.id as string);
+    }
+    const { error: deleteError } = await db.from(relationTable).delete().eq("org_id", orgId);
+    if (deleteError) throw new Error(deleteError.message);
+    if (ids.length) {
+      const { error: relationError } = await db.from(relationTable).insert(ids.map((id, index) => ({ org_id: orgId, [foreignKey]: id, display_order: index })));
+      if (relationError) throw new Error(relationError.message);
+    }
+  }
+  await replaceOrganisationTypes("profession_types", "organisation_profession_types", "profession_type_id", roleLabels);
+  await replaceOrganisationTypes("producer_categories", "organisation_producer_categories", "producer_category_id", producerCategories);
 
   await upsertForeningLetIntegration(db, orgId, {
     base_url: payload.foreninglet_base_url,
