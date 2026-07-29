@@ -163,3 +163,12 @@ export function uniqueCompanySelections(selections: ProductionCompanySelection[]
     return true;
   });
 }
+
+export function singleHighConfidenceCompanyMatch(options: ProductionCompanyOption[]) {
+  if (options.length !== 1) return null;
+  const [option] = options;
+  const highConfidence = option.matchMethod === "external_id"
+    || option.matchMethod === "exact_name"
+    || (option.matchScore ?? 0) >= 96;
+  return highConfidence ? option : null;
+}

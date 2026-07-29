@@ -260,7 +260,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           const match = ROLES.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase());
           if (match) { screenedRole = match; setCreditedRoles([match]); filled.add("creditedRole"); }
         }
-        if (result.premiereDate) { setPremiereDate(result.premiereDate); filled.add("premiereDate"); }
+        if (result.premiereDate) {
+          const premiereYear = String(result.premiereDate).match(/(?:19|20)\d{2}/)?.[0] ?? "";
+          if (premiereYear) { setPremiereDate(premiereYear); filled.add("premiereDate"); }
+        }
         if (result.duration && result.duration > 0) { setDuration(String(result.duration)); filled.add("duration"); }
         if (result.productionCompany) { setProductionCompanySelections([]); setProductionCompany(result.productionCompany); filled.add("productionCompany"); }
         if (result.director) { setDirector(result.director); filled.add("director"); }
@@ -407,6 +410,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
           coversWholeSeason: isSeries && contractSeriesScope === "season",
           deferAiJob: !isBatchUpload && Boolean(manualMode || pickedUnifiedResult),
+          producerSelections: manualMode ? manualWork.production_companies : productionCompanySelections,
         });
 
         if (!res.success) { toast.error(res.error ?? `Kunne ikke gemme ${selectedFile.name}`); return null; }
@@ -832,20 +836,6 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           {file && !screening && !isBatchUpload && (
             <div className="flex flex-col gap-4">
 
-              {/* Titel */}
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                  Produktionstitel
-                  {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                </Label>
-                <Input
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  placeholder="Filmens eller seriens titel"
-                  className={aiFields.has("title") ? "bg-purple-50" : ""}
-                />
-              </div>
-
               {/* Værkskobling */}
               {!isBatchUpload && (
               <div className="space-y-2 rounded-lg border bg-muted/40 px-3 py-3">
@@ -919,6 +909,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     typeFilter={typeFilter}
                     onTypeFilterChange={setTypeFilter}
                     manualMode={manualMode}
+                    autoSelectManualProducer
                     onManualModeChange={manual => {
                       setManualMode(manual);
                       if (manual) {
@@ -994,6 +985,20 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 )}
               </div>
               )}
+
+              {/* Titel */}
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                  Produktionstitel
+                  {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
+                </Label>
+                <Input
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  placeholder="Filmens eller seriens titel"
+                  className={aiFields.has("title") ? "bg-purple-50" : ""}
+                />
+              </div>
 
               {/* Kategori */}
               <div className="space-y-1.5">
@@ -1148,7 +1153,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 </div>
               )}
 
-              {/* Varighed / premieredato */}
+              {/* Varighed / premiereår */}
               {!isSeries && !manualMode && (
                 <div className="grid min-w-0 gap-3 lg:grid-cols-2">
                   <div className="min-w-0 space-y-1.5">
@@ -1165,12 +1170,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   </div>
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                      Premieredato
+                      Premiereår
                       {aiFields.has("premiereDate") && <Sparkles className="h-3 w-3 text-purple-500" />}
                     </Label>
                     <Input
-                      type="date" value={premiereDate}
-                      onChange={e => setPremiereDate(e.target.value)}
+                      type="text" inputMode="numeric" value={premiereDate}
+                      onChange={e => setPremiereDate(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                      placeholder="2026"
                       className={aiFields.has("premiereDate") ? "bg-purple-50" : ""}
                     />
                   </div>
@@ -1182,6 +1188,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     <ProductionCompanyPicker
                       value={productionCompanySelections}
                       suggestedName={productionCompany}
+                      autoSelectHighConfidence
                       onChange={selections => {
                         setProductionCompanySelections(selections)
                         setProductionCompany(selections[0]?.canonicalName ?? "")

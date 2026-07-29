@@ -1232,17 +1232,6 @@ export default function MineKontrakterClient({
                 )}
               </div>
 
-              {viewLoading && (
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Henter dokument...
-                </div>
-              )}
-              {viewUrl && (
-                <Button type="button" variant="outline" className="md:hidden" onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}>
-                  Åbn PDF
-                </Button>
-              )}
-
               <StatusBadge status={selectedContract.status} />
               {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
               {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
