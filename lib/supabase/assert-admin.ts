@@ -35,6 +35,7 @@ export async function assertAdminRole(
     // valg/parameter i stedet for at udledes af rolle-rank her.
     const highestRole = data?.slice().sort(
         (a, b) => (STAFF_ROLE_RANK[b.role as StaffRole] ?? -1) - (STAFF_ROLE_RANK[a.role as StaffRole] ?? -1)
+            || String(a.org_id).localeCompare(String(b.org_id))
     )[0]
 
     if (!highestRole) return null

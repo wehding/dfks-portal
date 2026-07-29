@@ -8,11 +8,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import type { AuditContext } from "@/lib/audit-log"
-import { assertAdminRole, SUPERADMIN_ROLES } from "@/lib/supabase/assert-admin"
+import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { assertUserInOrg } from "@/lib/authz"
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender"
 import { isStillUnassigned, parseUnassignedRecordId, type UnassignedRecordKind } from "@/lib/admin-user-deletion"
-import { highestStaffRole, isStaffRole, STAFF_ROLES } from "@/lib/admin-roles"
+import { highestStaffRole, isStaffRole, STAFF_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles"
 
 const ALLOWED_STAFF_ROLES = [...STAFF_ROLES]
 
@@ -31,7 +31,7 @@ async function ensureTargetUserInOrg(admin: ReturnType<typeof getAdmin>, userId:
 
 export async function GET() {
     const supabase = await createServerClient()
-    const caller = await assertAdminRole(supabase)
+    const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
     const orgId = caller.orgId
 
@@ -43,7 +43,7 @@ export async function GET() {
 
     const authMap = new Map(authData.users.map(u => [u.id, u]))
 
-    const isSuperadmin = caller.role === "superadmin" || SUPERADMIN_ROLES.includes(caller.role as "superadmin" | "admin");
+    const isSuperadmin = caller.role === "superadmin";
 
     // Hent staff-roller fra user_org_roles
     let orgRolesQuery = admin.from("user_org_roles").select("user_id, org_id, role");
@@ -224,8 +224,8 @@ export async function GET() {
 
 export async function PATCH(req: NextRequest) {
     const supabase = await createServerClient()
-    const patchCaller = await assertAdminRole(supabase, SUPERADMIN_ROLES)
-    if (!patchCaller) return NextResponse.json({ error: "Mangler superadmin/admin rettigheder" }, { status: 403 })
+    const patchCaller = await assertAdminRole(supabase, USER_ADMIN_ROLES)
+    if (!patchCaller) return NextResponse.json({ error: "Mangler brugeradministratorrettigheder" }, { status: 403 })
     const orgId = patchCaller.orgId
 
     const body = await req.json()

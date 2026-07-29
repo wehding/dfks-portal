@@ -7,10 +7,11 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createServerClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 
 export async function GET(req: NextRequest) {
     const supabase = await createServerClient()
-    const caller = await assertAdminRole(supabase)
+    const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     const q = req.nextUrl.searchParams.get("q") ?? ""
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await admin
         .from("rettighedshavere")
-        .select("id, full_name, email")
+        .select("id, full_name, email, org_affiliations!inner(org_id)")
+        .eq("org_affiliations.org_id", caller.orgId)
         .is("user_id", null)
         .or(`full_name.ilike.%${q}%,email.ilike.%${q}%`)
         .order("full_name")

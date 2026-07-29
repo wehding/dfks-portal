@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { ADMIN_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { findTMDBPoster } from "@/app/actions/tmdb";
 import { ensureOnboardingEpisodes } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
@@ -588,7 +589,7 @@ export async function submitWorkDataCorrection(params: {
 
 export async function fetchAdminWorksForReview() {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
@@ -720,7 +721,7 @@ export async function fetchAdminWorksForReview() {
 
 export async function fetchAdminSeasonEpisodes(params: { parentWorkId: string; seasonNumber: number }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
@@ -777,7 +778,7 @@ export async function syncAdminSeasonAssignments(params: {
   credits: Array<{ rightsHolderId: string; role: string; episodes: number[] }>;
 }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
   const orgId = await currentOrgId(db, user.id);
@@ -801,7 +802,7 @@ export async function syncAdminSeasonAssignments(params: {
 
 export async function fetchAdminWorkDetail(workId: string) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
@@ -838,7 +839,7 @@ export async function fetchAdminWorkDetail(workId: string) {
 
 export async function deleteAdminWorkPermanently(params: { workId: string }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const workId = cleanText(params.workId);
@@ -925,7 +926,7 @@ export async function deleteAdminWorkPermanently(params: { workId: string }) {
 
 export async function deleteAdminWorksPermanently(params: { workIds: string[] }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const workIds = params.workIds.map(id => cleanText(id)).filter(Boolean);
@@ -1012,7 +1013,7 @@ export async function deleteAdminWorksPermanently(params: { workIds: string[] })
 
 export async function fetchAdminRightsHolders() {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
@@ -1033,7 +1034,7 @@ export async function fetchAdminRightsHolders() {
 
 export async function fetchAdminBroadcasters() {
   const { supabase } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();
@@ -1051,7 +1052,7 @@ export async function fetchAdminBroadcasters() {
 
 export async function fetchPendingWorkReviewCount() {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!admin) return { success: true, count: 0 };
 
   const db = createServiceClient();
@@ -1170,7 +1171,7 @@ export async function updateAdminWorkData(params: {
   productionCompanies?: ProductionCompanySelection[];
 }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   let normalized = normalizeAdminData(params.data);
@@ -1323,7 +1324,7 @@ export async function createAdminWork(params: {
   productionCompanies?: ProductionCompanySelection[];
 }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   let normalized = normalizeData(params.data);
@@ -1509,7 +1510,7 @@ export async function createAdminWork(params: {
 
 export async function archiveAdminWorks(params: { workIds: string[] }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const ids = [...new Set(params.workIds)].filter(Boolean);
@@ -1531,7 +1532,7 @@ export async function archiveAdminWorks(params: { workIds: string[] }) {
 
 export async function approveAdminWorks(params: { workIds: string[] }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const ids = [...new Set(params.workIds)].filter(Boolean);
@@ -1600,7 +1601,7 @@ export async function mergeAdminWorks(params: {
   duplicateWorkIds: string[];
 }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const duplicateIds = [...new Set(params.duplicateWorkIds)]
@@ -1653,7 +1654,7 @@ export async function reviewWorkDataCorrection(params: {
   myEpisodesOverride?: number[];
 }) {
   const { supabase, user } = await currentUser();
-  const admin = await assertAdminRole(supabase);
+  const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!admin) throw new Error("Mangler adminrettigheder.");
 
   const db = createServiceClient();

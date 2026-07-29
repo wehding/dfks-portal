@@ -21,6 +21,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 import { recordAuditEvent } from "@/lib/audit-log-server"
 import type { AuditContext } from "@/lib/audit-log"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
 import { buildAccountAccessUrl } from "@/lib/auth/account-access"
 import { invitationAccessType, inviteSentAtAfterMail, isNewUserLimitReached } from "@/lib/auth/invitation-policy"
@@ -92,7 +93,7 @@ export async function POST(req: NextRequest) {
     try {
         // Kun admins må kalde denne route — tjek user_org_roles, ikke user_metadata
         const supabase = await createServerClient()
-        const caller = await assertAdminRole(supabase)
+        const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES)
         if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
         const body = await req.json()

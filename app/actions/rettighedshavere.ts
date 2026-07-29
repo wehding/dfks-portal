@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { ADMIN_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { encryptValue } from "@/lib/encryption";
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender";
@@ -68,7 +69,7 @@ function withoutGender(payload: ReturnType<typeof securePayload>) {
 
 export async function getAdminRightsHolders(options: { offset?: number; limit?: number } = {}) {
   const supabase = await createClient();
-  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
+  const caller = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!caller) throw new Error("Du har ikke adgang til rettighedshaverlisten.");
 
   const db = createServiceClient();
@@ -154,7 +155,7 @@ export type RightsHolderRelationOption = {
 
 export async function getRightsHolderRelations(rightsHolderId: string) {
   const supabase = await createClient();
-  const caller = await assertAdminRole(supabase, ["superadmin", "admin", "org-admin"]);
+  const caller = await assertAdminRole(supabase, ADMIN_ROLES);
   if (!caller) throw new Error("Ikke autoriseret");
   const db = createServiceClient();
   await assertRightsHolderInOrg(db, rightsHolderId, caller.orgId);
@@ -185,7 +186,7 @@ export async function createRettighedshaverSecure(
   memberNo?: string
 ) {
   const supabase = await createClient();
-  const caller = await assertAdminRole(supabase);
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!caller || caller.orgId !== orgId) return { success: false, error: "Ikke autoriseret" };
 
   const db = createServiceClient();
@@ -230,7 +231,7 @@ export async function updateRettighedshaverSecure(
   input: RightsHolderInput
 ) {
   const supabase = await createClient();
-  const caller = await assertAdminRole(supabase);
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
   if (!caller || caller.orgId !== orgId) return { success: false, error: "Ikke autoriseret" };
 
   const db = createServiceClient();

@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
+import { ADMIN_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles"
 import { parseContractReviewDeleteIds } from "@/lib/contract-review-delete"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
 export async function GET(req: NextRequest) {
     const sessionClient = await createClient()
-    const caller = await assertAdminRole(sessionClient)
+    const caller = await assertAdminRole(sessionClient, ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     // Service role omgår RLS — admin-rute, ingen bruger-data-lækage
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest) {
 // kontrakt i contracts-tabellen bevares altid.
 export async function DELETE(req: NextRequest) {
     const sessionClient = await createClient()
-    const caller = await assertAdminRole(sessionClient)
+    const caller = await assertAdminRole(sessionClient, USER_ADMIN_ROLES)
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     const body = await req.json().catch(() => null) as { ids?: unknown } | null
