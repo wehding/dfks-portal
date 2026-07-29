@@ -46,6 +46,7 @@ import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
 import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
+import { AdminListAutoTools } from "@/components/admin/admin-list-tools"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 
 const ADMIN_NAV_ITEMS = [
@@ -402,6 +403,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     </div>
                 </header>
                 <main className="min-w-0 flex-1 p-3 sm:p-4 lg:p-6">{children}</main>
+                <AdminListAutoTools />
             </SidebarInset>
             <AdminCommandMenu />
         </SidebarProvider>
