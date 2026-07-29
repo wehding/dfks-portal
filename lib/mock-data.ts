@@ -575,7 +575,7 @@ export const mockProductionTypes: MasterDataItem[] = [
     { id: "pt3", name: "TV Serie — Original",    active: true,  meta: "50" },
     { id: "pt4", name: "TV Serie — Licenseret",  active: true,  meta: "10" },
     { id: "pt5", name: "Kortfilm — Original",    active: true,  meta: "50" },
-    { id: "pt6", name: "Dokumentar — Original",  active: true,  meta: "50" },
+    { id: "pt6", name: "Dokumentarfilm — Original",  active: true,  meta: "50" },
 ]
 
 export const mockLicensePeriods: MasterDataItem[] = [
@@ -608,7 +608,7 @@ export const mockSalaryData: SalaryDataPoint[] = [
 export const mockRightsClauseStats: RightsClauseStats[] = [
     { category: "Spillefilm", svodPercent: 78, copydanPercent: 92, royaltyPercent: 35 },
     { category: "TV-Serie", svodPercent: 85, copydanPercent: 88, royaltyPercent: 22 },
-    { category: "Dokumentar", svodPercent: 45, copydanPercent: 95, royaltyPercent: 12 },
+    { category: "Dokumentarfilm", svodPercent: 45, copydanPercent: 95, royaltyPercent: 12 },
     { category: "Kortfilm", svodPercent: 30, copydanPercent: 70, royaltyPercent: 8 },
 ]
 
@@ -1166,4 +1166,3 @@ export const mockMaternityFundSummaries: MaternityFundSummary[] = [
         ],
     },
 ]
-

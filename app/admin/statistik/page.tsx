@@ -28,7 +28,7 @@ type StatisticsPayload = {
 };
 
 const tooltipStyle = { backgroundColor: "rgba(255,255,255,.95)", border: "1px solid #ddd", borderRadius: 8, fontSize: 12 };
-const categoryLabels: Record<string, string> = { feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentar", docSeries: "Dok.-serie", short: "Kortfilm", tvEntertainment: "TV-underholdning", reality: "Reality", other: "Andet" };
+const categoryLabels: Record<string, string> = { feature: "Spillefilm", tvSeries: "TV-serie", documentary: "Dokumentarfilm", docSeries: "Dok.-serie", short: "Kortfilm", tvEntertainment: "TV-underholdning", reality: "Reality", other: "Andet" };
 const formatKr = (value: number) => `${value.toLocaleString("da-DK")} kr.`;
 
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {

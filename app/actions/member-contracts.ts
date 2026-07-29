@@ -161,7 +161,7 @@ export async function saveUploadedContract(params: {
   memberName: string;
   workTitle?: string;
   workId?: string;
-  category: string;
+  productionType: string;
   roles: string[];
   duration?: number;
   premiereDate?: string;
@@ -216,7 +216,7 @@ export async function saveUploadedContract(params: {
       memberName: rh.full_name ?? params.memberName,
       workTitle: params.workTitle,
       workId: params.workId,
-      productionType: params.category || undefined,
+      productionType: params.productionType || undefined,
       creditedRoles: params.roles,
       duration: params.duration,
       premiereDate: params.premiereDate,

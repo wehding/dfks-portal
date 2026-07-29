@@ -26,7 +26,7 @@ type ReviewDetail = {
 // ── Hjælpefunktioner ─────────────────────────────────────────
 
 const PRODUCTION_LABELS: Record<string, string> = {
-    dokumentar: "Dokumentar", fiktion: "Fiktion / drama", reklame: "Reklame",
+    dokumentar: "Dokumentarfilm", fiktion: "Fiktion / drama", reklame: "Reklame",
     streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
 }
 

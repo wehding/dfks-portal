@@ -22,12 +22,7 @@ const BUCKET = "kontrakter";
 const MAX_FILES = 15;
 
 const ROLES = ["Klipper", "Film Editor", "Klippeassistent", "Dramaturg", "Klipper/Instruktør"];
-const SERIES_CATEGORIES = ["tvSeries", "docSeries", "tvEntertainment", "reality", "sport"];
-const CATEGORY_LABELS: Record<string, string> = {
-  feature: "Spillefilm", short: "Kortfilm", tvSeries: "TV-serie",
-  documentary: "Dokumentar", docSeries: "Dokumentarserie",
-  tvEntertainment: "TV-underholdning", reality: "Reality", sport: "Sport",
-};
+const SERIES_PRODUCTION_TYPES = ["tvSeries", "docSeries", "tvEntertainment", "reality", "sport"];
 type Props = {
   onClose: () => void;
   onUploaded: (contracts: UploadedContract[]) => void;
@@ -68,7 +63,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [title, setTitle] = useState(workTitle ?? "");
   const [selectedWorkId, setSelectedWorkId] = useState(workId ?? "");
   const [workSearch, setWorkSearch] = useState(workTitle ?? "");
-  const [category, setCategory] = useState("");
+  const [productionType, setProductionType] = useState("");
   const [creditedRoles, setCreditedRoles] = useState<string[]>(["Klipper"]);
   const [episodeCredits, setEpisodeCredits] = useState<{ number: number; role: string }[]>([{ number: 1, role: "Klipper" }]);
   const [episodesTouched, setEpisodesTouched] = useState(false);
@@ -101,7 +96,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
   const file = files[0] ?? null;
   const isBatchUpload = files.length > 1;
-  const isSeries = SERIES_CATEGORIES.includes(category);
+  const isSeries = SERIES_PRODUCTION_TYPES.includes(productionType);
   const selectedWork = selectedWorkId
     ? myWorks.find(w => w.id === selectedWorkId) ?? { id: selectedWorkId, title: workTitle ?? title, year: null }
     : null;
@@ -254,7 +249,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           setWorkSearch(prev => prev || result.title || "");
           filled.add("title");
         }
-        if (result.category && CATEGORY_LABELS[result.category]) { setCategory(result.category); filled.add("category"); }
+        if (result.productionType && CONTRACT_CATEGORY_TO_WORK_TYPE[result.productionType]) {
+          setProductionType(result.productionType);
+          filled.add("productionType");
+        }
         let screenedRole = "Klipper";
         if (result.creditedRole) {
           const match = ROLES.find(r => r.toLowerCase() === result.creditedRole!.toLowerCase());
@@ -283,14 +281,18 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     return () => { cancelled = true; };
   }, [file, files.length, workTitle]);
 
+  const resolvedUploadTitle = manualMode
+    ? manualWork.title.trim()
+    : chosenWork?.title?.trim() || title.trim() || workSearch.trim();
+
   const canSubmit = isBatchUpload
     ? files.length > 0 && !saving
-    : files.length > 0 && !!title && !screening && !saving &&
-      (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean));
+    : files.length > 0 && Boolean(resolvedUploadTitle) && !screening && !saving &&
+      (manualMode || (isSeries ? episodeCredits.some(e => e.role) : creditedRoles.some(Boolean)));
 
   const buildManualSeed = useCallback((contractId?: string | null) => contractDataToManualWorkSeed({
     title: title.trim() || workSearch.trim(),
-    category,
+    category: productionType,
     duration,
     premiereDate,
     productionCompany,
@@ -298,7 +300,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     seasonNumber: seriesSeason,
     episodes: isSeries && (aiFields.has("episodes") || episodesTouched) ? episodeCredits : [],
     contractId,
-  }), [aiFields, category, director, duration, episodeCredits, episodesTouched, isSeries, premiereDate, productionCompany, seriesSeason, title, workSearch]);
+  }), [aiFields, director, duration, episodeCredits, episodesTouched, isSeries, premiereDate, productionCompany, productionType, seriesSeason, title, workSearch]);
 
   const handleWorkSearch = useCallback(async (queryOverride?: string, preferredTypeOverride?: string | null) => {
     const query = queryOverride?.trim() || workSearch.trim() || title.trim();
@@ -318,14 +320,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       setUnifiedResults(results);
       setTypeFilter(preferredTypeOverride
         ? (results.some(item => item.type === preferredTypeOverride) ? preferredTypeOverride : "all")
-        : contractWorkTypeFilter(category, results));
+        : contractWorkTypeFilter(productionType, results));
     } catch (error) {
       console.error("Værkssøgning i kontraktupload fejlede", error);
       setSearchError("Søgningen mislykkedes. Prøv igen.");
     } finally {
       setIsSearching(false);
     }
-  }, [category, title, workSearch]);
+  }, [productionType, title, workSearch]);
 
   useEffect(() => {
     if (
@@ -340,7 +342,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
     const query = (workSearch.trim() || title.trim());
     if (!query) return;
-    const preferredType = CONTRACT_CATEGORY_TO_WORK_TYPE[category] ?? null;
+    const preferredType = CONTRACT_CATEGORY_TO_WORK_TYPE[productionType] ?? null;
     const searchKey = `${file.name}:${file.size}:${query}:${preferredType ?? "all"}`;
     if (autoSearchKeyRef.current === searchKey) return;
     autoSearchKeyRef.current = searchKey;
@@ -351,7 +353,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       manualSeededRef.current = true;
     }
     void handleWorkSearch(query, preferredType);
-  }, [aiFields, buildManualSeed, category, file, handleWorkSearch, hasSearched, isBatchUpload, pickedUnifiedResult, screening, selectedWorkId, title, workSearch]);
+  }, [aiFields, buildManualSeed, file, handleWorkSearch, hasSearched, isBatchUpload, pickedUnifiedResult, productionType, screening, selectedWorkId, title, workSearch]);
 
   const openWorkPicker = () => {
     setWorkPickerOpen(true);
@@ -365,7 +367,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   };
 
   const saveContracts = async () => {
-    if (files.length === 0 || (!isBatchUpload && !title)) return null;
+    if (files.length === 0 || (!isBatchUpload && !resolvedUploadTitle)) return null;
     setSaving(true);
     try {
       const supabase = createClient();
@@ -401,9 +403,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         const res = await saveUploadedContract({
           filePath, orgId, rhId: rhRow.id, memberName: rhRow.full_name,
           // Batch: ingen fælles titel — AI-jobbet udtrækker titlen pr. kontrakt.
-          workTitle: isBatchUpload ? undefined : selectedWork?.title ?? title.trim(),
+          workTitle: isBatchUpload ? undefined : resolvedUploadTitle,
           workId: isBatchUpload ? undefined : selectedWorkId || undefined,
-          category, roles,
+          productionType, roles,
           duration: duration ? Number(duration) : undefined,
           premiereDate: premiereDate || undefined,
           season: isSeries && seriesSeason ? Number(seriesSeason) : undefined,
@@ -791,7 +793,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setTitle(workTitle ?? "");
                       setSelectedWorkId(workId ?? "");
                       setWorkSearch(workTitle ?? "");
-                      setCategory("");
+                      setProductionType("");
                       setCreditedRoles(["Klipper"]);
                       setEpisodeCredits([{ number: 1, role: "Klipper" }]);
                       setEpisodesTouched(false);
@@ -899,9 +901,10 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setManualMode(false);
                       setManualDuplicateMatches([]);
                       // Et valgt serie-værk skal altid vise sæson/afsnit-vælgeren —
-                      // synk kategorien fra værkets type (AI-screeningen kan have gættet forkert).
-                      if (result.type === "tv-serie") setCategory("tvSeries");
-                      else if (result.type === "dokumentar-serie") setCategory("docSeries");
+                      // Synk produktionstypen fra værket (AI-screeningen kan have gættet forkert).
+                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                        .find(([, workType]) => workType === result.type)?.[0];
+                      if (matchedProductionType) setProductionType(matchedProductionType);
                       if ((result.type === "tv-serie" || result.type === "dokumentar-serie") && !seriesSeason.trim()) {
                         setSeriesSeason(String(result.season_hint ?? result.season_number ?? 1));
                       }
@@ -920,6 +923,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     manualWork={manualWork}
                     onManualWorkChange={value => {
                       setManualWork(value);
+                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                        .find(([, workType]) => workType === value.type)?.[0];
+                      if (matchedProductionType) setProductionType(matchedProductionType);
                       setManualDuplicateMatches([]);
                     }}
                     locale="da"
@@ -985,36 +991,6 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                 )}
               </div>
               )}
-
-              {/* Titel */}
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                  Produktionstitel
-                  {aiFields.has("title") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                </Label>
-                <Input
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  placeholder="Filmens eller seriens titel"
-                  className={aiFields.has("title") ? "bg-purple-50" : ""}
-                />
-              </div>
-
-              {/* Kategori */}
-              <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                  Kategori
-                  {aiFields.has("category") && <Sparkles className="h-3 w-3 text-purple-500" />}
-                </Label>
-                <select
-                  value={category}
-                  onChange={e => setCategory(e.target.value)}
-                  className={`${selectCls} ${aiFields.has("category") ? "bg-purple-50" : ""}`}
-                >
-                  <option value="">—</option>
-                  {Object.entries(CATEGORY_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </div>
 
               {/* Kreditering */}
               {!isSeries ? (

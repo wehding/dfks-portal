@@ -110,7 +110,7 @@ const VERDICT_CONFIG = {
 }
 
 const PRODUCTION_TYPE_LABELS: Record<string, string> = {
-    dokumentar: "Dokumentar",
+    dokumentar: "Dokumentarfilm",
     fiktion:    "Fiktion / drama",
     tv_program: "TV-program",
     reklame:    "Reklame",
@@ -423,7 +423,7 @@ function Indbakke() {
                     </SelectTrigger>
                     <SelectContent>
                         <SelectItem value="alle">{t("admin.reviewQueue.allTypes")}</SelectItem>
-                        <SelectItem value="dokumentar">Dokumentar</SelectItem>
+                        <SelectItem value="dokumentar">Dokumentarfilm</SelectItem>
                         <SelectItem value="spillefilm">Spillefilm</SelectItem>
                         <SelectItem value="tvserie">TV-serie</SelectItem>
                         <SelectItem value="kortfilm">Kortfilm</SelectItem>

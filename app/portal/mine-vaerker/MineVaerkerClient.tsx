@@ -179,7 +179,7 @@ function typeLabel(t: string, locale: "da" | "en" = "da") {
     animation: "animation",
   };
   const labels = {
-    da: { feature: "Feature", series: "TV-serie", documentary: "Dokumentar", docSeries: "Dokumentarserie", docudrama: "Dokudrama", short: "Kortfilm", animation: "Animation" },
+    da: { feature: "Feature", series: "TV-serie", documentary: "Dokumentarfilm", docSeries: "Dokumentarserie", docudrama: "Dokudrama", short: "Kortfilm", animation: "Animation" },
     en: { feature: "Feature", series: "TV series", documentary: "Documentary", docSeries: "Documentary series", docudrama: "Docudrama", short: "Short film", animation: "Animation" },
   };
   const type = canonical[key] ?? null;

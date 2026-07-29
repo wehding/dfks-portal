@@ -243,7 +243,7 @@ export const CONTRACT_TYPE_OPTIONS: { value: ContractType; label: string }[] = [
 ]
 
 export const PRODUCTION_TYPES: { value: ProductionType; label: string }[] = [
-    { value: "dokumentar",  label: "Dokumentar" },
+    { value: "dokumentar",  label: "Dokumentarfilm" },
     { value: "fiktion",     label: "Fiktion / drama" },
     { value: "tv_program",  label: "TV-program" },
     { value: "reklame",     label: "Reklame / branded content" },
