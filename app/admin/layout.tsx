@@ -69,7 +69,6 @@ const SETUP_NAV_ITEMS = [
     { key: "brugere",             href: "/admin/brugere",             icon: Users2,      labelKey: "nav.users"            },
     { key: "min-profil",          href: "/admin/min-profil",          icon: UserCog,     labelKey: "nav.minProfil"        },
     { key: "organisationer",      href: "/admin/organisationer",      icon: ShieldCheck, labelKey: "nav.organisations"    },
-    { key: "beta-test",           href: "/admin/beta-test",           icon: ShieldCheck, labelKey: "nav.betaTest"          },
 ]
 
 const RETTIGHEDS_NAV_ITEMS = [
@@ -98,8 +97,8 @@ const MENU_BADGE_GODKEND = `${MENU_BADGE_BASE} bg-amber-100 text-amber-800`
 
 const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
-    admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol" && k !== "beta-test"),
-    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol" && k !== "beta-test"),
+    admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
+    "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol"),
     jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang"],
     viewer:      ["overblik", "kontrakter"],
 }
