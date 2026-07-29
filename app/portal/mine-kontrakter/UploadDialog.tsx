@@ -17,6 +17,7 @@ import { CONTRACT_CATEGORY_TO_WORK_TYPE, contractDataToManualWorkSeed, contractW
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
+import { createClientId } from "@/lib/client-id";
 
 const BUCKET = "kontrakter";
 const MAX_FILES = 15;
@@ -48,6 +49,16 @@ type UploadedContract = {
 
 type UploadStage = "checking" | "uploading" | "saving" | "linking" | "finishing";
 
+type CoEditorDraft = {
+  id: string;
+  name: string;
+  role: string;
+};
+
+function emptyCoEditor(): CoEditorDraft {
+  return { id: createClientId("co-editor"), name: "", role: "Klipper" };
+}
+
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "Ukendt fejl";
 }
@@ -71,6 +82,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   const [premiereDate, setPremiereDate] = useState("");
   const [productionCompany, setProductionCompany] = useState("");
   const [productionCompanySelections, setProductionCompanySelections] = useState<ProductionCompanySelection[]>([]);
+  const [coEditors, setCoEditors] = useState<CoEditorDraft[]>([]);
   const [director, setDirector] = useState("");
   const [seriesSeason, setSeriesSeason] = useState("");
   const [contractSeriesScope, setContractSeriesScope] = useState<"season" | "episodes">("episodes");
@@ -159,6 +171,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     setManualDuplicateMatches([]);
     setManualLinkRetry(null);
     setAttachmentRetry(null);
+    setCoEditors([]);
     setUnifiedResults([]);
     setPickedUnifiedResult(null);
     setHasSearched(false);
@@ -431,6 +444,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
   };
 
   const selectedEpisodeNumbers = () => [...new Set(episodeCredits.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0))];
+  const proposedCoEditors = () => coEditors
+    .filter(editor => editor.name.trim())
+    .map(editor => ({ name: editor.name.trim(), role: editor.role || "Klipper", action: "add" as const }));
 
   const attachSelectedWork = async (contract: UploadedContract, forceDuplicate: boolean) => {
     const role = (isSeries ? episodeCredits.find(episode => episode.role)?.role : creditedRoles.find(Boolean)) ?? "Klipper";
@@ -442,6 +458,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         rightsHolderId,
         role,
         comment: "",
+        coEditors: proposedCoEditors(),
         contractId: contract.id,
         forceCreateDuplicate: forceDuplicate,
         contractScope: isManualSeries(manualWork) ? {
@@ -477,6 +494,18 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     }
 
     if (!pickedUnifiedResult) {
+      if (selectedWorkId && proposedCoEditors().length > 0) {
+        const linked = await linkExistingWorkForMember({
+          rightsHolderId,
+          workId: selectedWorkId,
+          role,
+          coEditors: proposedCoEditors(),
+          seasonNumber: isSeries ? Number(seriesSeason) || 1 : null,
+          selectedEpisodes: selectedEpisodeNumbers(),
+        });
+        if (!linked.success) return { success: false as const, error: linked.error ?? "Medklipperne kunne ikke gemmes." };
+        return { success: true as const, workId: linked.parentWorkId ?? linked.workId ?? selectedWorkId, pending: Boolean(linked.pending) };
+      }
       return { success: true as const, workId: selectedWorkId || null, pending: false };
     }
 
@@ -487,6 +516,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         rightsHolderId,
         workId: pickedUnifiedResult.local_id,
         role,
+        coEditors: proposedCoEditors(),
         seasonNumber,
         episodeNumber: selectedEpisodes.length === 1 ? selectedEpisodes[0] : null,
         selectedEpisodes,
@@ -511,6 +541,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       rightsHolderId,
       role,
       comment: "",
+      coEditors: proposedCoEditors(),
       source: pickedUnifiedResult.sources.includes("dfi") ? "dfi" : "tmdb",
       workData: {
         dfi_id: details.dfi_id ? String(details.dfi_id) : null,
@@ -584,7 +615,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
     const savedContracts = await saveContracts();
     if (!savedContracts) return;
-    if (savedContracts.length !== 1 || (!manualMode && !pickedUnifiedResult)) {
+    const needsWorkAttachment = manualMode || Boolean(pickedUnifiedResult) || proposedCoEditors().length > 0;
+    if (savedContracts.length !== 1 || !needsWorkAttachment) {
       completeUpload(savedContracts, selectedWorkId || null);
       return;
     }
@@ -803,6 +835,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setPremiereDate("");
                       setProductionCompany("");
                       setDirector("");
+                      setCoEditors([]);
                       setAiFields(new Set());
                       setWorkPickerOpen(false);
                       setManualMode(false);
@@ -991,6 +1024,39 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   </div>
                 )}
               </div>
+              )}
+
+              {(chosenWork || manualMode) && (
+                <div className="space-y-3 rounded-lg border p-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Medklippere</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Tilføjede medklippere sendes til admin sammen med værktilknytningen.</p>
+                  </div>
+                  {coEditors.map(editor => (
+                    <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+                      <Input
+                        value={editor.name}
+                        onChange={event => setCoEditors(current => current.map(item => item.id === editor.id ? { ...item, name: event.target.value } : item))}
+                        placeholder="Navn på medklipper"
+                        aria-label="Navn på medklipper"
+                      />
+                      <select
+                        value={editor.role}
+                        onChange={event => setCoEditors(current => current.map(item => item.id === editor.id ? { ...item, role: event.target.value } : item))}
+                        className={selectCls}
+                        aria-label={`Rolle for ${editor.name || "medklipper"}`}
+                      >
+                        {ROLES.map(role => <option key={role} value={role}>{role}</option>)}
+                      </select>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setCoEditors(current => current.filter(item => item.id !== editor.id))}>
+                        Fjern
+                      </Button>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setCoEditors(current => [...current, emptyCoEditor()])}>
+                    <Plus className="mr-1.5 h-4 w-4" /> Tilføj medklipper
+                  </Button>
+                </div>
               )}
 
               {/* Kreditering */}
