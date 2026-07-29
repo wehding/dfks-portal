@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
     "/invite",
     "/api/auth/invite",
     "/api/auth/callback",
+    "/api/integrations/gmail/contracts/push",
     "/auth/confirm",
     "/auth/opret-adgang",
     "/_next",

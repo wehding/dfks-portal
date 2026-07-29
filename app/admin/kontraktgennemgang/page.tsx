@@ -13,7 +13,7 @@ import { useSearchParams } from "next/navigation"
 import {
     Upload, ArrowLeft, Sparkles, Mail, Copy,
     CheckCircle2, AlertTriangle, Info, ChevronRight,
-    Archive, Send, Pencil, Eye, BookMarked,
+    Archive, Pencil, Eye, BookMarked,
     ThumbsUp, ThumbsDown, Star, Search,
     User, FileText, ChevronDown, RotateCcw,
     Trash2,
@@ -798,13 +798,6 @@ function ManuelGennemgang() {
         toast.success("Mail arkiveret under " + (memberName || "Ukendt"))
     }
 
-    const handleOpenMail = () => {
-        const to = memberEmail ? encodeURIComponent(memberEmail) : ""
-        const subject = encodeURIComponent(mailSubject)
-        const body = encodeURIComponent(mailText)
-        window.location.href = `mailto:${to}?subject=${subject}&body=${body}`
-    }
-
     const handleCopyMail = async () => {
         const html = mailText.replace(/\n/g, "<br/>")
         const plain = mailText.replace(/<[^>]+>/g, "")
@@ -1235,7 +1228,7 @@ function ManuelGennemgang() {
                 <div className="rounded-lg border flex flex-col min-h-0">
                     <div className="flex items-center gap-2 border-b px-4 py-2.5 shrink-0">
                         <Mail className="h-3.5 w-3.5 text-muted-foreground" />
-                        <span className="text-xs font-medium">Feedback-mail</span>
+                        <span className="text-xs font-medium">AI-svarudkast</span>
                         <div className="ml-auto flex items-center gap-1">
                             <button onClick={() => setMailEditMode(m => !m)}
                                 className={`flex items-center gap-1 rounded px-2 py-0.5 text-[10px] border transition-colors ${mailEditMode ? "bg-muted border-border" : "border-transparent text-muted-foreground hover:text-foreground"}`}
@@ -1245,8 +1238,10 @@ function ManuelGennemgang() {
                             </button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Kopiér hele mailen" onClick={handleCopyMail}><Copy className="h-3 w-3" /></Button>
                             <Button variant="ghost" size="icon" className="h-6 w-6" title="Arkivér" onClick={handleArchiveMail}><Archive className="h-3 w-3" /></Button>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Åbn i mailprogram" onClick={handleOpenMail}><Send className="h-3 w-3" /></Button>
                         </div>
+                    </div>
+                    <div className="border-b bg-amber-50 px-4 py-2 text-[11px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                        AI-forslag — skal kontrolleres af en jurist. Systemet sender ikke mail.
                     </div>
                     <div className="border-b px-4 py-2.5 space-y-2 shrink-0">
                         <div className="flex items-center gap-2">
@@ -1270,9 +1265,9 @@ function ManuelGennemgang() {
                             <span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-300 shrink-0" />
                             Kopiér til producent
                         </Button>
-                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={handleOpenMail}>
-                            <Send className="h-3.5 w-3.5" />
-                            Åbn i mailprogram
+                        <Button size="sm" className="gap-1.5 text-xs flex-1" onClick={handleCopyMail}>
+                            <Copy className="h-3.5 w-3.5" />
+                            Kopiér svarudkast
                         </Button>
                     </div>
                 </div>

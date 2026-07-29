@@ -112,3 +112,27 @@ GOOGLE_GMAIL_SENDER=bestyrelsen@danskfilmklipperselskab.dk
 ```
 
 `.env.local` og servicekontoens JSON-nøgle er ignoreret lokalt og må aldrig committes. Genstart `npm run dev`, når variablerne ændres.
+
+## Import til kontraktgennemgang
+
+Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklipperselskab.dk`. Adressen `kontrakt@danskfilmklipperselskab.dk` er et alias; systemet forsøger derfor ikke at identificere aliaset i mailens headers.
+
+1. Opret et Gmail-filter i Google Workspace, som sætter labelen `kontrakt` på de mails, der skal importeres.
+2. Giv servicekontoens domænedækkende delegation Gmail-scope `https://www.googleapis.com/auth/gmail.modify`. Dette scope bruges til at læse de labelmærkede mails og tilføje outputlabelen. Systemet fjerner aldrig labels, arkiverer ikke og markerer ikke mails som læst.
+3. Opret et Google Cloud Pub/Sub-topic og giv Gmail mulighed for at publicere på det efter Googles officielle Gmail watch-vejledning.
+4. Opret en verificeret Pub/Sub push-servicekonto, der kalder:
+
+   `https://<portalens-domæne>/api/integrations/gmail/contracts/push`
+
+5. Tilføj disse miljøvariabler i Vercel og lokalt:
+
+   ```dotenv
+   GOOGLE_GMAIL_CONTRACT_ORG_ID=<DFKS-organisationens UUID>
+   GOOGLE_GMAIL_CONTRACT_TOPIC=projects/<google-cloud-project>/topics/<topic-navn>
+   GOOGLE_PUBSUB_PUSH_AUDIENCE=https://<portalens-domæne>/api/integrations/gmail/contracts/push
+   GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL=<pubsub-push-servicekontoens-email>
+   ```
+
+6. Kør watch-ruten én gang som superadmin eller via Vercels beskyttede cron. Den fornyes derefter dagligt. Inputlabelen `kontrakt` skal allerede findes; outputlabelen `kontrakt gennemgang` oprettes automatisk, hvis den mangler.
+
+En mail får først outputlabelen `kontrakt gennemgang`, når alle understøttede bilag (`.pdf`, `.doc`, `.docx`) er oprettet som sager. Mailtekst og spørgsmål gemmes som reference. AI laver kun et lokalt svarudkast, som en jurist skal kontrollere. Portalen opretter ikke Gmail-kladder og sender aldrig svaret automatisk.

@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { analyserKontrakt } from "@/lib/analyse"
+import { analyseExistingContractReview } from "@/lib/contract-review-analysis"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
 import { requireInternalSecretApi } from "@/lib/api-auth"
 import { recordAuditEvent } from "@/lib/audit-log-server"
@@ -90,14 +91,15 @@ export async function POST(req: NextRequest) {
 
         const admin = createAdminClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!
+            process.env.SUPABASE_SERVICE_ROLE_KEY!,
+            { auth: { autoRefreshToken: false, persistSession: false } }
         )
-        let effectiveMemberName = memberName
-        let effectiveMemberEmail = portalEmail
-        let effectiveMemberId = portalUserId
+        // En eksisterende sag ejer selv organisations- og medlemskonteksten.
+        // Det interne kald må ikke overskrive en vilkårlig sag via formData-id'er,
+        // og filen er allerede gemt, så den skal ikke uploades igen.
         if (existingReviewId) {
             if (!isInternal) {
-                return NextResponse.json({ error: "Eksisterende sager kan kun opdateres via det interne flow" }, { status: 403 })
+                return NextResponse.json({ error: "Eksisterende sager kan kun analyseres via det interne flow" }, { status: 403 })
             }
             const { data: existingReview, error: existingError } = await admin
                 .from("contract_reviews")
@@ -118,9 +120,38 @@ export async function POST(req: NextRequest) {
                 }).catch(() => undefined)
                 return NextResponse.json({ error: "Kontraktgennemgangen tilhører en anden organisation" }, { status: 403 })
             }
-            effectiveMemberName = existingReview.member_name ?? memberName
-            effectiveMemberEmail = existingReview.member_email ?? null
-            effectiveMemberId = existingReview.member_id ?? null
+            try {
+                const existingResult = await analyseExistingContractReview({
+                    reviewId: existingReviewId,
+                    orgId: existingReview.org_id,
+                    fileBuffer,
+                    fileName: file.name,
+                    memberName: existingReview.member_name ?? memberName,
+                    memberEmail: existingReview.member_email ?? portalEmail,
+                    memberId: existingReview.member_id ?? portalUserId,
+                    contractType,
+                    productionType,
+                    distributionChannels,
+                    producerName,
+                    producerOverenskomst,
+                    focusAreas,
+                    notes: uploadNotes,
+                    actorUserId: sessionUser?.id ?? existingReview.member_id ?? null,
+                    source: isInternal ? "portal" : "admin",
+                })
+                const analysis = existingResult.analysis
+                return NextResponse.json({
+                    result: analysis.result,
+                    contractText: analysis.contractText,
+                    klassifikation: analysis.klassifikation,
+                    risk_level: analysis.risk_level,
+                    should_escalate: analysis.should_escalate,
+                })
+            } catch (err: unknown) {
+                const msg = errorMessage(err, "Analyse fejlede")
+                const status = msg.includes("Ikke-understøttet") ? 400 : msg.includes("Ingen tekst") ? 422 : 500
+                return NextResponse.json({ error: msg }, { status })
+            }
         }
 
         logInfo("gennemgang", "Starter kontraktanalyse")
@@ -129,7 +160,7 @@ export async function POST(req: NextRequest) {
             analysisResult = await analyserKontrakt({
                 fileBuffer,
                 fileName: file.name,
-                memberName: effectiveMemberName,
+                memberName,
                 contractType,
                 productionType,
                 distributionChannels,
@@ -138,10 +169,10 @@ export async function POST(req: NextRequest) {
                 focusAreas,
                 notes: uploadNotes,
                 orgId: resolvedOrgId,
-                memberId: effectiveMemberId,
-                memberEmail: effectiveMemberEmail,
-                entityId: existingReviewId,
-                actorUserId: sessionUser?.id ?? effectiveMemberId,
+                memberId: portalUserId,
+                memberEmail: portalEmail,
+                entityId: null,
+                actorUserId: sessionUser?.id ?? portalUserId,
                 source: isInternal ? "portal" : "admin",
             })
         } catch (err: unknown) {
@@ -180,28 +211,11 @@ export async function POST(req: NextRequest) {
         }
 
         // ── Gem i contract_reviews ────────────────────────────
+        let savedReviewId: string | null = null
         try {
-            if (existingReviewId) {
-                const { error: updateErr } = await admin
-                    .from("contract_reviews")
-                    .update({
-                        ai_result:       parsed,
-                        ai_run_at:       new Date().toISOString(),
-                        ai_language:     klassifikation?.kontraktsprog ?? null,
-                        risk_level:      riskLevel,
-                        should_escalate: shouldEscalate,
-                        ai_status:       "klar",
-                        ...(storagePath ? { storage_path: storagePath } : {}),
-                    })
-                    .eq("id", existingReviewId)
-                    .eq("org_id", resolvedOrgId)
-                if (updateErr) {
-                    logWarn("gennemgang", "Update af contract_reviews fejlede", { error: updateErr.message })
-                } else {
-                    logInfo("gennemgang", "Opdateret review", { reviewId: existingReviewId })
-                }
-            } else {
-                const insertPayload: Record<string, unknown> = {
+            const responseDraft = typeof parsed?.feedbackmail?.tekst === "string" ? parsed.feedbackmail.tekst.trim().slice(0, 50_000) : null
+            const responseDraftSubject = typeof parsed?.feedbackmail?.emne === "string" ? parsed.feedbackmail.emne.trim().slice(0, 500) : null
+            const insertPayload: Record<string, unknown> = {
                     org_id:          resolvedOrgId,
                     member_name:     memberName ?? null,
                     member_email:    portalEmail ?? null,
@@ -227,18 +241,21 @@ export async function POST(req: NextRequest) {
                     ai_language:  klassifikation?.kontraktsprog ?? null,
                     risk_level:      riskLevel,
                     should_escalate: shouldEscalate,
-                }
-                const { data: savedReview, error: insertError } = await admin
-                    .from("contract_reviews")
-                    .insert(insertPayload)
-                    .select()
-                    .single()
-                if (insertError) {
-                    if (storagePath) await admin.storage.from("contract-reviews").remove([storagePath])
-                    logWarn("gennemgang", "Insert i contract_reviews fejlede", { error: insertError.message })
-                } else {
-                    logInfo("gennemgang", "Gemt i contract_reviews", { reviewId: savedReview?.id ?? null, hasStorage: Boolean(storagePath) })
-                }
+                    response_draft: responseDraft,
+                    response_draft_subject: responseDraftSubject,
+                    response_draft_updated_at: responseDraft ? new Date().toISOString() : null,
+            }
+            const { data: savedReview, error: insertError } = await admin
+                .from("contract_reviews")
+                .insert(insertPayload)
+                .select()
+                .single()
+            if (insertError) {
+                if (storagePath) await admin.storage.from("contract-reviews").remove([storagePath])
+                logWarn("gennemgang", "Insert i contract_reviews fejlede", { error: insertError.message })
+            } else {
+                savedReviewId = savedReview?.id ?? null
+                logInfo("gennemgang", "Gemt i contract_reviews", { reviewId: savedReview?.id ?? null, hasStorage: Boolean(storagePath) })
             }
         } catch (saveErr) {
             logWarn("gennemgang", "Gem fejlede", { error: errorMessage(saveErr) })
@@ -250,6 +267,7 @@ export async function POST(req: NextRequest) {
             klassifikation,
             risk_level: riskLevel,
             should_escalate: shouldEscalate,
+            reviewId: savedReviewId,
         })
 
     } catch (err: unknown) {
