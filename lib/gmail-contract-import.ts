@@ -1,7 +1,6 @@
 import "server-only";
 
-import { createHash } from "node:crypto";
-import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
+import { createContractReviewIntake } from "@/lib/contract-review-intake";
 import {
   addGmailOutputLabel,
   createGmailLabel,
@@ -21,7 +20,6 @@ import {
   GMAIL_CONTRACT_OUTPUT_LABEL,
   MAX_GMAIL_CONTRACT_BYTES,
   parseGmailContractMessage,
-  safeGmailStorageName,
 } from "@/lib/gmail-contract-import-core";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -116,7 +114,7 @@ async function importMessage(messageId: string, state: ImportState): Promise<{ i
   let imported = 0;
   let completed = 0;
   for (const attachment of parsed.attachments) {
-    const { data: existing } = await db.from("contract_reviews").select("id,ai_status")
+    const { data: existing } = await db.from("contract_reviews").select("id")
       .eq("gmail_contract_message_id", source.id)
       .eq("gmail_attachment_id", attachment.attachmentId)
       .maybeSingle();
@@ -126,68 +124,26 @@ async function importMessage(messageId: string, state: ImportState): Promise<{ i
     if (buffer.byteLength > MAX_GMAIL_CONTRACT_BYTES) throw new Error(`Bilaget '${attachment.fileName}' er større end 25 MB.`);
     const senderEmail = extractEmailAddress(parsed.fromAddress);
     if (existing) {
-      if (existing.ai_status !== "klar") {
-        await analyseExistingContractReview({
-          reviewId: existing.id,
-          orgId: state.org_id,
-          fileBuffer: buffer,
-          fileName: attachment.fileName,
-          memberName: parsed.fromAddress,
-          memberEmail: senderEmail,
-          emailReference: [parsed.subject ? `Emne: ${parsed.subject}` : null, parsed.bodyText].filter(Boolean).join("\n\n"),
-          source: "import",
-        });
-      }
       completed += 1;
       continue;
     }
 
-    const digest = createHash("sha256").update(buffer).digest("hex").slice(0, 20);
-    const storagePath = `${state.org_id}/gmail/${messageId}/${digest}_${safeGmailStorageName(attachment.fileName)}`;
-    const { error: uploadError } = await db.storage.from("contract-reviews").upload(storagePath, buffer, {
+    const intake = await createContractReviewIntake({
+      orgId: state.org_id,
+      source: "gmail",
+      externalSourceId: `${messageId}:${attachment.attachmentId}`,
+      fileName: attachment.fileName,
       contentType: attachment.mimeType,
-      upsert: false,
+      fileBuffer: buffer,
+      memberName: parsed.fromAddress ?? senderEmail ?? "Mailimport",
+      memberEmail: senderEmail,
+      metadata: {
+        notes: parsed.subject ? `Importeret fra mail: ${parsed.subject}` : "Importeret fra mail",
+        gmail_contract_message_id: source.id,
+        gmail_attachment_id: attachment.attachmentId,
+      },
     });
-    if (uploadError && !/already exists|duplicate/i.test(uploadError.message)) throw new Error(uploadError.message);
-
-    const { data: review, error: reviewError } = await db.from("contract_reviews").insert({
-      org_id: state.org_id,
-      member_name: parsed.fromAddress ?? senderEmail ?? "Mailimport",
-      member_email: senderEmail,
-      ai_result: {},
-      status: "afventer",
-      ai_status: "analyserer",
-      file_name: attachment.fileName,
-      file_size_bytes: buffer.byteLength,
-      storage_path: storagePath,
-      notes: parsed.subject ? `Importeret fra mail: ${parsed.subject}` : "Importeret fra mail",
-      gmail_contract_message_id: source.id,
-      gmail_attachment_id: attachment.attachmentId,
-    }).select("id").single();
-    if (reviewError || !review) {
-      if (/duplicate|unique/i.test(reviewError?.message ?? "")) {
-        completed += 1;
-        continue;
-      }
-      if (!uploadError) await db.storage.from("contract-reviews").remove([storagePath]);
-      throw new Error(reviewError?.message ?? "Kontraktgennemgangen kunne ikke oprettes.");
-    }
-    try {
-      await analyseExistingContractReview({
-        reviewId: review.id,
-        orgId: state.org_id,
-        fileBuffer: buffer,
-        fileName: attachment.fileName,
-        memberName: parsed.fromAddress,
-        memberEmail: senderEmail,
-        emailReference: [parsed.subject ? `Emne: ${parsed.subject}` : null, parsed.bodyText].filter(Boolean).join("\n\n"),
-        source: "import",
-      });
-    } catch (error) {
-      await db.from("contract_reviews").update({ ai_status: "fejl" }).eq("id", review.id).eq("org_id", state.org_id);
-      throw error;
-    }
-    imported += 1;
+    if (!intake.duplicate) imported += 1;
     completed += 1;
   }
 
