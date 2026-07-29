@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONTRACT_SCREENING_TEXT } from "@/lib/profile-copy";
-import { CONTRACT_CATEGORY_TO_WORK_TYPE, contractDataToManualWorkSeed, contractWorkTypeFilter, emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
+import { CONTRACT_CATEGORY_TO_WORK_TYPE, contractDataToManualWorkSeed, emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
@@ -332,16 +332,16 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       }
       const results = result.results ?? [];
       setUnifiedResults(results);
-      setTypeFilter(preferredTypeOverride
-        ? preferredTypeOverride
-        : contractWorkTypeFilter(productionType));
+      // AI-typen sættes som første forslag før den automatiske søgning.
+      // Ved manuelle søgninger bevares brugerens aktuelle typevalg.
+      if (preferredTypeOverride) setTypeFilter(preferredTypeOverride);
     } catch (error) {
       console.error("Værkssøgning i kontraktupload fejlede", error);
       setSearchError("Søgningen mislykkedes. Prøv igen.");
     } finally {
       setIsSearching(false);
     }
-  }, [productionType, title, workSearch]);
+  }, [title, workSearch]);
 
   useEffect(() => {
     if (
