@@ -43,7 +43,7 @@ import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-ep
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
-import { isPendingContractValidation } from "@/lib/contract-list-status"
+import { contractReadiness, isPendingContractValidation } from "@/lib/contract-list-status"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -198,27 +198,12 @@ function normalizeDuplicateKey(value: string | null | undefined) {
         .trim()
 }
 
-function validationData(contract: ContractRow) {
-    return contract.validation_data ?? {}
-}
-
-function hasTruthyAiField(contract: ContractRow, keys: string[]) {
-    const data = validationData(contract)
-    return keys.some(key => data[key] === true || data[key] === "ja")
+function isMissingOwner(contract: ContractRow) {
+    return !contract.rights_holder_id
 }
 
 function isValidationRecommended(contract: ContractRow) {
-    if (contract.status !== "kladde") return false
-    const data = validationData(contract)
-    const hasSignature = hasTruthyAiField(contract, ["hasSignature", "signature", "signed", "isSigned"])
-    const hasCopydan = hasTruthyAiField(contract, ["copydan", "copydanReservation", "copydanforbehold"])
-    const hasStreaming = hasTruthyAiField(contract, ["svod", "streaming", "streamingReservation", "streamingforbehold"])
-    const hasDe4 = contract.overenskomst === "de4-fiktion" || data.overenskomst === "de4-fiktion" || data.collectiveAgreementName === "de4-fiktion"
-    return Boolean(contract.work_id && contract.employer_id && (hasSignature || hasCopydan || hasStreaming || hasDe4))
-}
-
-function isMissingOwner(contract: ContractRow) {
-    return !contract.rights_holder_id
+    return ["recommended", "recommended_with_warnings"].includes(contractReadiness(contract))
 }
 
 function hasContractWorkLink(contract: ContractRow) {
@@ -241,9 +226,9 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
                     {AI_JOB_LABELS[contract.ai_job_status] ?? contract.ai_job_status}
                 </Badge>
             )}
-            {isValidationRecommended(contract) && (
+            {["recommended", "recommended_with_warnings"].includes(contractReadiness(contract)) && (
                 <Badge variant="outline" className={`w-fit border-blue-300 bg-blue-50 font-normal text-blue-700 ${badgeClass}`}>
-                    Validering anbefalet
+                    {contractReadiness(contract) === "recommended_with_warnings" ? "Validering anbefalet · kontrollér advarsler" : "Validering anbefalet"}
                 </Badge>
             )}
             {contract.status !== "valideret" && (
@@ -540,7 +525,7 @@ function AdminKontrakterContent() {
                             employers (name),
                             rettighedshavere (full_name),
                             works (id, title, type, poster_url),
-                            contract_validations (has_credit_clause, has_overenskomst_incorporation)
+                            contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
                         `)
                         .eq("org_id", resolvedOrgId)
                         .order("created_at", { ascending: false }),
@@ -621,7 +606,7 @@ function AdminKontrakterContent() {
                         episode_numbers: r.episode_numbers ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
                         contract_attachments: attachmentsByContract[r.id] ?? [],
-                        validation_data: null,
+                        validation_data: validation?.extracted_data ?? null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                         ai_job_status: latestJobByContract[r.id]?.status ?? null,
@@ -678,7 +663,7 @@ function AdminKontrakterContent() {
                         id, type, overenskomst, status, employer_id, rights_holder_id, working_title,
                         season_number, episode_numbers,
                         employers (name), rettighedshavere (full_name), works (id, title, poster_url),
-                        contract_validations (has_credit_clause, has_overenskomst_incorporation)
+                        contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
                     `)
                     .in("id", doneIds)
                 for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
@@ -697,7 +682,7 @@ function AdminKontrakterContent() {
                         work_poster_url: r.works?.poster_url ?? null,
                         season_number: r.season_number ?? null,
                         episode_numbers: r.episode_numbers ?? null,
-                        validation_data: null,
+                        validation_data: validation?.extracted_data ?? null,
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                     }
