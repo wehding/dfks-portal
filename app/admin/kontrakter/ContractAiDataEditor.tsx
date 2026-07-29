@@ -331,7 +331,7 @@ export function ContractAiDataEditor({
                             const isLocked = lockedFields.has(f.key);
 
                             return (
-                                <div key={f.key} className={f.type === "textarea" ? "col-span-2 space-y-1" : g.title === "Rettigheder" && f.type === "bool" ? "min-w-fit" : "space-y-1"}>
+                                <div key={f.key} className={f.type === "textarea" ? "space-y-1 sm:col-span-2" : g.title === "Rettigheder" && f.type === "bool" ? "min-w-fit" : "space-y-1"}>
 	                                    {f.type === "bool" ? (
 	                                        <div className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0 min-h-[32px] gap-4">
 	                                            <button

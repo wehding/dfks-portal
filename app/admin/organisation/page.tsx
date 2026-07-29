@@ -245,7 +245,7 @@ export default function OrganisationSettingsPage() {
             Tilpas navn, logo, afsender-mail og de fagord organisationens brugere ser i portalen.
           </p>
         </div>
-        <Button onClick={handleSave} disabled={isPending || !canSave}>
+        <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isPending || !canSave}>
           {isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Gem ændringer
         </Button>

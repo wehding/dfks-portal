@@ -2068,7 +2068,7 @@ function AdminKontrakterContent() {
                                     : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil på kontrakten</div>}
                             </div>
                             <div className="max-h-[72vh] space-y-4 overflow-y-auto py-2 pr-1">
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid gap-4 sm:grid-cols-2">
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
                                         <Label className="text-xs">Klipper / rettighedshaver</Label>
@@ -2179,11 +2179,11 @@ function AdminKontrakterContent() {
                                             : null
                                     })()}
                                 </div>
-                                <div className="col-span-2 space-y-1">
+                                <div className="space-y-1 sm:col-span-2">
                                     <Label className="text-xs">Arbejdstitel</Label>
                                     <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
                                 </div>
-                                <div className="col-span-2 space-y-2 rounded-md border p-3">
+                                <div className="space-y-2 rounded-md border p-3 sm:col-span-2">
                                     <div className="flex items-center justify-between gap-2">
                                         <Label className="text-xs">Forbind med værk</Label>
                                         {editForm.work_id && (
