@@ -10,7 +10,7 @@ export type AiUsageContext = {
     runId?: string | null
     orgId?: string | null
     useCase: ContractAiUseCase
-    stage: "extraction" | "classification" | "advice" | "embedding"
+    stage: "extraction" | "classification" | "advice" | "embedding" | "query"
 }
 
 const FALLBACK_PRICES: Record<string, Price> = {

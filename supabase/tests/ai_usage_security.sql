@@ -25,7 +25,7 @@ select set_config('request.jwt.claims', json_build_object('sub',(select admin_us
 select set_config('request.jwt.claim.sub', (select admin_user::text from ai_usage_fixture), true);
 set local role authenticated;
 select is((select count(*) from public.ai_usage_events), 1::bigint, 'admin ser kun egen organisations AI-forbrug');
-select is((select count(*) from public.ai_runtime_settings), 2::bigint, 'admin kan se aktive globale modeller');
+select is((select count(*) from public.ai_runtime_settings), 3::bigint, 'admin kan se aktive globale modeller');
 reset role;
 
 select set_config('request.jwt.claims', json_build_object('sub',(select super_user from ai_usage_fixture),'role','authenticated')::text, true);
@@ -50,4 +50,3 @@ select ok(
 
 select * from finish();
 rollback;
-

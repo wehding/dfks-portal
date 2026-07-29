@@ -1,5 +1,5 @@
 export type AiProvider = "anthropic" | "google"
-export type ContractAiUseCase = "contract_extraction" | "contract_advice"
+export type ContractAiUseCase = "contract_extraction" | "contract_advice" | "statistics_query"
 
 export type ContractAiModel = {
     provider: AiProvider
@@ -16,7 +16,7 @@ export const CONTRACT_AI_MODELS: ContractAiModel[] = [
         model: "claude-sonnet-4-6",
         label: "Claude Sonnet 4.6",
         description: "Nuværende standard med stærk juridisk nuance.",
-        useCases: ["contract_extraction", "contract_advice"],
+        useCases: ["contract_extraction", "contract_advice", "statistics_query"],
     },
     {
         provider: "google",
@@ -31,7 +31,7 @@ export const CONTRACT_AI_MODELS: ContractAiModel[] = [
         model: "gemini-3.6-flash",
         label: "Gemini 3.6 Flash",
         description: "Stærkere reasoning-model til kontraktrådgivning.",
-        useCases: ["contract_advice"],
+        useCases: ["contract_advice", "statistics_query"],
         thinkingLevel: "medium",
     },
 ]
@@ -39,6 +39,7 @@ export const CONTRACT_AI_MODELS: ContractAiModel[] = [
 export const CONTRACT_AI_DEFAULTS: Record<ContractAiUseCase, { provider: AiProvider; model: string; promptCachingEnabled: boolean }> = {
     contract_extraction: { provider: "anthropic", model: "claude-sonnet-4-6", promptCachingEnabled: false },
     contract_advice: { provider: "anthropic", model: "claude-sonnet-4-6", promptCachingEnabled: false },
+    statistics_query: { provider: "anthropic", model: "claude-sonnet-4-6", promptCachingEnabled: false },
 }
 
 export function getContractAiModel(useCase: ContractAiUseCase, provider: string, model: string) {
@@ -48,6 +49,5 @@ export function getContractAiModel(useCase: ContractAiUseCase, provider: string,
 }
 
 export function isContractAiUseCase(value: unknown): value is ContractAiUseCase {
-    return value === "contract_extraction" || value === "contract_advice"
+    return value === "contract_extraction" || value === "contract_advice" || value === "statistics_query"
 }
-
