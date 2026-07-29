@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
-import { CalendarDays, Download, Loader2, ShieldCheck } from "lucide-react";
+import { CalendarDays, Download, Loader2, ShieldCheck, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-container";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/lib/i18n";
 
 type YearRow = { year: number; memberCount: number };
@@ -43,6 +44,10 @@ export default function AdminStatistikPage() {
   const [data, setData] = useState<StatisticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; series?: Array<{ year: number; value: number; memberCount: number }> } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -66,6 +71,24 @@ export default function AdminStatistikPage() {
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `dfks-statistik-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
   };
+  const askStatistics = async () => {
+    if (!aiQuestion.trim()) return;
+    setAiLoading(true); setAiError(null); setAiAnswer(null);
+    try {
+      const response = await fetch("/api/admin/statistics/query", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: aiQuestion }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Spørgsmålet kunne ikke behandles");
+      setAiAnswer(result);
+    } catch (queryError) {
+      setAiError(queryError instanceof Error ? queryError.message : "Spørgsmålet kunne ikke behandles");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   if (error) return <div className="space-y-6"><PageHeader title={t("admin.stats.title")} subtitle={t("admin.stats.subtitle")} /><Alert variant="destructive"><AlertTitle>Statistikken kunne ikke hentes</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
@@ -73,6 +96,21 @@ export default function AdminStatistikPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
     <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Beskyttet statistik</AlertTitle><AlertDescription>Personer, der har fravalgt statistik, indgår ikke. En gruppe vises kun, når den omfatter mindst {data?.minimum ?? 10} forskellige rettighedshavere. Rå kontrakt- og løndata sendes ikke til browseren.</AlertDescription></Alert>
+
+    <Card>
+      <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />Spørg statistikken</CardTitle></CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">Skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?” AI’en vælger kun mellem godkendte mål og filtre. Den kan ikke se personer eller skrive databasekode.</p>
+        <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
+        <Button onClick={askStatistics} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button>
+        {aiError && <Alert variant="destructive"><AlertDescription>{aiError}</AlertDescription></Alert>}
+        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertDescription>Resultatet skjules, fordi en gruppe har færre end {aiAnswer.minimum ?? 10} rettighedshavere.</AlertDescription></Alert>}
+        {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
+          <p className="text-sm">{aiAnswer.explanation}</p>
+          <DataTable headers={["År", "Resultat", "Rettighedshavere"]} rows={(aiAnswer.series ?? []).map(row => [row.year, row.value.toLocaleString("da-DK"), row.memberCount])} />
+        </div>}
+      </CardContent>
+    </Card>
 
     <div className="flex flex-wrap gap-3">
       <Select value={year} onValueChange={setYear}><SelectTrigger className="w-[160px]"><CalendarDays className="mr-2 h-4 w-4" /><SelectValue placeholder="År" /></SelectTrigger><SelectContent><SelectItem value="all">Alle år</SelectItem>{(data?.years ?? []).map(item => <SelectItem key={item} value={String(item)}>{item}</SelectItem>)}</SelectContent></Select>
