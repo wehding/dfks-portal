@@ -314,7 +314,7 @@ const FOCUS_AREAS: { value: FocusArea; label: string }[] = [
     { value: "konkurrence", label: "Konkurrenceklausul" },
 ]
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024 // 20 MB
+const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25 MB
 
 // ── Hoved-komponent ──────────────────────────────────────────
 
@@ -395,7 +395,7 @@ export default function PortalKontraktgennemgangPage() {
             return
         }
         if (f.size > MAX_FILE_SIZE) {
-            toast.error(`Filen er for stor (${formatBytes(f.size)}). Maksimalt 20 MB.`)
+            toast.error(`Filen er for stor (${formatBytes(f.size)}). Maksimalt 25 MB.`)
             return
         }
         setFile(f)
@@ -524,7 +524,7 @@ export default function PortalKontraktgennemgangPage() {
                             <Upload className="h-8 w-8 text-muted-foreground" />
                             <div className="text-center">
                                 <p className="text-sm font-medium">Træk filen hertil, eller klik for at vælge</p>
-                                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX eller DOC — maks. 20 MB</p>
+                                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX eller DOC — maks. 25 MB</p>
                             </div>
                             <input
                                 ref={fileInputRef}

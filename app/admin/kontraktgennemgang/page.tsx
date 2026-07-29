@@ -36,7 +36,6 @@ import {
     Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
 } from "@/components/ui/dialog"
 import { type CaseLearningKontrakttype } from "@/lib/ai"
-import { saveReview } from "@/lib/db/gennemgang"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
 import type { DbContractReview } from "@/lib/db/types"
@@ -744,14 +743,6 @@ function ManuelGennemgang() {
             setContractText(data.contractText || "")
             setKlassifikation(data.klassifikation ?? null)
             toast.success("Gennemgang fuldført")
-            if (orgId) {
-                saveReview({
-                    org_id: orgId,
-                    member_name: memberName || null,
-                    member_email: memberEmail || null,
-                    ai_result: data.result,
-                })
-            }
         } catch (e: unknown) {
             toast.error(`Gennemgang fejlede: ${getErrorMessage(e)}`)
         }

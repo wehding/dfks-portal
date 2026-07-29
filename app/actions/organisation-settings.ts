@@ -28,6 +28,7 @@ type OrganisationSettingsPayload = {
   coeditor_word: string;
   role_labels: string[];
   onboarding_keywords: string[];
+  contract_review_retention_months: number;
   foreninglet_base_url?: string | null;
   foreninglet_username?: string | null;
   foreninglet_password?: string | null;
@@ -67,7 +68,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at")
     .eq("id", orgId)
     .single();
 
@@ -97,6 +98,8 @@ export async function getOrganisationSettings() {
     onboarding_keywords: terminology.onboarding_keywords?.length
       ? terminology.onboarding_keywords
       : ["klip", "edit"],
+    contract_review_retention_months: data.contract_review_retention_months ?? 24,
+    contract_review_retention_updated_at: data.contract_review_retention_updated_at ?? null,
     foreninglet,
   };
 }
@@ -104,6 +107,8 @@ export async function getOrganisationSettings() {
 export async function updateOrganisationSettings(payload: OrganisationSettingsPayload) {
   const orgId = await currentAdminOrg();
   const db = createServiceClient();
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
 
   const shortName = cleanString(payload.short_name);
   const longName = cleanString(payload.long_name);
@@ -111,11 +116,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const roleLabels = normalizeRoles(payload.role_labels);
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
+  const retentionMonths = Number(payload.contract_review_retention_months);
 
   if (!shortName || !longName) throw new Error("Kort navn og fuldt navn skal udfyldes.");
   if (!coeditorWord) throw new Error("Fagordet skal udfyldes.");
   if (roleLabels.length === 0) throw new Error("Der skal være mindst én rollebetegnelse.");
   if (onboardingKeywords.length === 0) throw new Error("Der skal være mindst ét onboarding-søgeord.");
+  if (!Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 120) throw new Error("Opbevaringsperioden skal være mellem 1 og 120 måneder.");
   if (replyToEmail) {
     try {
       normalizeSingleEmail(replyToEmail);
@@ -147,6 +154,9 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       welcome_message_text: cleanOptionalString(payload.welcome_message_text),
       branding,
       terminology,
+      contract_review_retention_months: retentionMonths,
+      contract_review_retention_updated_at: new Date().toISOString(),
+      contract_review_retention_updated_by: user?.id ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("id", orgId);

@@ -23,6 +23,7 @@ type FormState = {
   coeditor_word: string;
   role_labels: string[];
   onboarding_keywords: string[];
+  contract_review_retention_months: number;
   foreninglet_base_url: string;
   foreninglet_username: string;
   foreninglet_password: string;
@@ -46,6 +47,7 @@ const emptyForm: FormState = {
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
   onboarding_keywords: ["klip", "edit"],
+  contract_review_retention_months: 24,
   foreninglet_base_url: "https://foreninglet.dk/api/members",
   foreninglet_username: "",
   foreninglet_password: "",
@@ -82,6 +84,7 @@ export default function OrganisationSettingsPage() {
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
           onboarding_keywords: settings.onboarding_keywords,
+          contract_review_retention_months: settings.contract_review_retention_months,
           foreninglet_base_url: settings.foreninglet.base_url,
           foreninglet_username: "",
           foreninglet_password: "",
@@ -152,6 +155,7 @@ export default function OrganisationSettingsPage() {
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
           onboarding_keywords: form.onboarding_keywords,
+          contract_review_retention_months: form.contract_review_retention_months,
           foreninglet_base_url: form.foreninglet_base_url || null,
           foreninglet_username: form.foreninglet_username || null,
           foreninglet_password: form.foreninglet_password || null,
@@ -320,6 +324,16 @@ export default function OrganisationSettingsPage() {
               />
             </div>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
+        <h2 className="text-base font-semibold">Opbevaring af kontraktgennemgange</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Afsluttede gennemgange soft-slettes først. Originalfil, mailreference og afledte AI-data slettes efter perioden. Juridisk hold stopper automatisk sletning.</p>
+        <div className="mt-4 max-w-xs space-y-2">
+          <Label htmlFor="review-retention">Opbevaringsperiode i måneder</Label>
+          <Input id="review-retention" type="number" min={1} max={120} value={form.contract_review_retention_months} onChange={event => setForm(current => ({ ...current, contract_review_retention_months: Number(event.target.value) }))} />
+          <p className="text-xs text-muted-foreground">Standard er 24 måneder. Tilladte værdier er 1–120 måneder. Lange perioder øger mængden af persondata, organisationen opbevarer.</p>
         </div>
       </section>
 
