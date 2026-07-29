@@ -46,8 +46,9 @@ export default function AdminStatistikPage() {
   const [error, setError] = useState<string | null>(null);
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; series?: Array<{ year: number; value: number; memberCount: number }> } | null>(null);
+  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; series?: Array<{ year: number; value: number; memberCount: number; inflationIndex?: number | null; realChangePercent?: number | null }> } | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [cpiLoading, setCpiLoading] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -89,6 +90,17 @@ export default function AdminStatistikPage() {
       setAiLoading(false);
     }
   };
+  const syncCpi = async () => {
+    setCpiLoading(true);
+    try {
+      const response = await fetch("/api/admin/statistics/cpi", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Inflationsdata kunne ikke opdateres");
+      setAiError(`Inflationsdata opdateret til ${result.latest}.`);
+    } catch (syncError) {
+      setAiError(syncError instanceof Error ? syncError.message : "Inflationsdata kunne ikke opdateres");
+    } finally { setCpiLoading(false); }
+  };
 
   if (loading) return <div className="flex items-center justify-center py-24"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   if (error) return <div className="space-y-6"><PageHeader title={t("admin.stats.title")} subtitle={t("admin.stats.subtitle")} /><Alert variant="destructive"><AlertTitle>Statistikken kunne ikke hentes</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>;
@@ -102,12 +114,12 @@ export default function AdminStatistikPage() {
       <CardContent className="space-y-3">
         <p className="text-sm text-muted-foreground">Skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?” AI’en vælger kun mellem godkendte mål og filtre. Den kan ikke se personer eller skrive databasekode.</p>
         <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
-        <Button onClick={askStatistics} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button>
+        <div className="flex flex-wrap gap-2"><Button onClick={askStatistics} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Button variant="outline" onClick={syncCpi} disabled={cpiLoading}>{cpiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Opdatér inflation</Button></div>
         {aiError && <Alert variant="destructive"><AlertDescription>{aiError}</AlertDescription></Alert>}
         {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertDescription>Resultatet skjules, fordi en gruppe har færre end {aiAnswer.minimum ?? 10} rettighedshavere.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <p className="text-sm">{aiAnswer.explanation}</p>
-          <DataTable headers={["År", "Resultat", "Rettighedshavere"]} rows={(aiAnswer.series ?? []).map(row => [row.year, row.value.toLocaleString("da-DK"), row.memberCount])} />
+          <DataTable headers={["År", "Resultat", "Rettighedshavere", "Inflationsindeks", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.year, row.value.toLocaleString("da-DK"), row.memberCount, row.inflationIndex ?? "—", row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />
         </div>}
       </CardContent>
     </Card>

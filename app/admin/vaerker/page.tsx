@@ -16,6 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { AdminListTools } from "@/components/admin/admin-list-tools";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
@@ -2193,6 +2194,7 @@ export default function VaerksadministrationPage() {
         })}
       </MobileCardList>
 
+      <AdminListTools pageKey="works" title="Værker" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"work",label:"Værk",index:2,required:true},{id:"type",label:"Type",index:3},{id:"year",label:"Premiereår",index:4},{id:"data",label:"Data",index:5},{id:"broadcast",label:"Broadcast/stream",index:6},{id:"status",label:"Status",index:7}]} />
       <ResponsiveTableFrame>
         <Table>
           <TableHeader>

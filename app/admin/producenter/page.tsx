@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
+import { AdminListTools } from "@/components/admin/admin-list-tools";
 import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
@@ -410,6 +411,7 @@ export default function ProducersPage() {
     <Button variant="outline" className="w-full md:hidden" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>
     {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
 
+    <AdminListTools pageKey="producers" title="Producenter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Producent",index:2,required:true},{id:"parent",label:"Broadcaster/moderselskab",index:3},{id:"status",label:"Status",index:4},{id:"works",label:"Værker",index:5},{id:"contracts",label:"Kontrakter",index:6},{id:"latest",label:"Seneste aktivitet",index:7}]} />
     {loading ? <TableSkeleton columns={7} rows={8} /> : <>
       <MobileCardList>{producers.length ? producers.map(producer => {
         const isExpanded = open.has(producer.id);

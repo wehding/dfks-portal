@@ -15,6 +15,8 @@ export type StatisticsQueryPlan = {
     gender: "male" | "female" | "other" | null;
     category: "feature" | "tvSeries" | "documentary" | "docSeries" | "short" | "tvEntertainment" | "reality" | "other" | null;
     contractType: "a-løn" | "leverandør" | null;
+    producerName: string | null;
+    professionType: string | null;
   };
   chart: "line" | "bar" | "table";
 };
@@ -39,6 +41,8 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
       gender: allowedGenders.has(String(rawFilters.gender)) ? rawFilters.gender as StatisticsQueryPlan["filters"]["gender"] : null,
       category: allowedCategories.has(String(rawFilters.category)) ? rawFilters.category as StatisticsQueryPlan["filters"]["category"] : null,
       contractType: allowedContractTypes.has(String(rawFilters.contractType)) ? rawFilters.contractType as StatisticsQueryPlan["filters"]["contractType"] : null,
+      producerName: typeof rawFilters.producerName === "string" ? rawFilters.producerName.trim().slice(0, 120) || null : null,
+      professionType: typeof rawFilters.professionType === "string" ? rawFilters.professionType.trim().slice(0, 120) || null : null,
     },
     chart: raw.chart === "bar" || raw.chart === "table" ? raw.chart : "line",
   };

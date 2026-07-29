@@ -16,6 +16,7 @@ import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSear
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
+import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT, isSupportedAdminContractFile } from "@/lib/contract-upload-format"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
@@ -1753,6 +1754,7 @@ function AdminKontrakterContent() {
                 })}
             </MobileCardList>
 
+            <AdminListTools pageKey="contracts" title="Kontrakter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"production",label:"Produktion",index:2,required:true},{id:"holder",label:"Klipper",index:3},{id:"producer",label:"Producent",index:4},{id:"type",label:"Type",index:5},{id:"agreement",label:"Overenskomst",index:6},{id:"period",label:"Periode",index:7},{id:"status",label:"Status",index:8},{id:"document",label:"Dokument",index:9}]} />
             <ResponsiveTableFrame>
                 <Table>
                     <TableHeader>
