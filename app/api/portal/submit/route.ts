@@ -1,229 +1,51 @@
-/**
- * POST /api/portal/submit
- *
- * Hurtig indsendelse fra brugerportalen:
- *   1. Gem filen i Supabase Storage
- *   2. Indsæt contract_reviews-række med ai_status = 'analyserer'
- *   3. Returner { success: true, review_id } øjeblikkeligt
- *   4. Kick AI-analysen asynkront via waitUntil (Vercel) eller fire-and-forget fetch
- *
- * Brugeren venter IKKE på AI — de ser kvittering med det samme.
- */
+import { NextRequest, NextResponse, after } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
+import { createContractReviewIntake } from "@/lib/contract-review-intake";
 
-import { NextRequest, NextResponse } from "next/server"
-import { createClient as createServerClient } from "@/lib/supabase/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
+const MAX_BYTES = 25 * 1024 * 1024;
+const ALLOWED = [".pdf", ".doc", ".docx"];
 
-const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024
-
-function getAdmin() {
-    return createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+function list(value: FormDataEntryValue | null | undefined) {
+  if (typeof value !== "string" || !value) return [];
+  try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return value.split(",").map(item => item.trim()).filter(Boolean); }
 }
 
-export async function POST(req: NextRequest) {
-    // ── Auth ──────────────────────────────────────────────────
-    const supabase = await createServerClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-
-    const admin = getAdmin()
-    const { data: orgRole } = await admin
-        .from("user_org_roles")
-        .select("org_id")
-        .eq("user_id", user.id)
-        .limit(1)
-        .maybeSingle()
-    const orgId = orgRole?.org_id as string | undefined
-    if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 })
-    const resolvedOrgId = orgId
-
-    // ── Parse form-data ───────────────────────────────────────
-    let formData: FormData
-    try {
-        formData = await req.formData()
-    } catch {
-        return NextResponse.json({ error: "Ugyldig form-data" }, { status: 400 })
+export async function POST(request: NextRequest) {
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
+  const db = createServiceClient();
+  const { data: affiliation } = await db.from("org_affiliations").select("org_id,rettighedshavere!inner(user_id,full_name,email)").eq("rettighedshavere.user_id", user.id).limit(1).maybeSingle();
+  const { data: role } = affiliation ? { data: null } : await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
+  const orgId = affiliation?.org_id ?? role?.org_id;
+  if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 });
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  if (!(file instanceof File)) return NextResponse.json({ error: "Ingen fil" }, { status: 400 });
+  if (file.size > MAX_BYTES) return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 });
+  if (!ALLOWED.some(extension => file.name.toLowerCase().endsWith(extension))) return NextResponse.json({ error: "Brug PDF, DOC eller DOCX." }, { status: 400 });
+  const holder = Array.isArray(affiliation?.rettighedshavere) ? affiliation?.rettighedshavere[0] : affiliation?.rettighedshavere;
+  try {
+    const intake = await createContractReviewIntake({
+      orgId, source: "portal", externalSourceId: String(form?.get("submissionId") ?? crypto.randomUUID()),
+      fileName: file.name, contentType: file.type, fileBuffer: Buffer.from(await file.arrayBuffer()),
+      memberId: user.id, memberName: String(form?.get("memberName") ?? holder?.full_name ?? user.user_metadata?.full_name ?? ""),
+      memberEmail: String(form?.get("memberEmail") ?? holder?.email ?? user.email ?? ""),
+      metadata: {
+        contract_type: form?.get("contractType") || null, production_type: form?.get("productionType") || null,
+        distribution_channels: list(form?.get("distributionChannels")), producer_name: form?.get("producerName") || null,
+        producer_overenskomst_bound: form?.get("producerOverenskomst") === "true" ? true : form?.get("producerOverenskomst") === "false" ? false : null,
+        focus_areas: list(form?.get("focusAreas")), notes: form?.get("notes") || null,
+      },
+    });
+    if (!intake.duplicate) {
+      const secret = process.env.CONTRACT_AI_JOB_SECRET ?? process.env.INTERNAL_API_SECRET ?? process.env.CRON_SECRET;
+      if (secret) after(fetch(new URL("/api/contracts/reviews/jobs/process", request.url), { method: "POST", headers: { Authorization: `Bearer ${secret}` } }).catch(() => undefined));
     }
-
-    const file = formData.get("file") as File | null
-    if (!file) return NextResponse.json({ error: "Ingen fil" }, { status: 400 })
-    if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
-        return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 })
-    }
-
-    const memberName         = formData.get("memberName")          as string | null
-    const memberEmail        = formData.get("memberEmail")         as string | null
-    const contractType       = formData.get("contractType")        as string | null
-    const productionType     = formData.get("productionType")      as string | null
-    const producerName       = formData.get("producerName")        as string | null
-    const producerOverenskomst = formData.get("producerOverenskomst") as string | null
-    const distributionRaw    = formData.get("distributionChannels") as string | null
-    const focusAreasRaw      = formData.get("focusAreas")          as string | null
-    const notes              = formData.get("notes")               as string | null
-
-    const distributionChannels: string[] = distributionRaw
-        ? (distributionRaw.startsWith("[") ? JSON.parse(distributionRaw) : distributionRaw.split(",").filter(Boolean))
-        : []
-
-    const focusAreas = focusAreasRaw
-        ? (focusAreasRaw.startsWith("[") ? JSON.parse(focusAreasRaw) : focusAreasRaw.split(",").filter(Boolean))
-        : []
-
-    // ── Gem fil i Storage ─────────────────────────────────────
-    let storagePath: string | null = null
-    try {
-        const ts = Date.now()
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-        storagePath = `${resolvedOrgId}/${ts}_${safeName}`
-        const fileBuffer = Buffer.from(await file.arrayBuffer())
-        const { error: storageErr } = await admin.storage
-            .from("contract-reviews")
-            .upload(storagePath, fileBuffer, {
-                contentType: file.type || "application/octet-stream",
-                upsert: false,
-            })
-        if (storageErr) {
-            logWarn("portal/submit", "Storage upload fejlede", { error: storageErr.message })
-            storagePath = null
-        }
-    } catch (e) {
-        logWarn("portal/submit", "Storage exception", { error: errorMessage(e) })
-        storagePath = null
-    }
-
-    // ── Opret contract_reviews-række øjeblikkeligt ────────────
-    const { data: review, error: insertErr } = await admin
-        .from("contract_reviews")
-        .insert({
-            org_id:          resolvedOrgId,
-            member_id:       user.id,
-            member_name:     memberName ?? user.user_metadata?.full_name ?? null,
-            member_email:    memberEmail ?? user.email ?? null,
-            status:          "afventer",
-            ai_status:       "analyserer",
-            file_name:       file.name,
-            file_size_bytes: file.size,
-            storage_path:    storagePath,
-            contract_type:               contractType ?? null,
-            production_type:             productionType ?? null,
-            distribution_channels:       distributionChannels.length ? distributionChannels : null,
-            producer_name:               producerName ?? null,
-            producer_overenskomst_bound: producerOverenskomst === "true"  ? true
-                                       : producerOverenskomst === "false" ? false
-                                       : null,
-            focus_areas:                 focusAreas.length ? focusAreas : null,
-            notes:                       notes ?? null,
-        })
-        .select("id")
-        .single()
-
-    if (insertErr || !review) {
-        logWarn("portal/submit", "Insert i contract_reviews fejlede", { error: insertErr?.message })
-        return NextResponse.json({ error: "Kunne ikke gemme kontrakten" }, { status: 500 })
-    }
-
-    const reviewId = review.id
-
-    // ── Returner straks — AI køres asynkront ─────────────────
-    // Brug Vercel waitUntil hvis tilgængeligt, ellers fire-and-forget
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL ?? `https://${req.headers.get("host")}`
-
-    // Capture non-null references for the async closure
-    const capturedFile = file!
-    const capturedUser = user!
-
-    async function runAnalysis() {
-        try {
-            // Hent filen fra storage (eller brug original buffer)
-            let analysisFile: File
-            if (storagePath) {
-                const { data: fileData } = await admin.storage
-                    .from("contract-reviews")
-                    .download(storagePath)
-                analysisFile = fileData
-                    ? new File([fileData], capturedFile.name, { type: capturedFile.type })
-                    : capturedFile
-            } else {
-                analysisFile = capturedFile
-            }
-
-            const fd = new FormData()
-            fd.append("file",          analysisFile)
-            fd.append("orgId",         resolvedOrgId)
-            fd.append("memberId",      capturedUser.id)
-            if (memberEmail)   fd.append("memberEmail",   memberEmail)
-            if (memberName)    fd.append("memberName",    memberName)
-            if (contractType)               fd.append("contractType",         contractType)
-            if (productionType)             fd.append("productionType",        productionType)
-            if (distributionChannels.length) fd.append("distributionChannels", JSON.stringify(distributionChannels))
-            if (producerName)               fd.append("producerName",          producerName)
-            if (producerOverenskomst)       fd.append("producerOverenskomst",  producerOverenskomst)
-            if (focusAreas.length)          fd.append("focusAreas",            JSON.stringify(focusAreas))
-            if (notes)                      fd.append("notes",                 notes)
-            // Marker at filen allerede er gemt — gennemgang skal ikke gemme på ny
-            fd.append("existingReviewId", reviewId)
-
-            // Inkluder invite-cookie så middleware-gate ikke blokerer det interne kald
-            const internalHeaders: HeadersInit = {}
-            if (process.env.INVITE_CODE) {
-                internalHeaders["Cookie"] = `dfks_invite=${process.env.INVITE_CODE}`
-            }
-            const internalSecret = process.env.INTERNAL_API_SECRET ?? process.env.CONTRACT_AI_JOB_SECRET ?? process.env.CRON_SECRET
-            if (internalSecret) {
-                internalHeaders["Authorization"] = `Bearer ${internalSecret}`
-            }
-
-            const resp = await fetch(`${baseUrl}/api/gennemgang`, {
-                method: "POST",
-                headers: internalHeaders,
-                body: fd,
-            })
-
-            if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}))
-                throw new Error(err.error ?? `HTTP ${resp.status}`)
-            }
-
-            const data = await resp.json()
-
-            // Opdater review med AI-resultat
-            await admin
-                .from("contract_reviews")
-                .update({
-                    ai_result:       data.result,
-                    ai_run_at:       new Date().toISOString(),
-                    ai_language:     data.klassifikation?.kontraktsprog ?? "da",
-                    risk_level:      data.risk_level ?? null,
-                    should_escalate: data.should_escalate ?? null,
-                    ai_status:       "klar",
-                })
-                .eq("id", reviewId)
-
-            logInfo("portal/submit", "Analyse fuldført", { reviewId })
-        } catch (e) {
-            logWarn("portal/submit", "Analyse fejlede", { reviewId, error: errorMessage(e) })
-            // Marker som fejlet i DB så admin kan se det
-            await admin
-                .from("contract_reviews")
-                .update({ ai_status: "fejl" })
-                .eq("id", reviewId)
-        }
-    }
-
-    // Vercel understøtter waitUntil via AsyncLocalStorage på edge/node runtime
-    // Next.js 15+: brug `after()` fra "next/server" — fallback: fire-and-forget
-    try {
-        const { after } = await import("next/server")
-        after(runAnalysis())
-    } catch {
-        // Fallback: fire-and-forget (virker på de fleste Vercel-deployments)
-        runAnalysis().catch(e => logWarn("portal/submit", "Fire-and-forget fejlede", { reviewId, error: errorMessage(e) }))
-    }
-
-    return NextResponse.json({ success: true, review_id: reviewId })
+    return NextResponse.json({ success: true, review_id: intake.reviewId, duplicate: intake.duplicate });
+  } catch (error) {
+    console.error("[review-intake] Portalindsendelse fejlede", error instanceof Error ? error.message : "Ukendt fejl");
+    return NextResponse.json({ error: "Kontrakten kunne ikke gemmes sikkert" }, { status: 500 });
+  }
 }

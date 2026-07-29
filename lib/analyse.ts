@@ -516,7 +516,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
 
     // ── Trin 1: Klassificér med den valgte rådgivningsmodel ──
     let klassifikation: Klassifikation | null = null
-    const tekstTilKlassifikation = contractText || (filename.endsWith(".pdf") ? "[Scannet PDF]" : "")
+    const tekstTilKlassifikation = contractText ? maskSensitiveData(contractText) : (filename.endsWith(".pdf") ? "[Scannet PDF]" : "")
     try {
         klassifikation = await klassificerKontrakt(tekstTilKlassifikation, provider, model, {
             runId, orgId, useCase: "contract_advice", stage: "classification",
@@ -695,7 +695,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
     }
 
     // RAG-kontekst
-    const ragText = contractText.slice(0, 8000)
+    const ragText = maskSensitiveData(contractText).slice(0, 8000)
     if (ragText.trim()) {
         try {
             if (!orgId) throw new Error("Kontraktanalyse kræver en organisation.")
