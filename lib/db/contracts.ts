@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/client"
-import type { DbContract, DbContractAttachment, DbEmployer, DbEmployerRegistry } from "./types"
+import type { DbContract, DbContractAttachment, DbEmployer } from "./types"
 
 export type ContractWithRelations = DbContract & {
     employers: DbEmployer | null
@@ -133,7 +133,6 @@ export async function updateEmployer(
 // Tjek om en arbejdsgiver er ProF-medlem — tjekker også moderselskabet via parent_id
 export async function isProFMember(employerId: string): Promise<boolean> {
     const supabase = createClient()
-    const today = new Date().toISOString().split("T")[0]
 
     // Find employer og eventuelt moderselskab
     const { data: emp } = await supabase
@@ -147,22 +146,13 @@ export async function isProFMember(employerId: string): Promise<boolean> {
     if (emp?.parent_id) idsToCheck.push(emp.parent_id)
 
     const { data } = await supabase
-        .from("employer_registries")
+        .from("employer_producer_types")
         .select("id")
         .in("employer_id", idsToCheck)
-        .eq("association_name", "ProF")
-        .or(`valid_to.is.null,valid_to.gte.${today}`)
+        .eq("source", "producentforeningen")
+        .eq("membership_type", "member")
+        .eq("is_active", true)
         .limit(1)
 
     return (data?.length ?? 0) > 0
-}
-
-export async function getEmployerRegistries(employerId: string): Promise<DbEmployerRegistry[]> {
-    const supabase = createClient()
-    const { data } = await supabase
-        .from("employer_registries")
-        .select("*")
-        .eq("employer_id", employerId)
-
-    return data ?? []
 }

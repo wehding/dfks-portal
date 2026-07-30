@@ -77,10 +77,11 @@ export default async function PortalDashboardPage() {
   // Lønstatistik: egen grundløn pr. uge pr. år vs. gennemsnittet for bidragende medlemmer.
   const optedOut = Boolean((holder as { opt_out_statistics?: boolean | null }).opt_out_statistics);
   let salaryPoints: SalaryStatPoint[] = [];
-  let membersWithContracts = 0;
-  if (!optedOut) {
+  let benchmarkAvailable = false;
+  let ownStatisticsContracts: Array<{ id: string; title: string; year: number; weekly: number }> = [];
+  {
     const { data: orgContracts } = await db.from("contracts")
-      .select("id,type,start_date,contract_date,rights_holder_id,rettighedshavere(opt_out_statistics)")
+      .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(opt_out_statistics)")
       .eq("org_id", orgId);
     const contractIds = (orgContracts ?? []).map(contract => contract.id);
     const { data: validations } = contractIds.length
@@ -96,16 +97,16 @@ export default async function PortalDashboardPage() {
       const isMine = contract.rights_holder_id === holder.id;
       if (!contributes && !isMine) continue;
       const dateStr = extracted.startDate ?? contract.start_date ?? extracted.contractDate ?? contract.contract_date ?? null;
-      const year = dateStr ? new Date(dateStr).getFullYear() : new Date().getFullYear();
+      const year = dateStr ? new Date(dateStr).getFullYear() : Number.NaN;
       const salary = Number(extracted.salary);
       const unit = extracted.salaryUnit ?? "weekly";
       // Grundløn normaliseret til ugeløn.
       const weekly = unit === "daily" ? salary * 5 : unit === "monthly" ? Math.round(salary * 12 / 52) : salary;
       if (!Number.isFinite(weekly) || weekly <= 0 || !Number.isFinite(year)) continue;
       salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null });
+      if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
     }
-    membersWithContracts = new Set(salaryRows.map(row => row.holderId).filter(Boolean)).size;
-    const MIN_MEMBERS_PER_YEAR = 10;
+    const MIN_BENCHMARK_CONTRACTS = 10;
     const avg = (list: number[]) => (list.length ? Math.round(list.reduce((sum, value) => sum + value, 0) / list.length) : null);
     // Gennemsnit pr. MEDLEM (ikke pr. kontrakt) og kun for år med nok distinkte bidragydere.
     // Det sikrer at et enkelt medlems ugeløn aldrig kan aflæses som "gennemsnit" et år med få bidragydere.
@@ -117,7 +118,9 @@ export default async function PortalDashboardPage() {
         list.push(row.weekly);
         byHolder.set(row.holderId, list);
       }
-      if (byHolder.size < MIN_MEMBERS_PER_YEAR) return null;
+      const contributingRows = rows.filter(row => row.contributes && row.holderId);
+      const largestContribution = Math.max(0, ...Array.from(byHolder.values()).map(values => values.length));
+      if (contributingRows.length < MIN_BENCHMARK_CONTRACTS || byHolder.size < 3 || largestContribution / contributingRows.length > 0.4) return null;
       const perHolderMeans = Array.from(byHolder.values()).map(list => list.reduce((sum, value) => sum + value, 0) / list.length);
       return Math.round(perHolderMeans.reduce((sum, value) => sum + value, 0) / perHolderMeans.length);
     };
@@ -129,8 +132,9 @@ export default async function PortalDashboardPage() {
         gennemsnit: yearlyAverage(yearRows),
       };
     });
+    benchmarkAvailable = salaryPoints.some(point => point.gennemsnit != null);
+    ownStatisticsContracts = ownStatisticsContracts.sort((left, right) => right.year - left.year || left.title.localeCompare(right.title, "da"));
   }
-  const insufficientMembers = membersWithContracts < 10;
   const waitingItems = [
     ...(workRequests ?? []).map(request => ({ key: `request-${request.id}`, href: `/portal/mine-vaerker?request=${request.id}`, icon: Clock3, title: "Værksrettelse", text: "Din rettelse afventer DFKS." })),
     ...(screeningClaims ?? []).map(claim => ({ key: `claim-${claim.id}`, href: `/portal/mine-visninger?claim=${claim.id}`, icon: MonitorPlay, title: claim.title || "Visningsindberetning", text: "Din indberetning afventer DFKS." })),
@@ -141,7 +145,7 @@ export default async function PortalDashboardPage() {
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
     </div>
-    <SalaryStatsCard points={salaryPoints} optedOut={optedOut} insufficientMembers={insufficientMembers} />
+    <SalaryStatsCard points={salaryPoints} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} contracts={ownStatisticsContracts} />
     <section className="space-y-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquare className="h-5 w-5 text-amber-500" />Beskeder fra DFKS</h2>
       <MemberInboxPanel />

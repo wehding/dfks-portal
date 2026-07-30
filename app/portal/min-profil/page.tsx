@@ -17,7 +17,7 @@ import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCan
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useI18n } from "@/lib/i18n"
-import { updateSensitiveMemberProfile } from "@/app/actions/member-profile"
+import { getMemberStatisticsProfile, updateMemberStatisticsProfile, updateSensitiveMemberProfile } from "@/app/actions/member-profile"
 
 interface ProfileData {
     id: string
@@ -33,6 +33,15 @@ interface ProfileData {
     portrait_url: string | null
     email_transactional_enabled: boolean
     email_broadcast_enabled: boolean
+}
+
+type StatisticsProfileState = {
+    success: true
+    profile: { optOutStatistics: boolean; professionalStartYear: number | null; primaryProfessionTypeId: string | null; secondaryProfessionTypeIds: string[]; usualWorkMode: string | null; primaryWorkRegionCode: string | null }
+    config: Record<string, boolean>
+    professionLabel: string
+    professionTypes: Array<{ id: string; name: string }>
+    workRegions: Array<{ code: string; nameDa: string; nameEn: string }>
 }
 
 export default function MinProfilPage() {
@@ -64,6 +73,13 @@ export default function MinProfilPage() {
     const [emailBroadcastEnabled, setEmailBroadcastEnabled] = useState(false)
     const [cpr, setCpr] = useState("")
     const [bankAccount, setBankAccount] = useState("")
+    const [statisticsOptions, setStatisticsOptions] = useState<StatisticsProfileState | null>(null)
+    const [shareStatistics, setShareStatistics] = useState(true)
+    const [professionalStartYear, setProfessionalStartYear] = useState("")
+    const [primaryProfessionTypeId, setPrimaryProfessionTypeId] = useState("")
+    const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>([])
+    const [usualWorkMode, setUsualWorkMode] = useState("")
+    const [primaryWorkRegionCode, setPrimaryWorkRegionCode] = useState("")
 
     // Arvekontakt (stored in user_metadata — ingen DB-tabel endnu)
     const [kinName, setKinName]         = useState("")
@@ -134,6 +150,17 @@ export default function MinProfilPage() {
             setKinEmail(kin.email ?? "")
             setKinNotes(kin.notes ?? "")
 
+            const statistics = await getMemberStatisticsProfile()
+            if (statistics.success) {
+                setStatisticsOptions(statistics as StatisticsProfileState)
+                setShareStatistics(!statistics.profile.optOutStatistics)
+                setProfessionalStartYear(statistics.profile.professionalStartYear ? String(statistics.profile.professionalStartYear) : "")
+                setPrimaryProfessionTypeId(statistics.profile.primaryProfessionTypeId ?? "")
+                setSecondaryProfessionTypeIds(statistics.profile.secondaryProfessionTypeIds ?? [])
+                setUsualWorkMode(statistics.profile.usualWorkMode ?? "")
+                setPrimaryWorkRegionCode(statistics.profile.primaryWorkRegionCode ?? "")
+            }
+
             setLoading(false)
         }
         load()
@@ -156,6 +183,16 @@ export default function MinProfilPage() {
                 .update({ email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
+
+            const statisticsResult = await updateMemberStatisticsProfile({
+                optOutStatistics: !shareStatistics,
+                professionalStartYear: professionalStartYear ? Number(professionalStartYear) : null,
+                primaryProfessionTypeId: primaryProfessionTypeId || null,
+                secondaryProfessionTypeIds,
+                usualWorkMode: usualWorkMode || null,
+                primaryWorkRegionCode: primaryWorkRegionCode || null,
+            })
+            if (!statisticsResult.success) throw new Error(statisticsResult.error)
 
             // Gem arvekontakt i user_metadata
             await supabase.auth.updateUser({
@@ -430,6 +467,18 @@ export default function MinProfilPage() {
                 <div className="space-y-4 p-5">
                     <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={emailTransactionalEnabled} onChange={event => setEmailTransactionalEnabled(event.target.checked)} /><span><span className="block font-medium">Svar og statusændringer</span><span className="text-sm text-muted-foreground">Modtag e-mail, når DFKS svarer eller validerer en kontrakt.</span></span></label>
                     <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={emailBroadcastEnabled} onChange={event => setEmailBroadcastEnabled(event.target.checked)} /><span><span className="block font-medium">Fællesmeddelelser</span><span className="text-sm text-muted-foreground">Modtag e-mail ved fælles beskeder fra din organisation.</span></span></label>
+                </div>
+            </section>
+
+            <section id="statistik" className="scroll-mt-20 rounded-lg border">
+                <div className="border-b px-5 py-4"><h2 className="font-medium">Statistikindstillinger</h2><p className="mt-1 text-sm text-muted-foreground">Det er frivilligt at bidrage. Du kan altid ændre valget igen.</p></div>
+                <div className="space-y-4 p-5">
+                    <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 h-4 w-4" checked={shareStatistics} onChange={event => setShareStatistics(event.target.checked)} /><span><span className="block font-medium">Jeg bidrager til fælles lønstatistik</span><span className="text-sm text-muted-foreground">Dine data bruges kun i aggregerede resultater, der opfylder statistikgrænserne.</span></span></label>
+                    {statisticsOptions?.config.professional_start_year && <div className="space-y-1.5"><Label>Hvilket år begyndte du at arbejde professionelt som {statisticsOptions.professionLabel.toLocaleLowerCase(locale === "en" ? "en" : "da")}?</Label><Input type="number" min={1940} max={new Date().getFullYear()} value={professionalStartYear} onChange={event => setProfessionalStartYear(event.target.value)} className="max-w-48" /></div>}
+                    {statisticsOptions?.config.primary_profession_type && statisticsOptions.professionTypes.length > 0 && <div className="space-y-1.5"><Label>Primær faggruppe</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={primaryProfessionTypeId} onChange={event => setPrimaryProfessionTypeId(event.target.value)}><option value="">Vælg faggruppe</option>{statisticsOptions.professionTypes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></div>}
+                    {statisticsOptions?.config.secondary_profession_types && statisticsOptions.professionTypes.length > 0 && <div className="space-y-2"><Label>Yderligere faggrupper</Label><div className="grid gap-2 sm:grid-cols-2">{statisticsOptions.professionTypes.filter(option => option.id !== primaryProfessionTypeId).map(option => <label key={option.id} className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" checked={secondaryProfessionTypeIds.includes(option.id)} onChange={event => setSecondaryProfessionTypeIds(current => event.target.checked ? [...new Set([...current, option.id])] : current.filter(id => id !== option.id))} />{option.name}</label>)}</div></div>}
+                    {statisticsOptions?.config.usual_work_mode && <div className="space-y-1.5"><Label>Typisk arbejdsform</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={usualWorkMode} onChange={event => setUsualWorkMode(event.target.value)}><option value="">Vælg arbejdsform</option><option value="employee">A-lønmodtager</option><option value="company">Gennem eget selskab</option><option value="both">Begge dele</option><option value="other">Andet</option><option value="prefer_not_to_say">Vil ikke oplyse</option></select></div>}
+                    {statisticsOptions?.config.primary_work_region && statisticsOptions.workRegions.length > 0 && <div className="space-y-1.5"><Label>Primært arbejdsområde</Label><select className="flex h-10 w-full max-w-sm rounded-md border bg-background px-3 text-sm" value={primaryWorkRegionCode} onChange={event => setPrimaryWorkRegionCode(event.target.value)}><option value="">Vælg område</option>{statisticsOptions.workRegions.map(option => <option key={option.code} value={option.code}>{locale === "en" ? option.nameEn : option.nameDa}</option>)}</select></div>}
                 </div>
             </section>
 

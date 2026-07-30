@@ -25,6 +25,7 @@ type Payload = {
     models: Model[]; settings: Setting[]; prices: Price[]; events: UsageEvent[]
     exchangeRate: { rate_date: string; usd_dkk: number; source: string } | null
     organisations: Array<{ id: string; name: string }>
+    statisticsContractScope: "validated_only" | "validated_and_drafts"
 }
 
 const COPY = {
@@ -63,6 +64,7 @@ export function AiUsageModelsTab() {
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState<UseCase | null>(null)
     const [orgFilter, setOrgFilter] = useState("all")
+    const [statisticsScope, setStatisticsScope] = useState<"validated_only" | "validated_and_drafts">("validated_only")
     const [drafts, setDrafts] = useState<Record<UseCase, { provider: string; model: string; promptCachingEnabled: boolean }> | null>(null)
 
     const load = useCallback(async () => {
@@ -72,6 +74,7 @@ export function AiUsageModelsTab() {
             const payload = await response.json()
             if (!response.ok) throw new Error(payload.error ?? "Kunne ikke hente AI-forbrug")
             setData(payload)
+            setStatisticsScope(payload.statisticsContractScope ?? "validated_only")
             const settings = Object.fromEntries((payload.settings as Setting[]).map(setting => [setting.use_case, {
                 provider: setting.provider, model: setting.model, promptCachingEnabled: setting.prompt_caching_enabled,
             }])) as Record<UseCase, { provider: string; model: string; promptCachingEnabled: boolean }>
@@ -115,6 +118,23 @@ export function AiUsageModelsTab() {
         finally { setSaving(null) }
     }
 
+    async function saveStatisticsScope(value: "validated_only" | "validated_and_drafts") {
+        setStatisticsScope(value)
+        try {
+            const response = await fetch("/api/admin/ai-control", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ statisticsContractScope: value }),
+            })
+            const payload = await response.json()
+            if (!response.ok) throw new Error(payload.error ?? "Statistikgrundlaget kunne ikke gemmes")
+            toast.success(locale === "en" ? "Statistics source saved" : "Statistikgrundlag gemt")
+        } catch (error) {
+            setStatisticsScope(data?.statisticsContractScope ?? "validated_only")
+            toast.error(error instanceof Error ? error.message : "Statistikgrundlaget kunne ikke gemmes")
+        }
+    }
+
     if (loading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
     if (!data || !drafts) return <p className="py-8 text-sm text-muted-foreground">{text.noUsage}</p>
 
@@ -132,6 +152,16 @@ export function AiUsageModelsTab() {
             <CardHeader className="pb-2"><CardDescription className="flex items-center gap-2"><card.icon className="h-4 w-4" />{card.label}</CardDescription></CardHeader>
             <CardContent><p className="text-2xl font-semibold tabular-nums">{card.value}</p>{card.sub && <p className="text-xs text-muted-foreground">{card.sub}</p>}</CardContent>
         </Card>)}</div>
+
+        <Card><CardHeader><CardTitle>{locale === "en" ? "Statistics contract source" : "Kontraktgrundlag for statistik"}</CardTitle><CardDescription>{locale === "en" ? "Drafts can contain incomplete or unverified extraction data." : "Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata."}</CardDescription></CardHeader><CardContent className="max-w-md">
+            <Select value={statisticsScope} onValueChange={value => void saveStatisticsScope(value as "validated_only" | "validated_and_drafts")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="validated_only">{locale === "en" ? "Validated contracts only" : "Kun validerede kontrakter"}</SelectItem>
+                    <SelectItem value="validated_and_drafts">{locale === "en" ? "Validated contracts and drafts" : "Validerede kontrakter og kladder"}</SelectItem>
+                </SelectContent>
+            </Select>
+        </CardContent></Card>
 
         <Card><CardHeader><CardTitle>{text.models}</CardTitle>{!data.caller.canEdit && <CardDescription>{text.readOnly}</CardDescription>}</CardHeader>
             <CardContent className="grid gap-5 lg:grid-cols-2">{(["contract_extraction", "contract_advice"] as UseCase[]).map(useCase => {

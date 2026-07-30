@@ -118,15 +118,15 @@ async function importMessage(messageId: string, state: ImportState): Promise<{ i
       .eq("gmail_contract_message_id", source.id)
       .eq("gmail_attachment_id", attachment.attachmentId)
       .maybeSingle();
+    if (existing) {
+      completed += 1;
+      continue;
+    }
     const buffer = attachment.inlineData
       ? decodeBase64Url(attachment.inlineData)
       : await getGmailAttachment(messageId, attachment.attachmentId);
     if (buffer.byteLength > MAX_GMAIL_CONTRACT_BYTES) throw new Error(`Bilaget '${attachment.fileName}' er større end 25 MB.`);
     const senderEmail = extractEmailAddress(parsed.fromAddress);
-    if (existing) {
-      completed += 1;
-      continue;
-    }
 
     const intake = await createContractReviewIntake({
       orgId: state.org_id,
@@ -167,6 +167,10 @@ export async function syncGmailContractMailbox(notificationHistoryId?: string) {
   } catch (error) {
     if (!(error instanceof GmailHistoryExpiredError)) throw error;
     messageIds = await listMessagesForLabel(state.input_label_id!);
+    // En udløbet cursor må ikke gemmes igen. Start næste synkronisering ved
+    // Gmail-watchens aktuelle history-id efter fallback-listningen.
+    const watch = await configureGmailContractWatch();
+    latestHistoryId = watch.historyId;
   }
 
   let imported = 0;

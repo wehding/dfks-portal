@@ -1,14 +1,12 @@
 /**
  * lib/db/employers.ts
  *
- * CRUD for employers + producer list group memberships.
+ * Legacy UI helpers backed by the unified producer type register.
  *
  * Data model (existing tables):
  *   employers            — the company record, never deleted if referenced
- *   employer_registries  — group membership:
- *       association_name = group name (e.g. "ProF Fiktion")
- *       valid_to IS NULL  = active member
- *       valid_to NOT NULL = left (history preserved)
+ *   producer_types          — canonical type/group catalog
+ *   employer_producer_types — many-to-many producer assignments
  */
 
 import { createClient } from "@/lib/supabase/client"
@@ -38,17 +36,17 @@ export interface DbEmployerWithGroup extends DbEmployer {
 export async function getProducerGroups(): Promise<string[]> {
     const supabase = createClient()
     const { data, error } = await supabase
-        .from("employer_registries")
-        .select("association_name, valid_from")
-        .is("valid_to", null)
-        .order("valid_from", { ascending: true })
+        .from("producer_types")
+        .select("name, created_at")
+        .eq("active", true)
+        .order("created_at", { ascending: true })
     if (error || !data) return []
     const seen = new Set<string>()
     const groups: string[] = []
     for (const row of data) {
-        if (!seen.has(row.association_name)) {
-            seen.add(row.association_name)
-            groups.push(row.association_name)
+        if (!seen.has(row.name)) {
+            seen.add(row.name)
+            groups.push(row.name)
         }
     }
     return groups
@@ -60,26 +58,26 @@ export async function getProducerGroups(): Promise<string[]> {
 export async function getGroupMembers(groupName: string): Promise<DbEmployerWithGroup[]> {
     const supabase = createClient()
     const { data, error } = await supabase
-        .from("employer_registries")
+        .from("employer_producer_types")
         .select(`
-            association_name,
-            valid_from,
+            created_at,
             employers (
                 id, name, cvr, address,
                 contact_name, contact_email, contact_phone, website, associeret, parent_id,
                 created_at
-            )
+            ),
+            producer_types!inner(name)
         `)
-        .eq("association_name", groupName)
-        .is("valid_to", null)
-        .order("valid_from", { ascending: true })
+        .eq("producer_types.name", groupName)
+        .eq("is_active", true)
+        .order("created_at", { ascending: true })
     if (error || !data) return []
     return (data as any[])
         .filter(r => r.employers)
         .map(r => ({
             ...r.employers,
-            group_name: r.association_name,
-            member_since: r.valid_from ?? null,
+            group_name: r.producer_types?.name ?? groupName,
+            member_since: r.created_at ?? null,
         }))
 }
 
@@ -88,9 +86,9 @@ export async function getNonGroupEmployers(): Promise<DbEmployer[]> {
     const supabase = createClient()
     // Fetch all active member employer_ids
     const { data: memberIds } = await supabase
-        .from("employer_registries")
+        .from("employer_producer_types")
         .select("employer_id")
-        .is("valid_to", null)
+        .eq("is_active", true)
     const ids = (memberIds ?? []).map((r: { employer_id: string }) => r.employer_id)
 
     const { data, error } = await supabase
@@ -216,16 +214,22 @@ export async function addToGroup(employerId: string, groupName: string): Promise
     // Partial unique index on (employer_id, association_name) WHERE valid_to IS NULL
     // is not supported by PostgREST upsert, so we do a manual check-then-insert.
     const { data: existing } = await supabase
-        .from("employer_registries")
-        .select("employer_id")
+        .from("employer_producer_types")
+        .select("employer_id, producer_types!inner(name)")
         .eq("employer_id", employerId)
-        .eq("association_name", groupName)
-        .is("valid_to", null)
+        .eq("producer_types.name", groupName)
+        .eq("is_active", true)
         .maybeSingle()
     if (existing) return true
+    const { data: type } = await supabase
+        .from("producer_types")
+        .select("id")
+        .eq("name", groupName)
+        .maybeSingle()
+    if (!type) return false
     const { error } = await supabase
-        .from("employer_registries")
-        .insert({ employer_id: employerId, association_name: groupName, valid_from: new Date().toISOString().slice(0, 10) })
+        .from("employer_producer_types")
+        .insert({ employer_id: employerId, producer_type_id: type.id, source: "manual", is_active: true })
     return !error
 }
 
@@ -235,11 +239,13 @@ export async function addToGroup(employerId: string, groupName: string): Promise
 export async function removeFromGroup(employerId: string, groupName: string): Promise<boolean> {
     const supabase = createClient()
     const { error } = await supabase
-        .from("employer_registries")
-        .update({ valid_to: new Date().toISOString().slice(0, 10) })
+        .from("employer_producer_types")
+        .update({ is_active: false })
         .eq("employer_id", employerId)
-        .eq("association_name", groupName)
-        .is("valid_to", null)
+        .eq("source", "manual")
+        .in("producer_type_id", (
+            await supabase.from("producer_types").select("id").eq("name", groupName)
+        ).data?.map(row => row.id) ?? [])
     return !error
 }
 
@@ -265,10 +271,12 @@ export async function findParentMember(companyName: string): Promise<string | nu
     if (!parent) return null
     // Tjek om moderselskabet er aktivt ProF-medlem
     const { count } = await supabase
-        .from("employer_registries")
+        .from("employer_producer_types")
         .select("*", { count: "exact", head: true })
         .eq("employer_id", parent.id)
-        .is("valid_to", null)
+        .eq("source", "producentforeningen")
+        .eq("membership_type", "member")
+        .eq("is_active", true)
     return (count ?? 0) > 0 ? parent.name : null
 }
 
@@ -307,10 +315,10 @@ export async function setAssocieret(employerId: string, associeret: boolean): Pr
 export async function getActiveGroupCount(employerId: string): Promise<number> {
     const supabase = createClient()
     const { count } = await supabase
-        .from("employer_registries")
+        .from("employer_producer_types")
         .select("*", { count: "exact", head: true })
         .eq("employer_id", employerId)
-        .is("valid_to", null)
+        .eq("is_active", true)
     return count ?? 0
 }
 
@@ -355,10 +363,10 @@ export async function bulkImportToGroup(
 
     // Fetch all active memberships for this group
     const { data: members } = await supabase
-        .from("employer_registries")
-        .select("employer_id")
-        .eq("association_name", groupName)
-        .is("valid_to", null)
+        .from("employer_producer_types")
+        .select("employer_id, producer_types!inner(name)")
+        .eq("producer_types.name", groupName)
+        .eq("is_active", true)
     const memberSet = new Set((members ?? []).map((m: { employer_id: string }) => m.employer_id))
 
     for (const row of rows) {
@@ -413,10 +421,9 @@ export async function bulkImportToGroup(
 export async function renameGroup(oldName: string, newName: string): Promise<boolean> {
     const supabase = createClient()
     const { error } = await supabase
-        .from("employer_registries")
-        .update({ association_name: newName })
-        .eq("association_name", oldName)
-        .is("valid_to", null)
+        .from("producer_types")
+        .update({ name: newName })
+        .eq("name", oldName)
     return !error
 }
 
@@ -424,10 +431,9 @@ export async function renameGroup(oldName: string, newName: string): Promise<boo
 export async function deleteGroup(groupName: string): Promise<boolean> {
     const supabase = createClient()
     const { error } = await supabase
-        .from("employer_registries")
-        .update({ valid_to: new Date().toISOString().slice(0, 10) })
-        .eq("association_name", groupName)
-        .is("valid_to", null)
+        .from("producer_types")
+        .update({ active: false })
+        .eq("name", groupName)
     return !error
 }
 
@@ -435,13 +441,14 @@ export async function deleteGroup(groupName: string): Promise<boolean> {
 export async function getGroupMemberCounts(): Promise<Record<string, number>> {
     const supabase = createClient()
     const { data } = await supabase
-        .from("employer_registries")
-        .select("association_name")
-        .is("valid_to", null)
+        .from("employer_producer_types")
+        .select("producer_types!inner(name)")
+        .eq("is_active", true)
     if (!data) return {}
     const counts: Record<string, number> = {}
     for (const row of data) {
-        counts[row.association_name] = (counts[row.association_name] ?? 0) + 1
+        const name = (row.producer_types as unknown as { name: string })?.name
+        if (name) counts[name] = (counts[name] ?? 0) + 1
     }
     return counts
 }

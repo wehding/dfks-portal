@@ -23,6 +23,15 @@ type FormState = {
   coeditor_word: string;
   role_labels: string[];
   producer_categories: string[];
+  statistics_contract_scope: "validated_only" | "validated_and_drafts";
+  statistics_profile_config: {
+    professional_start_year: boolean;
+    primary_profession_type: boolean;
+    secondary_profession_types: boolean;
+    usual_work_mode: boolean;
+    primary_work_region: boolean;
+  };
+  statistics_work_regions: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
   foreninglet_base_url: string;
@@ -48,6 +57,9 @@ const emptyForm: FormState = {
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
   producer_categories: [],
+  statistics_contract_scope: "validated_only",
+  statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
+  statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
   contract_review_retention_months: 24,
   foreninglet_base_url: "https://foreninglet.dk/api/members",
@@ -86,6 +98,9 @@ export default function OrganisationSettingsPage() {
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
           producer_categories: settings.producer_categories,
+          statistics_contract_scope: settings.statistics_contract_scope,
+          statistics_profile_config: settings.statistics_profile_config,
+          statistics_work_regions: settings.statistics_work_regions,
           onboarding_keywords: settings.onboarding_keywords,
           contract_review_retention_months: settings.contract_review_retention_months,
           foreninglet_base_url: settings.foreninglet.base_url,
@@ -158,6 +173,9 @@ export default function OrganisationSettingsPage() {
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
           producer_categories: form.producer_categories,
+          statistics_contract_scope: form.statistics_contract_scope,
+          statistics_profile_config: form.statistics_profile_config,
+          statistics_work_regions: form.statistics_work_regions,
           onboarding_keywords: form.onboarding_keywords,
           contract_review_retention_months: form.contract_review_retention_months,
           foreninglet_base_url: form.foreninglet_base_url || null,
@@ -338,6 +356,45 @@ export default function OrganisationSettingsPage() {
           <Label htmlFor="review-retention">Opbevaringsperiode i måneder</Label>
           <Input id="review-retention" type="number" min={1} max={120} value={form.contract_review_retention_months} onChange={event => setForm(current => ({ ...current, contract_review_retention_months: Number(event.target.value) }))} />
           <p className="text-xs text-muted-foreground">Standard er 24 måneder. Tilladte værdier er 1–120 måneder. Lange perioder øger mængden af persondata, organisationen opbevarer.</p>
+        </div>
+      </section>
+
+      <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
+        <h2 className="text-base font-semibold">Statistikgrundlag</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Vælg om kladder må indgå. Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede data.</p>
+        <div className="mt-4 max-w-md space-y-2">
+          <Label htmlFor="statistics-contract-scope">Kontrakter i statistik</Label>
+          <select
+            id="statistics-contract-scope"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={form.statistics_contract_scope}
+            onChange={event => setForm(current => ({ ...current, statistics_contract_scope: event.target.value as FormState["statistics_contract_scope"] }))}
+          >
+            <option value="validated_only">Kun validerede kontrakter</option>
+            <option value="validated_and_drafts">Validerede kontrakter og kladder</option>
+          </select>
+        </div>
+        <div className="mt-6 space-y-3 border-t pt-5">
+          <div>
+            <h3 className="text-sm font-semibold">Statistikprofil i onboarding og Min profil</h3>
+            <p className="text-xs text-muted-foreground">Aktivér kun spørgsmål, der giver mening for organisationens fagområde. Alle statistikspørgsmål er frivillige.</p>
+          </div>
+          {([
+            ["professional_start_year", "Professionelt startår"],
+            ["primary_profession_type", "Primær faggruppe"],
+            ["secondary_profession_types", "Yderligere faggrupper"],
+            ["usual_work_mode", "Typisk arbejdsform"],
+            ["primary_work_region", "Primært arbejdsområde"],
+          ] as const).map(([key, label]) => <div key={key} className="flex items-center justify-between gap-4 rounded-md border px-3 py-2">
+            <Label htmlFor={`statistics-profile-${key}`}>{label}</Label>
+            <Switch id={`statistics-profile-${key}`} checked={form.statistics_profile_config[key]} disabled={key === "secondary_profession_types" && !form.statistics_profile_config.primary_profession_type} onCheckedChange={checked => setForm(current => ({ ...current, statistics_profile_config: { ...current.statistics_profile_config, [key]: checked } }))} />
+          </div>)}
+          {form.statistics_profile_config.primary_work_region && <div className="space-y-2 rounded-md border p-3">
+            <Label>Valgbare arbejdsområder</Label>
+            <p className="text-xs text-muted-foreground">Brug brede områder. Indsaml ikke adresse eller postnummer til statistik.</p>
+            {form.statistics_work_regions.map((region, index) => <div key={index} className="flex gap-2"><Input value={region} onChange={event => setForm(current => ({ ...current, statistics_work_regions: current.statistics_work_regions.map((item, itemIndex) => itemIndex === index ? event.target.value : item) }))} /><Button type="button" size="icon" variant="outline" onClick={() => setForm(current => ({ ...current, statistics_work_regions: current.statistics_work_regions.filter((_, itemIndex) => itemIndex !== index) }))}><Trash2 className="h-4 w-4" /></Button></div>)}
+            <Button type="button" size="sm" variant="outline" onClick={() => setForm(current => ({ ...current, statistics_work_regions: [...current.statistics_work_regions, ""] }))}><Plus className="mr-2 h-4 w-4" />Tilføj område</Button>
+          </div>}
         </div>
       </section>
 

@@ -28,13 +28,16 @@ export async function createContractReviewIntake(input: ReviewIntakeInput) {
   if (existing) return { reviewId: existing.id, duplicate: true, storagePath: existing.storage_path };
 
   const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${input.orgId}/${fileHash}/${safeName}`;
+  // Hver sag ejer sin egen fil. Samme dokument må ikke dele storage-objekt
+  // med en anden indsendelse, da sager kan have forskellig retention/legal hold.
+  const storagePath = `${input.orgId}/${crypto.randomUUID()}/${safeName}`;
   const upload = await db.storage.from("contract-reviews").upload(storagePath, input.fileBuffer, {
     contentType: input.contentType || "application/octet-stream",
     upsert: false,
   });
   if (upload.error && !upload.error.message.toLowerCase().includes("already exists")) throw new Error(upload.error.message);
 
+  const metadata = input.metadata ?? {};
   const payload = {
     org_id: input.orgId,
     member_id: input.memberId ?? null,
@@ -49,7 +52,15 @@ export async function createContractReviewIntake(input: ReviewIntakeInput) {
     file_name: input.fileName,
     file_size_bytes: input.fileBuffer.length,
     storage_path: storagePath,
-    ...(input.metadata ?? {}),
+    contract_type: typeof metadata.contract_type === "string" ? metadata.contract_type.slice(0, 100) : null,
+    production_type: typeof metadata.production_type === "string" ? metadata.production_type.slice(0, 100) : null,
+    distribution_channels: Array.isArray(metadata.distribution_channels) ? metadata.distribution_channels.map(String).slice(0, 20) : null,
+    producer_name: typeof metadata.producer_name === "string" ? metadata.producer_name.slice(0, 500) : null,
+    producer_overenskomst_bound: typeof metadata.producer_overenskomst_bound === "boolean" ? metadata.producer_overenskomst_bound : null,
+    focus_areas: Array.isArray(metadata.focus_areas) ? metadata.focus_areas.map(String).slice(0, 20) : null,
+    notes: typeof metadata.notes === "string" ? metadata.notes.slice(0, 50_000) : null,
+    gmail_contract_message_id: typeof metadata.gmail_contract_message_id === "string" ? metadata.gmail_contract_message_id : null,
+    gmail_attachment_id: typeof metadata.gmail_attachment_id === "string" ? metadata.gmail_attachment_id.slice(0, 1000) : null,
   };
   const { data: review, error: reviewError } = await db.from("contract_reviews").insert(payload).select("id").single();
   if (reviewError || !review) {

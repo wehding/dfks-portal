@@ -1786,7 +1786,7 @@ function SatserTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Fane 7 — Producentlister (ProF-medlemmer)
+// Producentregisteret administreres nu samlet fra /admin/producenter.
 // ─────────────────────────────────────────────────────────────
 
 function ProducenterTab() {
@@ -2389,9 +2389,6 @@ export default function AiKontrolrumPage() {
                     <TabsTrigger value="satser" className="gap-1.5 text-xs whitespace-nowrap">
                         <Coins className="h-3.5 w-3.5 shrink-0" />Satser
                     </TabsTrigger>
-                    <TabsTrigger value="producenter" className="gap-1.5 text-xs whitespace-nowrap">
-                        <Building2 className="h-3.5 w-3.5 shrink-0" />Producenter
-                    </TabsTrigger>
                     <TabsTrigger value="videnbase" className="gap-1.5 text-xs whitespace-nowrap">
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />Videnbase
                     </TabsTrigger>
@@ -2409,7 +2406,6 @@ export default function AiKontrolrumPage() {
                 <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
                 <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
-                <TabsContent value="producenter" className="mt-4"><ProducenterTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>

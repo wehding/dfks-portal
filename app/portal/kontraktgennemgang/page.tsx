@@ -320,6 +320,7 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024 // 25 MB
 
 export default function PortalKontraktgennemgangPage() {
     const router = useRouter()
+    const submissionIdRef = useRef(crypto.randomUUID())
 
     const [file, setFile] = useState<File | null>(null)
     const [dragOver, setDragOver] = useState(false)
@@ -452,6 +453,7 @@ export default function PortalKontraktgennemgangPage() {
 
         const fd = new FormData()
         fd.append("file", file!)
+        fd.append("submissionId", submissionIdRef.current)
         if (memberName)  fd.append("memberName",  memberName)
         if (memberEmail) fd.append("memberEmail", memberEmail)
         if (memberId)    fd.append("memberId",    memberId)
@@ -487,6 +489,7 @@ export default function PortalKontraktgennemgangPage() {
     }
 
     function reset() {
+        submissionIdRef.current = crypto.randomUUID()
         setFile(null)
         setContractType(null)
         setProductionType(null)

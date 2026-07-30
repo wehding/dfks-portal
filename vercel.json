@@ -13,12 +13,20 @@
       "schedule": "0 5 * * *"
     },
     {
+      "path": "/api/contracts/reviews/jobs/process",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/admin/audit-retention",
       "schedule": "0 2 1 * *"
     },
     {
       "path": "/api/admin/gmail/contracts/watch",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/admin/statistics/cpi",
+      "schedule": "30 4 11 * *"
     }
   ]
 }

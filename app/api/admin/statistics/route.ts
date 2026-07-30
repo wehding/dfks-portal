@@ -15,15 +15,20 @@ export async function GET(req: NextRequest) {
   const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!caller) return NextResponse.json({ error: "Ingen statistikadgang" }, { status: 403 });
   const params = req.nextUrl.searchParams;
-  const yearValue = params.get("year");
-  const year = yearValue && /^\d{4}$/.test(yearValue) ? Number(yearValue) : null;
+  const years = params.getAll("year").flatMap(value => value.split(","))
+    .filter(value => /^\d{4}$/.test(value)).map(Number)
+    .filter((value, index, all) => all.indexOf(value) === index).slice(0, 200);
   const gender = ALLOWED_GENDERS.has(params.get("gender") ?? "") ? params.get("gender") : null;
-  const category = ALLOWED_CATEGORIES.has(params.get("category") ?? "") ? params.get("category") : null;
+  const categories = params.getAll("category").flatMap(value => value.split(","))
+    .filter(value => ALLOWED_CATEGORIES.has(value))
+    .filter((value, index, all) => all.indexOf(value) === index);
   const contractType = ALLOWED_CONTRACT_TYPES.has(params.get("contractType") ?? "") ? params.get("contractType") : null;
-  const producerId = /^[0-9a-f-]{36}$/i.test(params.get("producerId") ?? "") ? params.get("producerId") : null;
+  const producerIds = params.getAll("producerId").filter(value => /^[0-9a-f-]{36}$/i.test(value)).slice(0, 5);
+  const producerTypeCodes = params.getAll("producerType").filter(value => /^[a-z0-9_]{2,80}$/.test(value)).slice(0, 20);
+  const membershipTypes = params.getAll("membership").filter(value => ["member", "associate", "unknown", "none"].includes(value)).slice(0, 4);
   const professionType = params.get("professionType")?.trim().slice(0, 120) || null;
   try {
-    const data = await getAdminStatistics(caller.orgId, { year, gender, category, contractType, producerId, professionType });
+    const data = await getAdminStatistics(caller.orgId, { years, gender, categories, contractType, producerIds, producerTypeCodes, membershipTypes, professionType });
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("[admin-statistics] Aggregation failed", error instanceof Error ? error.message : "Unknown error");

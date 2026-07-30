@@ -92,6 +92,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.status) {
         if (!allowedStatuses.has(body.status)) return NextResponse.json({ error: "Ugyldig status" }, { status: 400 })
         updates.status = body.status
+        updates.completed_at = body.status === "afsluttet" ? new Date().toISOString() : null
     }
 
     if (body.action === "claim") {
@@ -151,14 +152,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return NextResponse.json({ error: "Ingen felter at opdatere" }, { status: 400 })
     }
 
-    // Hent nuværende kontrakt for at tjekke storage_path
-    const { data: existing } = await admin
-        .from("contract_reviews")
-        .select("storage_path,assigned_to")
-        .eq("id", id)
-        .eq("org_id", auth.orgId)
-        .single()
-
     const { data, error } = await admin
         .from("contract_reviews")
         .update(updates)
@@ -168,26 +161,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .single()
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-    // Slet fil fra storage når status sættes til afsluttet
-    if (body.status === "afsluttet" && existing?.storage_path) {
-        try {
-            const adminSupabase = createAdminClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.SUPABASE_SERVICE_ROLE_KEY!
-            )
-            await adminSupabase.storage
-                .from("contract-reviews")
-                .remove([existing.storage_path])
-
-            await admin
-                .from("contract_reviews")
-                .update({ storage_path: null })
-                .eq("id", id)
-        } catch {
-            // Logfejl men returner success — kontrakten er afsluttet
-        }
-    }
 
     return NextResponse.json({ data })
 }

@@ -7,15 +7,18 @@ export const STATISTICS_METRICS = [
 ] as const;
 
 export type StatisticsMetric = typeof STATISTICS_METRICS[number];
+export type StatisticsCategory = "feature" | "tvSeries" | "documentary" | "docSeries" | "short" | "tvEntertainment" | "reality" | "other";
 export type StatisticsQueryPlan = {
   metric: StatisticsMetric;
   groupBy: "year";
   filters: {
-    year: number | null;
+    years: number[];
     gender: "male" | "female" | "other" | null;
-    category: "feature" | "tvSeries" | "documentary" | "docSeries" | "short" | "tvEntertainment" | "reality" | "other" | null;
+    categories: StatisticsCategory[];
     contractType: "a-løn" | "leverandør" | null;
-    producerName: string | null;
+    producerNames: string[];
+    producerTypeCodes: string[];
+    membershipTypes: Array<"member" | "associate" | "none" | "unknown">;
     professionType: string | null;
   };
   chart: "line" | "bar" | "table";
@@ -23,8 +26,14 @@ export type StatisticsQueryPlan = {
 
 const allowedMetrics = new Set<string>(STATISTICS_METRICS);
 const allowedGenders = new Set(["male", "female", "other"]);
-const allowedCategories = new Set(["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"]);
+const allowedCategories = new Set<StatisticsCategory>(["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"]);
 const allowedContractTypes = new Set(["a-løn", "leverandør"]);
+const allowedMembershipTypes = new Set(["member", "associate", "none", "unknown"]);
+
+function stringArray(value: unknown, maximum: number, maxLength = 120) {
+  const values = Array.isArray(value) ? value : typeof value === "string" && value.trim() ? [value] : [];
+  return [...new Set(values.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(Boolean).map(item => item.slice(0, maxLength)))].slice(0, maximum);
+}
 
 export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (!value || typeof value !== "object") throw new Error("AI-planen mangler.");
@@ -32,23 +41,33 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (!allowedMetrics.has(String(raw.metric))) throw new Error("Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
   if (raw.groupBy !== "year") throw new Error("Kun gruppering pr. år er understøttet endnu.");
   const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as Record<string, unknown> : {};
-  const year = Number(rawFilters.year);
+  const legacyYear = Number(rawFilters.year);
+  const years = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
+    .map(Number).filter(year => Number.isInteger(year) && year >= 1900 && year <= 2200)
+    .filter((year, index, all) => all.indexOf(year) === index).sort((a, b) => a - b).slice(0, 200);
+  const legacyCategory = typeof rawFilters.category === "string" ? [rawFilters.category] : [];
+  const categories = (Array.isArray(rawFilters.categories) ? rawFilters.categories : legacyCategory)
+    .filter((category): category is StatisticsCategory => allowedCategories.has(category as StatisticsCategory))
+    .filter((category, index, all) => all.indexOf(category) === index);
+  const legacyProducer = typeof rawFilters.producerName === "string" ? [rawFilters.producerName] : [];
   return {
     metric: raw.metric as StatisticsMetric,
     groupBy: "year",
     filters: {
-      year: Number.isInteger(year) && year >= 1900 && year <= 2200 ? year : null,
+      years,
       gender: allowedGenders.has(String(rawFilters.gender)) ? rawFilters.gender as StatisticsQueryPlan["filters"]["gender"] : null,
-      category: allowedCategories.has(String(rawFilters.category)) ? rawFilters.category as StatisticsQueryPlan["filters"]["category"] : null,
+      categories,
       contractType: allowedContractTypes.has(String(rawFilters.contractType)) ? rawFilters.contractType as StatisticsQueryPlan["filters"]["contractType"] : null,
-      producerName: typeof rawFilters.producerName === "string" ? rawFilters.producerName.trim().slice(0, 120) || null : null,
+      producerNames: stringArray(Array.isArray(rawFilters.producerNames) ? rawFilters.producerNames : legacyProducer, 5),
+      producerTypeCodes: stringArray(rawFilters.producerTypeCodes, 20, 80).filter(code => /^[a-z0-9_]+$/.test(code)),
+      membershipTypes: stringArray(rawFilters.membershipTypes, 4, 20).filter((type): type is StatisticsQueryPlan["filters"]["membershipTypes"][number] => allowedMembershipTypes.has(type)),
       professionType: typeof rawFilters.professionType === "string" ? rawFilters.professionType.trim().slice(0, 120) || null : null,
     },
     chart: raw.chart === "bar" || raw.chart === "table" ? raw.chart : "line",
   };
 }
 
-export function extractStatisticsSeries(plan: StatisticsQueryPlan, statistics: Record<string, unknown>) {
+export function extractStatisticsSeries(plan: StatisticsQueryPlan, statistics: Record<string, unknown>, seriesKey = "result", seriesLabel = "Resultat") {
   const sourceKey = {
     average_monthly_salary: "salary",
     average_pension: "pension",
@@ -66,7 +85,15 @@ export function extractStatisticsSeries(plan: StatisticsQueryPlan, statistics: R
   const rows = Array.isArray(statistics[sourceKey]) ? statistics[sourceKey] as Array<Record<string, unknown>> : [];
   return rows.map(row => ({
     year: Number(row.year),
-    value: Number(row[valueKey] ?? 0),
+    value: plan.metric === "contributions"
+      ? Number(row.totalHolidayPayAmount ?? 0) + Number(row.totalBetaAmount ?? 0)
+      : Number(row[valueKey] ?? 0),
+    contractCount: Number(row.contractCount ?? 0),
     memberCount: Number(row.memberCount ?? 0),
+    validatedCount: Number(row.validatedCount ?? 0),
+    draftCount: Number(row.draftCount ?? 0),
+    lowSample: Boolean(row.lowSample),
+    seriesKey,
+    seriesLabel,
   }));
 }
