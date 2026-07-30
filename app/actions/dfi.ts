@@ -32,8 +32,10 @@ type DfiCredit = {
   Parent?: { Id?: number | string | null } | null;
   Children?: DfiCredit[] | null;
   __episode_options?: Array<{ number: number; title: string }>;
+  __suggested_episodes?: number[];
   __selected_episodes?: number[] | null;
   __season_number?: number | null;
+  __series_title?: string | null;
 };
 
 type EpisodeParentWork = {
@@ -571,7 +573,7 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     const workType = mapDfiWorkType(film.Category, film.Type);
 
     const prodYear = extractDfiPremiereYear(film);
-    const filmTitle = String(film.Title || film.DanishTitle || "Ukendt titel");
+    const filmTitle = String(credit.__series_title || film.Title || film.DanishTitle || "Ukendt titel");
 
     const dfiPosterUrl = await downloadDfiPosterDataUrl(film) ?? extractDfiPosterUrl(film);
     let posterUrl = dfiPosterUrl;
@@ -584,7 +586,11 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     let wikidataGenre: string | null = null;
     let tmdbDetails: Record<string, any> | null = null;
     try {
-      const match = await findTMDBMatch(filmTitle, prodYear);
+      const match = await findTMDBMatch(
+        filmTitle,
+        prodYear,
+        workType === "tv-serie" || workType === "dokumentar-serie" ? "tv" : undefined
+      );
       tmdbId = match.tmdb_id;
       if (!posterUrl) posterUrl = match.poster_url;
       if (tmdbId) {
@@ -795,6 +801,7 @@ export type OnboardingCredit = {
   season_number?: number | null;
   selected_episodes?: number[] | null;
   episode_options?: Array<{ number: number; title: string }>;
+  suggested_episodes?: number[];
   raw: any;
 };
 
@@ -865,15 +872,18 @@ function isDfiSeriesParent(c: any): boolean {
 export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
   const parents = new Map<string, DfiCredit>();
   const parentRequests = new Map<string, Promise<DfiCredit | null>>();
-  const seriesKey = (title: string | null | undefined) => cleanDfiTitle(title)
+  const seriesTitle = (title: string | null | undefined) => cleanDfiTitle(title)
     .replace(/\s+\d+\s*:\s*\d+.*$/i, "")
     .replace(/\(\s*\)/g, "")
+    .trim();
+  const seriesKey = (title: string | null | undefined) => seriesTitle(title)
     .toLocaleLowerCase("da-DK")
     .replace(/[^a-z0-9æøå]/g, "");
+  const groupedSeriesKey = (credit: DfiCredit) => `${seriesKey(credit.Title || credit.DanishTitle)}:${extractDfiPremiereYear(credit) ?? ""}`;
   const explicitParents = new Map(
     credits
       .filter(credit => !credit.Parent?.Id && !parseDfiEpisodeTitleInfo(credit.Title ?? ""))
-      .map(credit => [seriesKey(credit.Title || credit.DanishTitle), credit] as const)
+      .map(credit => [groupedSeriesKey(credit), credit] as const)
       .filter(([key]) => Boolean(key))
   );
 
@@ -888,12 +898,18 @@ export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
   for (const credit of credits) {
     const parentId = credit.Parent?.Id ? String(credit.Parent.Id) : null;
     const parsedChild = parseDfiEpisodeTitleInfo(credit.Title ?? "");
-    const inferredParent = parsedChild ? explicitParents.get(seriesKey(credit.Title)) ?? null : null;
+    const inferredParent = parsedChild ? explicitParents.get(groupedSeriesKey(credit)) ?? null : null;
     const canonical = parentId ? await fetchParent(parentId) : inferredParent ?? credit;
-    const canonicalId = String(canonical?.Id ?? parentId ?? credit.Id ?? "");
+    const syntheticSeriesKey = parsedChild && !parentId && !inferredParent ? groupedSeriesKey(credit) : null;
+    const canonicalId = syntheticSeriesKey ? `series:${syntheticSeriesKey}` : String(canonical?.Id ?? parentId ?? credit.Id ?? "");
     if (!canonicalId) continue;
 
-    const current = parents.get(canonicalId) ?? { ...(canonical ?? credit), Id: canonical?.Id ?? parentId ?? credit.Id };
+    const syntheticTitle = syntheticSeriesKey ? seriesTitle(credit.Title || credit.DanishTitle) : null;
+    const current = parents.get(canonicalId) ?? {
+      ...(canonical ?? credit),
+      Id: canonical?.Id ?? parentId ?? credit.Id,
+      ...(syntheticTitle ? { Title: syntheticTitle, DanishTitle: syntheticTitle, __series_title: syntheticTitle } : {}),
+    };
     const children = Array.isArray(current.Children) ? current.Children : [];
     const episodeOptions = children
       .map((child, index) => {
@@ -910,6 +926,10 @@ export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
     current.__episode_options = Array.from(
       new Map([...(current.__episode_options ?? []), ...episodeOptions].map(option => [option.number, option])).values()
     ).sort((a, b) => a.number - b.number);
+    current.__suggested_episodes = Array.from(new Set([
+      ...(current.__suggested_episodes ?? []),
+      ...(parsedChild?.episodeNumber ? [parsedChild.episodeNumber] : []),
+    ])).sort((a, b) => a - b);
     current.Description = credit.Description || current.Description;
     parents.set(canonicalId, current);
   }
@@ -1211,6 +1231,7 @@ export async function searchOnboardingCredits(
         director: extractDfiDirectors(c as DfiMetadata).join(", ") || null,
         season_number: parseSeasonNumberFromTitle(title),
         episode_options: c.__episode_options ?? [],
+        suggested_episodes: c.__suggested_episodes ?? [],
         raw: c
       });
     }
@@ -1263,7 +1284,7 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
     if (!tmdbId) {
       for (const candidate of seriesLookupTitleVariants(credit.title)) {
-        const match = await findTMDBMatch(candidate, credit.year);
+        const match = await findTMDBMatch(candidate, credit.year, "tv");
         if (match.tmdb_id && match.media_type === "tv") {
           tmdbId = Number(match.tmdb_id);
           break;
@@ -1358,11 +1379,14 @@ export async function resolveOnboardingEpisodeOptions(credit: OnboardingCredit, 
       });
     }
   }
-  if (!options.length || (credit.source === "lokal" && options.length <= (credit.raw?.__local_children?.length ?? 0))) {
+  const shouldTryTmdb = credit.source !== "lokal"
+    || !options.length
+    || options.length <= (credit.raw?.__local_children?.length ?? 0);
+  if (shouldTryTmdb) {
     let tmdbId = credit.source === "tmdb" ? Number(String(credit.id).replace(/^tmdb-/, "")) : Number(credit.raw?.tmdb_id ?? 0);
     if (!tmdbId) {
       for (const candidate of seriesLookupTitleVariants(credit.title)) {
-        const match = await findTMDBMatch(candidate, credit.year);
+        const match = await findTMDBMatch(candidate, credit.year, "tv");
         if (match.tmdb_id && match.media_type === "tv") {
           tmdbId = Number(match.tmdb_id);
           break;

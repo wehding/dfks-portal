@@ -119,16 +119,7 @@ export default function OnboardingClient({
     return !error;
   };
 
-  // Ét samlet "Dit navn"-felt: gem hele navnet, men bevar for-/efternavn i datamodellen
-  // ved at splitte ved sidste mellemrum (sidste ord = efternavn, resten = fornavn).
   const fullNameValue = `${formData.first_name} ${formData.last_name}`.trim();
-  const handleFullName = (value: string) => {
-    const parts = value.trim().split(/\s+/);
-    const last = parts.length > 1 ? parts.pop()! : "";
-    const first = parts.join(" ");
-    setFormData((prev) => ({ ...prev, first_name: value.trim() ? first || value.trim() : "", last_name: last }));
-    setFieldErrors(current => ({ ...current, name: undefined }));
-  };
 
   const isSeriesCredit = (credit: OnboardingCredit) => {
     const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
@@ -154,7 +145,10 @@ export default function OnboardingClient({
           localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
           seasonNumber: 1,
         });
-    return seriesEpisodes[credit.id] ?? options.map(option => option.number);
+    if (Object.prototype.hasOwnProperty.call(seriesEpisodes, credit.id)) return seriesEpisodes[credit.id];
+    const suggested = season === (credit.season_number ?? 1) ? credit.suggested_episodes ?? [] : [];
+    const available = new Set(options.map(option => option.number));
+    return suggested.filter(number => available.has(number));
   };
 
   const loadEpisodes = async (credit: OnboardingCredit, season = seriesSeasons[credit.id] ?? 1) => {
@@ -166,7 +160,12 @@ export default function OnboardingClient({
     if (episodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
-      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: result.options.map(option => option.number) }));
+      setSeriesEpisodes(prev => {
+        if (Object.prototype.hasOwnProperty.call(prev, credit.id)) return prev;
+        const available = new Set(result.options.map(option => option.number));
+        const suggested = season === (credit.season_number ?? 1) ? credit.suggested_episodes ?? [] : [];
+        return { ...prev, [credit.id]: suggested.filter(number => available.has(number)) };
+      });
     } else {
       // Ryd stale afsnit fra en tidligere sæson, så fejlen ikke kan blandes med gamle valg.
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
@@ -201,12 +200,12 @@ export default function OnboardingClient({
     }
   };
 
-  const handlePersonSearch = async (query = dfiSearchQuery, merge = false) => {
+  const handlePersonSearch = async (query = dfiSearchQuery, merge = false, nameVariants = alternativeNames) => {
     if (!query.trim()) return;
     setIsSearchingDfi(true);
     setPersonSearchError(null);
     try {
-      const result = await discoverPersonCandidates(query.trim());
+      const result = await discoverPersonCandidates(query.trim(), nameVariants);
       const candidates = result.success ? result.candidates : [];
       const errors: { dfi?: boolean; tmdb?: boolean; wikidata?: boolean } = result.success ? result.sourceErrors ?? {} : {};
       setPersonSourceErrors(current => merge
@@ -227,9 +226,10 @@ export default function OnboardingClient({
   const addAlternativeName = async () => {
     const value = newAlternativeName.trim();
     if (!value || alternativeNames.some(name => name.localeCompare(value, "da-DK", { sensitivity: "base" }) === 0)) return;
-    setAlternativeNames(current => [...current, value]);
+    const nextNames = [...alternativeNames, value];
+    setAlternativeNames(nextNames);
     setNewAlternativeName("");
-    await handlePersonSearch(value, true);
+    await handlePersonSearch(value, true, nextNames);
   };
 
   const handleNextStep = async () => {
@@ -486,17 +486,17 @@ export default function OnboardingClient({
                   <input
                     className="focus-visible:ring-2 focus-visible:ring-ring"
                     value={fullNameValue}
-                    onChange={(e) => handleFullName(e.target.value)}
-                    onBlur={() => validateField("name", fullNameValue)}
+                    readOnly
+                    aria-readonly="true"
                     placeholder={t("onboarding.fullNamePlaceholder")}
                     aria-invalid={Boolean(fieldErrors.name)}
                     aria-describedby={fieldErrors.name ? "onboarding-name-error" : undefined}
-                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors.name ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)" }}
+                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors.name ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)", background: "var(--muted)" }}
                   />
                   {fieldErrors.name && <p id="onboarding-name-error" role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors.name}</p>}
                 </div>
                 <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
-                  {t("onboarding.nameHint")}
+                  {t("onboarding.invitedNameHint")}
                 </div>
                 {([
                   { label: t("profile.phone"), key: "phone", placeholder: "+45 12 34 56 78" },
@@ -730,7 +730,11 @@ export default function OnboardingClient({
                             <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid var(--input)", borderRadius: "6px", backgroundColor: "var(--card)" }}>
                               <button
                                 type="button"
-                                onClick={() => { const opening = !expandedSeries[c.id]; setExpandedSeries(prev => ({ ...prev, [c.id]: opening })); if (opening && !(episodeOptions[c.id]?.length)) void loadEpisodes(c); }}
+                                onClick={() => {
+                                  const opening = !expandedSeries[c.id];
+                                  setExpandedSeries(prev => ({ ...prev, [c.id]: opening }));
+                                  if (opening && !Object.prototype.hasOwnProperty.call(episodeOptions, c.id)) void loadEpisodes(c);
+                                }}
                                 style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "var(--foreground)" }}
                               >
                                 {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
@@ -759,6 +763,11 @@ export default function OnboardingClient({
                                     error={episodeErrors[c.id]}
                                     label="Vælg afsnit"
                                   />
+                                  {c.suggested_episodes?.length ? (
+                                    <p style={{ margin: "8px 0 0", fontSize: "11px", color: "var(--on-surface-variant)" }}>
+                                      DFI-krediterede afsnit er foreslået. Du kan rette valget.
+                                    </p>
+                                  ) : null}
                                 </div>
                               )}
                             </div>

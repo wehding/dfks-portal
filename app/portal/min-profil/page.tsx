@@ -17,6 +17,7 @@ import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCan
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useI18n } from "@/lib/i18n"
+import { updateSensitiveMemberProfile } from "@/app/actions/member-profile"
 
 interface ProfileData {
     id: string
@@ -24,7 +25,6 @@ interface ProfileData {
     email: string | null
     phone: string | null
     address: string | null
-    cpr_no: string | null
     created_at: string
     is_member: boolean
     member_no: string | null
@@ -62,6 +62,8 @@ export default function MinProfilPage() {
     const [altNavne, setAltNavne] = useState<string[]>([])
     const [emailTransactionalEnabled, setEmailTransactionalEnabled] = useState(true)
     const [emailBroadcastEnabled, setEmailBroadcastEnabled] = useState(false)
+    const [cpr, setCpr] = useState("")
+    const [bankAccount, setBankAccount] = useState("")
 
     // Arvekontakt (stored in user_metadata — ingen DB-tabel endnu)
     const [kinName, setKinName]         = useState("")
@@ -79,7 +81,7 @@ export default function MinProfilPage() {
             // Slå op via user_id
             let { data: rh } = await supabase
                 .from("rettighedshavere")
-                .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
+                .select("id, full_name, email, phone, address, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
                 .eq("user_id", user.id)
                 .single()
 
@@ -87,7 +89,7 @@ export default function MinProfilPage() {
             if (!rh && user.email) {
                 const res = await supabase
                     .from("rettighedshavere")
-                    .select("id, full_name, email, phone, address, cpr_no, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
+                    .select("id, full_name, email, phone, address, created_at, alternative_names, portrait_url, email_transactional_enabled, email_broadcast_enabled")
                     .eq("email", user.email)
                     .single()
                 rh = res.data
@@ -142,10 +144,16 @@ export default function MinProfilPage() {
         setSaving(true)
         const supabase = createClient()
         try {
+            const sensitiveData = new FormData()
+            sensitiveData.set("cpr", cpr)
+            sensitiveData.set("bank_account", bankAccount)
+            const sensitiveResult = await updateSensitiveMemberProfile(sensitiveData)
+            if (!sensitiveResult.success) throw new Error(sensitiveResult.error)
+
             // Opdater rettighedshaver
             const { error } = await supabase
                 .from("rettighedshavere")
-                .update({ full_name: name, email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
+                .update({ email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
                 .eq("id", profile.id)
             if (error) throw new Error(error.message)
 
@@ -160,6 +168,8 @@ export default function MinProfilPage() {
             })
 
             toast.success("Dine oplysninger er gemt")
+            setCpr("")
+            setBankAccount("")
         } catch (e: unknown) {
             toast.error(e instanceof Error ? e.message : "Fejl ved gem")
         } finally {
@@ -184,11 +194,13 @@ export default function MinProfilPage() {
     const confirmPersonMatch = async () => {
         const selected = Object.entries(selectedPeople).filter(([, active]) => active).map(([key]) => personCandidates.find(candidate => candidate.key === key)).filter((candidate): candidate is PersonCandidate => Boolean(candidate))
         if (personCandidates.length > 0 && selected.length === 0) { setPersonError("Vælg mindst én navneprofil."); return }
+        setPersonSearching(true)
         const result = await confirmExternalPersonIdentity(selected, name || profile?.full_name || "", altNavne, selectedPortraitUrl)
+        setPersonSearching(false)
         if (!result.success) { setPersonError(result.error ?? "Personmatch kunne ikke gemmes."); return }
         if (result.portraitUrl || selectedPortraitUrl) setProfile(current => current ? { ...current, portrait_url: result.portraitUrl ?? selectedPortraitUrl } : current)
         setPersonMatchOpen(false)
-        setCreditSearchOpen(true)
+        toast.success(t("profile.personMatchSaved"))
     }
 
     const addMatchAlternativeName = async () => {
@@ -263,7 +275,7 @@ export default function MinProfilPage() {
                 </div>
                 <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm text-muted-foreground">{t("profile.findMissingWorksIntro")}</p>
-                    <Button type="button" variant="outline" onClick={openPersonSearch} className="shrink-0 gap-2">
+                    <Button type="button" variant="outline" onClick={() => setCreditSearchOpen(true)} className="shrink-0 gap-2">
                         <RefreshCw className="h-4 w-4" /> {t("profile.searchNewTitles")}
                     </Button>
                     <Button type="button" onClick={openPersonSearch} className="shrink-0">{t("profile.editPersonMatch")}</Button>
@@ -304,20 +316,29 @@ export default function MinProfilPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
                             <Label>{t("profile.name")}</Label>
-                            <Input value={name} onChange={e => setName(e.target.value)} />
+                            <Input value={name} readOnly aria-readonly="true" className="bg-muted/50" />
+                            <p className="text-[11px] text-muted-foreground">{t("profile.invitedNameLocked")}</p>
                         </div>
                         <div className="space-y-1.5">
                             <Label className="flex items-center gap-1.5">
                                 {t("profile.cpr")}
                                 <Lock className="h-3 w-3 text-muted-foreground" />
                             </Label>
-                            <Input
-                                value={profile?.cpr_no ? `${profile.cpr_no.slice(0, 6)}-****` : "—"}
-                                disabled
-                                className="bg-muted/50 text-muted-foreground"
-                            />
-                            <p className="text-[11px] text-muted-foreground">{t("profile.contactAdminForCpr")}</p>
+                            <Input value={cpr} onChange={e => setCpr(e.target.value)} placeholder={t("profile.cprPlaceholder")} inputMode="numeric" autoComplete="off" />
+                            <p className="text-[11px] text-muted-foreground">{t("profile.sensitiveReplaceHint")}</p>
                         </div>
+                    </div>
+                    <div className="space-y-1.5">
+                        <Label className="flex items-center gap-1.5">
+                            {t("profile.bankAccount")}
+                            <Lock className="h-3 w-3 text-muted-foreground" />
+                        </Label>
+                        <Input value={bankAccount} onChange={e => setBankAccount(e.target.value)} placeholder={t("profile.bankAccountPlaceholder")} inputMode="numeric" autoComplete="off" />
+                        <p className="text-[11px] text-muted-foreground">{t("profile.sensitiveReplaceHint")}</p>
+                    </div>
+                    <div className="flex gap-2.5 rounded-lg border border-blue-200 bg-blue-50 px-3.5 py-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+                        <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <p>{t("profile.sensitiveDataInfo")}</p>
                     </div>
                     <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
@@ -426,6 +447,7 @@ export default function MinProfilPage() {
                 onClose={() => setCreditSearchOpen(false)}
                 userName={profile?.full_name ?? name}
                 dfiPersonId={null}
+                autoSearch
                 onImportComplete={(message, success) => {
                     if (success) toast.success(message)
                     else toast.error(message)
