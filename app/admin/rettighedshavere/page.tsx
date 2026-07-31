@@ -10,12 +10,13 @@ import {
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
-import { createRettighedshaverSecure, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
+import { createRettighedshaverSecure, getAdminRightsHolderProfile, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -128,6 +129,13 @@ function findDfksMemberNo(name: string, members: DfksMemberOption[]) {
 const EMPTY_FORM = {
     full_name: "", email: "", phone: "", address: "", cpr_no: "", bank_account: "", member_no: "", is_member: false,
     gender: "", opt_out_statistics: false, send_invite: false,
+    alternative_names: "", portrait_url: "", professional_start_year: "", primary_profession_type_id: "",
+    secondary_profession_type_ids: [] as string[], usual_work_mode: "", primary_work_region_code: "",
+    external_dfi: "", external_tmdb: "", external_wikidata: "", external_imdb: "",
+}
+
+function parseList(value: string) {
+    return [...new Set(value.split(/[\n,;]+/).map(item => item.trim()).filter(Boolean))]
 }
 
 export default function RettighedshavereAdminPage() {
@@ -154,8 +162,11 @@ export default function RettighedshavereAdminPage() {
 
     const [editTarget, setEditTarget] = useState<RettighedshaverWithAffiliation | null>(null)
     const [editSaving, setEditSaving] = useState(false)
+    const [editLoading, setEditLoading] = useState(false)
     const [editForm, setEditForm] = useState({ ...EMPTY_FORM })
     const [editMemberNoTouched, setEditMemberNoTouched] = useState(false)
+    const [editProfessionTypes, setEditProfessionTypes] = useState<Array<{ id: string; name: string }>>([])
+    const [editWorkRegions, setEditWorkRegions] = useState<Array<{ code: string; name_da: string; name_en: string }>>([])
 
     // Portal-adgang
     const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reminder" | "reset" } | null>(null)
@@ -601,15 +612,64 @@ export default function RettighedshavereAdminPage() {
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
-        setEditForm({ full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", cpr_no: rh.cpr_no ?? "", bank_account: rh.bank_account ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), send_invite: false })
+        setEditForm({ ...EMPTY_FORM, full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
         setEditMemberNoTouched(false)
+        setEditProfessionTypes([])
+        setEditWorkRegions([])
         setEditTarget(rh)
+        if (!orgId) return
+        setEditLoading(true)
+        void getAdminRightsHolderProfile(rh.id, orgId).then(profile => {
+            setEditForm(form => ({
+                ...form,
+                cpr_no: profile.cpr_no,
+                bank_account: profile.bank_account,
+                alternative_names: profile.alternative_names.join("\n"),
+                portrait_url: profile.portrait_url ?? "",
+                professional_start_year: profile.professional_start_year ? String(profile.professional_start_year) : "",
+                primary_profession_type_id: profile.primary_profession_type_id ?? "",
+                secondary_profession_type_ids: profile.secondary_profession_type_ids,
+                usual_work_mode: profile.usual_work_mode ?? "",
+                primary_work_region_code: profile.primary_work_region_code ?? "",
+                external_dfi: profile.external_identities.dfi.join("\n"),
+                external_tmdb: profile.external_identities.tmdb.join("\n"),
+                external_wikidata: profile.external_identities.wikidata.join("\n"),
+                external_imdb: profile.external_identities.imdb.join("\n"),
+            }))
+            setEditProfessionTypes(profile.profession_types)
+            setEditWorkRegions(profile.work_regions)
+        }).catch(error => {
+            toast.error(errorMessage(error))
+            setEditTarget(null)
+        }).finally(() => setEditLoading(false))
     }
 
     async function handleEdit() {
         if (!editTarget || !orgId) return
         setEditSaving(true)
-        const updateResult = await updateRettighedshaverSecure(editTarget.id, orgId, { full_name: editForm.full_name.trim(), email: editForm.email || null, phone: editForm.phone || null, address: editForm.address || null, cpr_no: editForm.cpr_no || null, bank_account: editForm.bank_account || null, gender: editForm.gender || null, opt_out_statistics: editForm.opt_out_statistics })
+        const updateResult = await updateRettighedshaverSecure(editTarget.id, orgId, {
+            full_name: editForm.full_name.trim(),
+            email: editForm.email || null,
+            phone: editForm.phone || null,
+            address: editForm.address || null,
+            cpr_no: editForm.cpr_no || null,
+            bank_account: editForm.bank_account || null,
+            gender: editForm.gender || null,
+            opt_out_statistics: editForm.opt_out_statistics,
+            alternative_names: parseList(editForm.alternative_names),
+            portrait_url: editForm.portrait_url || null,
+            professional_start_year: editForm.professional_start_year ? Number(editForm.professional_start_year) : null,
+            primary_profession_type_id: editForm.primary_profession_type_id || null,
+            secondary_profession_type_ids: editForm.secondary_profession_type_ids,
+            usual_work_mode: editForm.usual_work_mode || null,
+            primary_work_region_code: editForm.primary_work_region_code || null,
+            external_identities: {
+                dfi: parseList(editForm.external_dfi),
+                tmdb: parseList(editForm.external_tmdb),
+                wikidata: parseList(editForm.external_wikidata),
+                imdb: parseList(editForm.external_imdb),
+            },
+        })
         if (!updateResult.success) {
             setEditSaving(false)
             toast.error(updateResult.error ?? "Kunne ikke gemme")
@@ -1097,7 +1157,8 @@ export default function RettighedshavereAdminPage() {
                         <DialogTitle>Rediger rettighedshaver</DialogTitle>
                         <DialogDescription>{editTarget?.full_name}</DialogDescription>
                     </DialogHeader>
-                    <div className="space-y-3 py-2">
+                    {editLoading && <div className="flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Henter onboardingoplysninger…</div>}
+                    <div className={`space-y-4 py-2 ${editLoading ? "pointer-events-none opacity-50" : ""}`}>
                         <div className="space-y-1"><Label>Fuldt navn *</Label><Input value={editForm.full_name} onChange={e => setEditForm(f => ({ ...f, full_name: e.target.value }))} /></div>
                         <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>Email</Label><Input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} /></div>
@@ -1121,7 +1182,9 @@ export default function RettighedshavereAdminPage() {
                                         <SelectItem value="__none__">Ikke angivet</SelectItem>
                                         <SelectItem value="female">Kvinde</SelectItem>
                                         <SelectItem value="male">Mand</SelectItem>
+                                        <SelectItem value="non_binary">Non-binær</SelectItem>
                                         <SelectItem value="other">Andet</SelectItem>
+                                        <SelectItem value="prefer_not_to_say">Vil ikke oplyse</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
@@ -1130,6 +1193,64 @@ export default function RettighedshavereAdminPage() {
                                 <Label htmlFor="edit-opt-out" className="cursor-pointer">Fravalgt statistik</Label>
                             </div>
                         </div>
+
+                        <section className="space-y-3 rounded-lg border p-3 sm:p-4">
+                            <div>
+                                <h3 className="font-semibold">Onboarding og statistikprofil</h3>
+                                <p className="text-xs text-muted-foreground">Oplysningerne stammer fra onboarding og kan også ændres af medlemmet på Min profil.</p>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-1">
+                                    <Label>Professionelt startår</Label>
+                                    <Input type="number" min={1940} max={new Date().getFullYear()} value={editForm.professional_start_year} onChange={e => setEditForm(f => ({ ...f, professional_start_year: e.target.value }))} placeholder="Fx 2004" />
+                                    <p className="text-xs text-muted-foreground">Året hvor personen begyndte at arbejde professionelt i organisationens fag.</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Primær faggruppe</Label>
+                                    <Select value={editForm.primary_profession_type_id || "__none__"} onValueChange={value => setEditForm(form => ({ ...form, primary_profession_type_id: value === "__none__" ? "" : value, secondary_profession_type_ids: form.secondary_profession_type_ids.filter(id => id !== value) }))}>
+                                        <SelectTrigger className="w-full"><SelectValue placeholder="Ikke angivet" /></SelectTrigger>
+                                        <SelectContent><SelectItem value="__none__">Ikke angivet</SelectItem>{editProfessionTypes.map(option => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}</SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+                            {editProfessionTypes.length > 0 && <div className="space-y-2">
+                                <Label>Yderligere faggrupper</Label>
+                                <div className="grid gap-2 sm:grid-cols-2">{editProfessionTypes.filter(option => option.id !== editForm.primary_profession_type_id).map(option => <label key={option.id} className="flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" checked={editForm.secondary_profession_type_ids.includes(option.id)} onChange={event => setEditForm(form => ({ ...form, secondary_profession_type_ids: event.target.checked ? [...new Set([...form.secondary_profession_type_ids, option.id])] : form.secondary_profession_type_ids.filter(id => id !== option.id) }))} /><span className="min-w-0 break-words">{option.name}</span></label>)}</div>
+                            </div>}
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-1">
+                                    <Label>Typisk arbejdsform</Label>
+                                    <Select value={editForm.usual_work_mode || "__none__"} onValueChange={value => setEditForm(form => ({ ...form, usual_work_mode: value === "__none__" ? "" : value }))}>
+                                        <SelectTrigger className="w-full"><SelectValue placeholder="Ikke angivet" /></SelectTrigger>
+                                        <SelectContent><SelectItem value="__none__">Ikke angivet</SelectItem><SelectItem value="employee">A-lønmodtager</SelectItem><SelectItem value="company">Gennem eget selskab</SelectItem><SelectItem value="both">Begge dele</SelectItem><SelectItem value="other">Andet</SelectItem><SelectItem value="prefer_not_to_say">Vil ikke oplyse</SelectItem></SelectContent>
+                                    </Select>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label>Primært arbejdsområde</Label>
+                                    <Select value={editForm.primary_work_region_code || "__none__"} onValueChange={value => setEditForm(form => ({ ...form, primary_work_region_code: value === "__none__" ? "" : value }))}>
+                                        <SelectTrigger className="w-full"><SelectValue placeholder="Ikke angivet" /></SelectTrigger>
+                                        <SelectContent><SelectItem value="__none__">Ikke angivet</SelectItem>{editWorkRegions.map(option => <SelectItem key={option.code} value={option.code}>{option.name_da}</SelectItem>)}</SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="space-y-3 rounded-lg border p-3 sm:p-4">
+                            <div><h3 className="font-semibold">Navneprofil og portræt</h3><p className="text-xs text-muted-foreground">Navnevarianter og portræt blev valgt under onboardingens personsøgning.</p></div>
+                            <div className="space-y-1"><Label>Navnevarianter</Label><Textarea rows={3} value={editForm.alternative_names} onChange={event => setEditForm(form => ({ ...form, alternative_names: event.target.value }))} placeholder="Ét navn pr. linje" /></div>
+                            <div className="space-y-1"><Label>Portræt-URL</Label><Input type="url" value={editForm.portrait_url} onChange={event => setEditForm(form => ({ ...form, portrait_url: event.target.value }))} placeholder="https://…" /></div>
+                            {editForm.portrait_url && <div className="flex items-center gap-3 rounded-md bg-muted p-2"><img src={editForm.portrait_url} alt={`Portræt af ${editForm.full_name}`} className="h-16 w-16 rounded-md object-cover" /><span className="min-w-0 break-all text-xs text-muted-foreground">Aktuelt portræt</span></div>}
+                        </section>
+
+                        <section className="space-y-3 rounded-lg border p-3 sm:p-4">
+                            <div><h3 className="font-semibold">Eksterne person-id&apos;er</h3><p className="text-xs text-muted-foreground">Flere id&apos;er fra samme kilde skrives på hver sin linje. Id&apos;er kontrolleres for format og dubletter ved gemning.</p></div>
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div className="space-y-1"><Label>DFI person-id</Label><Textarea rows={2} value={editForm.external_dfi} onChange={event => setEditForm(form => ({ ...form, external_dfi: event.target.value }))} placeholder="12345" /></div>
+                                <div className="space-y-1"><Label>TMDB person-id</Label><Textarea rows={2} value={editForm.external_tmdb} onChange={event => setEditForm(form => ({ ...form, external_tmdb: event.target.value }))} placeholder="12345" /></div>
+                                <div className="space-y-1"><Label>Wikidata-id</Label><Textarea rows={2} value={editForm.external_wikidata} onChange={event => setEditForm(form => ({ ...form, external_wikidata: event.target.value }))} placeholder="Q12345" /></div>
+                                <div className="space-y-1"><Label>IMDb person-id</Label><Textarea rows={2} value={editForm.external_imdb} onChange={event => setEditForm(form => ({ ...form, external_imdb: event.target.value }))} placeholder="nm1234567" /></div>
+                            </div>
+                        </section>
                         <div className="flex items-center gap-2 pt-1">
                             <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
@@ -1137,7 +1258,7 @@ export default function RettighedshavereAdminPage() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditTarget(null)}>Annuller</Button>
-                        <Button onClick={handleEdit} disabled={editSaving || !editForm.full_name.trim()}>
+                        <Button onClick={handleEdit} disabled={editLoading || editSaving || !editForm.full_name.trim()}>
                             {editSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Gem
                         </Button>
                     </DialogFooter>

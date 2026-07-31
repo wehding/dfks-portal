@@ -64,9 +64,14 @@ export interface DbRettighedshaver {
     wikidata_qid: string | null
     imdb_nm: string | null
     portrait_url: string | null
+    alternative_names: string[]
     archived_at: string | null
     opt_out_statistics: boolean
     gender: "female" | "male" | "non_binary" | "other" | "prefer_not_to_say" | null
+    professional_start_year: number | null
+    primary_profession_type_id: string | null
+    usual_work_mode: "employee" | "company" | "both" | "other" | "prefer_not_to_say" | null
+    primary_work_region_code: string | null
     created_at: string
 }
 
