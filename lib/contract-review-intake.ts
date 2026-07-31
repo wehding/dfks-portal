@@ -16,6 +16,28 @@ export type ReviewIntakeInput = {
   metadata?: Record<string, unknown>;
 };
 
+export async function triggerContractReviewWorker(origin: string) {
+  const secret = process.env.CONTRACT_AI_JOB_SECRET ?? process.env.INTERNAL_API_SECRET ?? process.env.CRON_SECRET;
+  if (!secret) {
+    console.warn("[review-intake] Køen er oprettet, men intern worker-secret mangler");
+    return false;
+  }
+  try {
+    const response = await fetch(new URL("/api/contracts/reviews/jobs/process", origin), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+    });
+    if (!response.ok) {
+      console.warn("[review-intake] Worker kunne ikke startes", response.status);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[review-intake] Worker kunne ikke kontaktes", error instanceof Error ? error.message : "ukendt fejl");
+    return false;
+  }
+}
+
 export async function createContractReviewIntake(input: ReviewIntakeInput) {
   const db = createServiceClient();
   const fileHash = createHash("sha256").update(input.fileBuffer).digest("hex");

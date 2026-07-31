@@ -14,7 +14,7 @@
     },
     {
       "path": "/api/contracts/reviews/jobs/process",
-      "schedule": "*/5 * * * *"
+      "schedule": "15 5 * * *"
     },
     {
       "path": "/api/admin/audit-retention",

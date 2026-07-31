@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { createContractReviewIntake } from "@/lib/contract-review-intake";
+import { createContractReviewIntake, triggerContractReviewWorker } from "@/lib/contract-review-intake";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED = [".pdf", ".doc", ".docx"];
@@ -45,8 +45,7 @@ export async function POST(request: NextRequest) {
       },
     });
     if (!intake.duplicate) {
-      const secret = process.env.CONTRACT_AI_JOB_SECRET ?? process.env.INTERNAL_API_SECRET ?? process.env.CRON_SECRET;
-      if (secret) after(fetch(new URL("/api/contracts/reviews/jobs/process", request.url), { method: "POST", headers: { Authorization: `Bearer ${secret}` } }).catch(() => undefined));
+      after(triggerContractReviewWorker(request.nextUrl.origin));
     }
     return NextResponse.json({ success: true, review_id: intake.reviewId, duplicate: intake.duplicate });
   } catch (error) {
