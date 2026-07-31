@@ -33,7 +33,7 @@ export function ResponsiveTableFrame({
     className?: string
 }) {
     return (
-        <div className={cn("hidden overflow-x-auto rounded-lg border md:block", className)}>
+        <div className={cn("hidden min-w-0 max-w-full overflow-x-auto rounded-lg border md:block", className)}>
             {children}
         </div>
     )
@@ -47,7 +47,7 @@ export function MobileCardList({
     className?: string
 }) {
     return (
-        <div className={cn("space-y-3 md:hidden", className)}>
+        <div className={cn("min-w-0 max-w-full space-y-3 md:hidden", className)}>
             {children}
         </div>
     )
@@ -65,7 +65,7 @@ export function MobileDataCard({
     return (
         <div
             className={cn(
-                "rounded-lg border bg-background p-4 shadow-sm",
+                "min-w-0 max-w-full overflow-hidden rounded-lg border bg-background p-4 shadow-sm",
                 onClick && "cursor-pointer active:bg-muted/50",
                 className
             )}
@@ -85,7 +85,7 @@ export function MobileDataCard({
 }
 
 export function SummaryGrid({ children, className }: { children: React.ReactNode; className?: string }) {
-    return <div className={cn("grid grid-cols-3 gap-2 sm:gap-4", className)}>{children}</div>
+    return <div className={cn("grid min-w-0 max-w-full grid-cols-3 gap-2 sm:gap-4", className)}>{children}</div>
 }
 
 export function SummaryCard({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
@@ -96,7 +96,7 @@ export function SummaryCard({ label, value, className }: { label: string; value:
 }
 
 export function ListFilterBar({ children, className }: { children: React.ReactNode; className?: string }) {
-    return <div className={cn("grid gap-2 rounded-lg border bg-card p-3 sm:flex sm:flex-wrap sm:items-center", className)}>{children}</div>
+    return <div className={cn("grid min-w-0 max-w-full gap-2 rounded-lg border bg-card p-3 sm:flex sm:flex-wrap sm:items-center", className)}>{children}</div>
 }
 
 export function EmptyState({ title, description, action, className }: { title: string; description?: string; action?: React.ReactNode; className?: string }) {
