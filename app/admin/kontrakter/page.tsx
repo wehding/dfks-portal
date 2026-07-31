@@ -1993,8 +1993,8 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
-                <DialogContent className="w-full max-w-[95vw] sm:max-w-4xl lg:max-w-[1180px] max-h-[92vh] overflow-y-auto p-4 sm:p-6">
-                    <DialogHeader>
+                <DialogContent className="flex h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)] w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]">
+                    <DialogHeader className="shrink-0 pr-8 text-left">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
                                 <DialogTitle className="flex items-center gap-2">
@@ -2005,7 +2005,8 @@ function AdminKontrakterContent() {
                             {editPreviewContract && <ContractStatusBadges contract={editPreviewContract} />}
                         </div>
                     </DialogHeader>
-                    <div className="flex flex-wrap gap-2 border-b pb-3">
+                    <div className="shrink-0 border-b pb-3">
+	                    <div className="flex flex-wrap gap-2">
 	                        <Button type="button" variant="outline" size="sm" onClick={closeEditDialog} disabled={editSaving}>
 	                            {t("common.cancel")}
 	                        </Button>
@@ -2045,13 +2046,14 @@ function AdminKontrakterContent() {
                             <Trash2 className="h-4 w-4" />
                             Slet
                         </Button>
+	                    </div>
                         {!editForm?.work_id && (
-                            <p className="basis-full text-xs text-amber-600">Hvis du validerer uden et værk tilknyttet, bliver du spurgt om der skal oprettes et nyt værk med arbejdstitlen.</p>
+                            <p className="mt-2 text-xs text-amber-600">Hvis du validerer uden et værk tilknyttet, bliver du spurgt om der skal oprettes et nyt værk med arbejdstitlen.</p>
                         )}
                     </div>
                     {editForm && (
-                        <div className="grid gap-4 md:grid-cols-[1.05fr_1fr]">
-                            <div className="hidden h-[72vh] overflow-hidden rounded-md border md:block">
+                        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain md:grid md:grid-cols-[1.05fr_1fr] md:gap-4 md:overflow-hidden">
+                            <div className="hidden h-full min-h-0 overflow-hidden rounded-md border md:block">
                                 {editContract?.pdf_url
                                     ? (() => {
                                         const sources = editContract?.validation_data?._sources as Record<string, string | null> | undefined
@@ -2067,7 +2069,7 @@ function AdminKontrakterContent() {
                                       })()
                                     : <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Ingen fil på kontrakten</div>}
                             </div>
-                            <div className="max-h-[72vh] space-y-4 overflow-y-auto py-2 pr-1">
+                            <div className="space-y-4 py-2 pr-1 md:h-full md:min-h-0 md:overflow-y-auto md:overscroll-contain">
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
