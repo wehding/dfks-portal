@@ -402,6 +402,20 @@ function AdminKontrakterContent() {
     const [activeHighlight, setActiveHighlight] = useState<string | null>(null)
     const [navneTjekResult, setNavneTjekResult] = useState<NavneTjekResult | null>(null)
     const [navneTjekLoading, setNavneTjekLoading] = useState(false)
+    const editDialogRef = useRef<HTMLDivElement>(null)
+    const editDialogScrollRef = useRef<HTMLDivElement>(null)
+
+    useEffect(() => {
+        if (!editContract?.id) return
+
+        const frame = window.requestAnimationFrame(() => {
+            editDialogRef.current?.scrollTo({ top: 0 })
+            editDialogScrollRef.current?.scrollTo({ top: 0 })
+        })
+
+        return () => window.cancelAnimationFrame(frame)
+    }, [editContract?.id])
+
     const closeEditDialog = () => {
         setEditContract(null)
         setEditForm(null)
@@ -1993,7 +2007,12 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
-                <DialogContent className="top-2 bottom-2 flex h-auto max-h-none min-h-0 w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:top-[50%] sm:bottom-auto sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]">
+                <DialogContent
+                    ref={editDialogRef}
+                    className="top-2 bottom-2 flex h-auto max-h-none min-h-0 w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:top-[50%] sm:bottom-auto sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]"
+                    style={{ overflow: "hidden" }}
+                    onOpenAutoFocus={event => event.preventDefault()}
+                >
                     <DialogHeader className="shrink-0 pr-8 text-left">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
@@ -2052,7 +2071,7 @@ function AdminKontrakterContent() {
                         )}
                     </div>
                     {editForm && (
-                        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain md:grid md:grid-cols-[1.05fr_1fr] md:gap-4 md:overflow-hidden">
+                        <div ref={editDialogScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain md:grid md:grid-cols-[1.05fr_1fr] md:gap-4 md:overflow-hidden">
                             <div className="hidden h-full min-h-0 overflow-hidden rounded-md border md:block">
                                 {editContract?.pdf_url
                                     ? (() => {
