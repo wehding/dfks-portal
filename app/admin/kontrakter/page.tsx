@@ -1993,7 +1993,7 @@ function AdminKontrakterContent() {
 
             {/* Edit */}
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
-                <DialogContent className="flex h-[calc(100dvh-0.5rem)] max-h-[calc(100dvh-0.5rem)] w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]">
+                <DialogContent className="top-2 bottom-2 flex h-auto max-h-none min-h-0 w-full max-w-[95vw] flex-col gap-3 overflow-hidden p-4 sm:top-[50%] sm:bottom-auto sm:h-[92vh] sm:max-h-[92vh] sm:max-w-4xl sm:gap-4 sm:p-6 lg:max-w-[1180px]">
                     <DialogHeader className="shrink-0 pr-8 text-left">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
