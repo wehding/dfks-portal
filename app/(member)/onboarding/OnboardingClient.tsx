@@ -24,13 +24,25 @@ type OnboardingProfile = {
   gender?: string | null;
   alternative_names?: string[] | null;
   is_member?: boolean | null;
+  professional_start_year?: number | null;
+  primary_profession_type_id?: string | null;
+  usual_work_mode?: string | null;
+  primary_work_region_code?: string | null;
 };
 
 type OnboardingUser = {
   email?: string | null;
 };
 
-type FormKey = "first_name" | "last_name" | "email" | "phone" | "address" | "zip" | "city" | "cpr" | "bank_account" | "gender";
+type FormKey = "first_name" | "last_name" | "email" | "phone" | "address" | "zip" | "city" | "cpr" | "bank_account" | "gender" | "professional_start_year" | "primary_profession_type_id" | "usual_work_mode" | "primary_work_region_code";
+
+type StatisticsProfileOptions = {
+  config: Record<string, boolean>;
+  professionLabel: string;
+  professionTypes: Array<{ id: string; name: string }>;
+  workRegions: Array<{ code: string; nameDa: string; nameEn: string }>;
+  secondaryProfessionTypeIds: string[];
+};
 
 type FormField = {
   label: string;
@@ -42,9 +54,11 @@ type FormField = {
 export default function OnboardingClient({
   rh,
   user,
+  statisticsProfile,
 }: {
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
+  statisticsProfile: StatisticsProfileOptions;
 }) {
   const { locale, t } = useI18n();
   const router = useRouter();
@@ -59,6 +73,7 @@ export default function OnboardingClient({
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
   const [shareStatistics, setShareStatistics] = useState(true);
+  const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>(statisticsProfile.secondaryProfessionTypeIds);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<OnboardingField, string>>>({});
 
   // DFI & TMDB-tilstand
@@ -104,6 +119,10 @@ export default function OnboardingClient({
     cpr: rh?.cpr_no || "",
     bank_account: rh?.bank_account || "",
     gender: rh?.gender || "prefer_not_to_say",
+    professional_start_year: rh?.professional_start_year ? String(rh.professional_start_year) : "",
+    primary_profession_type_id: rh?.primary_profession_type_id || "",
+    usual_work_mode: rh?.usual_work_mode || "",
+    primary_work_region_code: rh?.primary_work_region_code || "",
   });
 
   const handleField = (field: string, value: string) => {
@@ -189,6 +208,7 @@ export default function OnboardingClient({
     const payload = new FormData();
     Object.entries(formData).forEach(([k, v]) => payload.set(k, v));
     payload.set("opt_out_statistics", String(!shareStatistics));
+    payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
 
     const result = await completeOnboarding(payload);
     if (result.success) {
@@ -873,6 +893,32 @@ export default function OnboardingClient({
                     </div>
                   </div>
                 </div>
+
+                {statisticsProfile.config.professional_start_year && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Professionel erfaring (valgfrit)</div>
+                  <p style={{ fontSize: "14px", color: "var(--on-surface-variant)" }}>Hvilket år begyndte du at arbejde professionelt som {statisticsProfile.professionLabel.toLocaleLowerCase(locale === "en" ? "en" : "da")}? Året bruges kun i aggregeret statistik om anciennitet.</p>
+                  <input type="number" min={1940} max={new Date().getFullYear()} value={formData.professional_start_year} onChange={event => handleField("professional_start_year", event.target.value)} style={{ width: "100%", maxWidth: "240px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }} />
+                </div>}
+
+                {statisticsProfile.config.primary_profession_type && statisticsProfile.professionTypes.length > 0 && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Primær faggruppe (valgfrit)</div>
+                  <select value={formData.primary_profession_type_id} onChange={event => handleField("primary_profession_type_id", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg faggruppe</option>{statisticsProfile.professionTypes.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select>
+                </div>}
+
+                {statisticsProfile.config.secondary_profession_types && statisticsProfile.professionTypes.length > 0 && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Yderligere faggrupper (valgfrit)</div>
+                  <div style={{ display: "grid", gap: "8px", marginTop: "12px" }}>{statisticsProfile.professionTypes.filter(option => option.id !== formData.primary_profession_type_id).map(option => <label key={option.id} style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px" }}><input type="checkbox" checked={secondaryProfessionTypeIds.includes(option.id)} onChange={event => setSecondaryProfessionTypeIds(current => event.target.checked ? [...new Set([...current, option.id])] : current.filter(id => id !== option.id))} />{option.name}</label>)}</div>
+                </div>}
+
+                {statisticsProfile.config.usual_work_mode && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Typisk arbejdsform (valgfrit)</div>
+                  <select value={formData.usual_work_mode} onChange={event => handleField("usual_work_mode", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg arbejdsform</option><option value="employee">A-lønmodtager</option><option value="company">Gennem eget selskab</option><option value="both">Begge dele</option><option value="other">Andet</option><option value="prefer_not_to_say">Vil ikke oplyse</option></select>
+                </div>}
+
+                {statisticsProfile.config.primary_work_region && statisticsProfile.workRegions.length > 0 && <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 700, fontSize: "16px", color: "var(--on-surface)" }}>Primært arbejdsområde (valgfrit)</div>
+                  <select value={formData.primary_work_region_code} onChange={event => handleField("primary_work_region_code", event.target.value)} style={{ marginTop: "12px", width: "100%", maxWidth: "360px", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--input)", backgroundColor: "var(--surface-container-lowest)", color: "var(--on-surface)" }}><option value="">Vælg område</option>{statisticsProfile.workRegions.map(option => <option key={option.code} value={option.code}>{locale === "en" ? option.nameEn : option.nameDa}</option>)}</select>
+                </div>}
               </div>
             </div>
           )}

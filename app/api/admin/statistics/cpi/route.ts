@@ -1,12 +1,10 @@
-import { NextResponse } from "next/server";
-import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
+import { NextRequest, NextResponse } from "next/server";
 import { syncStatisticsCpi } from "@/lib/statistics-cpi";
-import { createClient } from "@/lib/supabase/server";
-import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { requireCronOrAdminApi } from "@/lib/api-auth";
 
-export async function POST() {
-  const caller = await assertAdminRole(await createClient(), USER_ADMIN_ROLES);
-  if (!caller) return NextResponse.json({ error: "Ingen statistikadgang" }, { status: 403 });
+async function run(request: NextRequest) {
+  const caller = await requireCronOrAdminApi(request, ["superadmin", "admin", "org-admin"]);
+  if (!caller.ok) return caller.response;
   try {
     return NextResponse.json(await syncStatisticsCpi());
   } catch (error) {
@@ -14,3 +12,6 @@ export async function POST() {
     return NextResponse.json({ error: "Inflationsdata kunne ikke opdateres." }, { status: 502 });
   }
 }
+
+export async function GET(request: NextRequest) { return run(request); }
+export async function POST(request: NextRequest) { return run(request); }

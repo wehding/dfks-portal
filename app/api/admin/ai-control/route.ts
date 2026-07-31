@@ -35,15 +35,16 @@ export async function GET(req: NextRequest) {
     const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString()
     const from = requestedFrom && !Number.isNaN(Date.parse(requestedFrom)) ? new Date(requestedFrom).toISOString() : monthStart
 
-    const [settingsResult, pricesResult, ratesResult, eventsResult, organisationsResult] = await Promise.all([
+    const [settingsResult, pricesResult, ratesResult, eventsResult, organisationsResult, statisticsScopeResult] = await Promise.all([
         db.from("ai_runtime_settings").select("use_case,provider,model,prompt_caching_enabled,updated_at,updated_by").order("use_case"),
         db.from("ai_model_prices").select("provider,model,pricing_mode,effective_from,input_usd_per_million,output_usd_per_million,cache_write_usd_per_million,cache_read_usd_per_million").is("effective_to", null).order("effective_from", { ascending: false }),
         db.from("ai_exchange_rates").select("rate_date,usd_dkk,source").order("rate_date", { ascending: false }).limit(1),
         loadUsageEvents(db, from, caller.role === "superadmin" ? undefined : caller.orgId),
         caller.role === "superadmin" ? db.from("organisations").select("id,name").order("name") : Promise.resolve({ data: [] }),
+        db.from("organisations").select("statistics_contract_scope").eq("id", caller.orgId).single(),
     ])
 
-    const firstError = settingsResult.error ?? pricesResult.error ?? ratesResult.error ?? eventsResult.error
+    const firstError = settingsResult.error ?? pricesResult.error ?? ratesResult.error ?? eventsResult.error ?? statisticsScopeResult.error
     if (firstError) {
         console.error("[ai-control] Kunne ikke hente forbrug", firstError.message)
         return NextResponse.json({ error: "AI-forbruget kunne ikke hentes. Kontrollér at migrationen er kørt." }, { status: 500 })
@@ -57,20 +58,34 @@ export async function GET(req: NextRequest) {
         exchangeRate: ratesResult.data?.[0] ?? null,
         events: eventsResult.data ?? [],
         organisations: organisationsResult.data ?? [],
+        statisticsContractScope: statisticsScopeResult.data?.statistics_contract_scope ?? "validated_only",
         from,
     })
 }
 
 export async function POST(req: NextRequest) {
     const session = await createClient()
-    const caller = await assertAdminRole(session, ["superadmin"])
-    if (!caller) return NextResponse.json({ error: "Kun superadmin kan ændre AI-modeller" }, { status: 403 })
+    const caller = await assertAdminRole(session, ALLOWED_ROLES)
+    if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
 
     const body = await req.json().catch(() => null) as null | {
         useCase?: unknown
         provider?: unknown
         model?: unknown
         promptCachingEnabled?: unknown
+        statisticsContractScope?: unknown
+    }
+    if (body?.statisticsContractScope === "validated_only" || body?.statisticsContractScope === "validated_and_drafts") {
+        const db = createServiceClient()
+        const { error } = await db.from("organisations").update({
+            statistics_contract_scope: body.statisticsContractScope,
+            updated_at: new Date().toISOString(),
+        }).eq("id", caller.orgId)
+        if (error) return NextResponse.json({ error: "Statistikgrundlaget kunne ikke gemmes" }, { status: 500 })
+        return NextResponse.json({ data: { statisticsContractScope: body.statisticsContractScope } })
+    }
+    if (caller.role !== "superadmin") {
+        return NextResponse.json({ error: "Kun superadmin kan ændre AI-modeller" }, { status: 403 })
     }
     if (!body || !isContractAiUseCase(body.useCase) || typeof body.provider !== "string" || typeof body.model !== "string") {
         return NextResponse.json({ error: "Ugyldig modelindstilling" }, { status: 400 })

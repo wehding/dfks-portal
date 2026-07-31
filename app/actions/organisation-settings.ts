@@ -28,6 +28,15 @@ type OrganisationSettingsPayload = {
   coeditor_word: string;
   role_labels: string[];
   producer_categories: string[];
+  statistics_contract_scope: "validated_only" | "validated_and_drafts";
+  statistics_profile_config: {
+    professional_start_year: boolean;
+    primary_profession_type: boolean;
+    secondary_profession_types: boolean;
+    usual_work_mode: boolean;
+    primary_work_region: boolean;
+  };
+  statistics_work_regions: string[];
   onboarding_keywords: string[];
   contract_review_retention_months: number;
   foreninglet_base_url?: string | null;
@@ -69,7 +78,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_profile_config")
     .eq("id", orgId)
     .single();
 
@@ -79,12 +88,13 @@ export async function getOrganisationSettings() {
   const terminology = (data.terminology ?? {}) as OrgTerminology;
 
   const foreninglet = await getForeningLetIntegration(db, orgId);
-  const [{ data: professionRows }, { data: producerRows }] = await Promise.all([
+  const [{ data: professionRows }, { data: producerRows }, { data: workRegionRows }] = await Promise.all([
     db.from("organisation_profession_types").select("display_order,profession_types(name)").eq("org_id", orgId).order("display_order"),
-    db.from("organisation_producer_categories").select("display_order,producer_categories(name)").eq("org_id", orgId).order("display_order"),
+    db.from("organisation_producer_types").select("display_order,producer_types(name)").eq("org_id", orgId).order("display_order"),
+    db.from("organisation_work_regions").select("name_da").eq("org_id", orgId).eq("active", true).order("display_order"),
   ]);
   const professionTypes = (professionRows ?? []).map(row => (row.profession_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
-  const producerCategories = (producerRows ?? []).map(row => (row.producer_categories as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
+  const producerCategories = (producerRows ?? []).map(row => (row.producer_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
 
   return {
     id: data.id as string,
@@ -108,6 +118,15 @@ export async function getOrganisationSettings() {
       : ["klip", "edit"],
     contract_review_retention_months: data.contract_review_retention_months ?? 24,
     contract_review_retention_updated_at: data.contract_review_retention_updated_at ?? null,
+    statistics_contract_scope: data.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" as const : "validated_only" as const,
+    statistics_profile_config: {
+      professional_start_year: (data.statistics_profile_config as Record<string, unknown> | null)?.professional_start_year !== false,
+      primary_profession_type: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_profession_type),
+      secondary_profession_types: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.secondary_profession_types),
+      usual_work_mode: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.usual_work_mode),
+      primary_work_region: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_work_region),
+    },
+    statistics_work_regions: (workRegionRows ?? []).map(row => row.name_da as string),
     foreninglet,
   };
 }
@@ -126,6 +145,15 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
   const retentionMonths = Number(payload.contract_review_retention_months);
+  const statisticsContractScope = payload.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" : "validated_only";
+  const statisticsProfileConfig = {
+    professional_start_year: Boolean(payload.statistics_profile_config?.professional_start_year),
+    primary_profession_type: Boolean(payload.statistics_profile_config?.primary_profession_type),
+    secondary_profession_types: Boolean(payload.statistics_profile_config?.primary_profession_type && payload.statistics_profile_config?.secondary_profession_types),
+    usual_work_mode: Boolean(payload.statistics_profile_config?.usual_work_mode),
+    primary_work_region: Boolean(payload.statistics_profile_config?.primary_work_region),
+  };
+  const statisticsWorkRegions = normalizeRoles(payload.statistics_work_regions).slice(0, 30);
 
   if (!shortName || !longName) throw new Error("Kort navn og fuldt navn skal udfyldes.");
   if (!coeditorWord) throw new Error("Fagordet skal udfyldes.");
@@ -166,13 +194,15 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       contract_review_retention_months: retentionMonths,
       contract_review_retention_updated_at: new Date().toISOString(),
       contract_review_retention_updated_by: user?.id ?? null,
+      statistics_contract_scope: statisticsContractScope,
+      statistics_profile_config: statisticsProfileConfig,
       updated_at: new Date().toISOString(),
     })
     .eq("id", orgId);
 
   if (error) throw new Error(error.message);
 
-  async function replaceOrganisationTypes(table: "profession_types" | "producer_categories", relationTable: "organisation_profession_types" | "organisation_producer_categories", foreignKey: "profession_type_id" | "producer_category_id", names: string[]) {
+  async function replaceOrganisationTypes(table: "profession_types", relationTable: "organisation_profession_types", foreignKey: "profession_type_id", names: string[]) {
     const ids: string[] = [];
     for (const name of names) {
       const { data: typeRow, error: typeError } = await db.from(table)
@@ -189,7 +219,40 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     }
   }
   await replaceOrganisationTypes("profession_types", "organisation_profession_types", "profession_type_id", roleLabels);
-  await replaceOrganisationTypes("producer_categories", "organisation_producer_categories", "producer_category_id", producerCategories);
+  const producerTypeResult = await db.rpc("replace_organisation_producer_types", {
+    target_org_id: orgId,
+    target_names: producerCategories,
+  });
+  if (producerTypeResult.error) throw new Error(producerTypeResult.error.message);
+
+  const regionCode = (name: string) => name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("da")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48);
+  const { error: regionDeleteError } = await db.from("organisation_work_regions").delete().eq("org_id", orgId);
+  if (regionDeleteError) throw new Error(regionDeleteError.message);
+  if (statisticsProfileConfig.primary_work_region && statisticsWorkRegions.length) {
+    const usedCodes = new Set<string>();
+    const regions = statisticsWorkRegions.map((name, index) => {
+      const baseCode = regionCode(name) || "omraade";
+      let code = baseCode;
+      let suffix = 2;
+      while (usedCodes.has(code)) code = `${baseCode}_${suffix++}`;
+      usedCodes.add(code);
+      return {
+      org_id: orgId,
+      code,
+      name_da: name,
+      name_en: name,
+      display_order: index,
+      };
+    });
+    const { error: regionError } = await db.from("organisation_work_regions").insert(regions);
+    if (regionError) throw new Error(regionError.message);
+  }
 
   await upsertForeningLetIntegration(db, orgId, {
     base_url: payload.foreninglet_base_url,

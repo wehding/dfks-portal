@@ -3,8 +3,8 @@ import { createClient } from "@supabase/supabase-js"
 import { requireSessionApi } from "@/lib/api-auth"
 
 // GET /api/producers/search?q=<query>
-// Søger i DFKS employers-tabel. Markerer om producenten er overenskomstbundet
-// (dvs. har en aktiv gruppe-tilknytning i employer_registries).
+// Søger i det kanoniske producentregister. Kun ordinære, aktive
+// Producentforeningen-relationer regnes som overenskomstbindende.
 export async function GET(req: NextRequest) {
     const auth = await requireSessionApi()
     if (!auth.ok) return auth.response
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
         .select(`
             id,
             name,
-            employer_registries!left(valid_to)
+            employer_producer_types!left(source,membership_type,is_active)
         `)
         .ilike("name", `%${q}%`)
         .order("name")
@@ -30,8 +30,12 @@ export async function GET(req: NextRequest) {
     const results = (data ?? []).map((e: any) => ({
         id: e.id as string,
         name: e.name as string,
-        isOverenskomstBound: Array.isArray(e.employer_registries) &&
-            e.employer_registries.some((r: any) => r.valid_to === null),
+        isOverenskomstBound: Array.isArray(e.employer_producer_types) &&
+            e.employer_producer_types.some((relation: any) =>
+                relation.source === "producentforeningen" &&
+                relation.membership_type === "member" &&
+                relation.is_active === true
+            ),
     }))
 
     return NextResponse.json({ results })

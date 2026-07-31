@@ -74,12 +74,16 @@ async function previewSync(userId: string) {
     const [{ rows, verifiedOn }, employers, currentResult] = await Promise.all([
       fetchProducentforeningenMemberships(),
       producerOptions(db),
-      db.from("producer_association_memberships").select("group_code,source_name").eq("association_code", "producentforeningen").eq("is_active", true),
+      db.from("employer_producer_types").select("source_name,producer_types(code)").eq("source", "producentforeningen").eq("is_active", true),
     ]);
     if (currentResult.error) throw new Error("Eksisterende medlemsdata kunne ikke hentes.");
     const items = buildAssociationPreview(rows, employers);
     const sourceKeys = new Set(rows.map(row => `${normalizeCompanyBaseName(row.sourceName)}:${row.groupCode}`));
-    const missingCount = (currentResult.data ?? []).filter(row => !sourceKeys.has(`${normalizeCompanyBaseName(row.source_name)}:${row.group_code}`)).length;
+    const missingCount = (currentResult.data ?? []).filter(row => {
+      const type = Array.isArray(row.producer_types) ? row.producer_types[0] : row.producer_types;
+      const sourceGroup = type?.code === "feature_fiction" ? "fiction" : type?.code;
+      return !sourceKeys.has(`${normalizeCompanyBaseName(row.source_name ?? "")}:${sourceGroup}`);
+    }).length;
     const matchedCount = items.filter(item => item.recommendation === "match").length;
     const reviewCount = items.filter(item => item.recommendation === "review").length;
     const createCount = items.filter(item => item.recommendation === "create").length;
@@ -162,25 +166,32 @@ async function applySync(userId: string, runId?: string, decisionsInput?: ApplyD
 
       for (const group of item.groups) {
         const membershipType = normalizeMembershipType(group.membershipType);
-        const membershipResult = await db.from("producer_association_memberships").upsert({
+        const typeCode = group.groupCode === "fiction" ? "feature_fiction" : group.groupCode;
+        const { data: producerType, error: producerTypeError } = await db.from("producer_types")
+          .select("id").eq("code", typeCode).single();
+        if (producerTypeError || !producerType) throw new Error(`Producenttypen “${group.groupLabel}” blev ikke fundet.`);
+        const membershipResult = await db.from("employer_producer_types").upsert({
           employer_id: employerId,
-          association_code: "producentforeningen",
-          group_code: group.groupCode,
-          group_label: group.groupLabel,
-          membership_type: membershipType,
+          producer_type_id: producerType.id,
+          source: "producentforeningen",
+          membership_type: membershipType === "ordinary" ? "member" : membershipType,
           source_name: group.sourceName,
-          owner_ceo_text: group.ownerCeoText,
-          website: normalizeSourceWebsite(group.website),
-          address: group.address,
-          postal_city: group.postalCity,
           source_url: group.sourceUrl,
-          source_hash: group.sourceHash ?? null,
+          source_identifier: `producentforeningen:${group.groupCode}`,
+          source_metadata: {
+            group_label: group.groupLabel,
+            owner_ceo_text: group.ownerCeoText,
+            website: normalizeSourceWebsite(group.website),
+            address: group.address,
+            postal_city: group.postalCity,
+            source_hash: group.sourceHash ?? null,
+          },
           is_active: true,
           verified_on: run.verified_on,
           last_seen_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           created_by: userId,
-        }, { onConflict: "employer_id,association_code,group_code" });
+        }, { onConflict: "employer_id,producer_type_id,source" });
         if (membershipResult.error) throw new Error(`Medlemsdata for “${item.sourceName}” kunne ikke gemmes: ${membershipResult.error.message}`);
         changedCount += 1;
       }

@@ -17,8 +17,8 @@ export async function GET(req: NextRequest) {
   const sort = searchParams.get("sort") ?? "name";
   const direction = searchParams.get("direction") === "desc" ? -1 : 1;
 
-  const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult, broadcasterResult] = await Promise.all([
-    db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),producer_association_memberships(id,group_code,group_label,membership_type,source_name,owner_ceo_text,website,address,postal_city,source_url,is_active,verified_on,last_seen_at),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
+  const [{ data: employers, error }, { data: contracts }, { data: legacyWorks }, { data: assignments }, { data: holders }, workOrgResult, contractRelationsResult, broadcasterResult, producerTypeResult] = await Promise.all([
+    db.from("employers").select("id,name,parent_id,dfi_company_id,broadcaster_id,associeret,created_at,cvr,status,is_verified,employer_aliases(alias),employer_legal_entities(id,legal_name,registration_country,registration_type,registration_number,entity_kind,is_primary,registration_status,address,contact_phone,contact_email,website,industry_code,industry_description,company_type,archived_at),producer_type_relations:employer_producer_types(id,membership_type,source,source_name,source_url,source_metadata,is_active,verified_on,last_seen_at,producer_types(id,code,name,origin)),broadcasters(name,logo_path,content_type)").is("merged_into_id", null).is("archived_at", null),
     db.from("contracts").select("id,employer_id,status,created_at,rights_holder_id").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("works").select("id,employer_id,status,created_at").eq("org_id", auth.orgId).not("employer_id", "is", null),
     db.from("work_assignments").select("rights_holder_id,work_id,works(employer_id)").eq("org_id", auth.orgId),
@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     db.from("work_organisations").select("work_id").eq("org_id", auth.orgId),
     db.from("contract_employers").select("contract_id,employer_id,contracts!inner(org_id)").eq("contracts.org_id", auth.orgId),
     db.from("broadcasters").select("id,name,logo_path,content_type").order("name"),
+    db.from("organisation_producer_types").select("display_order,producer_types(id,code,name,origin)").eq("org_id", auth.orgId).order("display_order"),
   ]);
   let employerRows = employers ?? [];
   if (error) {
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     }
     const legacy = await db.from("employers").select("id,name,parent_id,dfi_company_id,associeret,created_at,cvr");
     if (legacy.error) return NextResponse.json({ error: "Producenter kunne ikke hentes" }, { status: 500 });
-    employerRows = (legacy.data ?? []).map(row => ({ ...row, broadcaster_id: null, broadcasters: [], status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [], producer_association_memberships: [] })) as unknown as typeof employerRows;
+    employerRows = (legacy.data ?? []).map(row => ({ ...row, broadcaster_id: null, broadcasters: [], status: "active", is_verified: false, employer_aliases: [], employer_legal_entities: [], producer_type_relations: [] })) as unknown as typeof employerRows;
   }
 
   const relationWorkIds = (workOrgResult.data ?? []).map(row => row.work_id);
@@ -100,7 +101,37 @@ export async function GET(req: NextRequest) {
     return {
       ...employer,
       legal_entities: (employer.employer_legal_entities ?? []).filter(entity => !entity.archived_at),
-      association_memberships: (employer.producer_association_memberships ?? []).filter(membership => membership.is_active),
+      producer_types: (employer.producer_type_relations ?? []).filter(relation => relation.is_active).map(relation => {
+        const producerType = Array.isArray(relation.producer_types) ? relation.producer_types[0] : relation.producer_types;
+        return {
+          relation_id: relation.id,
+          id: producerType?.id,
+          code: producerType?.code,
+          name: producerType?.name,
+          origin: producerType?.origin,
+          source: relation.source,
+          membership_type: relation.membership_type,
+        };
+      }).filter(type => type.id),
+      association_memberships: (employer.producer_type_relations ?? []).filter(relation => relation.is_active && relation.source === "producentforeningen").map(relation => {
+        const producerType = Array.isArray(relation.producer_types) ? relation.producer_types[0] : relation.producer_types;
+        const metadata = (relation.source_metadata ?? {}) as Record<string, unknown>;
+        return {
+          id: relation.id,
+          group_code: producerType?.code,
+          group_label: producerType?.name,
+          membership_type: relation.membership_type === "member" ? "ordinary" : relation.membership_type,
+          source_name: relation.source_name,
+          owner_ceo_text: typeof metadata.owner_ceo_text === "string" ? metadata.owner_ceo_text : null,
+          website: typeof metadata.website === "string" ? metadata.website : null,
+          address: typeof metadata.address === "string" ? metadata.address : null,
+          postal_city: typeof metadata.postal_city === "string" ? metadata.postal_city : null,
+          source_url: relation.source_url,
+          is_active: relation.is_active,
+          verified_on: relation.verified_on,
+          last_seen_at: relation.last_seen_at,
+        };
+      }),
       aliases: (employer.employer_aliases ?? []).map(alias => alias.alias),
       parent_name: employer.parent_id ? names.get(employer.parent_id) ?? null : null,
       contract_count: employerContracts.length,
@@ -120,9 +151,10 @@ export async function GET(req: NextRequest) {
   if (status && ["attention", "active", "inactive"].includes(status)) rows = rows.filter(row => row.status === status);
   if (associationGroup === "ordinary" || associationGroup === "member") rows = rows.filter(row => row.association_memberships.some(membership => membership.membership_type === "ordinary"));
   else if (associationGroup === "associate") rows = rows.filter(row => !row.association_memberships.some(membership => membership.membership_type === "ordinary") && row.association_memberships.some(membership => membership.membership_type === "associate"));
+  else if (associationGroup === "none") rows = rows.filter(row => row.association_memberships.length === 0);
   else if (associationGroup === "unknown") rows = rows.filter(row => !row.association_memberships.some(membership => ["ordinary", "associate"].includes(membership.membership_type)) && row.association_memberships.length > 0);
-  else if (associationGroup && ["documentary", "fiction", "tv", "advertising", "dubbing", "animation"].includes(associationGroup)) {
-    rows = rows.filter(row => row.association_memberships.some(membership => membership.group_code === associationGroup));
+  else if (associationGroup && ["documentary", "feature_fiction", "tv", "advertising", "dubbing", "animation", "streamer", "broadcaster"].includes(associationGroup)) {
+    rows = rows.filter(row => row.producer_types.some(type => type.code === associationGroup));
   }
   if (rightsHolderId) rows = rows.filter(row => row.rights_holder_ids.includes(rightsHolderId));
   rows.sort((a, b) => {
@@ -133,7 +165,10 @@ export async function GET(req: NextRequest) {
     const [left, right] = values[sort] ?? values.name;
     return (typeof left === "number" && typeof right === "number" ? left - right : String(left).localeCompare(String(right), "da", { numeric: true })) * direction;
   });
-  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], canMerge: auth.role === "superadmin" });
+  const producerTypes = (producerTypeResult.data ?? []).map(row =>
+    Array.isArray(row.producer_types) ? row.producer_types[0] : row.producer_types
+  ).filter(Boolean);
+  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], producerTypes, canMerge: auth.role === "superadmin" });
 }
 
 export async function POST(req: NextRequest) {
@@ -143,6 +178,7 @@ export async function POST(req: NextRequest) {
     name?: string;
     dfiCompanyId?: string | number | null;
     broadcasterId?: string | null;
+    producerTypeIds?: string[];
     legalEntities?: Array<{ legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean }>;
   } | null;
   const name = body?.name?.trim().replace(/\s+/g, " ");
@@ -199,6 +235,17 @@ export async function POST(req: NextRequest) {
       await db.from("employers").delete().eq("id", employer.id);
       return NextResponse.json({ error: entityResult.error.message }, { status: 409 });
     }
+  }
+  const producerTypeIds = [...new Set((body?.producerTypeIds ?? []).filter(value => /^[0-9a-f-]{36}$/i.test(value)))];
+  const relations = await db.rpc("replace_employer_manual_producer_types", {
+    target_org_id: auth.orgId,
+    target_employer_id: employer.id,
+    target_type_ids: producerTypeIds,
+    actor_id: auth.userId,
+  });
+  if (relations.error) {
+    await db.from("employers").delete().eq("id", employer.id);
+    return NextResponse.json({ error: "Producenttyperne kunne ikke gemmes." }, { status: 409 });
   }
   return NextResponse.json({ id: employer.id }, { status: 201 });
 }

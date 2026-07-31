@@ -41,6 +41,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     name?: string;
     dfiCompanyId?: string | number | null;
     broadcasterId?: string | null;
+    producerTypeIds?: string[];
     deletedLegalEntityIds?: string[];
     legalEntities?: LegalEntityInput[];
   } | null;
@@ -136,5 +137,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       : await db.from("employer_legal_entities").insert({ ...payload, created_by: auth.userId });
     if (result.error) return NextResponse.json({ error: result.error.message }, { status: 409 });
   }
+  const producerTypeIds = [...new Set((body?.producerTypeIds ?? []).filter(value => /^[0-9a-f-]{36}$/i.test(value)))];
+  const typeResult = await db.rpc("replace_employer_manual_producer_types", {
+    target_org_id: auth.orgId,
+    target_employer_id: id,
+    target_type_ids: producerTypeIds,
+    actor_id: auth.userId,
+  });
+  if (typeResult.error) return NextResponse.json({ error: "Producenttyperne kunne ikke gemmes." }, { status: 409 });
   return NextResponse.json({ ok: true });
 }

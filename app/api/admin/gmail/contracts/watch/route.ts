@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdminApi } from "@/lib/api-auth";
 import { configureGmailContractWatch, syncGmailContractMailbox } from "@/lib/gmail-contract-import";
+import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ async function run(req: NextRequest) {
   try {
     const watch = await configureGmailContractWatch();
     const sync = await syncGmailContractMailbox();
+    if (sync.imported > 0) after(triggerContractReviewWorker(req.nextUrl.origin));
     return NextResponse.json({ ok: true, watch, sync });
   } catch (error) {
     console.error("[gmail-contract-watch] Opsætning fejlede", error instanceof Error ? error.message : "Ukendt fejl");
