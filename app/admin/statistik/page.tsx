@@ -103,7 +103,7 @@ export default function AdminStatistikPage() {
     return () => controller.abort();
   }, [years, gender, category, contractType]);
 
-  const contributionTotal = useMemo(() => (data?.contributions ?? []).reduce((sum, row) => sum + row.totalHolidayPayAmount + row.totalBetaAmount, 0), [data]);
+  const salaryContractCount = useMemo(() => (data?.salary ?? []).reduce((sum, row) => sum + row.contractCount, 0), [data]);
   const availableStatisticsCount = useMemo(() => [
     data?.salaryByCategory,
     data?.rights,
@@ -193,7 +193,6 @@ export default function AdminStatistikPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
     {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
-    {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.contractCount} kontrakter. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} kontrakter.</AlertDescription></Alert>}
 
     {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
       <Alert>
@@ -216,7 +215,7 @@ export default function AdminStatistikPage() {
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />Spørg statistikken</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">Skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?” AI’en vælger kun mellem godkendte mål og filtre. Den kan ikke se personer eller skrive databasekode.</p>
+        <p className="text-sm text-muted-foreground">Spørg databasen, skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?”</p>
         <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
         <div className="flex flex-wrap gap-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}>{suggestion}</Button>)}</div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Popover><PopoverTrigger asChild><Button type="button" variant="outline">{selectedCharts.length ? `${selectedCharts.length} resultatvisninger` : "Resultatvisning: Automatisk"}</Button></PopoverTrigger><PopoverContent className="w-80"><div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">Vælg resultat</span><Button size="sm" variant="ghost" onClick={() => setSelectedCharts([])}>Automatisk</Button></div><div className="max-h-72 space-y-1 overflow-y-auto">{STATISTICS_CHART_TYPES.map(chart => <label key={chart} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"><input type="checkbox" checked={selectedCharts.includes(chart)} onChange={event => setSelectedCharts(current => event.target.checked ? [...current, chart] : current.filter(item => item !== chart))} />{chartLabels[chart]}</label>)}</div></PopoverContent></Popover></div>
@@ -225,10 +224,10 @@ export default function AdminStatistikPage() {
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <p className="text-sm">{aiAnswer.explanation}</p>
           {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
-          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 kontrakter.</AlertDescription></Alert>}
           {rejectedCharts.map(result => <Alert key={result.chart}><AlertTitle>{chartLabels[result.chart]} kan ikke bruges</AlertTitle><AlertDescription>{result.reason}</AlertDescription></Alert>)}
           {effectiveCharts.filter(chart => chart !== "table" && evaluateChartEligibility(chart, chartShape).eligible).map(chart => <Card key={chart}><CardHeader><CardTitle className="text-sm">{chartLabels[chart]}</CardTitle></CardHeader><CardContent className="h-[320px]"><ResponsiveChartContainer><AiChartView chart={chart} rows={aiChart.rows} labels={aiChart.labels} /></ResponsiveChartContainer></CardContent></Card>)}
           {(effectiveCharts.includes("table") || selectedCharts.length === 0) && <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Inflationsindeks", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, row.value.toLocaleString("da-DK"), row.contractCount, row.lowSample ? "Usikkert" : "≥ 5", row.inflationIndex ?? "—", row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />}
+          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 kontrakter.</AlertDescription></Alert>}
         </div>}
       </CardContent>
     </Card>
@@ -246,7 +245,7 @@ export default function AdminStatistikPage() {
     </div>
 
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok kontrakter til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} kontrakter. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
-      <div className="grid gap-4 sm:grid-cols-3"><Card><CardHeader><CardTitle className="text-sm">Rettighedshavere</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.memberCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Kontrakter</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.contractCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Samlede bidrag</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{formatKr(contributionTotal)}</CardContent></Card></div>
+      <div className="hidden gap-4 sm:grid sm:grid-cols-3"><Card><CardHeader><CardTitle className="text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.memberCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.contractCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
         <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatKr(row.monthlyRate), row.lowSample ? "Statistisk usikkert" : "≥ 5 kontrakter"])} /></TabsContent>
         <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, `${row.avgPensionPercent}%`])} /></TabsContent>
@@ -258,6 +257,7 @@ export default function AdminStatistikPage() {
         <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause, row.withoutClause, `${row.pct}%`])} /></TabsContent>
         <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 2} kontrakter, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
       </Tabs>
+      {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.contractCount} kontrakter. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} kontrakter.</AlertDescription></Alert>}
     </>}
   </div>;
 }
