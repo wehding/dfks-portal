@@ -3,7 +3,7 @@ import { companyMatchScore, normalizeCompanyBaseName, normalizeCompanyName, type
 export const PRODUCENTFORENINGEN_GROUPS = [
   { code: "documentary", label: "Dokumentarfilm", url: "https://pro-f.dk/dokumentarfilm" },
   { code: "fiction", label: "Spillefilm - fiktion", url: "https://pro-f.dk/spillefilm-fiktion" },
-  { code: "tv", label: "TV", url: "https://pro-f.dk/tv" },
+  { code: "tv", label: "TV", url: "https://pro-f.dk/tv-1" },
   { code: "advertising", label: "Reklamefilm", url: "https://pro-f.dk/reklamefilm-1" },
   { code: "dubbing", label: "Dubbing", url: "https://pro-f.dk/dubbing-2" },
   { code: "animation", label: "Animation", url: "https://pro-f.dk/animation-0" },
@@ -112,7 +112,7 @@ export function parseAssociationTableScript(
     postalCity: row["Post nr. & By"]?.trim() || null,
     ownerCeoText: row["Ejere / CEO"]?.trim() || null,
     website: normalizeSourceWebsite(row.Website),
-    membershipType: normalizeMembershipType(row.Medlemstype),
+    membershipType: row.Medlemstype?.trim() ? normalizeMembershipType(row.Medlemstype) : "ordinary",
   } satisfies ProducerAssociationSourceRow)).filter(row => row.sourceName);
 }
 

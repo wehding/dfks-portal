@@ -4,6 +4,62 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { resolveProducerStatus, type ProducerStatus } from "@/lib/admin-producers";
 import { normalizeCompanyName, validateRegistrationNumber } from "@/lib/production-companies";
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function getDeletionPreview(db: ReturnType<typeof createServiceClient>, ids: string[]) {
+  const [employersResult, workRelationsResult, contractRelationsResult, legacyWorksResult, legacyContractsResult, mergeSourcesResult, mergeAuditResult] = await Promise.all([
+    db.from("employers").select("id,name").in("id", ids).is("merged_into_id", null),
+    db.from("work_employers").select("employer_id,work_id,works(org_id,work_organisations(org_id))").in("employer_id", ids),
+    db.from("contract_employers").select("employer_id,contract_id,contracts(org_id)").in("employer_id", ids),
+    db.from("works").select("id,employer_id,org_id,work_organisations(org_id)").in("employer_id", ids),
+    db.from("contracts").select("id,employer_id,org_id").in("employer_id", ids),
+    db.from("employers").select("id,merged_into_id").in("merged_into_id", ids),
+    db.from("employer_merge_audit").select("source_employer_id,target_employer_id").or(`source_employer_id.in.(${ids.join(",")}),target_employer_id.in.(${ids.join(",")})`),
+  ]);
+  const firstError = employersResult.error ?? workRelationsResult.error ?? contractRelationsResult.error ?? legacyWorksResult.error ?? legacyContractsResult.error ?? mergeSourcesResult.error ?? mergeAuditResult.error;
+  if (firstError) throw new Error("Producenternes tilknytninger kunne ikke kontrolleres.");
+
+  return (employersResult.data ?? []).map(employer => {
+    const workIds = new Set<string>();
+    const contractIds = new Set<string>();
+    const organisationIds = new Set<string>();
+    for (const relation of workRelationsResult.data ?? []) {
+      if (relation.employer_id !== employer.id) continue;
+      workIds.add(relation.work_id);
+      const work = Array.isArray(relation.works) ? relation.works[0] : relation.works;
+      if (work?.org_id) organisationIds.add(work.org_id);
+      for (const org of work?.work_organisations ?? []) if (org.org_id) organisationIds.add(org.org_id);
+    }
+    for (const work of legacyWorksResult.data ?? []) {
+      if (work.employer_id !== employer.id) continue;
+      workIds.add(work.id);
+      if (work.org_id) organisationIds.add(work.org_id);
+      for (const org of work.work_organisations ?? []) if (org.org_id) organisationIds.add(org.org_id);
+    }
+    for (const relation of contractRelationsResult.data ?? []) {
+      if (relation.employer_id !== employer.id) continue;
+      contractIds.add(relation.contract_id);
+      const contract = Array.isArray(relation.contracts) ? relation.contracts[0] : relation.contracts;
+      if (contract?.org_id) organisationIds.add(contract.org_id);
+    }
+    for (const contract of legacyContractsResult.data ?? []) {
+      if (contract.employer_id !== employer.id) continue;
+      contractIds.add(contract.id);
+      if (contract.org_id) organisationIds.add(contract.org_id);
+    }
+    const mergeReferences = (mergeSourcesResult.data ?? []).filter(row => row.merged_into_id === employer.id).length
+      + (mergeAuditResult.data ?? []).filter(row => row.source_employer_id === employer.id || row.target_employer_id === employer.id).length;
+    return {
+      id: employer.id,
+      name: employer.name,
+      workCount: workIds.size,
+      contractCount: contractIds.size,
+      organisationCount: organisationIds.size,
+      mergeReferences,
+      canDelete: workIds.size === 0 && contractIds.size === 0 && mergeReferences === 0,
+    };
+  });
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireAdminApi();
@@ -168,7 +224,7 @@ export async function GET(req: NextRequest) {
   const producerTypes = (producerTypeResult.data ?? []).map(row =>
     Array.isArray(row.producer_types) ? row.producer_types[0] : row.producer_types
   ).filter(Boolean);
-  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], producerTypes, canMerge: auth.role === "superadmin" });
+  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], producerTypes, canMerge: auth.role === "superadmin", canDelete: auth.role === "superadmin" });
 }
 
 export async function POST(req: NextRequest) {
@@ -248,4 +304,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Producenttyperne kunne ikke gemmes." }, { status: 409 });
   }
   return NextResponse.json({ id: employer.id }, { status: 201 });
+}
+
+export async function DELETE(req: NextRequest) {
+  const auth = await requireAdminApi(["superadmin"]);
+  if (!auth.ok) return auth.response;
+  const body = await req.json().catch(() => null) as { ids?: unknown; confirmation?: unknown; preview?: unknown } | null;
+  const ids = [...new Set(Array.isArray(body?.ids) ? body.ids.filter((id): id is string => typeof id === "string" && UUID_PATTERN.test(id)) : [])].slice(0, 25);
+  if (!ids.length) return NextResponse.json({ error: "Vælg mindst én producent." }, { status: 400 });
+
+  const db = createServiceClient();
+  let preview;
+  try { preview = await getDeletionPreview(db, ids); }
+  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Tilknytningerne kunne ikke kontrolleres." }, { status: 500 }); }
+  if (preview.length !== ids.length) return NextResponse.json({ error: "En eller flere producenter blev ikke fundet.", preview }, { status: 404 });
+  if (body?.preview === true) return NextResponse.json({ preview });
+  if (body?.confirmation !== "SLET") return NextResponse.json({ error: "Skriv SLET for at bekræfte permanent sletning.", preview }, { status: 400 });
+  if (preview.some(item => !item.canDelete)) {
+    return NextResponse.json({ error: "Producenter med tilknyttede værker, kontrakter eller sammenlægninger kan ikke slettes permanent.", preview }, { status: 409 });
+  }
+
+  const auditedDb = createServiceClient({ audit: {
+    actorUserId: auth.userId,
+    actorOrgId: auth.orgId,
+    actorRole: auth.role,
+    source: "admin",
+    correlationId: crypto.randomUUID(),
+  } });
+  const { data, error } = await auditedDb.rpc("delete_unlinked_employers_permanently", { target_ids: ids, actor_id: auth.userId });
+  if (error) {
+    console.error("[producers] permanent delete failed", error.message);
+    return NextResponse.json({ error: /linked records/i.test(error.message) ? "Tilknytningerne er ændret. Producenterne blev ikke slettet." : "Producenterne kunne ikke slettes permanent." }, { status: 409 });
+  }
+  return NextResponse.json({ deletedCount: Number((data as { deleted_count?: number } | null)?.deleted_count ?? 0) });
 }
