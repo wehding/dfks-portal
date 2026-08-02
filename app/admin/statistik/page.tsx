@@ -54,7 +54,7 @@ const demoRights = [
 ];
 
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {
-  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map(header => <TableHead key={header}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
+  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
 }
 
 function AiChartView({ chart, rows, labels }: { chart: StatisticsChartType; rows: Array<Record<string, number>>; labels: Array<[string, string]> }) {
@@ -62,7 +62,7 @@ function AiChartView({ chart, rows, labels }: { chart: StatisticsChartType; rows
   if (chart === "pie" || chart === "donut") {
     const row = rows[0] ?? {};
     const values = labels.map(([key, label]) => ({ name: label, value: Number(row[key] ?? 0) }));
-    return <PieChart><Tooltip contentStyle={tooltipStyle} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={value.name} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
+    return <PieChart><Tooltip contentStyle={tooltipStyle} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={`${value.name}-${index}`} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
   }
   if (chart === "line") return <LineChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Line connectNulls key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} />)}</LineChart>;
   if (chart === "area") return <AreaChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Area key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.25} />)}</AreaChart>;
