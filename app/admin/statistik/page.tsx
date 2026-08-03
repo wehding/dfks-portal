@@ -19,7 +19,7 @@ import { evaluateChartEligibility, recommendCharts, STATISTICS_CHART_TYPES, type
 
 type YearRow = { year: number; memberCount: number; contractCount: number; validatedCount: number; draftCount: number; lowSample: boolean };
 type StatisticsPayload = {
-  suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; cpiUpdatedAt?: string | null; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
+  suppressed: boolean; minimum: number; lowSampleThreshold: number; lowSample?: boolean; includeDrafts?: boolean; memberCount: number | null; contractCount?: number; validatedCount?: number; draftCount?: number; years: number[];
   salary?: Array<YearRow & { monthlyRate: number; dailyRate: number }>;
   salaryByCategory?: Array<YearRow & { category: string; monthlyRate: number }>;
   pension?: Array<YearRow & { avgPensionPercent: number }>;
@@ -42,9 +42,19 @@ const querySuggestions = [
   "Hvordan har det gennemsnitlige antal arbejdsuger udviklet sig over alle år?",
 ];
 const chartLabels: Record<StatisticsChartType, string> = { table: "Tabel", bar: "Søjlediagram", horizontal_bar: "Vandret søjlediagram", grouped_bar: "Grupperet søjlediagram", stacked_bar: "Stablet søjlediagram", pie: "Cirkeldiagram", donut: "Ringdiagram", stacked_100: "Stablet 100 %-søjlediagram", line: "Linjediagram", area: "Arealdiagram", histogram: "Histogram", box_plot: "Boksplot", scatter: "Prikdiagram", bubble: "Boblediagram" };
+const demoSalary = [
+  { year: 2022, feature: 46_000, documentary: 41_000 },
+  { year: 2023, feature: 48_500, documentary: 43_000 },
+  { year: 2024, feature: 51_000, documentary: 45_500 },
+];
+const demoRights = [
+  { name: "Copydan-forbehold", value: 72 },
+  { name: "Streamingforbehold", value: 54 },
+  { name: "Ukendt", value: 18 },
+];
 
 function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<string | number>> }) {
-  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map(header => <TableHead key={header}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
+  return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
 }
 
 function AiChartView({ chart, rows, labels }: { chart: StatisticsChartType; rows: Array<Record<string, number>>; labels: Array<[string, string]> }) {
@@ -52,7 +62,7 @@ function AiChartView({ chart, rows, labels }: { chart: StatisticsChartType; rows
   if (chart === "pie" || chart === "donut") {
     const row = rows[0] ?? {};
     const values = labels.map(([key, label]) => ({ name: label, value: Number(row[key] ?? 0) }));
-    return <PieChart><Tooltip contentStyle={tooltipStyle} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={value.name} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
+    return <PieChart><Tooltip contentStyle={tooltipStyle} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={`${value.name}-${index}`} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
   }
   if (chart === "line") return <LineChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Line connectNulls key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} />)}</LineChart>;
   if (chart === "area") return <AreaChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Area key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.25} />)}</AreaChart>;
@@ -74,8 +84,8 @@ export default function AdminStatistikPage() {
   const [error, setError] = useState<string | null>(null);
   const [aiQuestion, setAiQuestion] = useState("Sammenlign den gennemsnitlige lønudvikling for dokumentarfilm og spillefilm for alle år.");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; chart?: "line" | "bar" | "table"; plan?: { metric?: string }; lowSample?: boolean; includeDrafts?: boolean; candidates?: Array<{ id: string; name: string }>; series?: Array<{ year: number; value: number; contractCount: number; memberCount: number; lowSample: boolean; seriesKey: string; seriesLabel: string; inflationIndex?: number | null; realChangePercent?: number | null }> } | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; caveats?: string[]; chart?: "line" | "bar" | "table"; plan?: { metric?: string }; lowSample?: boolean; includeDrafts?: boolean; candidates?: Array<{ id: string; name: string }>; series?: Array<{ year: number; value: number; contractCount: number; memberCount: number; lowSample: boolean; seriesKey: string; seriesLabel: string; inflationIndex?: number | null; realChangePercent?: number | null }> } | null>(null);
+  const [aiError, setAiError] = useState<{ title: string; reason: string; suggestion?: string } | null>(null);
   const [selectedCharts, setSelectedCharts] = useState<StatisticsChartType[]>([]);
 
   useEffect(() => {
@@ -93,7 +103,16 @@ export default function AdminStatistikPage() {
     return () => controller.abort();
   }, [years, gender, category, contractType]);
 
-  const contributionTotal = useMemo(() => (data?.contributions ?? []).reduce((sum, row) => sum + row.totalHolidayPayAmount + row.totalBetaAmount, 0), [data]);
+  const salaryContractCount = useMemo(() => (data?.salary ?? []).reduce((sum, row) => sum + row.contractCount, 0), [data]);
+  const availableStatisticsCount = useMemo(() => [
+    data?.salaryByCategory,
+    data?.rights,
+    data?.contractCounts,
+    data?.pension,
+    data?.workingWeeks,
+    data?.contributions,
+  ].filter(rows => (rows?.length ?? 0) > 0).length, [data]);
+  const showDemonstrations = Boolean(data?.suppressed) || availableStatisticsCount < 2;
   const salaryCategoryChart = useMemo(() => {
     const rows = new Map<number, { year: number; feature?: number; documentary?: number }>();
     for (const item of data?.salaryByCategory ?? []) {
@@ -146,10 +165,23 @@ export default function AdminStatistikPage() {
         body: JSON.stringify({ question }),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Spørgsmålet kunne ikke behandles");
+      if (!response.ok) {
+        setAiError({
+          title: result.error ?? "Forespørgslen kunne ikke gennemføres",
+          reason: result.reason ?? "Spørgsmålet kunne ikke matches med de statistikmål og filtre, som systemet må bruge.",
+          suggestion: result.suggestion,
+        });
+        return;
+      }
       setAiAnswer(result);
     } catch (queryError) {
-      setAiError(queryError instanceof Error ? queryError.message : "Spørgsmålet kunne ikke behandles");
+      setAiError({
+        title: "Statistikforespørgslen kunne ikke gennemføres",
+        reason: queryError instanceof Error && queryError.message === "Failed to fetch"
+          ? "Forbindelsen til statistikserveren blev afbrudt. Der er ikke sendt eller vist data."
+          : "Der opstod en midlertidig teknisk fejl under behandlingen.",
+        suggestion: "Prøv igen. Hvis fejlen fortsætter, kan du vælge et af eksemplerne under feltet.",
+      });
     } finally {
       setAiLoading(false);
     }
@@ -160,26 +192,41 @@ export default function AdminStatistikPage() {
 
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
-    <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Beskyttet statistik</AlertTitle><AlertDescription>Personer, der har fravalgt statistik, indgår ikke. Adminresultater vises fra {data?.minimum ?? 1} kontrakt og markeres som statistisk usikre under {data?.lowSampleThreshold ?? 5} kontrakter. Rå kontrakt- og løndata sendes ikke til browseren.</AlertDescription></Alert>
-    {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
-    {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.contractCount} kontrakter. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} kontrakter.</AlertDescription></Alert>}
-    <p className="text-xs text-muted-foreground">Inflationsdata: Danmarks Statistik PRIS01 · senest synkroniseret {data?.cpiUpdatedAt ? new Date(data.cpiUpdatedAt).toLocaleDateString("da-DK") : "endnu ikke"}.</p>
+
+    {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
+      <Alert>
+        <Sparkles className="h-4 w-4" />
+        <AlertTitle id="demo-statistics-title">Eksempler på statistikvisninger</AlertTitle>
+        <AlertDescription>Der er endnu ikke data nok til at vise mindst to reelle statistikker. Diagrammerne nedenfor bruger fiktive eksempeldata og indgår ikke i beregninger, forespørgsler eller eksport.</AlertDescription>
+      </Alert>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle className="text-base">Demonstration: lønudvikling</CardTitle></CardHeader>
+          <CardContent className="h-[300px]"><ResponsiveChartContainer><LineChart data={demoSalary}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${Number(value) / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-base">Demonstration: rettighedsforbehold</CardTitle></CardHeader>
+          <CardContent className="h-[300px]"><ResponsiveChartContainer><BarChart data={demoRights} layout="vertical"><CartesianGrid strokeDasharray="3 3" /><XAxis type="number" domain={[0, 100]} tickFormatter={value => `${value}%`} /><YAxis type="category" dataKey="name" width={130} /><Tooltip contentStyle={tooltipStyle} formatter={value => `${value}%`} /><Bar dataKey="value" name="Andel" fill="#8b5cf6" /></BarChart></ResponsiveChartContainer></CardContent>
+        </Card>
+      </div>
+    </section>}
 
     <Card>
       <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Sparkles className="h-4 w-4" />Spørg statistikken</CardTitle></CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">Skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?” AI’en vælger kun mellem godkendte mål og filtre. Den kan ikke se personer eller skrive databasekode.</p>
+        <p className="text-sm text-muted-foreground">Spørg databasen, skriv fx: “Hvordan har gennemsnitslønnen udviklet sig siden 2022?”</p>
         <Textarea value={aiQuestion} onChange={event => setAiQuestion(event.target.value)} placeholder="Skriv et spørgsmål om de anonymiserede data…" />
         <div className="flex flex-wrap gap-2">{querySuggestions.map(suggestion => <Button key={suggestion} type="button" size="sm" variant="outline" className="h-auto whitespace-normal text-left" onClick={() => void askStatistics(suggestion)} disabled={aiLoading}>{suggestion}</Button>)}</div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap"><Button className="w-full sm:w-auto" onClick={() => void askStatistics()} disabled={aiLoading || aiQuestion.trim().length < 5}>{aiLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Undersøg</Button><Popover><PopoverTrigger asChild><Button type="button" variant="outline">{selectedCharts.length ? `${selectedCharts.length} resultatvisninger` : "Resultatvisning: Automatisk"}</Button></PopoverTrigger><PopoverContent className="w-80"><div className="mb-2 flex items-center justify-between"><span className="text-sm font-medium">Vælg resultat</span><Button size="sm" variant="ghost" onClick={() => setSelectedCharts([])}>Automatisk</Button></div><div className="max-h-72 space-y-1 overflow-y-auto">{STATISTICS_CHART_TYPES.map(chart => <label key={chart} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"><input type="checkbox" checked={selectedCharts.includes(chart)} onChange={event => setSelectedCharts(current => event.target.checked ? [...current, chart] : current.filter(item => item !== chart))} />{chartLabels[chart]}</label>)}</div></PopoverContent></Popover></div>
-        {aiError && <Alert variant="destructive"><AlertDescription>{aiError}</AlertDescription></Alert>}
-        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertDescription>Resultatet skjules, fordi en gruppe har færre end {aiAnswer.minimum ?? 2} kontrakter.</AlertDescription></Alert>}
+        {aiError && <Alert variant="destructive"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
+        {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 2} kontrakter. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
           <p className="text-sm">{aiAnswer.explanation}</p>
-          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 kontrakter.</AlertDescription></Alert>}
+          {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
           {rejectedCharts.map(result => <Alert key={result.chart}><AlertTitle>{chartLabels[result.chart]} kan ikke bruges</AlertTitle><AlertDescription>{result.reason}</AlertDescription></Alert>)}
           {effectiveCharts.filter(chart => chart !== "table" && evaluateChartEligibility(chart, chartShape).eligible).map(chart => <Card key={chart}><CardHeader><CardTitle className="text-sm">{chartLabels[chart]}</CardTitle></CardHeader><CardContent className="h-[320px]"><ResponsiveChartContainer><AiChartView chart={chart} rows={aiChart.rows} labels={aiChart.labels} /></ResponsiveChartContainer></CardContent></Card>)}
           {(effectiveCharts.includes("table") || selectedCharts.length === 0) && <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Inflationsindeks", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, row.value.toLocaleString("da-DK"), row.contractCount, row.lowSample ? "Usikkert" : "≥ 5", row.inflationIndex ?? "—", row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />}
+          {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 kontrakter.</AlertDescription></Alert>}
         </div>}
       </CardContent>
     </Card>
@@ -197,7 +244,7 @@ export default function AdminStatistikPage() {
     </div>
 
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok kontrakter til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} kontrakter. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
-      <div className="grid gap-4 sm:grid-cols-3"><Card><CardHeader><CardTitle className="text-sm">Rettighedshavere</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.memberCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Kontrakter</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.contractCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Samlede bidrag</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{formatKr(contributionTotal)}</CardContent></Card></div>
+      <div className="hidden gap-4 sm:grid sm:grid-cols-3"><Card><CardHeader><CardTitle className="text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.memberCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.contractCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
         <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatKr(row.monthlyRate), row.lowSample ? "Statistisk usikkert" : "≥ 5 kontrakter"])} /></TabsContent>
         <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, `${row.avgPensionPercent}%`])} /></TabsContent>
@@ -209,6 +256,8 @@ export default function AdminStatistikPage() {
         <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause, row.withoutClause, `${row.pct}%`])} /></TabsContent>
         <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 2} kontrakter, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
       </Tabs>
+      {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
+      {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.contractCount} kontrakter. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} kontrakter.</AlertDescription></Alert>}
     </>}
   </div>;
 }

@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useI18n } from "@/lib/i18n"
 
-type UseCase = "contract_extraction" | "contract_advice"
+type UseCase = "contract_extraction" | "contract_advice" | "statistics_query"
 type Model = { provider: "anthropic" | "google"; model: string; label: string; description: string; useCases: UseCase[] }
 type Setting = { use_case: UseCase; provider: string; model: string; prompt_caching_enabled: boolean; updated_at: string }
 type Price = { provider: string; model: string; pricing_mode: "standard" | "batch"; input_usd_per_million: number; output_usd_per_million: number; cache_write_usd_per_million: number; cache_read_usd_per_million: number }
@@ -30,8 +30,8 @@ type Payload = {
 
 const COPY = {
     da: {
-        title: "Forbrug og modeller", subtitle: "Faktiske tokens, priser og permanente modelvalg for kontrakt-AI.",
-        month: "Denne måned", runs: "Kontraktbehandlinger", extraction: "Aflæsning", advice: "Rådgivning", tokens: "Tokens i alt",
+        title: "Forbrug og modeller", subtitle: "Faktiske tokens, priser og permanente modelvalg for kontrakt- og statistik-AI.",
+        month: "Denne måned", runs: "AI-behandlinger", extraction: "Aflæsning", advice: "Rådgivning", statistics: "Statistik", tokens: "Tokens i alt",
         models: "Aktive modeller", model: "Model", save: "Gem modelvalg", caching: "Anthropic Prompt Caching (5 min.)",
         cachingHelp: "Kan reducere inputprisen ved gentagne kald med samme faste prompt. Første cache-write er dyrere.",
         readOnly: "Kun superadmin kan ændre modeller. Du ser forbruget for din organisation.", comparison: "Prisforskel på periodens tokenprofil",
@@ -41,8 +41,8 @@ const COPY = {
         estimated: "~ betyder estimeret tokenforbrug for embeddings.",
     },
     en: {
-        title: "Usage and models", subtitle: "Actual tokens, prices and permanent model choices for contract AI.",
-        month: "This month", runs: "Contract operations", extraction: "Extraction", advice: "Advice", tokens: "Total tokens",
+        title: "Usage and models", subtitle: "Actual tokens, prices and permanent model choices for contract and statistics AI.",
+        month: "This month", runs: "AI operations", extraction: "Extraction", advice: "Advice", statistics: "Statistics", tokens: "Total tokens",
         models: "Active models", model: "Model", save: "Save model choice", caching: "Anthropic Prompt Caching (5 min)",
         cachingHelp: "Can reduce input cost for repeated calls with the same stable prompt. The first cache write costs more.",
         readOnly: "Only superadmins can change models. You are viewing usage for your organisation.", comparison: "Price difference for the period's token profile",
@@ -95,6 +95,7 @@ export function AiUsageModelsTab() {
             runs: new Set(events.map(event => event.run_id).filter(Boolean)).size,
             extraction: sum(events.filter(event => event.use_case === "contract_extraction"), "cost_dkk"),
             advice: sum(events.filter(event => event.use_case === "contract_advice"), "cost_dkk"),
+            statistics: sum(events.filter(event => event.use_case === "statistics_query"), "cost_dkk"),
             tokens: sum(events, "input_tokens") + sum(events, "output_tokens"),
         }
     }, [filteredEvents])
@@ -143,12 +144,13 @@ export function AiUsageModelsTab() {
         { label: text.runs, value: formatNumber(totals.runs), sub: "", icon: Activity },
         { label: text.extraction, value: formatDkk(totals.extraction), sub: "", icon: Database },
         { label: text.advice, value: formatDkk(totals.advice), sub: "", icon: BrainCircuit },
+        { label: text.statistics, value: formatDkk(totals.statistics), sub: "", icon: Activity },
         { label: text.tokens, value: formatNumber(totals.tokens), sub: "", icon: ShieldCheck },
     ]
 
     return <div className="min-w-0 space-y-4 sm:space-y-6">
         <div className="flex min-w-0 flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between"><div className="min-w-0"><h2 className="text-lg font-semibold">{text.title}</h2><p className="text-sm text-muted-foreground">{text.subtitle}</p></div>{data.caller.role === "superadmin" && data.organisations.length > 0 && <div className="w-full space-y-1 sm:w-64"><Label>{locale === "en" ? "Organisation" : "Organisation"}</Label><Select value={orgFilter} onValueChange={setOrgFilter}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{locale === "en" ? "All organisations" : "Alle organisationer"}</SelectItem>{data.organisations.map(org => <SelectItem key={org.id} value={org.id}>{org.name}</SelectItem>)}</SelectContent></Select></div>}</div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{cards.map(card => <Card key={card.label}>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{cards.map(card => <Card key={card.label}>
             <CardHeader className="pb-2"><CardDescription className="flex items-center gap-2"><card.icon className="h-4 w-4" />{card.label}</CardDescription></CardHeader>
             <CardContent><p className="text-2xl font-semibold tabular-nums">{card.value}</p>{card.sub && <p className="text-xs text-muted-foreground">{card.sub}</p>}</CardContent>
         </Card>)}</div>
@@ -164,11 +166,11 @@ export function AiUsageModelsTab() {
         </CardContent></Card>
 
         <Card><CardHeader><CardTitle>{text.models}</CardTitle>{!data.caller.canEdit && <CardDescription>{text.readOnly}</CardDescription>}</CardHeader>
-            <CardContent className="grid gap-5 lg:grid-cols-2">{(["contract_extraction", "contract_advice"] as UseCase[]).map(useCase => {
+            <CardContent className="grid gap-5 lg:grid-cols-3">{(["contract_extraction", "contract_advice", "statistics_query"] as UseCase[]).map(useCase => {
                 const draft = drafts[useCase]
                 const options = data.models.filter(model => model.useCases.includes(useCase))
                 return <div key={useCase} className="min-w-0 space-y-3 rounded-lg border p-3 sm:p-4">
-                    <div><h3 className="font-medium">{useCase === "contract_extraction" ? text.extraction : text.advice}</h3><p className="text-xs text-muted-foreground">{options.find(model => model.model === draft.model)?.description}</p></div>
+                    <div><h3 className="font-medium">{useCase === "contract_extraction" ? text.extraction : useCase === "contract_advice" ? text.advice : text.statistics}</h3><p className="text-xs text-muted-foreground">{options.find(model => model.model === draft.model)?.description}</p></div>
                     <div className="space-y-1.5"><Label>{text.model}</Label><Select disabled={!data.caller.canEdit} value={`${draft.provider}/${draft.model}`} onValueChange={value => {
                         const [provider, model] = value.split("/")
                         setDrafts(current => current ? { ...current, [useCase]: { provider, model, promptCachingEnabled: provider === "anthropic" ? current[useCase].promptCachingEnabled : false } } : current)
@@ -187,7 +189,7 @@ export function AiUsageModelsTab() {
                 const usd = relevant.reduce((total, event) => total + (Number(event.input_tokens) * Number(standard.input_usd_per_million) + Number(event.output_tokens) * Number(standard.output_usd_per_million) + Number(event.cache_write_tokens) * Number(standard.cache_write_usd_per_million) + Number(event.cache_read_tokens) * Number(standard.cache_read_usd_per_million)) / 1_000_000, 0)
                 const rate = Number(data.exchangeRate?.usd_dkk ?? 0)
                 return <div key={model.model} className="rounded-lg border p-3"><p className="break-words font-medium">{model.label}</p><div className="mt-2 grid grid-cols-2 gap-2 text-sm"><div><p className="text-xs text-muted-foreground">{text.standard}</p><p className="font-medium">{rate ? formatDkk(usd * rate) : `$${usd.toFixed(3)}`}</p></div><div><p className="text-xs text-muted-foreground">{text.batch}</p><p className="font-medium">{rate ? formatDkk(usd * rate * .5) : `$${(usd * .5).toFixed(3)}`}</p></div></div></div>
-            })}</div><div className="hidden overflow-x-auto sm:block"><Table><TableHeader><TableRow><TableHead>{text.model}</TableHead><TableHead>{text.extraction}</TableHead><TableHead>{text.advice}</TableHead><TableHead>{text.standard}</TableHead><TableHead>{text.batch}</TableHead></TableRow></TableHeader><TableBody>{data.models.map(model => {
+            })}</div><div className="hidden overflow-x-auto sm:block"><Table><TableHeader><TableRow><TableHead>{text.model}</TableHead><TableHead>{text.extraction}</TableHead><TableHead>{text.advice}</TableHead><TableHead>{text.statistics}</TableHead><TableHead>{text.standard}</TableHead><TableHead>{text.batch}</TableHead></TableRow></TableHeader><TableBody>{data.models.map(model => {
                 const relevant = filteredEvents.filter(event => model.useCases.includes(event.use_case))
                 const standard = data.prices.find(price => price.provider === model.provider && price.model === model.model && price.pricing_mode === "standard")
                 if (!standard) return null
@@ -198,7 +200,7 @@ export function AiUsageModelsTab() {
                     Number(event.cache_read_tokens) * Number(standard.cache_read_usd_per_million)
                 ) / 1_000_000, 0)
                 const rate = Number(data.exchangeRate?.usd_dkk ?? 0)
-                return <TableRow key={model.model}><TableCell className="font-medium">{model.label}</TableCell><TableCell>{model.useCases.includes("contract_extraction") ? "✓" : "—"}</TableCell><TableCell>{model.useCases.includes("contract_advice") ? "✓" : "—"}</TableCell><TableCell>{rate ? formatDkk(usd * rate) : `$${usd.toFixed(3)}`}</TableCell><TableCell>{rate ? formatDkk(usd * rate * .5) : `$${(usd * .5).toFixed(3)}`}</TableCell></TableRow>
+                return <TableRow key={model.model}><TableCell className="font-medium">{model.label}</TableCell><TableCell>{model.useCases.includes("contract_extraction") ? "✓" : "—"}</TableCell><TableCell>{model.useCases.includes("contract_advice") ? "✓" : "—"}</TableCell><TableCell>{model.useCases.includes("statistics_query") ? "✓" : "—"}</TableCell><TableCell>{rate ? formatDkk(usd * rate) : `$${usd.toFixed(3)}`}</TableCell><TableCell>{rate ? formatDkk(usd * rate * .5) : `$${(usd * .5).toFixed(3)}`}</TableCell></TableRow>
             })}</TableBody></Table></div></>}
         </CardContent></Card>
 

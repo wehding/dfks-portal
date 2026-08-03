@@ -1691,7 +1691,7 @@ function SatserTab() {
             ) : satser.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-4">Ingen satser fundet. Kør SQL-migration og seed i Supabase.</p>
             ) : (
-                <div className="rounded-md border">
+                <div className="max-w-full overflow-x-auto rounded-md border">
                     <table className="w-full text-xs">
                         <thead>
                             <tr className="border-b bg-muted/40">

@@ -142,7 +142,6 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     include_drafts: includeDrafts,
   });
   if (error) throw new Error(error.message);
-  const { data: cpiLatest } = await db.schema("analytics").from("cpi_monthly").select("synced_at").order("synced_at", { ascending: false }).limit(1).maybeSingle();
 
   const sourceRows: ContractRow[] = ((data ?? []) as FactRow[]).map(fact => ({
     id: fact.contract_id,
@@ -187,7 +186,6 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
       contractCount: rows.length,
       years,
       includeDrafts,
-      cpiUpdatedAt: cpiLatest?.synced_at ?? null,
     };
   }
 
@@ -273,7 +271,6 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     minimum: MIN_STATISTICS_CONTRACTS,
     lowSampleThreshold: LOW_SAMPLE_CONTRACTS,
     includeDrafts,
-    cpiUpdatedAt: cpiLatest?.synced_at ?? null,
     ...sampleMeta(rows),
     years,
     salary,

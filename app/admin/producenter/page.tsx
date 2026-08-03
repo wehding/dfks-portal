@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
 import { AdminListTools } from "@/components/admin/admin-list-tools";
+import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
 import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
@@ -43,6 +44,7 @@ type SyncGroup = { groupCode: string; groupLabel: string; membershipType: "ordin
 type SyncPreviewItem = { sourceKey: string; sourceName: string; ownerCeoText: string | null; website: string | null; groups: SyncGroup[]; recommendation: "match" | "create" | "review"; suggestedEmployerId: string | null; suggestedEmployerName: string | null; candidates: SyncCandidate[] };
 type SyncPreview = { runId: string; verifiedOn: string; items: SyncPreviewItem[]; summary: { sourceRows: number; uniqueProducers: number; matchedCount: number; reviewCount: number; createCount: number; missingCount: number } };
 type SyncDecision = { action: "match" | "create" | "skip"; employerId?: string | null };
+type ProducerDeletionPreview = { id: string; name: string; workCount: number; contractCount: number; organisationCount: number; mergeReferences: number; canDelete: boolean };
 
 const emptyLegalEntity = (): LegalEntityDraft => ({ legalName: "", registrationNumber: "", address: "", contactPhone: "", contactEmail: "", website: "", registrationStatus: "", industryCode: "", industryDescription: "", companyType: "", isPrimary: false });
 
@@ -66,6 +68,11 @@ export default function ProducersPage() {
   const [details, setDetails] = useState<Record<string, DetailState>>({});
   const [merging, setMerging] = useState(false);
   const [canMerge, setCanMerge] = useState(false);
+  const [canDelete, setCanDelete] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<ProducerDeletionPreview[]>([]);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [editor, setEditor] = useState<ProducerDraft | null>(null);
   const [savingEditor, setSavingEditor] = useState(false);
@@ -105,7 +112,7 @@ export default function ProducersPage() {
         const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error);
-        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []); setBroadcasters(json.broadcasters ?? []); setProducerTypes(json.producerTypes ?? []); setCanMerge(Boolean(json.canMerge));
+        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []); setBroadcasters(json.broadcasters ?? []); setProducerTypes(json.producerTypes ?? []); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
       } catch (error) {
         if ((error as Error).name !== "AbortError") setProducers([]);
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -360,6 +367,37 @@ export default function ProducersPage() {
       toast.error(error instanceof Error ? error.message : t("common.error"));
     } finally { setMerging(false); }
   };
+  const previewSelectedDeletion = async () => {
+    setDeleteOpen(true);
+    setDeleteLoading(true);
+    setDeletePreview([]);
+    setDeleteConfirmation("");
+    try {
+      const response = await fetch("/api/admin/producers", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: selected, preview: true }) });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error);
+      setDeletePreview(json.preview ?? []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Producenterne kunne ikke kontrolleres");
+      setDeleteOpen(false);
+    } finally { setDeleteLoading(false); }
+  };
+  const deleteSelected = async () => {
+    if (deleteConfirmation !== "SLET" || deletePreview.some(item => !item.canDelete)) return;
+    setDeleteLoading(true);
+    try {
+      const response = await fetch("/api/admin/producers", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: selected, confirmation: deleteConfirmation }) });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error);
+      toast.success(`${json.deletedCount ?? 0} producent${json.deletedCount === 1 ? "" : "er"} blev slettet permanent.`);
+      setProducers(current => current.filter(producer => !selected.includes(producer.id)));
+      setSelected([]);
+      setDeleteOpen(false);
+      setDeletePreview([]);
+      setDeleteConfirmation("");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Producenterne kunne ikke slettes"); }
+    finally { setDeleteLoading(false); }
+  };
 
   const DetailPanel = ({ producer, type }: { producer: Producer; type: DetailType }) => {
     const key = detailKey(producer.id, type); const state = details[key];
@@ -408,12 +446,12 @@ export default function ProducersPage() {
       <div className="relative flex-1 lg:max-w-sm"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input value={query} onChange={event => setQuery(event.target.value)} className="pl-9 pr-9" placeholder={t("admin.producers.search")} />{query && <button type="button" aria-label={t("common.clearSearch")} onClick={() => setQuery("")} className="absolute right-3 top-2.5"><X className="h-4 w-4" /></button>}</div>
       <Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full lg:w-48"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allStatuses")}</SelectItem><SelectItem value="attention">{statusLabel("attention")}</SelectItem><SelectItem value="active">{statusLabel("active")}</SelectItem><SelectItem value="inactive">{statusLabel("inactive")}</SelectItem></SelectContent></Select>
       <Select value={associationGroup} onValueChange={setAssociationGroup}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder="Producenttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle producenttyper</SelectItem><SelectItem value="ordinary">Medlem af Producentforeningen</SelectItem><SelectItem value="associate">Tilknyttet medlem</SelectItem><SelectItem value="none">Ikke medlem</SelectItem><SelectItem value="unknown">Uklassificeret medlemsstatus</SelectItem><SelectItem value="documentary">Dokumentarfilm</SelectItem><SelectItem value="feature_fiction">Spillefilm / fiktion</SelectItem><SelectItem value="tv">TV</SelectItem><SelectItem value="advertising">Reklamefilm</SelectItem><SelectItem value="dubbing">Dubbing</SelectItem><SelectItem value="animation">Animation</SelectItem><SelectItem value="streamer">Streamer</SelectItem><SelectItem value="broadcaster">Broadcaster</SelectItem></SelectContent></Select>
-      <Select value={rightsHolderId} onValueChange={setRightsHolderId}><SelectTrigger className="w-full lg:w-60"><SelectValue placeholder={t("admin.producers.rightsHolder")} /></SelectTrigger><SelectContent><SelectItem value="all">{t("admin.producers.allRightsHolders")}</SelectItem>{rightsHolders.map(holder => <SelectItem key={holder.id} value={holder.id}>{holder.full_name}</SelectItem>)}</SelectContent></Select>
+      <div className="w-full lg:w-72"><RightsHolderAutocomplete options={rightsHolders} value={rightsHolderId === "all" ? "" : rightsHolderId} onChange={id => setRightsHolderId(id || "all")} placeholder={t("admin.producers.allRightsHolders")} /></div>
       <Select value={sort} onValueChange={setSort}><SelectTrigger className="w-full lg:hidden"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="name">{t("admin.producers.producer")}</SelectItem><SelectItem value="works">{t("admin.producers.works")}</SelectItem><SelectItem value="contracts">{t("admin.producers.contracts")}</SelectItem><SelectItem value="latest">{t("admin.producers.latest")}</SelectItem></SelectContent></Select>
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
     </div>
     <Button variant="outline" className="w-full md:hidden" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>
-    {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
+    {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}{canDelete && <Button variant="destructive" size="sm" disabled={deleteLoading} onClick={() => void previewSelectedDeletion()}><Trash2 className="mr-2 h-4 w-4" />Slet valgte</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
 
     <AdminListTools pageKey="producers" title="Producenter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Producent",index:2,required:true},{id:"parent",label:"Broadcaster/moderselskab",index:3},{id:"status",label:"Status",index:4},{id:"works",label:"Værker",index:5},{id:"contracts",label:"Kontrakter",index:6},{id:"latest",label:"Seneste aktivitet",index:7}]} />
     {loading ? <TableSkeleton columns={7} rows={8} /> : <>
@@ -437,6 +475,21 @@ export default function ProducersPage() {
         return <Fragment key={producer.id}><TableRow><TableCell><input type="checkbox" checked={selected.includes(producer.id)} onChange={() => toggleSelected(producer.id)} aria-label={t("admin.producers.selectProducer", { name: producer.name })} /></TableCell><TableCell className="font-medium"><div className="flex flex-wrap items-center gap-2"><ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleProducer(producer.id)} label={isExpanded ? `Skjul detaljer for ${producer.name}` : `Vis detaljer for ${producer.name}`} /><button type="button" className="text-left hover:underline" onClick={() => openEdit(producer)}>{producer.name}</button>{producer.dfi_company_id && <span className="text-xs font-normal text-muted-foreground">DFI #{producer.dfi_company_id}</span>}<ProducerAssociationBadge memberships={producer.association_memberships} />{producer.producer_types.map(type => <Badge key={`${type.source}-${type.id}`} variant="secondary">{type.name}</Badge>)}</div></TableCell><TableCell>{broadcaster ? <Badge variant="outline" className="gap-1"><Radio className="h-3 w-3" />{broadcaster.name}</Badge> : producer.parent_name ?? "—"}</TableCell><TableCell><Badge variant="outline" className={statusTone[producer.status]}>{statusLabel(producer.status)}</Badge></TableCell><TableCell>{producer.work_count}</TableCell><TableCell>{producer.contract_count}</TableCell><TableCell>{producer.latest_activity ? new Date(producer.latest_activity).toLocaleDateString(locale === "da" ? "da-DK" : "en-GB") : "—"}</TableCell></TableRow>{isExpanded && <TableRow><TableCell colSpan={7} className="p-0"><ProducerDetails producer={producer} /></TableCell></TableRow>}</Fragment>;
       }) : <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">{t("common.noResults")}</TableCell></TableRow>}</TableBody></Table></ResponsiveTableFrame>
     </>}
+
+    <Dialog open={deleteOpen} onOpenChange={openState => { if (!deleteLoading) setDeleteOpen(openState); }}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Slet valgte producenter permanent</DialogTitle>
+          <DialogDescription>Producentregisteret deles mellem alle organisationer i systemet. Permanent sletning kan ikke fortrydes.</DialogDescription>
+        </DialogHeader>
+        {deleteLoading && !deletePreview.length ? <div className="flex items-center justify-center py-10 text-sm text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Kontrollerer tilknytninger på tværs af organisationer…</div> : <div className="space-y-4">
+          <div className="max-h-64 space-y-2 overflow-y-auto">{deletePreview.map(item => <div key={item.id} className={`rounded-lg border p-3 text-sm ${item.canDelete ? "" : "border-destructive/50 bg-destructive/5"}`}><div className="flex items-start justify-between gap-3"><span className="font-medium">{item.name}</span><Badge variant={item.canDelete ? "outline" : "destructive"}>{item.canDelete ? "Kan slettes" : "Har tilknytninger"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">{item.workCount} værker · {item.contractCount} kontrakter · {item.organisationCount} organisationer{item.mergeReferences ? ` · ${item.mergeReferences} sammenlægningsreferencer` : ""}</p></div>)}</div>
+          {deletePreview.some(item => !item.canDelete) && <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">Producenter med værker, kontrakter eller sammenlægningshistorik slettes ikke. Fjern dem fra valget, eller sammenlæg dem med den korrekte producent.</div>}
+          <div className="space-y-2"><Label htmlFor="confirm-producer-delete">Skriv SLET for at bekræfte</Label><Input id="confirm-producer-delete" value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} autoComplete="off" /></div>
+        </div>}
+        <DialogFooter><Button type="button" variant="outline" disabled={deleteLoading} onClick={() => setDeleteOpen(false)}>Annuller</Button><Button type="button" variant="destructive" disabled={deleteLoading || !deletePreview.length || deletePreview.some(item => !item.canDelete) || deleteConfirmation !== "SLET"} onClick={() => void deleteSelected()}>{deleteLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Slet permanent</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <Dialog open={Boolean(editor)} onOpenChange={openState => { if (!openState) setEditor(null); }}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">

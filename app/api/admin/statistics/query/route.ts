@@ -74,6 +74,30 @@ function categoryLabel(category: StatisticsCategory) {
   return category === "feature" ? "Spillefilm" : category === "documentary" ? "Dokumentarfilm" : category;
 }
 
+function safeQueryFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (error instanceof SyntaxError) return {
+    reason: "Statistikassistenten returnerede ikke en gyldig, sikker forespørgselsplan.",
+    suggestion: "Skriv ét spørgsmål ad gangen og nævn gerne mål, periode og eventuel produktionstype.",
+  };
+  if (message.includes("mål, som statistikmotoren ikke tillader")) return {
+    reason: "Spørgsmålet handler om et mål, som den sikre statistikmotor endnu ikke understøtter.",
+    suggestion: "Spørg fx til løn, pension, arbejdsuger, antal kontrakter eller producentbidrag.",
+  };
+  if (message.includes("gruppering pr. år")) return {
+    reason: "Spørgsmålet kræver en gruppering, som ikke kan beregnes sikkert endnu.",
+    suggestion: "Bed om en udvikling eller sammenligning fordelt på år.",
+  };
+  if (message.includes("AI-planen mangler")) return {
+    reason: "Spørgsmålet indeholdt ikke nok oplysninger til at vælge et sikkert statistikmål.",
+    suggestion: "Nævn fx gennemsnitsløn, pension, arbejdsuger eller antal kontrakter.",
+  };
+  return {
+    reason: "Spørgsmålet kunne ikke matches entydigt med de godkendte statistikmål og filtre, eller statistikassistenten var midlertidigt utilgængelig.",
+    suggestion: "Forenkle spørgsmålet, brug ét mål ad gangen, og angiv eventuelt år, producent eller produktionstype.",
+  };
+}
+
 export async function POST(request: NextRequest) {
   const session = await createClient();
   const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
@@ -144,7 +168,13 @@ export async function POST(request: NextRequest) {
 
     if (!allSeries.length) {
       await finishAiUsageRun(runId, "succeeded");
-      return NextResponse.json({ suppressed: true, minimum, plan });
+      return NextResponse.json({
+        suppressed: true,
+        minimum,
+        plan,
+        explanation: "Der blev ikke fundet et tilstrækkeligt datagrundlag til den valgte kombination.",
+        caveats: ["Små eller tomme udsnit returneres ikke som statistik."],
+      });
     }
     const inflation = await getAnnualCpi();
     const inflationMap = new Map(inflation.map(row => [row.year, row.index]));
@@ -162,6 +192,11 @@ export async function POST(request: NextRequest) {
       });
     });
     await finishAiUsageRun(runId, "succeeded");
+    const caveats = [
+      ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem kontrakter og skal tolkes med forsigtighed."] : []),
+      ...(includeDrafts ? ["Kladdekontrakter indgår efter organisationens indstilling og kan indeholde endnu ikke kontrollerede data."] : []),
+      ...(new Set(comparison.map(row => row.year)).size < 2 ? ["Resultatet dækker kun ét år og kan derfor ikke vise en udvikling over tid."] : []),
+    ];
     return NextResponse.json({
       suppressed: false,
       minimum,
@@ -170,11 +205,15 @@ export async function POST(request: NextRequest) {
       includeDrafts,
       lowSample: comparison.some(row => row.lowSample),
       series: comparison,
+      caveats,
       explanation: `${comparison.length} aggregerede datapunkter blev fundet. Adminresultater med 1–4 kontrakter er markeret som statistisk usikre.${includeDrafts ? " Kladder indgår efter organisationens indstilling." : ""}`,
     });
   } catch (error) {
     await finishAiUsageRun(runId, "failed", "invalid_query_plan");
     console.error("[statistics-query]", error instanceof Error ? error.message : "Ukendt fejl");
-    return NextResponse.json({ error: "Spørgsmålet kunne ikke omsættes til en sikker statistikforespørgsel." }, { status: 400 });
+    return NextResponse.json({
+      error: "Forespørgslen kunne ikke gennemføres",
+      ...safeQueryFailure(error),
+    }, { status: 400 });
   }
 }

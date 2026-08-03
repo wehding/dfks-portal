@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
             action: "update",
             entityType: "ai_runtime_settings",
             entityId: body.useCase,
-            entityLabel: body.useCase === "contract_extraction" ? "Kontraktaflæsning" : "Kontraktrådgivning",
+            entityLabel: body.useCase === "contract_extraction" ? "Kontraktaflæsning" : body.useCase === "contract_advice" ? "Kontraktrådgivning" : "Statistikforespørgsler",
             changes: [
                 { field: "model", old: before ? `${before.provider}/${before.model}` : null, new: `${selected.provider}/${selected.model}` },
                 { field: "prompt_caching_enabled", old: before?.prompt_caching_enabled ?? false, new: promptCachingEnabled },

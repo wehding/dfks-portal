@@ -12,7 +12,7 @@ export function PageHeader({ title, subtitle, actions, hideTitleOnMobile = true,
         : ""
 
     return (
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 max-w-full flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
                 <h1 className={`${titleVisibility} text-xl font-semibold tracking-tight sm:text-2xl`}>{title}</h1>
                 {subtitle && (
@@ -20,7 +20,7 @@ export function PageHeader({ title, subtitle, actions, hideTitleOnMobile = true,
                 )}
             </div>
             {actions && (
-                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end [&>*]:w-full sm:[&>*]:w-auto">
+                <div className="flex min-w-0 max-w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end [&>*]:w-full sm:[&>*]:w-auto">
                     {actions}
                 </div>
             )}

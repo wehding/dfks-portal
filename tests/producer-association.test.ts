@@ -28,8 +28,14 @@ test("parser medlemskolonner efter navn og bevarer Ejere / CEO samlet", () => {
     postalCity: "1000 København K",
     ownerCeoText: "Ada & Bo",
     website: "https://afilm.dk",
-    membershipType: "unknown",
+    membershipType: "ordinary",
   }]);
+});
+
+test("officielle medlemsrækker er ordinære medmindre associeret er angivet", () => {
+  const associatedTable = '<table><thead><tr><th>Virksomhedsnavn</th><th>Ejere / CEO</th><th>Website</th><th>Medlemstype</th></tr></thead><tr><td>Associeret Film</td><td>Ada</td><td></td><td>Associeret</td></tr></table>';
+  const rows = parseAssociationTableScript(`document.write(${JSON.stringify(associatedTable)});`, documentary);
+  assert.equal(rows[0].membershipType, "associate");
 });
 
 test("afviser tomme og strukturelt ændrede medlemslister", () => {
