@@ -8,6 +8,7 @@ import MineVaerkerClient, { memberOverviewItemsToAssignments } from "./MineVaerk
 import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerkerClient";
 import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
+import { resolveBranding } from "@/lib/branding";
 
 type ContractWorkIdRow = { work_id: string | null };
 
@@ -21,6 +22,7 @@ export default function MineVaerkerPage() {
     userName: string;
     dfiPersonId: number | null;
     contractedWorkIds: string[];
+    organisationShortName: string;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -40,7 +42,24 @@ export default function MineVaerkerPage() {
           .maybeSingle();
 
         if (rhError) throw rhError;
-        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] }); return; }
+        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], organisationShortName: "DFKS" }); return; }
+
+        const { data: roleRow } = await supabase
+          .from("user_org_roles")
+          .select("org_id")
+          .eq("user_id", user.id)
+          .limit(1)
+          .maybeSingle();
+        const { data: organisation } = roleRow?.org_id
+          ? await supabase
+              .from("organisations")
+              .select("name, branding")
+              .eq("id", roleRow.org_id)
+              .maybeSingle()
+          : { data: null };
+        const organisationShortName = organisation
+          ? resolveBranding(organisation as never).short_name
+          : "DFKS";
 
         const overview = await fetchMemberWorkOverview({ rightsHolderId: rh.id });
         if (!overview.success) throw new Error(overview.error ?? "Mine værker kunne ikke indlæses.");
@@ -74,13 +93,14 @@ export default function MineVaerkerPage() {
           userName: rh.full_name ?? "",
           dfiPersonId: rh.dfi_person_id ?? null,
           contractedWorkIds: [...contractedWorkIdSet],
+          organisationShortName,
         });
 
         void linkApprovedCoEditorSuggestionsForRightsHolder({ rightsHolderId: rh.id, fullName: rh.full_name ?? "" }).catch(() => null);
       } catch (error) {
         console.error("Mine værker kunne ikke indlæses:", error);
         setLoadError(error instanceof Error ? error.message : "Mine værker kunne ikke indlæses.");
-        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [] });
+        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], organisationShortName: "DFKS" });
       }
     }
 
@@ -110,6 +130,7 @@ export default function MineVaerkerPage() {
       userName={data.userName}
       dfiPersonId={data.dfiPersonId}
       contractedWorkIds={data.contractedWorkIds}
+      organisationShortName={data.organisationShortName}
     />
   );
 }
