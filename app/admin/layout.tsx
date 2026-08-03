@@ -44,6 +44,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
+import { AppShellTopBar } from "@/components/navigation/app-shell-top-bar"
 import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
 import { AdminListAutoTools } from "@/components/admin/admin-list-tools"
@@ -375,13 +376,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </SidebarFooter>
             </Sidebar>
 
-            <SidebarInset className="min-w-0 max-w-full overflow-x-hidden">
-                <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-2.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:h-12 sm:px-4 sm:shadow-none">
+            <SidebarInset className="min-w-0 max-w-full overflow-x-clip">
+                <AppShellTopBar>
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
                     <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">{currentPageTitle}</h1>
                     <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{brand.short_name} administration</span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
+                        <AdminCommandMenu inline />
                         {organisations.length > 1 && (
                             <label className="flex items-center gap-1.5">
                                 <Building2 className="hidden h-4 w-4 text-muted-foreground sm:block" />
@@ -400,11 +402,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>
-                </header>
-                <main className="min-w-0 max-w-full flex-1 overflow-x-hidden p-3 sm:p-4 lg:p-6">{children}</main>
+                </AppShellTopBar>
+                <main className="min-w-0 max-w-full flex-1 overflow-x-clip p-3 sm:p-4 lg:p-6">{children}</main>
                 <AdminListAutoTools />
             </SidebarInset>
-            <AdminCommandMenu />
         </SidebarProvider>
     )
 }
