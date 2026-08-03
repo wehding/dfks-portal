@@ -192,7 +192,6 @@ export default function AdminStatistikPage() {
 
   return <div className="space-y-6">
     <PageHeader title={t("admin.stats.title")} subtitle="Anonymiseret statistik for den aktive organisation" />
-    {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
 
     {showDemonstrations && <section className="space-y-4" aria-labelledby="demo-statistics-title">
       <Alert>
@@ -257,6 +256,7 @@ export default function AdminStatistikPage() {
         <TabsContent value="ai"><DataTable headers={["År", "Medlemmer", "Med forbehold", "Uden forbehold", "Andel"]} rows={(data?.aiClauses ?? []).map(row => [row.year, row.memberCount, row.withClause, row.withoutClause, `${row.pct}%`])} /></TabsContent>
         <TabsContent value="individual"><Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Individrangering er deaktiveret</AlertTitle><AlertDescription>Årsindkomst og kontraktdata for enkelte personer vises ikke på adminsiden. Statistikken præsenteres kun som grupper med mindst {data?.minimum ?? 2} kontrakter, og små grupper markeres som usikre.</AlertDescription></Alert></TabsContent>
       </Tabs>
+      {data?.includeDrafts && <Alert><AlertTitle>Kladder indgår</AlertTitle><AlertDescription>Organisationens indstilling medtager kladekontrakter. De kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata.</AlertDescription></Alert>}
       {data?.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Det valgte resultat bygger på {data.contractCount} kontrakter. Vær forsigtig med konklusioner baseret på færre end {data.lowSampleThreshold} kontrakter.</AlertDescription></Alert>}
     </>}
   </div>;
