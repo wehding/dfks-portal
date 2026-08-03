@@ -90,11 +90,11 @@ export function AdminListAutoTools() {
       return next;
     });
   };
-  return <div className="fixed inset-x-3 bottom-3 z-40 grid grid-cols-2 gap-2 rounded-lg border bg-background p-2 shadow-lg print:hidden sm:inset-x-auto sm:bottom-4 sm:right-20 sm:flex">
+  return <><div aria-hidden="true" className="h-20 shrink-0 print:hidden sm:hidden" /><div className="fixed inset-x-3 bottom-3 z-40 mb-[env(safe-area-inset-bottom)] grid grid-cols-2 gap-2 rounded-lg border bg-background p-2 shadow-lg print:hidden sm:inset-x-auto sm:bottom-4 sm:right-20 sm:mb-0 sm:flex">
     <details className="relative min-w-0"><summary className="list-none [&>span]:w-full"><Button variant="outline" size="sm" asChild><span><Columns3 className="mr-2 h-4 w-4" />Vælg kolonner</span></Button></summary>
       <div className="absolute bottom-full left-0 right-0 mb-2 max-h-[60vh] min-w-56 overflow-y-auto rounded-md border bg-popover p-2 text-sm shadow-lg sm:left-auto">{columns.map(column => <label key={column.id} className="flex items-center gap-2 px-2 py-1"><input type="checkbox" checked={visible.has(column.id)} disabled={column.required} onChange={() => toggle(column)} />{column.label}</label>)}</div>
     </details>
     <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => window.print()}><Printer className="mr-2 h-4 w-4" />Udskriv / PDF</Button>
     {hiddenRules && <style>{hiddenRules}</style>}
-  </div>;
+  </div></>;
 }
