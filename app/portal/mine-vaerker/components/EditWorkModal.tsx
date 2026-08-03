@@ -122,6 +122,7 @@ interface EditWorkModalProps {
   editScope?: "work" | "season" | "episode";
   seasonWorkIds?: string[];
   initialEpisodeOptions?: SeriesEpisodeOption[];
+  organisationShortName: string;
 }
 
 function emptyCoEditor(): CoEditorDraft {
@@ -226,6 +227,7 @@ export function EditWorkModal({
   editScope = "work",
   seasonWorkIds = [],
   initialEpisodeOptions = [],
+  organisationShortName,
 }: EditWorkModalProps) {
   const { t } = useI18n();
 
@@ -402,7 +404,11 @@ export function EditWorkModal({
     const hasCoEditorChanges = editCoEditors.some(editor => !editor.locked || editor.action === "remove" || editor.action === "change");
     const roleChanged = editRole !== displayRole(assignment.role);
     const hasAdminCorrection = hasWorkDataChanges || hasCoEditorChanges || (editScope !== "season" && roleChanged);
-    if (hasAdminCorrection && !workCorrectionComment.trim()) { setCommentError(true); return; }
+    if (hasAdminCorrection && !workCorrectionComment.trim()) {
+      setCommentError(true);
+      setShowWorkCorrection(true);
+      return;
+    }
     setIsSendingCorrection(true);
 
     try {
@@ -476,11 +482,6 @@ export function EditWorkModal({
           <X className="h-5 w-5" />
         </button>
       </div>
-      <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        {locale === "da"
-          ? "Bemærk: Forkerte værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af dine rettighedsmidler. Alle rettelser skal derfor godkendes af administrator."
-          : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
-      </div>
       {(assignment.works?.work_change_requests ?? []).length > 0 && (
         <div className="mb-5">
           <MessageThread
@@ -493,19 +494,6 @@ export function EditWorkModal({
             nextActionLabel={workNextActionLabel(assignment.works)}
             nextActionTone={workNextActionTone(assignment.works)}
           />
-        </div>
-      )}
-      {assignment.works && (
-        <div className="mb-6 rounded-lg border p-4">
-          <p className="mb-3 text-sm font-semibold text-foreground">Grunddata</p>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <ReadonlyWorkField label="Titel" value={assignment.works.title} />
-            <ReadonlyWorkField label="Type" value={workTypeLabel(assignment.works.type)} />
-            <ReadonlyWorkField label="Premiereår" value={assignment.works.year} />
-            <ReadonlyWorkField label="Længde" value={assignment.works.duration_minutes != null ? `${assignment.works.duration_minutes} min.` : null} />
-            <ReadonlyWorkField label="Produktionsselskab" value={(assignment.works.production_companies ?? []).join(", ")} />
-            <ReadonlyWorkField label="Instruktør" value={assignment.works.director} />
-          </div>
         </div>
       )}
       <div className="space-y-1.5 mb-6">
@@ -711,6 +699,26 @@ export function EditWorkModal({
 
         {showWorkCorrection && workCorrection && (
           <div className="mt-4 grid gap-3">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+              {locale === "da"
+                ? "Bemærk: Forkerte værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af dine rettighedsmidler. Alle rettelser skal derfor godkendes af administrator."
+                : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
+            </div>
+            {assignment.works && (
+              <div className="rounded-lg border p-4">
+                <p className="mb-3 text-sm font-semibold text-foreground">
+                  {locale === "da" ? "Grunddata" : "Current work data"}
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <ReadonlyWorkField label="Titel" value={assignment.works.title} />
+                  <ReadonlyWorkField label="Type" value={workTypeLabel(assignment.works.type)} />
+                  <ReadonlyWorkField label="Premiereår" value={assignment.works.year} />
+                  <ReadonlyWorkField label="Længde" value={assignment.works.duration_minutes != null ? `${assignment.works.duration_minutes} min.` : null} />
+                  <ReadonlyWorkField label="Produktionsselskab" value={(assignment.works.production_companies ?? []).join(", ")} />
+                  <ReadonlyWorkField label="Instruktør" value={assignment.works.director} />
+                </div>
+              </div>
+            )}
             <div className="rounded-md border bg-muted/20 p-3">
               <Label className="text-sm font-medium">Find og kombiner data fra DFI og TMDB</Label>
               <div className="mt-2 flex gap-2">
@@ -819,13 +827,13 @@ export function EditWorkModal({
               <div className="space-y-1.5"><Label>TMDB-id</Label><Input value={workCorrection.tmdb_id} onChange={e => setWorkCorrection({ ...workCorrection, tmdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, tmdb_id: "manual" } })} /></div>
               <div className="space-y-1.5"><Label>IMDb-id</Label><Input value={workCorrection.imdb_id} onChange={e => setWorkCorrection({ ...workCorrection, imdb_id: e.target.value, field_sources: { ...workCorrection.field_sources, imdb_id: "manual" } })} /></div>
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-muted-foreground">{t("works.commentToAdmin")}</Label>
+              <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort rettelsen, fx ændrede værksdata, rolle, afsnit eller medklippere." : "Briefly explain the correction, such as changed work data, role, episodes, or co-editors."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
+              {commentError && <p className="text-xs text-red-600">{locale === "da" ? `Skriv en bemærkning til ${organisationShortName}, før du sender rettelsen.` : `Add a note to ${organisationShortName} before sending the correction.`}</p>}
+            </div>
           </div>
         )}
-      </div>
-      <div className="space-y-1.5">
-        <Label className="text-sm font-medium text-gray-500">{t("works.commentToAdmin")}</Label>
-        <Textarea value={workCorrectionComment} onChange={e => { setWorkCorrectionComment(e.target.value); if (commentError) setCommentError(false); }} placeholder={locale === "da" ? "Forklar kort rettelsen, fx ændrede værksdata, rolle, afsnit eller medklippere." : "Briefly explain the correction, such as changed work data, role, episodes, or co-editors."} className={commentError ? "border-red-500 focus-visible:ring-red-500" : undefined} />
-        {commentError && <p className="text-xs text-red-600">{locale === "da" ? "Skriv en bemærkning til admin, før du sender rettelsen." : "Add a note to admin before sending the correction."}</p>}
       </div>
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end mt-4 pt-4 border-t border-gray-100">
         <Button variant="outline" onClick={onClose}>
@@ -833,7 +841,7 @@ export function EditWorkModal({
         </Button>
         <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
           {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
-          {locale === "da" ? "Send rettelse til admin" : "Send correction to admin"}
+          {locale === "da" ? `Send rettelse til ${organisationShortName}` : `Send correction to ${organisationShortName}`}
         </Button>
       </div>
     </Modal>

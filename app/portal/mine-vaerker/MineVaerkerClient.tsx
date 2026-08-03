@@ -247,7 +247,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, organisationShortName,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -256,6 +256,7 @@ export default function MineVaerkerClient({
   userName: string;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
+  organisationShortName: string;
 }) {
   const { locale, t } = useI18n();
   const [assignments, setAssignments] = useState(initialAssignments);
@@ -1028,6 +1029,7 @@ export default function MineVaerkerClient({
           editScope={editScope}
           seasonWorkIds={editSeasonWorkIds}
           initialEpisodeOptions={editEpisodeOptions}
+          organisationShortName={organisationShortName}
           onWorkUpdated={(message, success, updatedRole, targetId) => {
             setMsg({ type: success ? "success" : "error", text: message });
             if (success) {
