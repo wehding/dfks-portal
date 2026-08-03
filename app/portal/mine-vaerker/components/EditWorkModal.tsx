@@ -482,6 +482,21 @@ export function EditWorkModal({
           <X className="h-5 w-5" />
         </button>
       </div>
+      {assignment.works && (
+        <div className="mb-6 rounded-lg border p-4">
+          <p className="mb-3 text-sm font-semibold text-foreground">
+            {locale === "da" ? "Grunddata" : "Current work data"}
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <ReadonlyWorkField label="Titel" value={assignment.works.title} />
+            <ReadonlyWorkField label="Type" value={workTypeLabel(assignment.works.type)} />
+            <ReadonlyWorkField label="Premiereår" value={assignment.works.year} />
+            <ReadonlyWorkField label="Længde" value={assignment.works.duration_minutes != null ? `${assignment.works.duration_minutes} min.` : null} />
+            <ReadonlyWorkField label="Produktionsselskab" value={(assignment.works.production_companies ?? []).join(", ")} />
+            <ReadonlyWorkField label="Instruktør" value={assignment.works.director} />
+          </div>
+        </div>
+      )}
       {(assignment.works?.work_change_requests ?? []).length > 0 && (
         <div className="mb-5">
           <MessageThread
@@ -704,21 +719,6 @@ export function EditWorkModal({
                 ? "Bemærk: Forkerte værksdata kan gøre det svært at matche værket i systemet, hvilket kan forsinke eller forhindre korrekt udbetaling af dine rettighedsmidler. Alle rettelser skal derfor godkendes af administrator."
                 : "Note: Incorrect work data can make it difficult to match the work in the system, which can delay or prevent correct payment of your rights funds. All corrections must therefore be approved by an administrator."}
             </div>
-            {assignment.works && (
-              <div className="rounded-lg border p-4">
-                <p className="mb-3 text-sm font-semibold text-foreground">
-                  {locale === "da" ? "Grunddata" : "Current work data"}
-                </p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <ReadonlyWorkField label="Titel" value={assignment.works.title} />
-                  <ReadonlyWorkField label="Type" value={workTypeLabel(assignment.works.type)} />
-                  <ReadonlyWorkField label="Premiereår" value={assignment.works.year} />
-                  <ReadonlyWorkField label="Længde" value={assignment.works.duration_minutes != null ? `${assignment.works.duration_minutes} min.` : null} />
-                  <ReadonlyWorkField label="Produktionsselskab" value={(assignment.works.production_companies ?? []).join(", ")} />
-                  <ReadonlyWorkField label="Instruktør" value={assignment.works.director} />
-                </div>
-              </div>
-            )}
             <div className="rounded-md border bg-muted/20 p-3">
               <Label className="text-sm font-medium">Find og kombiner data fra DFI og TMDB</Label>
               <div className="mt-2 flex gap-2">
