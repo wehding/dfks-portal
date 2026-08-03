@@ -12,6 +12,7 @@ import { isUuid } from "@/lib/uuid";
 import { resolveTerminology } from "@/lib/branding";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
+import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
 
 import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -491,7 +492,7 @@ export async function deleteMemberContract(contractId: string) {
   return { success: true };
 }
 
-export async function getContractValidation(contractId: string) {
+export async function getContractValidation(contractId: string, includeEpisodes = true) {
   const user = await currentUser();
   if (!user) return { success: false, error: "Ikke logget ind" };
   const db = createServiceClient();
@@ -537,7 +538,7 @@ export async function getContractValidation(contractId: string) {
 
   const linkedEpisodes: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number; role: string | null }> = [];
   const episodeOptions: Array<{ id: string; title: string; seasonNumber: number; episodeNumber: number }> = [];
-  if (relatedWork && contract.rights_holder_id) {
+  if (includeEpisodes && relatedWork && contract.rights_holder_id) {
     const parentId = relatedWork.parent_work_id ?? relatedWork.id;
     const { episodeWorks } = await fetchSeriesEpisodeWorks(db, contract.org_id, parentId);
     const episodeIds = episodeWorks.map(item => item.id);
@@ -575,7 +576,137 @@ export async function getContractValidation(contractId: string) {
   // hasSavedValidation afspejler om der faktisk findes gemte valideringsdata FØR merge med værkets
   // fallback-felter — så UI kan skelne "endnu ingen validering" fra "felter fyldt fra det linkede værk".
   const hasSavedValidation = Boolean(data?.extracted_data && Object.keys(data.extracted_data as Record<string, unknown>).length > 0);
-  return { success: true, extractedData, linkedEpisodes, episodeOptions, isSeriesWork, hasSavedValidation };
+  return {
+    success: true,
+    extractedData,
+    linkedEpisodes,
+    episodeOptions,
+    isSeriesWork,
+    hasSavedValidation,
+    workIdentifiers: {
+      dfiId: work?.dfi_id ?? null,
+      tmdbId: work?.tmdb_id ?? null,
+      imdbId: work?.imdb_id ?? null,
+    },
+  };
+}
+
+export type ContractValidationSectionKey = "rights" | "dates" | "salary" | "series" | "signature" | "ids" | "work";
+
+const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, readonly string[]> = {
+  rights: [
+    "copydan", "svod", "agreementReferenceStatus", "collectiveAgreement",
+    "collectiveAgreementByReference", "hasOverenskomstIncorporation", "rightsNotApplicable",
+    "royalty", "royaltyPercent", "aiDataMiningClause", "futureRightsReservation",
+    "rightsOverview", "distribution", "hasCreditClause", "_sources", "_lockedFields",
+  ],
+  dates: ["contractDate", "startDate", "endDate", "_sources", "_lockedFields"],
+  salary: [
+    "salary", "salaryUnit", "salarySourceType", "salaryConfidence", "salaryNote",
+    "needsManualSalaryReview", "workingDays", "workingWeeks", "loentillaeg",
+    "pensionPercent", "pensionSupplement", "personalSupplement", "otherSupplements",
+    "holidayPayRate", "betaRate", "_sources", "_lockedFields",
+  ],
+  series: ["seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "_sources", "_lockedFields"],
+  signature: ["signatureStatus", "signatureDate", "signatureEvidence", "signaturePage", "_sources", "_lockedFields"],
+  ids: ["dfiId", "tmdbId", "imdbId"],
+  work: [
+    "workTitle", "director", "duration", "premiereYear", "genre", "description",
+    "productionCountries", "creditedFunction", "creditedRoles", "productionType",
+    "_sources", "_lockedFields",
+  ],
+};
+
+function pickValidationFields(data: Record<string, unknown>, fields: readonly string[]) {
+  return Object.fromEntries(fields.filter(key => key in data).map(key => [key, data[key]]));
+}
+
+function valueText(value: unknown, fallback = "Ukendt") {
+  if (value == null || value === "") return fallback;
+  if (Array.isArray(value)) return value.length ? value.join(", ") : fallback;
+  return String(value);
+}
+
+export async function getContractValidationSummary(contractId: string) {
+  const result = await getContractValidation(contractId, false);
+  if (!result.success || !result.extractedData) return result;
+  const data = result.extractedData;
+  const weeklySalary = weeklySalaryWithPersonalSupplement(data);
+  const copydan = effectiveCopydanStatus({
+    overenskomst: valueText(data.overenskomst, ""),
+    validation_data: data,
+  });
+  return {
+    success: true,
+    found: result.hasSavedValidation,
+    isSeriesWork: result.isSeriesWork,
+    summaries: {
+      rights: { copydan, streaming: normalizeTriState(data.svod ?? (data.rightsOverview as Record<string, unknown> | undefined)?.streamingforbehold), signature: normalizeTriState(data.signatureStatus) },
+      dates: valueText(data.contractDate, "Ingen kontraktdato"),
+      salary: weeklySalary ? `${Math.round(weeklySalary).toLocaleString("da-DK")} kr./uge inkl. tillæg` : "Løn ikke fundet",
+      series: `Sæson ${valueText(data.seasonNumber, "—")} · afsnit ${valueText(data.episodeNumber ?? data.episodeCount, "—")}`,
+      signature: normalizeTriState(data.signatureStatus),
+      ids: [result.workIdentifiers?.dfiId && `DFI ${result.workIdentifiers.dfiId}`, result.workIdentifiers?.tmdbId && `TMDB ${result.workIdentifiers.tmdbId}`, result.workIdentifiers?.imdbId && `IMDb ${result.workIdentifiers.imdbId}`].filter(Boolean).join(" · ") || "Ingen ID'er",
+      work: valueText(data.workTitle, "Ingen værkstitel aflæst"),
+    },
+  };
+}
+
+export async function getContractValidationSection(params: { contractId: string; section: ContractValidationSectionKey }) {
+  if (!CONTRACT_VALIDATION_SECTION_FIELDS[params.section]) return { success: false, error: "Ukendt sektion" };
+  const result = await getContractValidation(params.contractId, params.section === "series");
+  if (!result.success || !result.extractedData) return result;
+  const sectionData = pickValidationFields(result.extractedData, CONTRACT_VALIDATION_SECTION_FIELDS[params.section]);
+  if (params.section === "ids") {
+    sectionData.dfiId = result.workIdentifiers?.dfiId ?? null;
+    sectionData.tmdbId = result.workIdentifiers?.tmdbId ?? null;
+    sectionData.imdbId = result.workIdentifiers?.imdbId ?? null;
+  }
+  if (params.section === "rights" && sectionData.agreementReferenceStatus == null) {
+    sectionData.agreementReferenceStatus = [
+      sectionData.collectiveAgreement,
+      sectionData.collectiveAgreementByReference,
+      sectionData.hasOverenskomstIncorporation,
+    ].some(value => normalizeTriState(value) === "yes") ? "yes" : "unknown";
+  }
+  return {
+    success: true,
+    data: sectionData,
+    linkedEpisodes: params.section === "series" ? result.linkedEpisodes : undefined,
+    episodeOptions: params.section === "series" ? result.episodeOptions : undefined,
+    isSeriesWork: result.isSeriesWork,
+  };
+}
+
+export async function saveContractValidationSection(params: {
+  contractId: string;
+  section: ContractValidationSectionKey;
+  data: Record<string, unknown>;
+  lockedFields?: string[];
+}) {
+  const allowed = CONTRACT_VALIDATION_SECTION_FIELDS[params.section];
+  if (!allowed) return { success: false, error: "Ukendt sektion" };
+  const user = await currentUser();
+  if (!user) return { success: false, error: "Ikke logget ind" };
+  const db = createServiceClient();
+  const { data: contract } = await db.from("contracts").select("id, org_id").eq("id", params.contractId).single();
+  if (!contract || !(await assertAdminForOrg(db, user.id, contract.org_id))) return { success: false, error: "Ikke autoriseret" };
+  const { data: existing } = await db.from("contract_validations").select("extracted_data").eq("contract_id", params.contractId).maybeSingle();
+  const previous = (existing?.extracted_data ?? {}) as Record<string, unknown>;
+  const patch = pickValidationFields(params.data, allowed.filter(key => !key.startsWith("_")));
+  if (patch.rightsOverview && typeof patch.rightsOverview === "object") {
+    patch.rightsOverview = {
+      ...((previous.rightsOverview as Record<string, unknown> | undefined) ?? {}),
+      ...(patch.rightsOverview as Record<string, unknown>),
+    };
+  }
+  const sectionFieldSet = new Set(allowed.filter(key => !key.startsWith("_")));
+  const previousLocks = Array.isArray(previous._lockedFields) ? previous._lockedFields.filter((key): key is string => typeof key === "string") : [];
+  patch._lockedFields = [
+    ...previousLocks.filter(key => !sectionFieldSet.has(key)),
+    ...(params.lockedFields ?? []).filter(key => sectionFieldSet.has(key)),
+  ];
+  return saveContractValidation({ contractId: params.contractId, extractedData: patch });
 }
 
 export async function updateAdminContractEpisodeAssignments(params: {
@@ -683,11 +814,14 @@ export async function saveContractValidation(params: { contractId: string; extra
     {
       contract_id: params.contractId,
       org_id: contract.org_id,
-      holiday_pay_rate: (ed.holidayPayRate as number) ?? null,
-      beta_rate: (ed.betaRate as number) ?? null,
-      has_overenskomst_incorporation: !!ed.collectiveAgreement,
-      has_credit_clause: !!(ed.creditedRoles || ed.creditedFunction || mergedEd.hasCreditClause),
-      notes: (ed.specialNotes as string) ?? null,
+      holiday_pay_rate: (mergedEd.holidayPayRate as number) ?? null,
+      beta_rate: (mergedEd.betaRate as number) ?? null,
+      has_overenskomst_incorporation: normalizeTriState(mergedEd.agreementReferenceStatus) === "yes"
+        || !!mergedEd.collectiveAgreement
+        || !!mergedEd.collectiveAgreementByReference
+        || !!mergedEd.hasOverenskomstIncorporation,
+      has_credit_clause: !!(mergedEd.creditedRoles || mergedEd.creditedFunction || mergedEd.hasCreditClause),
+      notes: (mergedEd.specialNotes as string) ?? null,
       extracted_data: mergedEd,
       validated_by: user.id,
       validated_at: new Date().toISOString(),

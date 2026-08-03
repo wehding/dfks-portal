@@ -642,14 +642,14 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
           <div className="space-y-1.5"><Label>Kontrakttype</Label><Select value={form.type} onValueChange={value => update("type", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandør</SelectItem><SelectItem value="hybrid">Hybrid</SelectItem></SelectContent></Select></div>
           <div className="space-y-1.5"><Label>Overenskomst</Label><Select value={form.overenskomst} onValueChange={value => update("overenskomst", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem><SelectItem value="faf">FAF (fiktion)</SelectItem><SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem><SelectItem value="dj">DJ</SelectItem><SelectItem value="metal">Metal</SelectItem><SelectItem value="ingen">Ingen</SelectItem></SelectContent></Select></div>
           <div className="space-y-1.5"><Label>Status</Label><Select value={form.status} onValueChange={value => update("status", value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="kladde">Kladde</SelectItem><SelectItem value="valideret">Valideret</SelectItem><SelectItem value="arkiveret">Arkiveret</SelectItem></SelectContent></Select></div>
-          <div className="space-y-1.5"><Label>Kontraktdato</Label><Input type="date" value={form.contractDate} onChange={event => update("contractDate", event.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Startdato</Label><Input type="date" value={form.startDate} onChange={event => update("startDate", event.target.value)} /></div>
-          <div className="space-y-1.5"><Label>Slutdato</Label><Input type="date" value={form.endDate} onChange={event => update("endDate", event.target.value)} /></div>
         </div>
       </FormSection>
-      <FormSection title="Data fra kontrakt og tilknyttet værk">
-        <ContractAiDataEditor contractId={contractId} onHighlightClick={() => undefined} />
-      </FormSection>
+      <ContractAiDataEditor
+        contractId={contractId}
+        onHighlightClick={() => undefined}
+        dates={{ contractDate: form.contractDate, startDate: form.startDate, endDate: form.endDate }}
+        onDatesChange={dates => setForm(current => current ? ({ ...current, contractDate: dates.contractDate, startDate: dates.startDate, endDate: dates.endDate }) : current)}
+      />
       {(payload.contract.contract_attachments ?? []).length > 0 && <FormSection title="Allonger">
         <div className="space-y-2">{payload.contract.contract_attachments?.map(attachment => <div key={attachment.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant="outline">{attachment.ai_status ?? "afventer"}</Badge></div>)}</div>
       </FormSection>}

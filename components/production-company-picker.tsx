@@ -28,10 +28,11 @@ type Props = {
   disabled?: boolean;
   label?: string;
   suggestedName?: string;
+  suggestedNames?: string[];
   autoSelectHighConfidence?: boolean;
 };
 
-export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", autoSelectHighConfidence = false }: Props) {
+export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", suggestedNames = [], autoSelectHighConfidence = false }: Props) {
   const { locale } = useI18n();
   const da = locale === "da";
   const [query, setQuery] = useState(suggestedName);
@@ -40,6 +41,36 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
   const [loading, setLoading] = useState(false);
   const [creatingCanonical, setCreatingCanonical] = useState(false);
   const [savingCvr, setSavingCvr] = useState<string | null>(null);
+  const [contractSuggestions, setContractSuggestions] = useState<Array<{ sourceName: string; option: ProductionCompanyOption | null }>>([]);
+
+  const suggestedNamesKey = `${suggestedName}\u0000${suggestedNames.join("\u0000")}`;
+  const normalizedSuggestedNames = useMemo(() => [...new Set([suggestedName, ...suggestedNames].map(name => name.trim()).filter(Boolean))], [suggestedNamesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const results = await Promise.all(normalizedSuggestedNames.map(async sourceName => {
+        try {
+          const response = await fetch(`/api/production-companies?query=${encodeURIComponent(sourceName)}`);
+          const json = await response.json();
+          const option = response.ok ? ((json.data ?? []) as ProductionCompanyOption[])[0] ?? null : null;
+          return { sourceName, option };
+        } catch {
+          return { sourceName, option: null };
+        }
+      }));
+      if (!active) return;
+      const seen = new Set<string>();
+      setContractSuggestions(results.filter(item => {
+        const key = item.option?.employerId ?? `unmatched:${item.sourceName.toLocaleLowerCase("da")}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return !item.option || !value.some(selectedValue => selectedValue.employerId === item.option?.employerId);
+      }));
+    };
+    void load();
+    return () => { active = false; };
+  }, [normalizedSuggestedNames, value]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -179,6 +210,23 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>)}
+    </div>}
+
+    {contractSuggestions.length > 0 && <div className="space-y-1 rounded-md border border-dashed p-2">
+      <p className="px-1 text-xs font-medium text-muted-foreground">{da ? "Aflæst fra kontrakten" : "Read from the contract"}</p>
+      {contractSuggestions.map(item => item.option ? <button
+        key={`${item.sourceName}:${item.option.employerId}`}
+        type="button"
+        disabled={disabled}
+        onClick={() => addSelection({ employerId: item.option!.employerId, canonicalName: item.option!.canonicalName, matchScore: item.option!.matchScore, matchMethod: "admin" })}
+        className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+      >
+        <span className="block font-medium">{item.option.canonicalName}</span>
+        <span className="block text-xs text-muted-foreground">{item.sourceName}{item.option.matchScore != null ? ` · ${Math.min(100, item.option.matchScore)}% match` : ""}</span>
+      </button> : <button key={item.sourceName} type="button" disabled={disabled} onClick={() => setQuery(item.sourceName)} className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-50">
+        <span className="block font-medium">{item.sourceName}</span>
+        <span className="block text-xs text-muted-foreground">{da ? "Ikke fundet — søg eller opret" : "Not found — search or create"}</span>
+      </button>)}
     </div>}
 
     <div className="relative">

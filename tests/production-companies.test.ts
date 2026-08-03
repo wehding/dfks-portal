@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   companyMatchScore,
   companyMatches,
+  extractedProductionCompanyNames,
   normalizeCompanyName,
   normalizeRegistrationNumber,
   singleHighConfidenceCompanyMatch,
@@ -69,4 +70,13 @@ test("vælger kun automatisk ved ét producenthit med høj sikkerhed", () => {
     { ...option, matchMethod: "exact_name", matchScore: 110 },
     { ...option, employerId: "other", canonicalName: "Nordisk Film ApS", matchMethod: "fuzzy_name", matchScore: 96 },
   ]), null);
+});
+
+test("samler og deduplikerer alle producentnavne aflæst fra kontrakten", () => {
+  assert.deepEqual(extractedProductionCompanyNames({
+    employerName: "Nordisk Film",
+    producerName: "Nordisk Film",
+    productionCompanies: ["Cosmo Film", "Projekt ApS"],
+    parentCompanyName: "Cosmo Film",
+  }), ["Nordisk Film", "Cosmo Film", "Projekt ApS"]);
 });

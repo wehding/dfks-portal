@@ -69,6 +69,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "collectiveAgreement": "${COLLECTIVE_AGREEMENT_RULE}",
   "collectiveAgreementName": "overenskomstens navn (string | null)",
   "collectiveAgreementByReference": "${COLLECTIVE_AGREEMENT_BY_REFERENCE_RULE}",
+  "agreementReferenceStatus": "én af: yes, no, unknown. yes når kontrakten direkte henviser til De4-fiktion, FAF, FAF-dokumentar, DJ TV eller Metal som aftalegrundlag; no ved en udtrykkelig afvisning; ellers unknown",
   "isFreelanceContract": "${IS_FREELANCE_CONTRACT_RULE}",
   "hasCreditClause": "er der en krediteringsklausul? (boolean)",
   "hasTerminationClause": "er der en opsigelsesklausul? (boolean)",

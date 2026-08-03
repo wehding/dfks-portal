@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, FileText,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
-    AlertTriangle, Clock, Archive, Sparkles,
+    AlertTriangle, Clock, Archive,
 } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
@@ -37,13 +37,12 @@ import {
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
-import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector"
-import { SeasonStepper } from "@/components/works/season-stepper"
 import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
+import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadiness, isPendingContractValidation } from "@/lib/contract-list-status"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
@@ -314,6 +313,7 @@ function AdminKontrakterContent() {
     const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null)
     const [episodesLoading, setEpisodesLoading] = useState(false)
     const [episodesError, setEpisodesError] = useState<string | null>(null)
+    const [seriesSectionRequested, setSeriesSectionRequested] = useState(false)
 
     useEffect(() => {
         const delayDebounceFn = setTimeout(async () => {
@@ -341,6 +341,7 @@ function AdminKontrakterContent() {
     useEffect(() => {
         let cancelled = false
         const updateEpisodesForSeason = async () => {
+            if (!seriesSectionRequested) return
             if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
                 setEpisodesLoading(true)
                 setEpisodesError(null)
@@ -387,7 +388,7 @@ function AdminKontrakterContent() {
         }
         updateEpisodesForSeason()
         return () => { cancelled = true }
-    }, [addSeason, pickedUnifiedResult])
+    }, [addSeason, pickedUnifiedResult, seriesSectionRequested])
 
     const pickUnifiedResult = (result: UnifiedSearchWorkResult) => {
         setPickedUnifiedResult(result)
@@ -395,6 +396,7 @@ function AdminKontrakterContent() {
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
         setEpisodesError(null)
+        setSeriesSectionRequested(false)
         const initialSeason = result.season_hint ? String(result.season_hint) : "1"
         setAddSeason(initialSeason)
     }
@@ -425,6 +427,7 @@ function AdminKontrakterContent() {
         setSelectedEpisodes([])
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
+        setSeriesSectionRequested(false)
     }
 
     // Upload flow
@@ -958,6 +961,7 @@ function AdminKontrakterContent() {
         setEditDocUrl(null)
         setActiveHighlight(null)
         setNavneTjekResult(null)
+        setSeriesSectionRequested(false)
 
         if (c.pdf_url) {
             const supabase = createClient()
@@ -1094,6 +1098,7 @@ function AdminKontrakterContent() {
 
         const rightsHolderName = detail.validation_data?.rightsHolderName as string | undefined
         if (rightsHolderName) {
+            if (!row.rights_holder_id) setEditRightsHolderSearch(rightsHolderName)
             setNavneTjekLoading(true)
             checkRightsHolderName(rightsHolderName).then(res => {
                 if (res.success && res.result) setNavneTjekResult(res.result)
@@ -1555,6 +1560,7 @@ function AdminKontrakterContent() {
         employer_id: editForm.employer_id || null,
         rights_holder_id: editForm.rights_holder_id || null,
         work_id: editForm.work_id || null,
+        overenskomst: editForm.overenskomst === "ingen" ? null : editForm.overenskomst,
     } : editContract
     const toggleSelected = (id: string) => {
         setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
@@ -2037,10 +2043,6 @@ function AdminKontrakterContent() {
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
 	                            {t("admin.contracts.validate")}
 	                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving} title={t("admin.contracts.rereadHelp")}>
-                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                            {t("admin.contracts.reread")}
-                        </Button>
                         <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
@@ -2191,14 +2193,8 @@ function AdminKontrakterContent() {
                                             setEditForm(form => form && ({ ...form, employer_id: selections[0]?.employerId ?? "" }))
                                         }}
                                         label="Producent"
+                                        suggestedNames={extractedProductionCompanyNames(editContract?.validation_data)}
                                     />
-                                    {(() => {
-                                        const validation = editContract?.validation_data
-                                        const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
-                                        return extractedEmployer && editProducerSelections.length === 0
-                                            ? <p className="text-xs text-muted-foreground">Aflæst fra kontrakten: <span className="font-medium">{extractedEmployer}</span>. Søg og vælg selskabet ovenfor.</p>
-                                            : null
-                                    })()}
                                 </div>
                                 <div className="space-y-1 sm:col-span-2">
                                     <Label className="text-xs">Arbejdstitel</Label>
@@ -2257,40 +2253,6 @@ function AdminKontrakterContent() {
                                                 </div>
                                             )}
 
-                                            {!detailsLoading && (pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie") && (
-                                                <div className="space-y-3 pt-2 border-t">
-                                                    <SeasonStepper
-                                                        value={Number(addSeason) || 1}
-                                                        onChange={season => {
-                                                            setAddSeason(String(season))
-                                                            setSelectedEpisodes([])
-                                                        }}
-                                                        compact
-                                                    />
-
-                                                    {episodesLoading ? (
-                                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
-                                                            <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
-                                                        </div>
-                                                    ) : episodesError ? (
-                                                        <p className="text-xs text-destructive">{episodesError}</p>
-                                                    ) : (
-                                                        <SeriesEpisodeSelector
-                                                            season={Number(addSeason) || 1}
-                                                            onSeasonChange={season => setAddSeason(String(season))}
-                                                            options={buildCompleteEpisodeOptions({
-                                                                episodeCount: detectedEpisodeCount,
-                                                                externalOptions: episodeOptions,
-                                                                seasonNumber: Number(addSeason) || 1,
-                                                            })}
-                                                            selected={selectedEpisodes}
-                                                            onSelectedChange={setSelectedEpisodes}
-                                                            showSeason={false}
-                                                            compact
-                                                        />
-                                                    )}
-                                                </div>
-                                            )}
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
@@ -2364,20 +2326,29 @@ function AdminKontrakterContent() {
                                         </SelectContent>
                                     </Select>
                                 </div>
-                                <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Startdato</Label><Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Slutdato</Label><Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} /></div>
                             </div>
-                            <div className="rounded-md border p-3">
-                                {editContract && (
-                                    <ContractAiDataEditor
-                                        key={editContract.id}
-                                        contractId={editContract.id}
-                                        activeHighlight={activeHighlight}
-                                        onHighlightClick={(quote) => setActiveHighlight(quote)}
-                                    />
-                                )}
-                            </div>
+                            {editContract && (
+                                <ContractAiDataEditor
+                                    key={editContract.id}
+                                    contractId={editContract.id}
+                                    activeHighlight={activeHighlight}
+                                    onHighlightClick={(quote) => setActiveHighlight(quote)}
+                                    rereadLoading={editSaving}
+                                    onReread={handleRunAiDatamining}
+                                    dates={{ contractDate: editForm.contract_date, startDate: editForm.start_date, endDate: editForm.end_date }}
+                                    onDatesChange={dates => setEditForm(form => form && ({ ...form, contract_date: dates.contractDate, start_date: dates.startDate, end_date: dates.endDate }))}
+                                    isSeries={pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie"}
+                                    season={Number(addSeason) || 1}
+                                    onSeasonChange={season => { setAddSeason(String(season)); setSelectedEpisodes([]) }}
+                                    episodeOptions={buildCompleteEpisodeOptions({ episodeCount: detectedEpisodeCount, externalOptions: episodeOptions, seasonNumber: Number(addSeason) || 1 })}
+                                    selectedEpisodes={selectedEpisodes}
+                                    onSelectedEpisodesChange={setSelectedEpisodes}
+                                    episodesLoading={episodesLoading}
+                                    episodesError={episodesError}
+                                    onSeriesOpen={() => setSeriesSectionRequested(true)}
+                                    onValidationChange={patch => setEditContract(contract => contract ? ({ ...contract, validation_data: { ...(contract.validation_data ?? {}), ...patch } }) : contract)}
+                                />
+                            )}
                             {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "Indlæst" : attachment.ai_status === "fejl" ? "Fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">Indlæst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}
                             <MessageThread
                                 title="Beskeder"
