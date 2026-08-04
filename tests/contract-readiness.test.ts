@@ -54,7 +54,7 @@ test("overenskomsthenvisning anbefaler med advarsel uden underskrift", () => {
 });
 
 test("ugelønsresume tæller aldrig to navne for samme personlige tillæg", () => {
-  assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, personalSupplement: 1000, loentillaeg: 2000 }), 16000);
+  assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, personalSupplement: 1000, loentillaeg: 2000, postProductionSupplement: 500 }), 16500);
   assert.equal(weeklySalaryWithPersonalSupplement({ salary: 15000, loentillaeg: 2000 }), 17000);
   assert.equal(weeklySalaryWithPersonalSupplement({ personalSupplement: 1000 }), null);
 });

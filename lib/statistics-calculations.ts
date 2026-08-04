@@ -12,14 +12,33 @@ export function salaryToMonthly(salary: number, unit: string) {
   return Number.NaN;
 }
 
+export function salarySupplements(data: Record<string, unknown> | null | undefined) {
+  const personalSupplement = Number(data?.personalSupplement ?? data?.loentillaeg ?? 0) || 0;
+  const postProductionSupplement = Number(data?.postProductionSupplement ?? 0) || 0;
+  return personalSupplement + postProductionSupplement;
+}
+
+export function salaryDataToWeekly(data: Record<string, unknown> | null | undefined) {
+  const salary = Number(data?.salary);
+  if (!Number.isFinite(salary) || salary <= 0) return Number.NaN;
+  const unit = String(data?.salaryUnit ?? "weekly");
+  const baseWeekly = unit === "daily" ? salary * 5
+    : unit === "monthly" ? salary * 12 / 52
+    : unit === "weekly" ? salary
+    : Number.NaN;
+  return Number.isFinite(baseWeekly) ? baseWeekly + salarySupplements(data) : Number.NaN;
+}
+
+export function salaryDataToMonthly(data: Record<string, unknown> | null | undefined) {
+  const weekly = salaryDataToWeekly(data);
+  return Number.isFinite(weekly) ? Math.round(weekly * 52 / 12) : Number.NaN;
+}
+
 export function contributionForContract(contract: StatisticsContract) {
   const data = contract.extractedData;
   if (!data?.salary) return null;
-  const salary = Number(data.salary);
-  const baseWeekly = data.salaryUnit === "weekly" ? salary
-    : data.salaryUnit === "daily" ? salary * 5
-    : data.salaryUnit === "monthly" ? Math.round(salary * 12 / 52)
-    : salary;
+  const baseWeekly = salaryDataToWeekly(data);
+  if (!Number.isFinite(baseWeekly)) return null;
   const weeks = Number(data.workingWeeks ?? 0);
   const totalSalary = Math.round(baseWeekly * weeks);
   const holidayRate = Number(data.holidayPayRate);

@@ -632,7 +632,6 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
           {manualMode && <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
             <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" />
           </div>}
-          <div className="space-y-1.5 sm:col-span-2"><Label>Arbejdstitel</Label><Input value={form.workingTitle} onChange={event => update("workingTitle", event.target.value)} /></div>
           <div className="space-y-1.5"><Label>Sæson</Label><Input inputMode="numeric" value={form.seasonNumber} onChange={event => update("seasonNumber", event.target.value)} /></div>
           <div className="space-y-1.5"><Label>Afsnit</Label><Input value={form.episodeNumbers} onChange={event => update("episodeNumbers", event.target.value)} placeholder="Fx 1, 2, 5" /></div>
         </div>
@@ -649,6 +648,8 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
         onHighlightClick={() => undefined}
         dates={{ contractDate: form.contractDate, startDate: form.startDate, endDate: form.endDate }}
         onDatesChange={dates => setForm(current => current ? ({ ...current, contractDate: dates.contractDate, startDate: dates.startDate, endDate: dates.endDate }) : current)}
+        workingTitle={form.workingTitle}
+        onWorkingTitleChange={value => update("workingTitle", value)}
       />
       {(payload.contract.contract_attachments ?? []).length > 0 && <FormSection title="Allonger">
         <div className="space-y-2">{payload.contract.contract_attachments?.map(attachment => <div key={attachment.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant="outline">{attachment.ai_status ?? "afventer"}</Badge></div>)}</div>

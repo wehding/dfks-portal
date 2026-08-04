@@ -52,6 +52,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "pensionPercent": "pensionsprocent som tal (number | null)",
   "pensionSupplement": "pensionssupplement i kr. som tal (number | null)",
   "personalSupplement": "personligt tillæg som tal i kr. hvis konkret aftalt (number | null)",
+  "postProductionSupplement": "særskilt ugentligt tillæg for efterarbejde/postproduktion som tal i kr. Det må ikke være inkluderet i salary eller personalSupplement. (number | null)",
   "loentillaeg": "løntillæg/personligt tillæg som tal i kr. hvis det fremgår; ellers null. Må ikke lægges oven i salary. (number | null)",
   "otherSupplements": "andre tillæg der ikke kan udtrykkes som et enkelt tal. Fritekst. (string | null)",
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",

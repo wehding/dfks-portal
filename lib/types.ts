@@ -145,6 +145,7 @@ export interface ExtractedContractData {
     pensionPercent?: number
     pensionSupplement?: number
     personalSupplement?: number
+    postProductionSupplement?: number
     otherSupplements?: string
     workingWeeks?: number
     svod: boolean

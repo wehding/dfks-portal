@@ -1,3 +1,5 @@
+import { salaryDataToWeekly } from "@/lib/statistics-calculations";
+
 type ContractMessageStatus = {
   author_role: "member" | "admin";
   member_read_at?: string | null;
@@ -75,9 +77,8 @@ export function effectiveCopydanStatus(contract: {
 }
 
 export function weeklySalaryWithPersonalSupplement(data: Record<string, unknown> | null | undefined) {
-  const salary = Number(data?.salary ?? 0) || 0;
-  const supplement = Number(data?.personalSupplement ?? data?.loentillaeg ?? 0) || 0;
-  return salary > 0 ? salary + supplement : null;
+  const weekly = salaryDataToWeekly(data);
+  return Number.isFinite(weekly) ? weekly : null;
 }
 
 export function contractReadiness(contract: { status?: string | null; work_id?: string | null; employer_id?: string | null; rights_holder_id?: string | null; overenskomst?: string | null; validation_data?: Record<string, unknown> | null }): ContractReadiness {

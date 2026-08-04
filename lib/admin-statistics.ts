@@ -1,6 +1,6 @@
 import "server-only";
 
-import { contributionForContract, salaryToMonthly } from "@/lib/statistics-calculations";
+import { contributionForContract, salaryDataToMonthly, salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export const MIN_STATISTICS_CONTRACTS = 1;
@@ -190,8 +190,8 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   }
 
   const salary = groupSafe(rows.filter(row => Number(row.data.salary) > 0), row => row.year).map(([year, items]) => {
-    const monthly = personWeighted(items.filter(row => row.type !== "leverandør"), row => salaryToMonthly(Number(row.data.salary), String(row.data.salaryUnit ?? "unknown")));
-    const daily = personWeighted(items, row => row.data.salaryUnit === "daily" ? Number(row.data.salary) : salaryToMonthly(Number(row.data.salary), String(row.data.salaryUnit ?? "unknown")) / (52 / 12 * 5));
+    const monthly = personWeighted(items.filter(row => row.type !== "leverandør"), row => salaryDataToMonthly(row.data));
+    const daily = personWeighted(items, row => salaryDataToWeekly(row.data) / 5);
     return {
       year: Number(year),
       monthlyRate: monthly.median,
@@ -206,7 +206,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     row => `${row.year}:${row.category}`,
   ).map(([key, items]) => {
     const [year, category] = String(key).split(":");
-    const values = personWeighted(items, row => salaryToMonthly(Number(row.data.salary), String(row.data.salaryUnit ?? "unknown")));
+    const values = personWeighted(items, row => salaryDataToMonthly(row.data));
     return { year: Number(year), category, monthlyRate: values.median, averageMonthlyRate: values.average, ...sampleMeta(items) };
   }).sort((left, right) => left.year - right.year || left.category.localeCompare(right.category));
 

@@ -604,7 +604,7 @@ const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, r
   salary: [
     "salary", "salaryUnit", "salarySourceType", "salaryConfidence", "salaryNote",
     "needsManualSalaryReview", "workingDays", "workingWeeks", "loentillaeg",
-    "pensionPercent", "pensionSupplement", "personalSupplement", "otherSupplements",
+    "pensionPercent", "pensionSupplement", "personalSupplement", "postProductionSupplement", "otherSupplements",
     "holidayPayRate", "betaRate", "_sources", "_lockedFields",
   ],
   series: ["seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "_sources", "_lockedFields"],
