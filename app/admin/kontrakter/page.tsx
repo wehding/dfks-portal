@@ -45,7 +45,7 @@ import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
 import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadiness, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
-import { emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
+import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -2295,7 +2295,34 @@ function AdminKontrakterContent() {
                                                 onClick={() => {
                                                     setManualWorkMode(current => {
                                                         const next = !current
-                                                        if (next) setManualWork(work => ({ ...work, title: work.title || editWorkSearch.trim() || editForm.working_title }))
+                                                        if (next) {
+                                                            const data = editContract?.validation_data ?? {}
+                                                            const seed = contractDataToManualWorkSeed({
+                                                                title: typeof data.workTitle === "string" ? data.workTitle : editWorkSearch.trim() || editForm.working_title,
+                                                                category: typeof data.productionType === "string" ? data.productionType : null,
+                                                                duration: typeof data.duration === "string" || typeof data.duration === "number" ? data.duration : null,
+                                                                premiereDate: typeof data.premiereDate === "string" ? data.premiereDate : null,
+                                                                premiereYear: typeof data.premiereYear === "string" || typeof data.premiereYear === "number" ? data.premiereYear : null,
+                                                                productionCompany: editProducerSelections[0]?.canonicalName ?? extractedProductionCompanyNames(data)[0] ?? null,
+                                                                director: typeof data.director === "string" ? data.director : null,
+                                                                seasonNumber: typeof data.seasonNumber === "string" || typeof data.seasonNumber === "number" ? data.seasonNumber : null,
+                                                                contractId: editContract?.id,
+                                                            })
+                                                            setManualWork(work => emptyManualWorkForm({
+                                                                ...seed,
+                                                                title: work.title || seed.title,
+                                                                type: work.type !== "spillefilm" || !data.productionType ? work.type : seed.type,
+                                                                year: work.year || seed.year,
+                                                                duration_minutes: work.duration_minutes || seed.duration_minutes,
+                                                                episode_count: work.episode_count || seed.episode_count,
+                                                                season_number: work.season_number || seed.season_number,
+                                                                episode_number: work.episode_number || seed.episode_number,
+                                                                selected_episodes: work.selected_episodes.length ? work.selected_episodes : seed.selected_episodes,
+                                                                director: work.director || seed.director,
+                                                                production_company: editProducerSelections[0]?.canonicalName ?? seed.production_company,
+                                                                production_companies: editProducerSelections.length ? editProducerSelections : work.production_companies,
+                                                            }))
+                                                        }
                                                         return next
                                                     })
                                                 }}
@@ -2376,29 +2403,31 @@ function AdminKontrakterContent() {
                                         </div>
                                     )}
                                 </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Kontrakttype</Label>
-                                    <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="a-løn">A-løn</SelectItem>
-                                            <SelectItem value="leverandør">Leverandør</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Overenskomst</Label>
-                                    <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
-                                            <SelectItem value="faf">FAF (fiktion)</SelectItem>
-                                            <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
-                                            <SelectItem value="dj">DJ</SelectItem>
-                                            <SelectItem value="metal">Metal</SelectItem>
-                                            <SelectItem value="ingen">Ingen</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                                <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+                                    <div className="min-w-0 space-y-1">
+                                        <Label className="text-xs">Kontrakttype</Label>
+                                        <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
+                                            <SelectTrigger className="h-8 w-full min-w-0 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="a-løn">A-løn</SelectItem>
+                                                <SelectItem value="leverandør">Leverandør</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                        <Label className="text-xs">Overenskomst</Label>
+                                        <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
+                                            <SelectTrigger className="h-8 w-full min-w-0 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
+                                                <SelectItem value="faf">FAF (fiktion)</SelectItem>
+                                                <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
+                                                <SelectItem value="dj">DJ</SelectItem>
+                                                <SelectItem value="metal">Metal</SelectItem>
+                                                <SelectItem value="ingen">Ingen</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 </div>
                                 {(editCopydanStatus === "yes" || editCopydanStatus === "implicit" || editStreamingStatus === "yes" || editStreamingStatus === "implicit") && (
                                     <div className="flex flex-wrap gap-2 sm:col-span-2">
