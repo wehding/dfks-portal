@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { requireAdminApi } from "@/lib/api-auth"
+import { recordAuditEvent } from "@/lib/audit-log-server"
 
 function sb() {
     return createClient(
@@ -220,9 +221,42 @@ export async function PUT(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
     try {
+        const body = await req.json()
+        if (body.agreementId) {
+            const auth = await requireAdminApi(["superadmin", "jurist"])
+            if (!auth.ok) return auth.response
+            const status = body.status
+            if (!['draft', 'approved', 'archived'].includes(status)) {
+                return NextResponse.json({ error: "Ugyldig status" }, { status: 400 })
+            }
+            const supabase = sb()
+            const { data: before, error: beforeError } = await supabase
+                .from("agreements")
+                .select("id,title,status")
+                .eq("id", body.agreementId)
+                .maybeSingle()
+            if (beforeError || !before) return NextResponse.json({ error: "Overenskomsten blev ikke fundet" }, { status: 404 })
+            const approval = status === "approved" ? { approved_by: auth.userId, approved_at: new Date().toISOString() } : { approved_by: null, approved_at: null }
+            const { error } = await supabase.from("agreements").update({ status, ...approval, updated_at: new Date().toISOString() }).eq("id", body.agreementId)
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            await supabase.from("agreement_pension_rules").update({ status, ...approval, updated_at: new Date().toISOString() }).eq("agreement_id", body.agreementId)
+            try {
+                await recordAuditEvent({
+                    context: { actorUserId: auth.userId, actorOrgId: auth.orgId, actorRole: auth.role, source: "admin" },
+                    action: "update",
+                    entityType: "agreement",
+                    entityId: body.agreementId,
+                    entityLabel: before.title,
+                    changes: [{ field: "status", old: before.status, new: status }],
+                })
+            } catch (auditError) {
+                console.error("[overenskomst] Status blev gemt, men auditlog fejlede", auditError)
+            }
+            return NextResponse.json({ ok: true })
+        }
         const auth = await requireAdminApi()
         if (!auth.ok) return auth.response
-        const { overenskomst, gyldigFra, aktiv } = await req.json()
+        const { overenskomst, gyldigFra, aktiv } = body
         if (!overenskomst || !gyldigFra) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
         }
@@ -277,12 +311,19 @@ export async function GET() {
     const supabase = sb()
 
     // Hent alle versioner (aktive + arkiverede)
-    const { data: chunks } = await supabase
+    const [{ data: chunks }, { data: agreementRegistry, error: registryError }] = await Promise.all([
+      supabase
         .from("knowledge_chunks")
         .select("overenskomst, kategori, kilde_id, aktiv, gyldig_fra")
         .not("overenskomst", "is", null)
         .neq("kategori", "fuldt-dokument")
-        .order("gyldig_fra", { ascending: false })
+        .order("gyldig_fra", { ascending: false }),
+      supabase
+        .from("agreements")
+        .select("id,code,title,parties,production_types,profession_roles,employment_forms,source_url,status,valid_from,valid_to,notes,agreement_pension_rules(id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status)")
+        .not("code", "is", null)
+        .order("title"),
+    ])
 
     const BILAG_KATEGORIER = ["lønskema", "lønskema-satser", "standardkontrakt-aloen", "standardkontrakt-leverandoer", "bilag"]
 
@@ -308,5 +349,5 @@ export async function GET() {
         }
     }
 
-    return NextResponse.json({ versioner })
+    return NextResponse.json({ versioner, agreementRegistry: registryError ? [] : agreementRegistry ?? [], registryError: registryError?.message ?? null })
 }

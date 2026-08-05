@@ -144,6 +144,20 @@ export interface ExtractedContractData {
     producerName?: string
     pensionPercent?: number
     pensionSupplement?: number
+    pensionStatus?: "explicit_contract" | "inferred_agreement" | "not_applicable" | "unknown" | "conflict" | "review_required"
+    pensionEmployerPercent?: number
+    pensionEmployeePercent?: number
+    pensionTotalPercent?: number
+    pensionBasis?: string
+    pensionBasisAmount?: number
+    pensionAgreementCode?: string
+    pensionAgreementTitle?: string
+    pensionAgreementSection?: string
+    pensionAgreementSourceUrl?: string
+    pensionSourceType?: "contract" | "collective_agreement"
+    pensionEvidence?: string
+    pensionConfidence?: string
+    pensionTag?: string
     personalSupplement?: number
     postProductionSupplement?: number
     otherSupplements?: string

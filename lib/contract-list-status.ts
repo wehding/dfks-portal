@@ -57,6 +57,7 @@ export function hasCopydanAgreementReference(contract: {
   const agreement = String(contract.overenskomst ?? "").trim().toLocaleLowerCase("da");
   if (!COPYDAN_AGREEMENTS.has(agreement)) return false;
   const data = contract.validation_data ?? {};
+  if (String(data.contractType ?? "").trim().toLocaleLowerCase("da") === "leverandør" || data.isFreelanceContract === true) return false;
   const explicitStatus = normalizeTriState(nestedValue(data, ["agreementReferenceStatus"]));
   if (explicitStatus === "yes") return true;
   if (explicitStatus === "no") return false;

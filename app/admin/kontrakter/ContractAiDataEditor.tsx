@@ -41,7 +41,7 @@ const SALARY_SOURCE_LABELS: Record<string, string> = {
 };
 const SALARY_SOURCE_VALUES = Object.fromEntries(Object.entries(SALARY_SOURCE_LABELS).map(([value, label]) => [label, value]));
 const ARRAY_KEYS = new Set(["distribution", "productionCountries", "creditedRoles"]);
-const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "postProductionSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
+const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "pensionEmployerPercent", "pensionEmployeePercent", "pensionTotalPercent", "pensionBasisAmount", "personalSupplement", "postProductionSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
 const SOURCE_KEYS: Record<string, string> = {
   salary: "salary", pensionPercent: "pension", personalSupplement: "supplements", postProductionSupplement: "supplements",
   otherSupplements: "otherSupplements", signatureStatus: "signature", signatureMethod: "signature", signatureDate: "signature",
@@ -75,8 +75,16 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
     { key: "workingDays", label: "Arbejdsdage", type: "number" },
     { key: "workingWeeks", label: "Arbejdsuger", type: "number" },
     { key: "loentillaeg", label: "Løntillæg (fallback)", type: "number" },
-    { key: "pensionPercent", label: "Pension %", type: "number" },
+    { key: "contractType", label: "Kontrakttype", type: "text", readOnly: true },
+    { key: "agreementEmploymentForm", label: "Ansættelsesform i overenskomsten", type: "text", readOnly: true },
+    { key: "pensionPercent", label: "Arbejdsgivers pension %", type: "number" },
+    { key: "pensionEmployeePercent", label: "Medarbejderens pension %", type: "number" },
+    { key: "pensionTotalPercent", label: "Pension i alt %", type: "number", readOnly: true },
     { key: "pensionSupplement", label: "Pensionstillæg", type: "number" },
+    { key: "pensionBasis", label: "Pensionsgrundlag", type: "text", readOnly: true },
+    { key: "pensionAgreementTitle", label: "Overenskomstkilde", type: "text", readOnly: true },
+    { key: "pensionAgreementSection", label: "Afsnit i overenskomsten", type: "text", readOnly: true },
+    { key: "pensionEvidence", label: "Begrundelse", type: "textarea", readOnly: true },
     { key: "otherSupplements", label: "Øvrige tillæg", type: "textarea" },
     { key: "holidayPayRate", label: "Feriepenge %", type: "number" },
     { key: "betaRate", label: "BETA-sats", type: "number" },
@@ -287,7 +295,15 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     const sectionValues = values[section] ?? {};
     const sectionRaw = rawData[section] ?? {};
     const sources = (sectionRaw._sources ?? {}) as Record<string, string | null>;
-    return <div className="grid gap-3 sm:grid-cols-2">{(FIELDS[section] ?? []).map(field => {
+    const pensionTag = section === "salary" ? String(sectionRaw.pensionTag ?? "") : "";
+    const pensionUrl = section === "salary" ? String(sectionRaw.pensionAgreementSourceUrl ?? "") : "";
+    const pensionStatus = section === "salary" ? String(sectionRaw.pensionStatus ?? "") : "";
+    return <div className="grid gap-3 sm:grid-cols-2">
+      {pensionTag && <div className={`rounded-md border px-3 py-2 text-sm sm:col-span-2 ${pensionStatus === "inferred_agreement" ? "border-emerald-300 bg-emerald-50 text-emerald-900" : pensionStatus === "review_required" ? "border-amber-300 bg-amber-50 text-amber-900" : "bg-muted/40"}`}>
+        <div className="font-medium">{pensionTag}</div>
+        {pensionUrl && <a className="mt-1 inline-block text-xs underline underline-offset-2" href={pensionUrl} target="_blank" rel="noreferrer">Se den officielle kilde</a>}
+      </div>}
+      {(FIELDS[section] ?? []).map(field => {
       const quote = sources[SOURCE_KEYS[field.key]];
       const locked = locks[section]?.has(field.key) ?? false;
       return <div key={field.key} className={field.type === "textarea" ? "space-y-1 sm:col-span-2" : "space-y-1"}>

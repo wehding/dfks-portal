@@ -17,6 +17,7 @@ import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
+import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 
 export type ContractExtractionResult = {
     ok: boolean
@@ -114,6 +115,16 @@ export async function runContractExtraction(maskedText: string, context: Contrac
     }
     if (extracted._sources && typeof extracted._sources === "object") {
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
+    }
+
+    // AI'en udtrækker kun det, der står i kontrakten. En godkendt og
+    // datofastsat regel anvendes deterministisk bagefter. Leverandør/B2B
+    // er altid udelukket, også hvis kontrakten omtaler en overenskomst.
+    try {
+        const pension = await applyApprovedAgreementPension(extracted)
+        extracted = pension.data
+    } catch (error) {
+        console.warn("[contract-extract] Pensionsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
 
     // Advar hvis kontrakten blev afkortet — rettighedsklausuler (Copydan/SVOD/
