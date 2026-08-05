@@ -498,7 +498,7 @@ export default function OnboardingClient({
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
                 <div style={{ gridColumn: "1 / -1", padding: "14px 16px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--muted)" }}>
                   <p style={{ margin: "0 0 4px", color: "var(--on-surface-variant)", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                    {t("onboarding.invitedAs")}
+                    {t("profile.name")}
                   </p>
                   <p style={{ margin: 0, color: "var(--on-surface)", fontSize: "17px", fontWeight: 600 }}>
                     {fullNameValue || t("onboarding.missingName")}
