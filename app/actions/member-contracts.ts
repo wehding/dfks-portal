@@ -604,7 +604,12 @@ const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, r
   salary: [
     "salary", "salaryUnit", "salarySourceType", "salaryConfidence", "salaryNote",
     "needsManualSalaryReview", "workingDays", "workingWeeks", "loentillaeg",
-    "pensionPercent", "pensionSupplement", "personalSupplement", "postProductionSupplement", "otherSupplements",
+    "contractType", "isFreelanceContract", "agreementEmploymentForm",
+    "pensionPercent", "pensionSupplement", "pensionStatus", "pensionEmployerPercent",
+    "pensionEmployeePercent", "pensionTotalPercent", "pensionBasis", "pensionBasisAmount",
+    "pensionAgreementCode", "pensionAgreementTitle", "pensionAgreementSection",
+    "pensionAgreementSourceUrl", "pensionSourceType", "pensionEvidence", "pensionConfidence", "pensionTag",
+    "personalSupplement", "postProductionSupplement", "otherSupplements",
     "holidayPayRate", "betaRate", "_sources", "_lockedFields",
   ],
   series: ["seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "_sources", "_lockedFields"],
@@ -643,7 +648,10 @@ export async function getContractValidationSummary(contractId: string) {
     summaries: {
       rights: { copydan, streaming: normalizeTriState(data.svod ?? (data.rightsOverview as Record<string, unknown> | undefined)?.streamingforbehold), signature: normalizeTriState(data.signatureStatus) },
       dates: valueText(data.contractDate, "Ingen kontraktdato"),
-      salary: weeklySalary ? `${Math.round(weeklySalary).toLocaleString("da-DK")} kr./uge inkl. tillæg` : "Løn ikke fundet",
+      salary: [
+        weeklySalary ? `${Math.round(weeklySalary).toLocaleString("da-DK")} kr./uge inkl. tillæg` : "Løn ikke fundet",
+        valueText(data.pensionTag, ""),
+      ].filter(Boolean).join(" · "),
       series: `Sæson ${valueText(data.seasonNumber, "—")} · afsnit ${valueText(data.episodeNumber ?? data.episodeCount, "—")}`,
       signature: normalizeTriState(data.signatureStatus),
       ids: [result.workIdentifiers?.dfiId && `DFI ${result.workIdentifiers.dfiId}`, result.workIdentifiers?.tmdbId && `TMDB ${result.workIdentifiers.tmdbId}`, result.workIdentifiers?.imdbId && `IMDb ${result.workIdentifiers.imdbId}`].filter(Boolean).join(" · ") || "Ingen ID'er",

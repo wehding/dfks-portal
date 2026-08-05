@@ -1184,6 +1184,13 @@ const OVERENSKOMST_TYPER = [
     { id: "faf-dokumentar", label: "FAF (dokumentar)" },
     { id: "dj", label: "DJ" },
     { id: "metal", label: "Metal" },
+    { id: "de4-fiction-2022", label: "De4 Fiktionsoverenskomst 2022" },
+    { id: "faf-fiction-2025", label: "FAF Fiktion 2025–2027" },
+    { id: "faf-documentary", label: "FAF Kort- og dokumentarfilm" },
+    { id: "dj-tv-2024", label: "DJ TV 2024–2026" },
+    { id: "faf-tv-employee-2008", label: "FAF/DJ TV – ansatte" },
+    { id: "faf-tv-freelance-2008", label: "FAF/DJ TV – lønmodtagerfreelancere" },
+    { id: "dr-metal-2025", label: "DR og Dansk Metal 2025–2028" },
 ]
 
 const KATEGORIER = [
@@ -1218,6 +1225,42 @@ type KøItem = {
     resultat?: { kategoriserede: number; fuldeChunks: number; total: number }
 }
 
+type PensionRuleItem = {
+    id: string
+    employment_form: string
+    employer_percent: number
+    employee_percent: number
+    basis: string
+    valid_from: string
+    valid_to: string | null
+    section_reference: string
+    source_note: string | null
+    status: "draft" | "approved" | "archived"
+}
+
+type AgreementRegistryItem = {
+    id: string
+    code: string
+    title: string
+    parties: string[]
+    production_types: string[]
+    profession_roles: string[]
+    employment_forms: string[]
+    source_url: string | null
+    status: "draft" | "approved" | "archived"
+    valid_from: string | null
+    valid_to: string | null
+    notes: string | null
+    agreement_pension_rules: PensionRuleItem[]
+}
+
+type PensionPreviewItem = {
+    contractId: string
+    title: string
+    pensionTag: string
+    agreementTitle: string
+}
+
 async function filTilBase64(fil: File): Promise<string> {
     const buf = await fil.arrayBuffer()
     const bytes = new Uint8Array(buf)
@@ -1234,6 +1277,10 @@ function OverenskomsterTab() {
     const [aktivItem, setAktivItem] = useState<string | null>(null) // ID for item i bekræftelsesfasen
     type OkVersion = { kategorier: string[]; bilag: string[]; antal: number; aktiv: boolean; gyldig_fra: string }
     const [versioner, setVersioner] = useState<Record<string, OkVersion[]>>({})
+    const [agreementRegistry, setAgreementRegistry] = useState<AgreementRegistryItem[]>([])
+    const [registryError, setRegistryError] = useState<string | null>(null)
+    const [pensionPreview, setPensionPreview] = useState<PensionPreviewItem[] | null>(null)
+    const [pensionPreviewLoading, setPensionPreviewLoading] = useState(false)
 
     // Ny fil-tilføjelse state
     const [nyFil, setNyFil] = useState<File | null>(null)
@@ -1243,7 +1290,11 @@ function OverenskomsterTab() {
     const refreshAktive = () => {
         fetch("/api/admin/overenskomst")
             .then(r => r.json())
-            .then(d => setVersioner(d.versioner ?? {}))
+            .then(d => {
+                setVersioner(d.versioner ?? {})
+                setAgreementRegistry(d.agreementRegistry ?? [])
+                setRegistryError(d.registryError ?? null)
+            })
             .catch(() => {})
     }
 
@@ -1257,6 +1308,42 @@ function OverenskomsterTab() {
         })
         refreshAktive()
         toast.success(aktiv ? "Overenskomst genaktiveret" : "Overenskomst arkiveret")
+    }
+
+    const setAgreementStatus = async (agreementId: string, status: AgreementRegistryItem["status"]) => {
+        const res = await fetch("/api/admin/overenskomst", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agreementId, status }),
+        })
+        const data = await res.json()
+        if (!res.ok) return toast.error(data.error ?? "Status kunne ikke ændres")
+        refreshAktive()
+        toast.success(status === "approved" ? "Overenskomst og pensionsregler er godkendt" : "Overenskomst arkiveret")
+    }
+
+    const findMissingPension = async () => {
+        setPensionPreviewLoading(true)
+        const res = await fetch("/api/admin/overenskomst/pension-preview")
+        const data = await res.json()
+        setPensionPreviewLoading(false)
+        if (!res.ok) return toast.error(data.error ?? "Kontrakterne kunne ikke kontrolleres")
+        setPensionPreview(data.candidates ?? [])
+    }
+
+    const applyMissingPension = async () => {
+        if (!pensionPreview?.length) return
+        setPensionPreviewLoading(true)
+        const res = await fetch("/api/admin/overenskomst/pension-preview", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contractIds: pensionPreview.map(item => item.contractId) }),
+        })
+        const data = await res.json()
+        setPensionPreviewLoading(false)
+        if (!res.ok) return toast.error(data.error ?? "Pension kunne ikke opdateres")
+        toast.success(`${data.updated} kontraktkladder blev opdateret${data.skipped?.length ? ` · ${data.skipped.length} sprunget over` : ""}`)
+        setPensionPreview(null)
     }
 
     const sletVersion = async (overenskomst: string, gyldigFra: string) => {
@@ -1369,6 +1456,63 @@ function OverenskomsterTab() {
 
     return (
         <div className="space-y-6">
+            <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <p className="text-sm font-medium">Pensionsregler for filmklippere</p>
+                        <p className="text-xs text-muted-foreground">Kun godkendte regler bruges automatisk ved AI-aflæsning. Leverandørkontrakter er aldrig dækket, selv om en overenskomst nævnes.</p>
+                    </div>
+                    <Button variant="outline" size="sm" disabled={pensionPreviewLoading} onClick={findMissingPension}>
+                        {pensionPreviewLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
+                        Find manglende pension
+                    </Button>
+                </div>
+                {pensionPreview && <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                    <p className="font-medium">Forhåndsvisning: {pensionPreview.length} kontraktkladder kan opdateres</p>
+                    <p className="mt-1 text-xs">Validerede kontrakter og manuelt låste pensionsfelter ændres ikke.</p>
+                    {pensionPreview.length > 0 && <div className="mt-3 space-y-1">
+                        {pensionPreview.slice(0, 20).map(item => <p key={item.contractId} className="text-xs">{item.title} · {item.pensionTag}</p>)}
+                        {pensionPreview.length > 20 && <p className="text-xs">… og {pensionPreview.length - 20} flere</p>}
+                        <Button size="sm" className="mt-2" disabled={pensionPreviewLoading} onClick={applyMissingPension}>Opdatér kontraktkladder</Button>
+                    </div>}
+                </div>}
+                {registryError && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">Registeret er ikke klar endnu. Kør den tilhørende databasemigration.</p>}
+                <div className="grid gap-3 lg:grid-cols-2">
+                    {agreementRegistry.map(agreement => (
+                        <div key={agreement.id} className="rounded-md border p-3 space-y-3">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-sm font-medium">{agreement.title}</p>
+                                        <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
+                                    </div>
+                                    <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
+                                </div>
+                                <div className="flex gap-2">
+                                    {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
+                                    {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                {agreement.agreement_pension_rules
+                                    .slice()
+                                    .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
+                                    .map(rule => (
+                                        <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                            <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
+                                            <p className="text-muted-foreground">{rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · afventer juridisk godkendelse" : ""}</p>
+                                        </div>
+                                    ))}
+                            </div>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                <span>Funktioner: {agreement.profession_roles.join(", ")}</span>
+                                {agreement.source_url && <a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Officiel kilde</a>}
+                            </div>
+                            {agreement.notes && <p className="text-xs text-muted-foreground">{agreement.notes}</p>}
+                        </div>
+                    ))}
+                </div>
+            </div>
             {/* Sektion A — Tilføj til kø */}
             <div className="rounded-lg border p-4 space-y-4">
                 <p className="text-sm font-medium">Tilføj overenskomst</p>
