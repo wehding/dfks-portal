@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, FileText,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
-    AlertTriangle, Clock, Archive, Sparkles,
+    AlertTriangle, Clock, Archive,
 } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
@@ -37,14 +37,15 @@ import {
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder"
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button"
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages"
-import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector"
-import { SeasonStepper } from "@/components/works/season-stepper"
 import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
+import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
-import { contractReadiness, isPendingContractValidation } from "@/lib/contract-list-status"
+import { extractedProductionCompanyNames } from "@/lib/production-companies"
+import { contractReadiness, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
+import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
 const ContractDocViewer = dynamic(() => import("./ContractDocViewer").then(mod => mod.ContractDocViewer), { ssr: false })
@@ -306,6 +307,8 @@ function AdminKontrakterContent() {
     const [isSearching, setIsSearching] = useState(false)
     const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null)
     const [detailsLoading, setDetailsLoading] = useState(false)
+    const [manualWorkMode, setManualWorkMode] = useState(false)
+    const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm())
 
     // Series fields
     const [addSeason, setAddSeason] = useState("")
@@ -314,6 +317,7 @@ function AdminKontrakterContent() {
     const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null)
     const [episodesLoading, setEpisodesLoading] = useState(false)
     const [episodesError, setEpisodesError] = useState<string | null>(null)
+    const [seriesSectionRequested, setSeriesSectionRequested] = useState(false)
 
     useEffect(() => {
         const delayDebounceFn = setTimeout(async () => {
@@ -341,6 +345,7 @@ function AdminKontrakterContent() {
     useEffect(() => {
         let cancelled = false
         const updateEpisodesForSeason = async () => {
+            if (!seriesSectionRequested) return
             if (pickedUnifiedResult && (pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie")) {
                 setEpisodesLoading(true)
                 setEpisodesError(null)
@@ -387,14 +392,16 @@ function AdminKontrakterContent() {
         }
         updateEpisodesForSeason()
         return () => { cancelled = true }
-    }, [addSeason, pickedUnifiedResult])
+    }, [addSeason, pickedUnifiedResult, seriesSectionRequested])
 
     const pickUnifiedResult = (result: UnifiedSearchWorkResult) => {
+        setManualWorkMode(false)
         setPickedUnifiedResult(result)
         setSelectedEpisodes([])
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
         setEpisodesError(null)
+        setSeriesSectionRequested(false)
         const initialSeason = result.season_hint ? String(result.season_hint) : "1"
         setAddSeason(initialSeason)
     }
@@ -421,10 +428,13 @@ function AdminKontrakterContent() {
         setEditForm(null)
         setEditWorkTypeFilter("all")
         setPickedUnifiedResult(null)
+        setManualWorkMode(false)
+        setManualWork(emptyManualWorkForm())
         setAddSeason("")
         setSelectedEpisodes([])
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
+        setSeriesSectionRequested(false)
     }
 
     // Upload flow
@@ -958,6 +968,7 @@ function AdminKontrakterContent() {
         setEditDocUrl(null)
         setActiveHighlight(null)
         setNavneTjekResult(null)
+        setSeriesSectionRequested(false)
 
         if (c.pdf_url) {
             const supabase = createClient()
@@ -977,6 +988,11 @@ function AdminKontrakterContent() {
             work_id: c.work_id ?? "",
             working_title: c.working_title ?? "",
         })
+        setManualWorkMode(false)
+        setManualWork(emptyManualWorkForm({
+            title: c.working_title ?? c.work_title ?? "",
+            contract_id: c.id,
+        }))
         setEditProducerSelections(c.employer_id ? [{
             employerId: c.employer_id,
             canonicalName: c.employer_name ?? employers.find(employer => employer.id === c.employer_id)?.name ?? "Producent",
@@ -1094,6 +1110,7 @@ function AdminKontrakterContent() {
 
         const rightsHolderName = detail.validation_data?.rightsHolderName as string | undefined
         if (rightsHolderName) {
+            if (!row.rights_holder_id) setEditRightsHolderSearch(rightsHolderName)
             setNavneTjekLoading(true)
             checkRightsHolderName(rightsHolderName).then(res => {
                 if (res.success && res.result) setNavneTjekResult(res.result)
@@ -1246,7 +1263,54 @@ function AdminKontrakterContent() {
         let resolvedWorkId = editForm.work_id
         let selectedWork = works.find(w => w.id === resolvedWorkId)
 
-        if (pickedUnifiedResult) {
+        if (manualWorkMode) {
+            const validationError = validateManualWork(manualWork, "da")
+            if (validationError) {
+                toast.error(validationError)
+                return false
+            }
+            setEditSaving(true)
+            try {
+                const numberOrNull = (value: string) => {
+                    const number = Number(value)
+                    return value.trim() && Number.isFinite(number) ? number : null
+                }
+                const created = await createAdminWork({
+                    data: {
+                        title: manualWork.title.trim(),
+                        type: manualWork.type,
+                        year: numberOrNull(manualWork.year),
+                        duration_minutes: numberOrNull(manualWork.duration_minutes),
+                        season_count: null,
+                        episode_count: numberOrNull(manualWork.episode_count),
+                        parent_work_id: null,
+                        season_number: numberOrNull(manualWork.season_number),
+                        episode_number: numberOrNull(manualWork.episode_number),
+                        genre: null,
+                        director: manualWork.director.trim() || null,
+                        alternative_titles: [],
+                        production_countries: [],
+                        production_companies: manualWork.production_companies.map(company => company.canonicalName),
+                        description: null,
+                        dfi_id: null,
+                        tmdb_id: null,
+                        poster_url: null,
+                    },
+                    seasonNumber: numberOrNull(manualWork.season_number),
+                    selectedEpisodes: manualWork.selected_episodes,
+                    productionCompanies: manualWork.production_companies,
+                    status: "godkendt",
+                })
+                if (!created.workId) throw new Error("Værket kunne ikke oprettes")
+                resolvedWorkId = created.workId
+                selectedWork = { id: created.workId, title: manualWork.title.trim(), year: numberOrNull(manualWork.year), poster_url: null }
+                setWorks(previous => previous.some(work => work.id === created.workId) ? previous : [...previous, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
+            } catch (error: unknown) {
+                toast.error(error instanceof Error ? error.message : "Værket kunne ikke oprettes")
+                setEditSaving(false)
+                return false
+            }
+        } else if (pickedUnifiedResult) {
             setEditSaving(true)
             try {
                 const activeSeason = parseInt(addSeason) || 1
@@ -1324,9 +1388,11 @@ function AdminKontrakterContent() {
                 selectedWork = { id: created.workId, title, year: null, poster_url: null }
                 setWorks(prev => prev.some(w => w.id === created.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
             }
-            const isSeriesSave = pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie"
-            const saveSeasonNumber = isSeriesSave ? (Number(addSeason) || 1) : null
-            const saveEpisodeNumbers = isSeriesSave ? selectedEpisodes : null
+            const isSeriesSave = manualWorkMode
+                ? manualWork.type === "tv-serie" || manualWork.type === "dokumentar-serie"
+                : pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie"
+            const saveSeasonNumber = isSeriesSave ? (manualWorkMode ? Number(manualWork.season_number) || 1 : Number(addSeason) || 1) : null
+            const saveEpisodeNumbers = isSeriesSave ? (manualWorkMode ? manualWork.selected_episodes : selectedEpisodes) : null
 
             const updateResult = await updateAdminContract(editContract.id, {
                     type: editForm.type,
@@ -1555,7 +1621,14 @@ function AdminKontrakterContent() {
         employer_id: editForm.employer_id || null,
         rights_holder_id: editForm.rights_holder_id || null,
         work_id: editForm.work_id || null,
+        overenskomst: editForm.overenskomst === "ingen" ? null : editForm.overenskomst,
     } : editContract
+    const editValidationData = editPreviewContract?.validation_data ?? {}
+    const editCopydanStatus = editPreviewContract ? effectiveCopydanStatus(editPreviewContract) : "unknown"
+    const editRightsOverview = editValidationData.rightsOverview && typeof editValidationData.rightsOverview === "object"
+        ? editValidationData.rightsOverview as Record<string, unknown>
+        : {}
+    const editStreamingStatus = normalizeTriState(editValidationData.svod ?? editValidationData.streamingReservation ?? editRightsOverview.streamingforbehold)
     const toggleSelected = (id: string) => {
         setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
     }
@@ -2037,10 +2110,6 @@ function AdminKontrakterContent() {
 	                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
 	                            {t("admin.contracts.validate")}
 	                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleRunAiDatamining} disabled={editSaving} title={t("admin.contracts.rereadHelp")}>
-                            {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                            {t("admin.contracts.reread")}
-                        </Button>
                         <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
@@ -2092,11 +2161,28 @@ function AdminKontrakterContent() {
                             <div className="grid gap-4 sm:grid-cols-2">
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
-                                        <Label className="text-xs">Klipper / rettighedshaver</Label>
-                                        {navneTjekLoading && <span className="text-[10px] text-muted-foreground animate-pulse">Tjekker register...</span>}
+                                        <Label className="text-xs">Rettighedshaver</Label>
+                                        {!editForm.rights_holder_id && navneTjekLoading && <span className="text-[10px] text-muted-foreground animate-pulse">Tjekker register...</span>}
                                     </div>
                                     <div className="space-y-2">
-                                        {!editForm.rights_holder_id && navneTjekResult && (
+                                        {editForm.rights_holder_id ? (
+                                            <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-xs">
+                                                <span className="font-medium">{rightsHolders.find(r => r.id === editForm.rights_holder_id)?.full_name ?? editRightsHolderSearch}</span>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-6 px-2 text-xs"
+                                                    onClick={() => {
+                                                        setEditForm(f => f && ({ ...f, rights_holder_id: "" }))
+                                                        setEditRightsHolderSearch("")
+                                                    }}
+                                                >
+                                                    Fjern
+                                                </Button>
+                                            </div>
+                                        ) : <>
+                                        {navneTjekResult && (
                                             <div className={`p-2 rounded-md text-xs border ${
                                                 navneTjekResult.status === "match" 
                                                     ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
@@ -2141,28 +2227,10 @@ function AdminKontrakterContent() {
                                                 onChange={e => {
                                                     const value = e.target.value
                                                     setEditRightsHolderSearch(value)
-                                                    setEditForm(f => f && ({ ...f, rights_holder_id: "" }))
                                                 }}
                                             />
                                         </div>
-                                        {editForm.rights_holder_id ? (
-                                            <div className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-xs">
-                                                <span className="font-medium">{rightsHolders.find(r => r.id === editForm.rights_holder_id)?.full_name ?? editRightsHolderSearch}</span>
-                                                <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="h-6 px-2 text-xs"
-                                                    onClick={() => {
-                                                        setEditForm(f => f && ({ ...f, rights_holder_id: "" }))
-                                                        setEditRightsHolderSearch("")
-                                                    }}
-                                                >
-                                                    Fjern
-                                                </Button>
-                                            </div>
-                                        ) : (
-                                            <div className="max-h-36 space-y-1 overflow-y-auto">
+                                        <div className="max-h-36 space-y-1 overflow-y-auto">
                                                 {editRightsHolderResults.map(holder => (
                                                     <button
                                                         key={holder.id}
@@ -2179,8 +2247,8 @@ function AdminKontrakterContent() {
                                                 {editRightsHolderSearch.trim() && editRightsHolderResults.length === 0 && (
                                                     <p className="px-1 py-2 text-xs text-muted-foreground">Ingen rettighedshavere fundet.</p>
                                                 )}
-                                            </div>
-                                        )}
+                                        </div>
+                                        </>}
                                     </div>
                                 </div>
                                 <div className="space-y-1 sm:col-span-2">
@@ -2191,18 +2259,8 @@ function AdminKontrakterContent() {
                                             setEditForm(form => form && ({ ...form, employer_id: selections[0]?.employerId ?? "" }))
                                         }}
                                         label="Producent"
+                                        suggestedNames={extractedProductionCompanyNames(editContract?.validation_data)}
                                     />
-                                    {(() => {
-                                        const validation = editContract?.validation_data
-                                        const extractedEmployer = (validation?.employerName || validation?.producerName || null) as string | null
-                                        return extractedEmployer && editProducerSelections.length === 0
-                                            ? <p className="text-xs text-muted-foreground">Aflæst fra kontrakten: <span className="font-medium">{extractedEmployer}</span>. Søg og vælg selskabet ovenfor.</p>
-                                            : null
-                                    })()}
-                                </div>
-                                <div className="space-y-1 sm:col-span-2">
-                                    <Label className="text-xs">Arbejdstitel</Label>
-                                    <Input className="h-8 text-xs" value={editForm.working_title} placeholder="Produktionens arbejdstitel..." onChange={e => setEditForm(f => f && ({ ...f, working_title: e.target.value }))} />
                                 </div>
                                 <div className="space-y-2 rounded-md border p-3 sm:col-span-2">
                                     <div className="flex items-center justify-between gap-2">
@@ -2216,13 +2274,68 @@ function AdminKontrakterContent() {
                                                 onClick={() => {
                                                     setEditForm(f => f && ({ ...f, work_id: "" }))
                                                     setEditWorkSearch(editForm.working_title)
+                                                    setPickedUnifiedResult(null)
+                                                    setManualWorkMode(false)
+                                                    setAddSeason("1")
+                                                    setSelectedEpisodes([])
+                                                    setEpisodeOptions([])
+                                                    setDetectedEpisodeCount(null)
+                                                    setEpisodesError(null)
                                                 }}
                                             >
                                                 Fjern kobling
                                             </Button>
                                         )}
+                                        {!editForm.work_id && !pickedUnifiedResult && (
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="h-7 px-2 text-xs"
+                                                onClick={() => {
+                                                    setManualWorkMode(current => {
+                                                        const next = !current
+                                                        if (next) {
+                                                            const data = editContract?.validation_data ?? {}
+                                                            const seed = contractDataToManualWorkSeed({
+                                                                title: typeof data.workTitle === "string" ? data.workTitle : editWorkSearch.trim() || editForm.working_title,
+                                                                category: typeof data.productionType === "string" ? data.productionType : null,
+                                                                duration: typeof data.duration === "string" || typeof data.duration === "number" ? data.duration : null,
+                                                                premiereDate: typeof data.premiereDate === "string" ? data.premiereDate : null,
+                                                                premiereYear: typeof data.premiereYear === "string" || typeof data.premiereYear === "number" ? data.premiereYear : null,
+                                                                productionCompany: editProducerSelections[0]?.canonicalName ?? extractedProductionCompanyNames(data)[0] ?? null,
+                                                                director: typeof data.director === "string" ? data.director : null,
+                                                                seasonNumber: typeof data.seasonNumber === "string" || typeof data.seasonNumber === "number" ? data.seasonNumber : null,
+                                                                contractId: editContract?.id,
+                                                            })
+                                                            setManualWork(work => emptyManualWorkForm({
+                                                                ...seed,
+                                                                title: work.title || seed.title,
+                                                                type: work.type !== "spillefilm" || !data.productionType ? work.type : seed.type,
+                                                                year: work.year || seed.year,
+                                                                duration_minutes: work.duration_minutes || seed.duration_minutes,
+                                                                episode_count: work.episode_count || seed.episode_count,
+                                                                season_number: work.season_number || seed.season_number,
+                                                                episode_number: work.episode_number || seed.episode_number,
+                                                                selected_episodes: work.selected_episodes.length ? work.selected_episodes : seed.selected_episodes,
+                                                                director: work.director || seed.director,
+                                                                production_company: editProducerSelections[0]?.canonicalName ?? seed.production_company,
+                                                                production_companies: editProducerSelections.length ? editProducerSelections : work.production_companies,
+                                                            }))
+                                                        }
+                                                        return next
+                                                    })
+                                                }}
+                                            >
+                                                {manualWorkMode ? "Tilbage til søgning" : "Indtast manuelt"}
+                                            </Button>
+                                        )}
                                     </div>
-                                    {editForm.work_id || pickedUnifiedResult ? (
+                                    {manualWorkMode ? (
+                                        <div className="rounded-lg border bg-muted/20 p-3">
+                                            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" autoSelectProducer />
+                                        </div>
+                                    ) : editForm.work_id || pickedUnifiedResult ? (
                                         <div className="rounded-lg border bg-card p-3 text-card-foreground space-y-3">
                                             <div className="flex items-start justify-between gap-2">
                                                 <div>
@@ -2233,22 +2346,6 @@ function AdminKontrakterContent() {
                                                         {works.find(w => w.id === editForm.work_id)?.year ?? pickedUnifiedResult?.year ?? "-"} · {pickedUnifiedResult?.type ?? "værk"}
                                                     </p>
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setEditForm(f => f && ({ ...f, work_id: "" }))
-                                                        setEditWorkSearch(editForm.working_title)
-                                                        setPickedUnifiedResult(null)
-                                                        setAddSeason("1")
-                                                        setSelectedEpisodes([])
-                                                        setEpisodeOptions([])
-                                                        setDetectedEpisodeCount(null)
-                                                        setEpisodesError(null)
-                                                    }}
-                                                    className="text-muted-foreground hover:text-foreground"
-                                                >
-                                                    <X className="h-3.5 w-3.5" />
-                                                </button>
                                             </div>
 
                                             {detailsLoading && (
@@ -2257,40 +2354,6 @@ function AdminKontrakterContent() {
                                                 </div>
                                             )}
 
-                                            {!detailsLoading && (pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie") && (
-                                                <div className="space-y-3 pt-2 border-t">
-                                                    <SeasonStepper
-                                                        value={Number(addSeason) || 1}
-                                                        onChange={season => {
-                                                            setAddSeason(String(season))
-                                                            setSelectedEpisodes([])
-                                                        }}
-                                                        compact
-                                                    />
-
-                                                    {episodesLoading ? (
-                                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground justify-center py-2">
-                                                            <Loader2 className="h-3 w-3 animate-spin" /> Henter afsnit...
-                                                        </div>
-                                                    ) : episodesError ? (
-                                                        <p className="text-xs text-destructive">{episodesError}</p>
-                                                    ) : (
-                                                        <SeriesEpisodeSelector
-                                                            season={Number(addSeason) || 1}
-                                                            onSeasonChange={season => setAddSeason(String(season))}
-                                                            options={buildCompleteEpisodeOptions({
-                                                                episodeCount: detectedEpisodeCount,
-                                                                externalOptions: episodeOptions,
-                                                                seasonNumber: Number(addSeason) || 1,
-                                                            })}
-                                                            selected={selectedEpisodes}
-                                                            onSelectedChange={setSelectedEpisodes}
-                                                            showSeason={false}
-                                                            compact
-                                                        />
-                                                    )}
-                                                </div>
-                                            )}
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
@@ -2340,44 +2403,65 @@ function AdminKontrakterContent() {
                                         </div>
                                     )}
                                 </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Kontrakttype</Label>
-                                    <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="a-løn">A-løn</SelectItem>
-                                            <SelectItem value="leverandør">Leverandør</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                                <div className="grid grid-cols-2 gap-2 sm:col-span-2">
+                                    <div className="min-w-0 space-y-1">
+                                        <Label className="text-xs">Kontrakttype</Label>
+                                        <Select value={editForm.type} onValueChange={v => setEditForm(f => f && ({ ...f, type: v }))}>
+                                            <SelectTrigger className="h-8 w-full min-w-0 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="a-løn">A-løn</SelectItem>
+                                                <SelectItem value="leverandør">Leverandør</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                        <Label className="text-xs">Overenskomst</Label>
+                                        <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
+                                            <SelectTrigger className="h-8 w-full min-w-0 text-xs"><SelectValue /></SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
+                                                <SelectItem value="faf">FAF (fiktion)</SelectItem>
+                                                <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
+                                                <SelectItem value="dj">DJ</SelectItem>
+                                                <SelectItem value="metal">Metal</SelectItem>
+                                                <SelectItem value="ingen">Ingen</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
                                 </div>
-                                <div className="space-y-1">
-                                    <Label className="text-xs">Overenskomst</Label>
-                                    <Select value={editForm.overenskomst} onValueChange={v => setEditForm(f => f && ({ ...f, overenskomst: v }))}>
-                                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="de4-fiktion">De4 (fiktion)</SelectItem>
-                                            <SelectItem value="faf">FAF (fiktion)</SelectItem>
-                                            <SelectItem value="faf-dokumentar">FAF (dokumentar)</SelectItem>
-                                            <SelectItem value="dj">DJ</SelectItem>
-                                            <SelectItem value="metal">Metal</SelectItem>
-                                            <SelectItem value="ingen">Ingen</SelectItem>
-                                        </SelectContent>
-                                    </Select>
-                                </div>
-                                <div className="space-y-1"><Label className="text-xs">Kontraktdato</Label><Input type="date" className="h-8 text-xs" value={editForm.contract_date} onChange={e => setEditForm(f => f && ({ ...f, contract_date: e.target.value }))} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Startdato</Label><Input type="date" className="h-8 text-xs" value={editForm.start_date} onChange={e => setEditForm(f => f && ({ ...f, start_date: e.target.value }))} /></div>
-                                <div className="space-y-1"><Label className="text-xs">Slutdato</Label><Input type="date" className="h-8 text-xs" value={editForm.end_date} onChange={e => setEditForm(f => f && ({ ...f, end_date: e.target.value }))} /></div>
-                            </div>
-                            <div className="rounded-md border p-3">
-                                {editContract && (
-                                    <ContractAiDataEditor
-                                        key={editContract.id}
-                                        contractId={editContract.id}
-                                        activeHighlight={activeHighlight}
-                                        onHighlightClick={(quote) => setActiveHighlight(quote)}
-                                    />
+                                {(editCopydanStatus === "yes" || editCopydanStatus === "implicit" || editStreamingStatus === "yes" || editStreamingStatus === "implicit") && (
+                                    <div className="flex flex-wrap gap-2 sm:col-span-2">
+                                        {(editCopydanStatus === "yes" || editCopydanStatus === "implicit") && <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-700">
+                                            {editCopydanStatus === "implicit" ? "Copydan via overenskomst" : "Copydan-forbehold"}
+                                        </Badge>}
+                                        {(editStreamingStatus === "yes" || editStreamingStatus === "implicit") && <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">Streaming-forbehold</Badge>}
+                                    </div>
                                 )}
                             </div>
+                            {editContract && (
+                                <ContractAiDataEditor
+                                    key={editContract.id}
+                                    contractId={editContract.id}
+                                    activeHighlight={activeHighlight}
+                                    onHighlightClick={(quote) => setActiveHighlight(quote)}
+                                    rereadLoading={editSaving}
+                                    onReread={handleRunAiDatamining}
+                                    dates={{ contractDate: editForm.contract_date, startDate: editForm.start_date, endDate: editForm.end_date }}
+                                    onDatesChange={dates => setEditForm(form => form && ({ ...form, contract_date: dates.contractDate, start_date: dates.startDate, end_date: dates.endDate }))}
+                                    isSeries={pickedUnifiedResult?.type === "tv-serie" || pickedUnifiedResult?.type === "dokumentar-serie"}
+                                    season={Number(addSeason) || 1}
+                                    onSeasonChange={season => { setAddSeason(String(season)); setSelectedEpisodes([]) }}
+                                    episodeOptions={buildCompleteEpisodeOptions({ episodeCount: detectedEpisodeCount, externalOptions: episodeOptions, seasonNumber: Number(addSeason) || 1 })}
+                                    selectedEpisodes={selectedEpisodes}
+                                    onSelectedEpisodesChange={setSelectedEpisodes}
+                                    episodesLoading={episodesLoading}
+                                    episodesError={episodesError}
+                                    onSeriesOpen={() => setSeriesSectionRequested(true)}
+                                    onValidationChange={patch => setEditContract(contract => contract ? ({ ...contract, validation_data: { ...(contract.validation_data ?? {}), ...patch } }) : contract)}
+                                    workingTitle={editForm.working_title}
+                                    onWorkingTitleChange={value => setEditForm(form => form && ({ ...form, working_title: value }))}
+                                />
+                            )}
                             {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "Indlæst" : attachment.ai_status === "fejl" ? "Fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">Indlæst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}
                             <MessageThread
                                 title="Beskeder"

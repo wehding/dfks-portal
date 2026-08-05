@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
 
         const masked = maskPersonalData(text)
 
-        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin" })
+        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })

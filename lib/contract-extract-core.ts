@@ -16,6 +16,7 @@ import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage"
+import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 
 export type ContractExtractionResult = {
     ok: boolean
@@ -33,6 +34,7 @@ export type ContractExtractionContext = {
     entityId?: string | null
     actorUserId?: string | null
     source?: "portal" | "admin" | "api" | "cron" | "import"
+    pdfBuffer?: Buffer | null
 }
 
 export async function runContractExtraction(maskedText: string, context: ContractExtractionContext = {}): Promise<ContractExtractionResult> {
@@ -95,6 +97,20 @@ export async function runContractExtraction(maskedText: string, context: Contrac
     } catch {
         await finishAiUsageRun(runId, "failed", "invalid_json")
         return { ok: false, error: "Kunne ikke parse AI-svar" }
+    }
+    if (context.pdfBuffer) {
+        try {
+            const signature = await detectPdfSignature(context.pdfBuffer)
+            if (signature.status === "yes") {
+                extracted.signatureStatus = "yes"
+                extracted.signatureMethod = signature.method
+                extracted.signaturePage = signature.page
+                extracted.signatureEvidence = signature.evidence
+                extracted._signatureDetection = { method: signature.method, detectedLocally: true }
+            }
+        } catch (error) {
+            console.warn("[contract-extract] Lokal underskriftskontrol fejlede:", error instanceof Error ? error.message : "ukendt fejl")
+        }
     }
     if (extracted._sources && typeof extracted._sources === "object") {
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)

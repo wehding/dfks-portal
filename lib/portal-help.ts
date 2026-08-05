@@ -13,6 +13,10 @@ export const MINE_KONTRAKTER_HELP: HelpTopic[] = [
     ],
   },
   {
+    title: "AI-aflæste oplysninger",
+    body: "Systemet bruger kontraktens tekst og en lokal PDF-kontrol til at foreslå oplysninger, herunder om kontrakten ser håndskrevet eller digitalt underskrevet ud. AI-forslag kan være usikre, så oplysningerne skal altid kontrolleres mod selve kontrakten.",
+  },
+  {
     title: "Forbind med værk",
     body: "En kontrakt skal være forbundet med det værk, den handler om. Kontroller især kontrakter med mærket Mangler værk.",
     tips: [

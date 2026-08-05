@@ -22,8 +22,9 @@ type ContractJob = {
 
 async function runAttachmentJob(admin: ReturnType<typeof createServiceClient>, job: ContractJob) {
     if (!job.attachment_id || !job.pdf_url) throw new Error("Allongen mangler fil eller reference")
-    const maskedText = maskPersonalData(await textFromStoragePath(job.pdf_url))
-    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron" })
+    const file = await fileFromStoragePath(job.pdf_url)
+    const maskedText = maskPersonalData(file.text)
+    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron", pdfBuffer: file.ext === "pdf" ? file.buffer : null })
     if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning af allonge fejlede")
     const { data: validation } = await admin.from("contract_validations").select("extracted_data").eq("contract_id", job.contract_id).maybeSingle()
     const { extracted, changes } = attachmentChanges((validation?.extracted_data ?? {}) as Record<string, unknown>, (extractResult.data ?? {}) as Record<string, unknown>)
@@ -150,18 +151,19 @@ async function findSingleRightsHolderMatch(
     return null
 }
 
-async function textFromStoragePath(path: string): Promise<string> {
+async function fileFromStoragePath(path: string) {
     const admin = createServiceClient()
     const { data, error } = await admin.storage.from("kontrakter").download(path)
     if (error || !data) throw new Error(`Kunne ikke hente kontraktfil: ${error?.message ?? "ukendt fejl"}`)
 
     const buffer = Buffer.from(await data.arrayBuffer())
     const ext = path.split(".").pop()?.toLowerCase()
-    if (ext === "pdf") return extractPdfText(buffer)
+    let text: string
+    if (ext === "pdf") text = await extractPdfText(buffer)
     if (ext === "docx" || ext === "doc") {
-        return extractWordText(buffer, path)
-    }
-    return buffer.toString("utf-8")
+        text = await extractWordText(buffer, path)
+    } else if (ext !== "pdf") text = buffer.toString("utf-8")
+    return { buffer, ext, text: text! }
 }
 
 // Behandler ét enkelt job: henter fil, kører AI-udtræk, opdaterer validering +
@@ -171,12 +173,12 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
     const storagePath = job.pdf_url
     if (!storagePath) throw new Error("Kontrakten mangler filsti")
 
-    const rawText = await textFromStoragePath(storagePath)
-    const maskedText = maskPersonalData(rawText)
+    const file = await fileFromStoragePath(storagePath)
+    const maskedText = maskPersonalData(file.text)
 
     // Kald udtræks-kernen direkte (ingen HTTP-runde), så batch-læsningen ikke
     // afhænger af den nu-autentificerede /api/contracts/extract-rute.
-    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron" })
+    const extractResult = await runContractExtraction(maskedText, { orgId: job.org_id, entityId: job.contract_id, source: "cron", pdfBuffer: file.ext === "pdf" ? file.buffer : null })
     if (!extractResult.ok) throw new Error(extractResult.error ?? "AI-aflæsning fejlede")
     const ext = extractResult.data ?? {}
     const extractedTitle = String(ext.workTitle ?? ext.title ?? "").trim() || null
