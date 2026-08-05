@@ -44,6 +44,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { SHARED_NAV_ICONS } from "@/lib/navigation-icons"
 import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/navigation/sidebar-navigation-link"
+import { AppShellTopBar } from "@/components/navigation/app-shell-top-bar"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
 
@@ -438,8 +439,8 @@ export default function PortalLayout({
                 </SidebarFooter>
             </Sidebar>
 
-            <SidebarInset className="min-w-0 max-w-full overflow-x-hidden">
-                <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b bg-background/95 px-2.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:h-12 sm:px-4 sm:shadow-none">
+            <SidebarInset className="min-w-0 max-w-full overflow-x-clip">
+                <AppShellTopBar>
                     <SidebarTrigger className="shrink-0" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
                     <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground md:hidden">
@@ -453,8 +454,8 @@ export default function PortalLayout({
                         <LanguageToggle />
                         <ThemeToggle />
                     </div>
-                </header>
-                <main className="min-w-0 max-w-full flex-1 overflow-x-hidden p-3 sm:p-4 lg:p-6">{children}</main>
+                </AppShellTopBar>
+                <main className="min-w-0 max-w-full flex-1 overflow-x-clip p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>
     )
