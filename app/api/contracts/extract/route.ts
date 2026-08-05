@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
         // Hvis klienten allerede har maskeret teksten (efter brugerbekræftelse), brug den direkte
         const preMasked = formData.get("maskedText") as string | null
         let masked: string
+        let pdfBuffer: Buffer | null = null
 
         if (preMasked) {
             masked = preMasked
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
             let text: string
             if (filename.endsWith(".pdf")) {
                 text = await extractPdfText(buffer)
+                pdfBuffer = buffer
             } else if (filename.endsWith(".docx") || filename.endsWith(".doc")) {
                 text = await extractWordText(buffer, file.name)
             } else if (filename.endsWith(".txt")) {
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
             masked = maskPersonalData(text)
         }
 
-        const result = await runContractExtraction(masked)
+        const result = await runContractExtraction(masked, { source: "api", pdfBuffer })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek })
     } catch (err: unknown) {

@@ -57,6 +57,11 @@ test("manual edits survive a search/manual toggle when the same form value is re
   assert.equal(afterReturningToManual.director, "Rettet instruktør");
 });
 
+test("AI premiere year can prefill manual work without a full date", () => {
+  const seed = contractDataToManualWorkSeed({ title: "Film", premiereYear: 2024 });
+  assert.equal(seed.year, "2024");
+});
+
 test("series validation accepts selected AI episodes", () => {
   const value = emptyManualWorkForm({
     title: "Serie",

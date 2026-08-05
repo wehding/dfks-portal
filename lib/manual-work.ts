@@ -114,6 +114,7 @@ export function contractDataToManualWorkSeed(input: {
   category?: string | null;
   duration?: string | number | null;
   premiereDate?: string | null;
+  premiereYear?: string | number | null;
   productionCompany?: string | null;
   director?: string | null;
   seasonNumber?: string | number | null;
@@ -125,7 +126,9 @@ export function contractDataToManualWorkSeed(input: {
     .filter(number => Number.isInteger(number) && number > 0))]
     .sort((a, b) => a - b);
   const maxEpisode = episodes.length > 0 ? Math.max(...episodes) : null;
-  const yearMatch = input.premiereDate?.match(/^\d{4}/)?.[0] ?? "";
+  const yearMatch = input.premiereDate?.match(/^\d{4}/)?.[0]
+    ?? String(input.premiereYear ?? "").match(/(?:19|20)\d{2}/)?.[0]
+    ?? "";
 
   return {
     title: input.title?.trim() ?? "",

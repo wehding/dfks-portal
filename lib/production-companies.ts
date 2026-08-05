@@ -172,3 +172,16 @@ export function singleHighConfidenceCompanyMatch(options: ProductionCompanyOptio
     || (option.matchScore ?? 0) >= 96;
   return highConfidence ? option : null;
 }
+
+export function extractedProductionCompanyNames(data: Record<string, unknown> | null | undefined) {
+  const values: unknown[] = [data?.employerName, data?.producerName, data?.productionCompanies, data?.parentCompanyName];
+  const names = values.flatMap(value => Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : []);
+  const seen = new Set<string>();
+  return names.map(name => String(name).trim()).filter(name => {
+    if (!name) return false;
+    const key = normalizeCompanyName(name);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}

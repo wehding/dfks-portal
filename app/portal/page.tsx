@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
+import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
@@ -90,18 +91,15 @@ export default async function PortalDashboardPage() {
     const extractedMap = new Map((validations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
     const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null }> = [];
     for (const contract of orgContracts ?? []) {
-      const extracted = extractedMap.get(contract.id) as { salary?: number; salaryUnit?: string; startDate?: string; contractDate?: string } | null | undefined;
+      const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
       if (!extracted?.salary || contract.type === "leverandør") continue;
       const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
       const contributes = !(holderRow as { opt_out_statistics?: boolean | null } | null)?.opt_out_statistics;
       const isMine = contract.rights_holder_id === holder.id;
       if (!contributes && !isMine) continue;
-      const dateStr = extracted.startDate ?? contract.start_date ?? extracted.contractDate ?? contract.contract_date ?? null;
+      const dateStr = (typeof extracted.startDate === "string" ? extracted.startDate : null) ?? contract.start_date ?? (typeof extracted.contractDate === "string" ? extracted.contractDate : null) ?? contract.contract_date ?? null;
       const year = dateStr ? new Date(dateStr).getFullYear() : Number.NaN;
-      const salary = Number(extracted.salary);
-      const unit = extracted.salaryUnit ?? "weekly";
-      // Grundløn normaliseret til ugeløn.
-      const weekly = unit === "daily" ? salary * 5 : unit === "monthly" ? Math.round(salary * 12 / 52) : salary;
+      const weekly = salaryDataToWeekly(extracted);
       if (!Number.isFinite(weekly) || weekly <= 0 || !Number.isFinite(year)) continue;
       salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null });
       if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
