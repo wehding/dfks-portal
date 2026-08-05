@@ -13,6 +13,7 @@ import { buildCompleteEpisodeOptions, parseLocalEpisodeCode, seriesLookupTitleVa
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
+import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireOrgId } from "@/lib/org";
@@ -829,22 +830,6 @@ function matchesOnboardingKeywords(roleText: string | null | undefined, keywords
   return keywords.some(keyword => text.includes(keyword));
 }
 
-function isRightBearingRole(role: string | null | undefined): boolean {
-  if (!role) return true;
-  const r = role.toLowerCase().trim();
-  const excluded = [
-    "color grading",
-    "kolorist",
-    "teaser klipper",
-    "grading",
-    "colorist",
-    "trailer klipper",
-    "dft",
-    "colorist assistant"
-  ];
-  return !excluded.some(ex => r.includes(ex));
-}
-
 function isSameCredit(aTitle: string, aYear: number | null, bTitle: string, bYear: number | null) {
   const normA = normalizeTitle(aTitle);
   const normB = normalizeTitle(bTitle);
@@ -983,7 +968,7 @@ export async function searchOnboardingCredits(
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
-          .filter((c: any) => matchesOnboardingKeywords(c.Description || c.Type, onboardingKeywords) && isRightBearingRole(c.Description || c.Type));
+          .filter((c: any) => matchesOnboardingKeywords(c.Description || c.Type, onboardingKeywords) && isRightBearingOnboardingRole(c.Description || c.Type));
         rawDfiCredits.push(...filteredDfi);
       }
     }
@@ -1004,7 +989,7 @@ export async function searchOnboardingCredits(
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
         const editors = tmdbCrew.filter(c => matchesOnboardingKeywords(c.job, onboardingKeywords));
-        const filteredTmdb = editors.filter(c => isRightBearingRole(c.job));
+        const filteredTmdb = editors.filter(c => isRightBearingOnboardingRole(c.job));
         rawTmdbCredits.push(...filteredTmdb);
       }
     }
@@ -1038,7 +1023,7 @@ export async function searchOnboardingCredits(
         if (myAssignments) {
           myAssignments.forEach((a: any) => {
             const w = a.works;
-            if (w && isRightBearingRole(a.role)) {
+            if (w && isRightBearingOnboardingRole(a.role)) {
               localWorksMap.set(w.id, { work: w, role: a.role });
               if (w.dfi_id) localDfiIds.add(String(w.dfi_id));
               if (w.tmdb_id) localTmdbIds.add(Number(w.tmdb_id));
@@ -1263,7 +1248,8 @@ export async function searchOnboardingCredits(
     }
   });
 
-  const mergedCredits = [...localCredits, ...dfiCredits, ...tmdbCredits];
+  const mergedCredits = [...localCredits, ...dfiCredits, ...tmdbCredits]
+    .filter(credit => isRightBearingOnboardingRole(credit.role));
 
   // Sorter den samlede liste efter årstal (nyeste først)
   mergedCredits.sort((a, b) => (b.year ?? 0) - (a.year ?? 0));
