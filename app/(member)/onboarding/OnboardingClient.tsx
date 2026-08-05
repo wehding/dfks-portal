@@ -13,6 +13,7 @@ import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
 import { seasonLookupMessage } from "@/lib/season-selection";
+import { parseOnboardingAddress } from "@/lib/onboarding-address";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -34,7 +35,7 @@ type OnboardingUser = {
   email?: string | null;
 };
 
-type FormKey = "first_name" | "last_name" | "email" | "phone" | "address" | "zip" | "city" | "cpr" | "bank_account" | "gender" | "professional_start_year" | "primary_profession_type_id" | "usual_work_mode" | "primary_work_region_code";
+type FormKey = "email" | "phone" | "address" | "zip" | "city" | "cpr" | "bank_account" | "gender" | "professional_start_year" | "primary_profession_type_id" | "usual_work_mode" | "primary_work_region_code";
 
 type StatisticsProfileOptions = {
   config: Record<string, boolean>;
@@ -105,12 +106,9 @@ export default function OnboardingClient({
   const [importProgress, setImportProgress] = useState<{ current: number; total: number; title: string } | null>(null);
 
   // Formulardata præ-udfyldt fra rettighedshaveren
-  const existingName = rh?.full_name || "";
-  const nameParts = existingName.split(" ");
-  const parsedInitialAddress = parseAddress(rh?.address || "");
+  const invitedName = rh?.full_name?.trim() || "";
+  const parsedInitialAddress = parseOnboardingAddress(rh?.address || "");
   const [formData, setFormData] = useState({
-    first_name: nameParts[0] || "",
-    last_name: nameParts.slice(1).join(" ") || "",
     email: user?.email || rh?.email || "",
     phone: rh?.phone || "",
     address: parsedInitialAddress.street,
@@ -138,7 +136,7 @@ export default function OnboardingClient({
     return !error;
   };
 
-  const fullNameValue = `${formData.first_name} ${formData.last_name}`.trim();
+  const fullNameValue = invitedName;
 
   const isSeriesCredit = (credit: OnboardingCredit) => {
     const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
@@ -254,8 +252,8 @@ export default function OnboardingClient({
 
   const handleNextStep = async () => {
     if (step === 2) {
-      // Krav 1: Validering af navn og e-mail (navnet er nu ét samlet felt)
-      const fullName = `${formData.first_name} ${formData.last_name}`.trim();
+      // Navnet kommer fra invitationens rettighedshaverprofil og kan ikke redigeres her.
+      const fullName = invitedName;
       const valid = [
         validateField("name", fullName),
         validateField("email", formData.email),
@@ -498,25 +496,14 @@ export default function OnboardingClient({
               </p>
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-                {/* Ét samlet navnefelt (fuld bredde) med fælles hjælpetekst */}
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ display: "block", fontSize: "13px", fontWeight: 500, marginBottom: "6px", color: "var(--on-surface-variant)" }}>
-                    {t("onboarding.yourName")}
-                  </label>
-                  <input
-                    className="focus-visible:ring-2 focus-visible:ring-ring"
-                    value={fullNameValue}
-                    readOnly
-                    aria-readonly="true"
-                    placeholder={t("onboarding.fullNamePlaceholder")}
-                    aria-invalid={Boolean(fieldErrors.name)}
-                    aria-describedby={fieldErrors.name ? "onboarding-name-error" : undefined}
-                    style={{ width: "100%", padding: "10px 12px", fontSize: "14px", borderRadius: "6px", border: `1px solid ${fieldErrors.name ? "var(--destructive)" : "var(--input)"}`, outline: "none", color: "var(--on-surface)", background: "var(--muted)" }}
-                  />
+                <div style={{ gridColumn: "1 / -1", padding: "14px 16px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--muted)" }}>
+                  <p style={{ margin: "0 0 4px", color: "var(--on-surface-variant)", fontSize: "12px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                    {t("onboarding.invitedAs")}
+                  </p>
+                  <p style={{ margin: 0, color: "var(--on-surface)", fontSize: "17px", fontWeight: 600 }}>
+                    {fullNameValue || t("onboarding.missingName")}
+                  </p>
                   {fieldErrors.name && <p id="onboarding-name-error" role="alert" style={{ margin: "6px 0 0", color: "var(--destructive)", fontSize: "12px" }}>{fieldErrors.name}</p>}
-                </div>
-                <div style={{ gridColumn: "1 / -1", marginTop: "-8px", color: "var(--on-surface-variant)", fontSize: "13px", lineHeight: 1.5 }}>
-                  {t("onboarding.invitedNameHint")}
                 </div>
                 {([
                   { label: t("profile.phone"), key: "phone", placeholder: "+45 12 34 56 78" },
@@ -808,7 +795,7 @@ export default function OnboardingClient({
                   <div style={{ fontSize: "36px" }}>🔍</div>
                   <div style={{ fontWeight: 600, fontSize: "15px", color: "var(--on-surface)" }}>Ingen film fundet automatisk</div>
                   <p style={{ fontSize: "13px", color: "var(--on-surface-variant)", margin: 0, lineHeight: 1.6, maxWidth: "400px" }}>
-                    Vi kunne ikke finde dig i DFI eller TMDb under navnet <strong>{formData.first_name} {formData.last_name}</strong>.
+                    Vi kunne ikke finde dig i DFI eller TMDb under navnet <strong>{fullNameValue}</strong>.
                     Brug søgefeltet ovenfor, eller fortsæt hvis du ikke har film registreret endnu.
                   </p>
                 </div>
@@ -935,7 +922,7 @@ export default function OnboardingClient({
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
                 {[
-                  { label: "Navn", value: `${formData.first_name} ${formData.last_name}`.trim() },
+                  { label: "Navn", value: fullNameValue },
                   { label: "E-mail", value: formData.email },
                   { label: "By", value: formData.city || "Ikke angivet" },
                   { label: "Køn (statistik)", value: formData.gender === "female" ? "Kvinde" : formData.gender === "male" ? "Mand" : formData.gender === "non_binary" ? "Andet / Non-binær" : "Ikke oplyst" },
@@ -1000,16 +987,4 @@ export default function OnboardingClient({
       </div>
     </div>
   );
-}
-
-function parseAddress(value: string) {
-  const parts = value.split(",").map(part => part.trim()).filter(Boolean);
-  const street = parts[0] ?? "";
-  const rest = parts.slice(1).join(" ");
-  const match = rest.match(/^(\d{4})\s+(.+)$/);
-  return {
-    street,
-    postalCode: match?.[1] ?? "",
-    city: match?.[2] ?? rest,
-  };
 }
