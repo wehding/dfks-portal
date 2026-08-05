@@ -1238,6 +1238,26 @@ type PensionRuleItem = {
     status: "draft" | "approved" | "archived"
 }
 
+type WageRuleItem = {
+    id: string
+    profession_role: string
+    wage_group: string | null
+    employment_form: string
+    rate_kind: "minimum" | "normalløn" | "source_requires_review" | "individual_or_classified"
+    amount: number | null
+    currency: "DKK"
+    unit: "time" | "dag" | "uge" | "måned" | null
+    pension_included: boolean
+    valid_from: string
+    valid_to: string | null
+    source_title: string
+    source_url: string
+    source_section: string | null
+    source_checked_at: string
+    source_note: string | null
+    status: "draft" | "approved" | "archived"
+}
+
 type AgreementRegistryItem = {
     id: string
     code: string
@@ -1246,12 +1266,14 @@ type AgreementRegistryItem = {
     production_types: string[]
     profession_roles: string[]
     employment_forms: string[]
+    content_url: string | null
     source_url: string | null
     status: "draft" | "approved" | "archived"
     valid_from: string | null
     valid_to: string | null
     notes: string | null
     agreement_pension_rules: PensionRuleItem[]
+    agreement_wage_rules: WageRuleItem[]
 }
 
 type PensionPreviewItem = {
@@ -1319,7 +1341,7 @@ function OverenskomsterTab() {
         const data = await res.json()
         if (!res.ok) return toast.error(data.error ?? "Status kunne ikke ændres")
         refreshAktive()
-        toast.success(status === "approved" ? "Overenskomst og pensionsregler er godkendt" : "Overenskomst arkiveret")
+        toast.success(status === "approved" ? "Overenskomsten er godkendt" : "Overenskomsten er arkiveret")
     }
 
     const findMissingPension = async () => {
@@ -1459,8 +1481,10 @@ function OverenskomsterTab() {
             <div className="rounded-lg border p-4 space-y-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
-                        <p className="text-sm font-medium">Pensionsregler for filmklippere</p>
-                        <p className="text-xs text-muted-foreground">Kun godkendte regler bruges automatisk ved AI-aflæsning. Leverandørkontrakter er aldrig dækket, selv om en overenskomst nævnes.</p>
+                        <p className="text-sm font-medium">Overenskomster som grundkilder</p>
+                        <p className="max-w-3xl text-xs text-muted-foreground">
+                            Overenskomsterne bruges både til AI-aflæsning af løn og pension og som juridisk grundkilde i kontraktgennemgangen. AI må kun bruge en sats automatisk, når reglen er godkendt, dato, funktion og ansættelsesform passer, og kontrakten faktisk er omfattet. En leverandørkontrakt er ikke dækket alene, fordi den nævner en overenskomst.
+                        </p>
                     </div>
                     <Button variant="outline" size="sm" disabled={pensionPreviewLoading} onClick={findMissingPension}>
                         {pensionPreviewLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
@@ -1494,21 +1518,74 @@ function OverenskomsterTab() {
                                 </div>
                             </div>
                             <div className="space-y-2">
-                                {agreement.agreement_pension_rules
-                                    .slice()
-                                    .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
-                                    .map(rule => (
-                                        <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
-                                            <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
-                                            <p className="text-muted-foreground">{rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · afventer juridisk godkendelse" : ""}</p>
+                                <details className="group rounded-md border bg-background" open>
+                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                        <span>Aktuel minimumsløn</span>
+                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                    </summary>
+                                    <div className="space-y-2 border-t p-3">
+                                        {agreement.agreement_wage_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret et kontrolleret lønskema.</p>}
+                                        {agreement.agreement_wage_rules
+                                            .slice()
+                                            .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
+                                            .map(rule => (
+                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                    {rule.amount !== null && rule.unit ? (
+                                                        <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
+                                                    ) : (
+                                                        <p className="font-medium">Ingen verificeret aktuel sats</p>
+                                                    )}
+                                                    <p className="text-muted-foreground">
+                                                        {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
+                                                        {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
+                                                    </p>
+                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </details>
+
+                                <details className="group rounded-md border bg-background">
+                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                        <span>Pension</span>
+                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                    </summary>
+                                    <div className="space-y-2 border-t p-3">
+                                        {agreement.agreement_pension_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret en pensionsregel.</p>}
+                                        {agreement.agreement_pension_rules
+                                            .slice()
+                                            .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
+                                            .map(rule => (
+                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                    <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
+                                                    <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
+                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                </div>
+                                            ))}
+                                    </div>
+                                </details>
+
+                                <details className="group rounded-md border bg-background">
+                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                        <span>Kilder og brug i kontraktgennemgang</span>
+                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                    </summary>
+                                    <div className="space-y-3 border-t p-3 text-xs text-muted-foreground">
+                                        <p>
+                                            Kilderne giver AI’en et kontrolleret sammenligningsgrundlag. De beviser ikke i sig selv, at en kontrakt er omfattet. AI’en skal også kontrollere kontraktens henvisning, produktionstype, funktion, dato og ansættelsesform og vise usikkerhed for administratoren.
+                                        </p>
+                                        <div className="space-y-1">
+                                            {agreement.source_url && <p><span className="font-medium text-foreground">Officiel oversigt: </span><a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Producentforeningens eller organisationens kildeside</a></p>}
+                                            {agreement.content_url && <p><span className="font-medium text-foreground">Aftaletekst: </span><a href={agreement.content_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Åbn den registrerede overenskomst</a></p>}
+                                            {Array.from(new Map(agreement.agreement_wage_rules.map(rule => [rule.source_url, rule])).values()).map(rule => (
+                                                <p key={rule.source_url}><span className="font-medium text-foreground">Lønskema: </span><a href={rule.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{rule.source_title}</a> · kontrolleret {rule.source_checked_at}</p>
+                                            ))}
                                         </div>
-                                    ))}
+                                        <p>Funktioner i registeret: {agreement.profession_roles.join(", ") || "ikke angivet"}</p>
+                                        {agreement.notes && <p><span className="font-medium text-foreground">Bemærkning: </span>{agreement.notes}</p>}
+                                    </div>
+                                </details>
                             </div>
-                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                <span>Funktioner: {agreement.profession_roles.join(", ")}</span>
-                                {agreement.source_url && <a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Officiel kilde</a>}
-                            </div>
-                            {agreement.notes && <p className="text-xs text-muted-foreground">{agreement.notes}</p>}
                         </div>
                     ))}
                 </div>
