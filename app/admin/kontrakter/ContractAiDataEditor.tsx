@@ -18,7 +18,7 @@ import { SeasonStepper } from "@/components/works/season-stepper";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import type { SeriesEpisodeOption } from "@/lib/series-episodes";
 
-type FieldType = "text" | "number" | "bool" | "triState" | "textarea";
+type FieldType = "text" | "number" | "bool" | "triState" | "signatureMethod" | "textarea";
 type Field = { key: string; label: string; type: FieldType; readOnly?: boolean };
 type FormValues = Record<string, string | boolean>;
 type SummaryData = {
@@ -44,7 +44,7 @@ const ARRAY_KEYS = new Set(["distribution", "productionCountries", "creditedRole
 const NUMBER_KEYS = new Set(["salary", "workingDays", "workingWeeks", "loentillaeg", "pensionPercent", "pensionSupplement", "personalSupplement", "postProductionSupplement", "royaltyPercent", "holidayPayRate", "betaRate", "signaturePage", "duration", "premiereYear"]);
 const SOURCE_KEYS: Record<string, string> = {
   salary: "salary", pensionPercent: "pension", personalSupplement: "supplements", postProductionSupplement: "supplements",
-  otherSupplements: "otherSupplements", signatureStatus: "signature", signatureDate: "signature",
+  otherSupplements: "otherSupplements", signatureStatus: "signature", signatureMethod: "signature", signatureDate: "signature",
   signatureEvidence: "signature", signaturePage: "signature", workingWeeks: "workingWeeks",
   agreementReferenceStatus: "collectiveAgreement", copydan: "copydan", svod: "svod",
   workTitle: "workTitle",
@@ -83,6 +83,7 @@ const FIELDS: Partial<Record<ContractValidationSectionKey, Field[]>> = {
   ],
   signature: [
     { key: "signatureStatus", label: "Underskrift", type: "triState" },
+    { key: "signatureMethod", label: "Underskriftstype", type: "signatureMethod" },
     { key: "signatureDate", label: "Underskriftsdato", type: "text" },
     { key: "signatureEvidence", label: "Evidens for underskrift", type: "textarea" },
     { key: "signaturePage", label: "Side for underskrift", type: "number" },
@@ -141,7 +142,7 @@ function toPatch(values: FormValues, fields: Field[]) {
   for (const field of fields) {
     const value = values[field.key];
     if (field.type === "bool") data[field.key] = Boolean(value);
-    else if (field.type === "triState") data[field.key] = String(value || "unknown");
+    else if (field.type === "triState" || field.type === "signatureMethod") data[field.key] = String(value || "unknown");
     else if (NUMBER_KEYS.has(field.key)) data[field.key] = value === "" ? null : Number(value);
     else if (ARRAY_KEYS.has(field.key)) data[field.key] = String(value ?? "").split(",").map(item => item.trim()).filter(Boolean);
     else if (field.key === "salarySourceType") data[field.key] = value ? SALARY_SOURCE_VALUES[String(value)] ?? String(value) : null;
@@ -294,13 +295,14 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
           <Label className="text-xs">{field.label}</Label>
           {!field.readOnly && <div className="flex items-center gap-1">
             {quote && <SourceBtn quote={quote} active={props.activeHighlight === quote} onClick={() => props.onHighlightClick(quote)} />}
-            <button type="button" title={locked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"} onClick={() => toggleLock(section, field.key)} className="p-1 text-muted-foreground hover:text-foreground">
+            <button type="button" title={locked ? "Feltet er låst for AI-overskrivning" : "Lås felt for AI-overskrivning"} aria-label={locked ? "Lås feltet op for AI-overskrivning" : "Beskyt feltet mod AI-overskrivning"} onClick={() => toggleLock(section, field.key)} className="p-1 text-muted-foreground hover:text-foreground">
               {locked ? <Lock className="h-3.5 w-3.5 text-amber-600" /> : <Unlock className="h-3.5 w-3.5 opacity-30" />}
             </button>
           </div>}
         </div>
         {field.type === "textarea" ? <Textarea disabled={field.readOnly} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />
           : field.type === "triState" ? <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={triState(sectionValues[field.key])} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="yes">Ja</option><option value="no">Nej</option>{field.key !== "agreementReferenceStatus" && <option value="implicit">Implicit via overenskomst</option>}</select>
+          : field.type === "signatureMethod" ? <select className="h-9 w-full rounded-md border bg-background px-3 text-sm" value={String(sectionValues[field.key] || "unknown")} onChange={event => setField(section, field.key, event.target.value)}><option value="unknown">Ukendt</option><option value="handwritten">Håndskrevet</option><option value="digital">Digital</option><option value="none">Ingen</option></select>
           : field.type === "bool" ? <button type="button" onClick={() => setField(section, field.key, !sectionValues[field.key])} className={`h-9 w-full rounded-md border px-3 text-left text-sm ${sectionValues[field.key] ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "bg-background text-muted-foreground"}`}>{sectionValues[field.key] ? "Ja" : "Nej"}</button>
           : <Input disabled={field.readOnly} inputMode={field.type === "number" ? "decimal" : undefined} value={String(sectionValues[field.key] ?? "")} onChange={event => setField(section, field.key, event.target.value)} />}
       </div>;

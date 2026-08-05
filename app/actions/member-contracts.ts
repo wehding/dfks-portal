@@ -608,7 +608,7 @@ const CONTRACT_VALIDATION_SECTION_FIELDS: Record<ContractValidationSectionKey, r
     "holidayPayRate", "betaRate", "_sources", "_lockedFields",
   ],
   series: ["seasonNumber", "episodeNumber", "episodeCount", "seasonCount", "_sources", "_lockedFields"],
-  signature: ["signatureStatus", "signatureDate", "signatureEvidence", "signaturePage", "_sources", "_lockedFields"],
+  signature: ["signatureStatus", "signatureMethod", "signatureDate", "signatureEvidence", "signaturePage", "_sources", "_lockedFields"],
   ids: ["dfiId", "tmdbId", "imdbId"],
   work: [
     "workTitle", "director", "duration", "premiereYear", "genre", "description",

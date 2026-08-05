@@ -21,9 +21,11 @@ export function SourceBtn({
     if (!quote) return null
     return (
         <button
+            type="button"
             onClick={onClick}
             title="Vis i dokument"
-            className={`ml-1 inline-flex items-center justify-center w-4 h-4 rounded text-[9px] transition-colors ${
+            aria-label="Vis feltets kilde i dokumentet"
+            className={`ml-1 hidden h-4 w-4 items-center justify-center rounded text-[9px] transition-colors sm:inline-flex ${
                 active
                     ? "bg-yellow-400 text-yellow-900"
                     : "bg-muted text-muted-foreground hover:bg-yellow-200 hover:text-yellow-800"

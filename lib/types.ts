@@ -147,6 +147,11 @@ export interface ExtractedContractData {
     personalSupplement?: number
     postProductionSupplement?: number
     otherSupplements?: string
+    signatureStatus?: "yes" | "no" | "unknown"
+    signatureMethod?: "handwritten" | "digital" | "none" | "unknown"
+    signatureDate?: string
+    signaturePage?: number
+    signatureEvidence?: string
     workingWeeks?: number
     svod: boolean
     copydan: boolean
