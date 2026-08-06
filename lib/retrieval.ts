@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js"
 import { getEmbedding, getEmbeddingWithFallback } from "./embedding-provider"
 import { estimateEmbeddingTokens } from "./ai-cost"
 import { recordAiUsage, type AiUsageContext } from "./ai-usage"
+import { detectAgreementReferences } from "./agreement-detection"
 
 const MATCH_THRESHOLD = 0.65
 const MATCH_COUNT = 6
@@ -34,12 +35,7 @@ export interface KnowledgeChunk {
 // ── Detektér overenskomst-referencer i kontrakttekst ─────────
 
 export function detekterOverenskomst(tekst: string): string[] {
-    const refs: string[] = []
-    if (/\bde[\s-]?4\b|de4.{0,10}overenskomst/i.test(tekst)) refs.push("de4")
-    if (/\bfaf\b.*?(dokumentar|dok)/i.test(tekst)) refs.push("faf-dokumentar")
-    else if (/\bfaf\b|faf.{0,10}overenskomst/i.test(tekst)) refs.push("faf")
-    if (/create[\s-]?denmark/i.test(tekst) && !refs.length) refs.push("de4")
-    return refs
+    return detectAgreementReferences(tekst)
 }
 
 // ── Detektér kontraktdato fra råtekst ─────────────────────────
@@ -143,6 +139,116 @@ export interface KontekstResultat {
     altid: { title: string; body: string }[]
     baggrund: { title: string; body: string }[]
     detekteredeOverenskomster: string[]
+    aftaleGrundlag: AgreementGrounding[]
+}
+
+export interface AgreementGrounding {
+    title: string
+    sourceUrl: string | null
+    validFrom: string | null
+    validTo: string | null
+    notes: string | null
+    wages: Array<{
+        professionRole: string
+        wageGroup: string | null
+        amount: number
+        unit: string
+        validFrom: string
+        validTo: string | null
+        sourceTitle: string
+        sourceUrl: string
+        sourceNote: string | null
+    }>
+    pensions: Array<{
+        employmentForm: string
+        employerPercent: number
+        employeePercent: number
+        basis: string
+        validFrom: string
+        validTo: string | null
+        sectionReference: string
+        sourceNote: string | null
+    }>
+}
+
+async function hentStruktureretAftalegrundlag(
+    overenskomster: string[],
+    kontraktdato?: string | null,
+): Promise<AgreementGrounding[]> {
+    if (!overenskomster.length) return []
+
+    const codeMap: Record<string, string[]> = {
+        de4: ["de4-fiction-2022"],
+        "faf-dokumentar": ["faf-documentary"],
+        faf: ["faf-fiction-2025", "faf-tv-employee-2008", "faf-tv-freelance-2008"],
+        "dj-tv": ["dj-tv-2024"],
+        "dr-metal": ["dr-metal-2025"],
+    }
+    const codes = [...new Set(overenskomster.flatMap(ref => codeMap[ref] ?? []))]
+    if (!codes.length) return []
+
+    const supabase = getSupabaseAdmin()
+    const { data: agreements, error: agreementError } = await supabase
+        .from("agreements")
+        .select("id,title,source_url,valid_from,valid_to,notes")
+        .in("code", codes)
+        .eq("status", "approved")
+    if (agreementError || !agreements?.length) {
+        if (agreementError) console.error("[retrieval] aftaleregister fejl:", agreementError)
+        return []
+    }
+
+    const agreementIds = agreements.map(agreement => agreement.id)
+    const [{ data: wages, error: wageError }, { data: pensions, error: pensionError }] = await Promise.all([
+        supabase
+            .from("agreement_wage_rules")
+            .select("agreement_id,profession_role,wage_group,amount,unit,valid_from,valid_to,source_title,source_url,source_note")
+            .in("agreement_id", agreementIds)
+            .eq("status", "approved"),
+        supabase
+            .from("agreement_pension_rules")
+            .select("agreement_id,employment_form,employer_percent,employee_percent,basis,valid_from,valid_to,section_reference,source_note")
+            .in("agreement_id", agreementIds)
+            .eq("status", "approved"),
+    ])
+    if (wageError) console.error("[retrieval] lønregler fejl:", wageError)
+    if (pensionError) console.error("[retrieval] pensionsregler fejl:", pensionError)
+
+    const isApplicableOnDate = (from: string, to: string | null) =>
+        !kontraktdato || (from <= kontraktdato && (!to || to >= kontraktdato))
+
+    return agreements.map(agreement => ({
+        title: agreement.title,
+        sourceUrl: agreement.source_url,
+        validFrom: agreement.valid_from,
+        validTo: agreement.valid_to,
+        notes: agreement.notes,
+        wages: (wages ?? [])
+            .filter(rule => rule.agreement_id === agreement.id && rule.amount !== null && rule.unit && isApplicableOnDate(rule.valid_from, rule.valid_to))
+            .map(rule => ({
+                professionRole: rule.profession_role,
+                wageGroup: rule.wage_group,
+                amount: Number(rule.amount),
+                unit: rule.unit!,
+                validFrom: rule.valid_from,
+                validTo: rule.valid_to,
+                sourceTitle: rule.source_title,
+                sourceUrl: rule.source_url,
+                sourceNote: rule.source_note,
+            })),
+        pensions: (pensions ?? [])
+            .filter(rule => rule.agreement_id === agreement.id && isApplicableOnDate(rule.valid_from, rule.valid_to))
+            .map(rule => ({
+                employmentForm: rule.employment_form,
+                employerPercent: Number(rule.employer_percent),
+                employeePercent: Number(rule.employee_percent),
+                basis: rule.basis,
+                validFrom: rule.valid_from,
+                validTo: rule.valid_to,
+                sectionReference: rule.section_reference,
+                sourceNote: rule.source_note,
+            })),
+    }))
 }
 
 export async function hentKontekst(
@@ -192,6 +298,7 @@ export async function hentKontekst(
         mønstreRes,
         altidRes,
         baggrundRes,
+        aftaleGrundlag,
     ] = await Promise.all([
         // 1. Lovtekster — semantisk RAG
         hentRelevanteRegler(kontraktTekst, MATCH_COUNT, orgId, embedding),
@@ -211,6 +318,9 @@ export async function hentKontekst(
 
         // 5. Baggrundsnoteringer
         supabase.from("legal_notes").select("title, body").eq("priority", "baggrund").eq("active", true),
+
+        // 6. Godkendte, strukturerede aftale-, løn- og pensionskilder
+        hentStruktureretAftalegrundlag(detekterede, kontraktdato),
     ])
 
     // 6. Semantisk overenskomst-søgning i fuldt dokument (top 3)
@@ -251,6 +361,7 @@ export async function hentKontekst(
         altid: (altidRes.data ?? []) as { title: string; body: string }[],
         baggrund: (baggrundRes.data ?? []) as { title: string; body: string }[],
         detekteredeOverenskomster: detekterede,
+        aftaleGrundlag,
     }
 }
 

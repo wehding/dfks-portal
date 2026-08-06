@@ -704,6 +704,23 @@ anbefalinger og juridiske referencer — leveres på engelsk.
                 runId, orgId: resolvedOrgId, useCase: "contract_advice", stage: "embedding",
             })
 
+            if (kontekst.aftaleGrundlag.length > 0) {
+                activeSystemPrompt +=
+                    "\n\n──────────────────────────────────────────────────────────────────────\n" +
+                    "GODKENDT AFTALEGRUNDLAG FRA AI-KONTROLRUMMET:\n" +
+                    "──────────────────────────────────────────────────────────────────────\n" +
+                    "Dette er sammenligningskilder, ikke bevis for at kontrakten er omfattet. Kontrollér altid henvisning, produktionstype, funktion, dato og ansættelsesform. En leverandørkontrakt bliver ikke dækket alene ved at nævne en overenskomst. Brug kun en sats, når den matcher kontrakten; ellers beskriv usikkerheden.\n\n" +
+                    kontekst.aftaleGrundlag.map(agreement => {
+                        const wageLines = agreement.wages.length
+                            ? agreement.wages.map(wage => `Løn: ${wage.professionRole}${wage.wageGroup ? ` (${wage.wageGroup})` : ""}: ${wage.amount.toLocaleString("da-DK")} kr. pr. ${wage.unit}, gyldig ${wage.validFrom}${wage.validTo ? `–${wage.validTo}` : " og frem"}. Kilde: ${wage.sourceTitle} (${wage.sourceUrl}).${wage.sourceNote ? ` ${wage.sourceNote}` : ""}`).join("\n")
+                            : "Løn: Ingen godkendt, dato- og funktionsmatchende minimumssats i registeret."
+                        const pensionLines = agreement.pensions.length
+                            ? agreement.pensions.map(pension => `Pension: ${pension.employmentForm}, arbejdsgiver ${pension.employerPercent}%${pension.employeePercent > 0 ? ` + medarbejder ${pension.employeePercent}%` : ""} af ${pension.basis}; ${pension.sectionReference}; gyldig ${pension.validFrom}${pension.validTo ? `–${pension.validTo}` : " og frem"}.${pension.sourceNote ? ` ${pension.sourceNote}` : ""}`).join("\n")
+                            : "Pension: Ingen godkendt, dato- og ansættelsesformsmatchende regel i registeret."
+                        return `${agreement.title} (${agreement.validFrom ?? "ukendt start"}${agreement.validTo ? `–${agreement.validTo}` : ""})\nOfficiel kilde: ${agreement.sourceUrl ?? "ikke registreret"}\n${wageLines}\n${pensionLines}${agreement.notes ? `\nBemærkning: ${agreement.notes}` : ""}`
+                    }).join("\n\n")
+            }
+
             if (kontekst.kategorier.length > 0) {
                 activeSystemPrompt +=
                     "\n\n──────────────────────────────────────────────────────────────────────\n" +

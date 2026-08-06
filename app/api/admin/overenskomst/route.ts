@@ -320,7 +320,7 @@ export async function GET() {
         .order("gyldig_fra", { ascending: false }),
       supabase
         .from("agreements")
-        .select("id,code,title,parties,production_types,profession_roles,employment_forms,source_url,status,valid_from,valid_to,notes,agreement_pension_rules(id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status)")
+        .select("id,code,title,parties,production_types,profession_roles,employment_forms,content_url,source_url,status,valid_from,valid_to,notes,agreement_pension_rules(id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status),agreement_wage_rules(id,profession_role,wage_group,employment_form,rate_kind,amount,currency,unit,pension_included,valid_from,valid_to,source_title,source_url,source_section,source_checked_at,source_note,status)")
         .not("code", "is", null)
         .order("title"),
     ])
