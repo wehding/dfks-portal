@@ -10,6 +10,8 @@ import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { attachmentChanges } from "@/lib/attachment-ai"
 import { requireInternalSecretApi } from "@/lib/api-auth"
+import { matchRightsHolder, matchSharedWork } from "@/lib/server/contract-import-matching"
+import { CONTRACT_MATCH_VERSION } from "@/lib/contract-import"
 
 type ContractJob = {
     id: string
@@ -36,119 +38,10 @@ async function runAttachmentJob(admin: ReturnType<typeof createServiceClient>, j
 
 type DirectContractJob = ContractJob & { id: "__direct__" }
 
-type OwnWorkMatchRow = {
-    works: { id: string; title: string; year: number | null } | { id: string; title: string; year: number | null }[] | null
-}
-
-type RightsHolderMatchRow = { id: string; full_name: string | null }
-
-function normalizeMatchText(value: unknown) {
-    return String(value ?? "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9æøå]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-}
-
-function levenshtein(a: string, b: string) {
-    const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i])
-    for (let j = 1; j <= b.length; j++) matrix[0][j] = j
-    for (let i = 1; i <= a.length; i++) {
-        for (let j = 1; j <= b.length; j++) {
-            matrix[i][j] = a[i - 1] === b[j - 1]
-                ? matrix[i - 1][j - 1]
-                : Math.min(matrix[i - 1][j - 1], matrix[i][j - 1], matrix[i - 1][j]) + 1
-        }
-    }
-    return matrix[a.length][b.length]
-}
-
-function fuzzyTitleScore(a: string, b: string) {
-    const left = normalizeMatchText(a)
-    const right = normalizeMatchText(b)
-    if (!left || !right) return 0
-    if (left === right) return 1
-    const distance = levenshtein(left, right)
-    const similarity = 1 - distance / Math.max(left.length, right.length)
-    const leftTokens = new Set(left.split(" "))
-    const rightTokens = new Set(right.split(" "))
-    const overlap = [...leftTokens].filter(token => rightTokens.has(token)).length / Math.max(1, Math.min(leftTokens.size, rightTokens.size))
-    return Math.max(similarity, overlap)
-}
-
 function yearFromValue(value: unknown) {
     if (typeof value === "number" && Number.isFinite(value)) return value
     const match = String(value ?? "").match(/\b(19|20)\d{2}\b/)
     return match ? Number(match[0]) : null
-}
-
-function firstRelation<T>(value: T | T[] | null) {
-    return Array.isArray(value) ? value[0] ?? null : value
-}
-
-async function findSingleOwnWorkMatch(
-    admin: ReturnType<typeof createServiceClient>,
-    rightsHolderId: string | null,
-    title: string | null,
-    year: number | null,
-) {
-    if (!rightsHolderId || !title) return null
-    const normalizedTitle = normalizeMatchText(title)
-    if (!normalizedTitle) return null
-
-    const { data } = await admin
-        .from("work_assignments")
-        .select("works(id, title, year)")
-        .eq("rights_holder_id", rightsHolderId)
-
-    const works = ((data ?? []) as OwnWorkMatchRow[])
-        .map(row => firstRelation(row.works))
-        .filter((work): work is { id: string; title: string; year: number | null } => Boolean(work))
-
-    const uniqueWorks = [...new Map(works.map(work => [work.id, work])).values()]
-    const scoredMatches = uniqueWorks
-        .map(work => ({
-            work,
-            titleScore: fuzzyTitleScore(work.title, normalizedTitle),
-            yearScore: year && work.year ? Math.max(0, 1 - Math.abs(work.year - year) / 2) : 0.75,
-        }))
-        .map(match => ({ ...match, score: match.titleScore * 0.75 + match.yearScore * 0.25 }))
-        .filter(match => match.titleScore >= 0.82 && match.yearScore >= 0.5 && match.score >= 0.78)
-        .sort((a, b) => b.score - a.score)
-
-    if (scoredMatches.length === 1) return scoredMatches[0].work.id
-    if (scoredMatches.length > 1 && scoredMatches[0].score - scoredMatches[1].score >= 0.12) return scoredMatches[0].work.id
-    return null
-}
-
-async function findSingleRightsHolderMatch(
-    admin: ReturnType<typeof createServiceClient>,
-    orgId: string,
-    name: string | null,
-) {
-    if (!name) return null
-    const normalizedName = normalizeMatchText(name)
-    if (!normalizedName) return null
-
-    const { data } = await admin
-        .from("rettighedshavere")
-        .select("id, full_name, org_affiliations!inner(org_id)")
-        .eq("org_affiliations.org_id", orgId)
-
-    const matches = ((data ?? []) as RightsHolderMatchRow[])
-        .filter(row => row.full_name)
-        .map(row => ({
-            id: row.id,
-            score: fuzzyTitleScore(row.full_name ?? "", normalizedName),
-        }))
-        .filter(match => match.score >= 0.86)
-        .sort((a, b) => b.score - a.score)
-
-    if (matches.length === 1) return matches[0].id
-    if (matches.length > 1 && matches[0].score - matches[1].score >= 0.1) return matches[0].id
-    return null
 }
 
 async function fileFromStoragePath(path: string) {
@@ -173,6 +66,9 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
     const storagePath = job.pdf_url
     if (!storagePath) throw new Error("Kontrakten mangler filsti")
 
+    if (job.id !== "__direct__") {
+        await admin.from("contract_import_items").update({ status: "analysing", updated_at: new Date().toISOString() }).eq("ai_job_id", job.id)
+    }
     const file = await fileFromStoragePath(storagePath)
     const maskedText = maskPersonalData(file.text)
 
@@ -203,26 +99,47 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         employerId = employer?.id ?? null
     }
 
-    // Bevar eksisterende ejer. Kun når kontrakten endnu ikke har en ejer
-    // (fx admin-batch-upload) forsøges udledning fra det AI-udtrukne navn —
-    // ellers kan et forkert navnematch omdøbe ejeren på en medlems-kontrakt,
-    // så den forsvinder fra medlemmets liste.
+    if (job.id !== "__direct__") {
+        await admin.from("contract_import_items").update({ status: "matching", updated_at: new Date().toISOString() }).eq("ai_job_id", job.id)
+    }
+    const extractedType = String(ext.productionType ?? ext.workType ?? "").toLocaleLowerCase("da-DK")
+    const workType = extractedType.includes("serie") ? "tv-serie"
+        : extractedType.includes("dokumentar") ? "dokumentarfilm"
+        : extractedType.includes("kort") ? "kortfilm"
+        : extractedType.includes("spille") ? "spillefilm"
+        : null
+
+    let workId: string | null = existingContract?.work_id ?? null
+    let workMatch = workId
+        ? { id: workId, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
+        : await matchSharedWork(admin, {
+            title: extractedTitle,
+            premiereYear: extractedYear,
+            contractDate: typeof ext.contractDate === "string" ? ext.contractDate : null,
+            type: workType,
+        })
+    workId = workId ?? workMatch.id
+
     let rightsHolderId: string | null = existingContract?.rights_holder_id ?? null
-    if (!rightsHolderId && ext.rightsHolderName) {
-        const { data: rh } = await admin
-            .from("rettighedshavere")
-            .select("id")
-            .ilike("full_name", String(ext.rightsHolderName))
-            .maybeSingle()
-        rightsHolderId = rh?.id ?? null
+    const ownerMatch = rightsHolderId
+        ? { id: rightsHolderId, score: 100, evidence: [{ signal: "existing_manual_link", points: 100 }], version: CONTRACT_MATCH_VERSION, candidates: [] }
+        : await matchRightsHolder(admin, {
+            orgId: job.org_id,
+            name: ext.rightsHolderName ? String(ext.rightsHolderName) : null,
+            workId,
+        })
+    rightsHolderId = rightsHolderId ?? ownerMatch.id
+
+    if (!workId && rightsHolderId) {
+        workMatch = await matchSharedWork(admin, {
+            title: extractedTitle,
+            premiereYear: extractedYear,
+            contractDate: typeof ext.contractDate === "string" ? ext.contractDate : null,
+            type: workType,
+            rightsHolderId,
+        })
+        workId = workMatch.id
     }
-    if (!rightsHolderId) {
-        rightsHolderId = await findSingleRightsHolderMatch(admin, job.org_id, ext.rightsHolderName ? String(ext.rightsHolderName) : null)
-    }
-    const matchRightsHolderId = rightsHolderId ?? existingContract?.rights_holder_id ?? null
-    const autoMatchedWorkId = existingContract?.work_id
-        ? null
-        : await findSingleOwnWorkMatch(admin, matchRightsHolderId, extractedTitle, extractedYear)
 
     const { data: existingValidation } = await admin
         .from("contract_validations")
@@ -276,8 +193,25 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         end_date: ext.endDate ?? null,
         ...(employerId ? { employer_id: employerId } : {}),
         ...(rightsHolderId ? { rights_holder_id: rightsHolderId } : {}),
-        ...(autoMatchedWorkId ? { work_id: autoMatchedWorkId } : {}),
+        ...(workId ? { work_id: workId } : {}),
     }).eq("id", job.contract_id)
+
+    if (job.id !== "__direct__") {
+        let itemStatus = !rightsHolderId ? "missing_owner" : !workId ? "missing_work" : "ready_for_review"
+        if (rightsHolderId && workId) {
+            const { data: linkedWork } = await admin.from("works").select("type").eq("id", workId).maybeSingle()
+            if (String(linkedWork?.type ?? "").includes("serie")) itemStatus = "awaiting_episode_confirmation"
+        }
+        await admin.from("contract_import_items").update({
+            status: itemStatus,
+            owner_match_score: ownerMatch.score,
+            work_match_score: workMatch.score,
+            owner_match_evidence: ownerMatch.evidence,
+            work_match_evidence: workMatch.evidence,
+            match_version: CONTRACT_MATCH_VERSION,
+            updated_at: new Date().toISOString(),
+        }).eq("ai_job_id", job.id)
+    }
 
     if (job.id !== "__direct__") {
         await admin.from("contract_ai_jobs").update({
@@ -293,11 +227,20 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
 
 async function markJobError(admin: ReturnType<typeof createServiceClient>, jobId: string, message: string, attachmentId?: string | null) {
     if (jobId === "__direct__") return
+    const { data: job } = await admin.from("contract_ai_jobs").select("attempts").eq("id", jobId).maybeSingle()
     await admin.from("contract_ai_jobs").update({
         status: "error",
         error_message: message,
         updated_at: new Date().toISOString(),
     }).eq("id", jobId)
+    await admin.from("contract_import_items").update({
+        status: Number(job?.attempts ?? 0) >= 3 ? "dead" : "retryable_error",
+        error_code: "analysis_failed",
+        error_message: "Kontrakten kunne ikke analyseres",
+        attempts: Number(job?.attempts ?? 0),
+        next_attempt_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+        updated_at: new Date().toISOString(),
+    }).eq("ai_job_id", jobId)
     if (attachmentId) await admin.from("contract_attachments").update({ ai_status: "fejl", ai_result: { error: message } }).eq("id", attachmentId)
 }
 

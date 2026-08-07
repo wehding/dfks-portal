@@ -1,0 +1,144 @@
+import "server-only";
+
+import { MAX_CONTRACT_IMPORT_BYTES } from "@/lib/contract-import";
+import { decryptIntegrationCredentials, providerOAuthConfig, type ImportProvider } from "@/lib/server/import-connection-oauth";
+
+type Credentials = { refreshToken?: string };
+export type ProviderFile = {
+  id: string;
+  name: string;
+  revision: string;
+  size: number;
+  contentType: string | null;
+  downloadPath?: string;
+};
+
+async function providerAccessToken(provider: ImportProvider, encryptedCredentials: string) {
+  const credentials = decryptIntegrationCredentials<Credentials>(encryptedCredentials);
+  if (!credentials.refreshToken) throw new Error("Forbindelsen mangler et refresh-token");
+  const config = providerOAuthConfig(provider, "http://localhost/oauth-callback");
+  const body = new URLSearchParams({
+    refresh_token: credentials.refreshToken,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    grant_type: "refresh_token",
+  });
+  const response = await fetch(config.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
+    cache: "no-store",
+  });
+  const json = await response.json() as { access_token?: string };
+  if (!response.ok || !json.access_token) throw new Error("Drevforbindelsen skal godkendes igen");
+  return json.access_token;
+}
+
+async function listGoogleFolder(token: string, folderId: string, recursive: boolean) {
+  const output: ProviderFile[] = [];
+  const pending = [folderId];
+  while (pending.length) {
+    const parent = pending.shift()!;
+    let pageToken = "";
+    do {
+      const url = new URL("https://www.googleapis.com/drive/v3/files");
+      url.searchParams.set("q", `'${parent.replaceAll("'", "\\'")}' in parents and trashed=false`);
+      url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,version)");
+      url.searchParams.set("pageSize", "1000");
+      if (pageToken) url.searchParams.set("pageToken", pageToken);
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!response.ok) throw new Error("Google Drive-mappen kunne ikke læses");
+      const json = await response.json() as { nextPageToken?: string; files?: Array<{ id: string; name: string; mimeType?: string; size?: string; modifiedTime?: string; md5Checksum?: string; version?: string }> };
+      for (const file of json.files ?? []) {
+        if (file.mimeType === "application/vnd.google-apps.folder") {
+          if (recursive) pending.push(file.id);
+          continue;
+        }
+        const size = Number(file.size) || 0;
+        output.push({ id: file.id, name: file.name, size, contentType: file.mimeType ?? null, revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown" });
+      }
+      pageToken = json.nextPageToken ?? "";
+    } while (pageToken);
+  }
+  return output;
+}
+
+async function listOneDriveFolder(token: string, folderId: string, recursive: boolean) {
+  const output: ProviderFile[] = [];
+  const pending = [folderId];
+  while (pending.length) {
+    const id = pending.shift()!;
+    let nextUrl: string | null = `https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(id)}/children?$select=id,name,size,file,folder,eTag,lastModifiedDateTime&$top=999`;
+    while (nextUrl) {
+      const response = await fetch(nextUrl, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+      if (!response.ok) throw new Error("OneDrive-mappen kunne ikke læses");
+      const json = await response.json() as { value?: Array<{ id: string; name: string; size?: number; file?: { mimeType?: string }; folder?: unknown; eTag?: string; lastModifiedDateTime?: string }>; "@odata.nextLink"?: string };
+      for (const file of json.value ?? []) {
+        if (file.folder) {
+          if (recursive) pending.push(file.id);
+          continue;
+        }
+        output.push({ id: file.id, name: file.name, size: file.size ?? 0, contentType: file.file?.mimeType ?? null, revision: file.eTag ?? file.lastModifiedDateTime ?? "unknown" });
+      }
+      nextUrl = json["@odata.nextLink"] ?? null;
+    }
+  }
+  return output;
+}
+
+async function listDropboxFolder(token: string, folderPath: string, recursive: boolean) {
+  const output: ProviderFile[] = [];
+  let response = await fetch("https://api.dropboxapi.com/2/files/list_folder", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ path: folderPath === "/" ? "" : folderPath, recursive, include_deleted: false }),
+    cache: "no-store",
+  });
+  let json = await response.json() as { entries?: Array<{ ".tag": string; id?: string; name: string; path_lower?: string; size?: number; rev?: string }>; cursor?: string; has_more?: boolean };
+  while (true) {
+    if (!response.ok) throw new Error("Dropbox-mappen kunne ikke læses");
+    for (const file of json.entries ?? []) {
+      if (file[".tag"] !== "file" || !file.id) continue;
+      output.push({ id: file.id, name: file.name, size: file.size ?? 0, contentType: null, revision: file.rev ?? "unknown", downloadPath: file.path_lower });
+    }
+    if (!json.has_more || !json.cursor) break;
+    response = await fetch("https://api.dropboxapi.com/2/files/list_folder/continue", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ cursor: json.cursor }),
+      cache: "no-store",
+    });
+    json = await response.json() as typeof json;
+  }
+  return output;
+}
+
+export async function listProviderFiles(input: {
+  provider: ImportProvider;
+  encryptedCredentials: string;
+  folderId: string;
+  recursive: boolean;
+}) {
+  const token = await providerAccessToken(input.provider, input.encryptedCredentials);
+  const files = input.provider === "google_drive"
+    ? await listGoogleFolder(token, input.folderId, input.recursive)
+    : input.provider === "onedrive"
+      ? await listOneDriveFolder(token, input.folderId, input.recursive)
+      : await listDropboxFolder(token, input.folderId, input.recursive);
+  return { token, files };
+}
+
+export async function downloadProviderFile(provider: ImportProvider, token: string, file: ProviderFile) {
+  if (file.size > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
+  const response = provider === "google_drive"
+    ? await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+    : provider === "onedrive"
+      ? await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.id)}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow", cache: "no-store" })
+      : await fetch("https://content.dropboxapi.com/2/files/download", { headers: { Authorization: `Bearer ${token}`, "Dropbox-API-Arg": JSON.stringify({ path: file.downloadPath ?? file.id }) }, cache: "no-store" });
+  if (!response.ok) throw new Error("Filen kunne ikke hentes fra drevet");
+  const contentLength = Number(response.headers.get("content-length")) || file.size;
+  if (contentLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
+  return buffer;
+}
