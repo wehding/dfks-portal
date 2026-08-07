@@ -11,11 +11,11 @@ const DRIVE_SYNC_CHUNK_SIZE = 20;
 export async function syncImportSource(sourceId: string, actor: ContractImportActor) {
   const db = createServiceClient({ audit: { actorUserId: actor.userId, actorOrgId: actor.orgId, actorRole: actor.role, source: "admin", correlationId: crypto.randomUUID(), mode: "summary" } });
   const { data: source } = await db.from("import_sources")
-    .select("id,import_type,provider_folder_id,recursive,enabled,connection_id,import_connections!inner(provider,credentials_encrypted,status)")
+    .select("id,import_type,provider_folder_id,recursive,enabled,connection_id,import_connections!inner(provider,credentials_encrypted,status,connection_kind)")
     .eq("id", sourceId).eq("org_id", actor.orgId).maybeSingle();
   const connectionRelation = source?.import_connections as unknown;
-  const connection = (Array.isArray(connectionRelation) ? connectionRelation[0] : connectionRelation) as { provider?: ImportProvider; credentials_encrypted?: string; status?: string } | null;
-  if (!source || !source.enabled || !connection?.provider || !connection.credentials_encrypted || connection.status !== "connected") {
+  const connection = (Array.isArray(connectionRelation) ? connectionRelation[0] : connectionRelation) as { provider?: ImportProvider; credentials_encrypted?: string; status?: string; connection_kind?: string } | null;
+  if (!source || !source.enabled || !connection?.provider || !connection.credentials_encrypted || connection.status !== "connected" || connection.connection_kind !== "organisation") {
     return { ok: false as const, status: 404, error: "Importmappen eller drevforbindelsen er ikke aktiv" };
   }
   if (source.import_type !== "contracts") {

@@ -1,21 +1,21 @@
 import "server-only";
 
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createServiceClient } from "@/lib/supabase/service";
 
 export type ImportProvider = "google_drive" | "onedrive" | "dropbox";
 
-type OAuthState = { provider: ImportProvider; orgId: string; userId: string; expiresAt: number };
+export type ImportConnectionKind = "organisation" | "member";
+export type OAuthAttempt = {
+  id: string; provider: ImportProvider; connectionKind: ImportConnectionKind;
+  orgId: string; userId: string; rightsHolderId: string | null; returnPath: string;
+  codeVerifier: string;
+};
 
 function encryptionKey() {
   const secret = process.env.INTEGRATION_ENCRYPTION_KEY;
   if (!secret) throw new Error("INTEGRATION_ENCRYPTION_KEY mangler");
   return createHash("sha256").update(secret).digest();
-}
-
-function stateSecret() {
-  const secret = process.env.IMPORT_OAUTH_STATE_SECRET ?? process.env.INTERNAL_API_SECRET;
-  if (!secret) throw new Error("IMPORT_OAUTH_STATE_SECRET mangler");
-  return secret;
 }
 
 export function encryptIntegrationCredentials(value: Record<string, unknown>) {
@@ -33,28 +33,48 @@ export function decryptIntegrationCredentials<T extends Record<string, unknown>>
   return JSON.parse(Buffer.concat([decipher.update(payload.subarray(28)), decipher.final()]).toString("utf8")) as T;
 }
 
-export function createImportOAuthState(input: Omit<OAuthState, "expiresAt">) {
-  const payload = Buffer.from(JSON.stringify({ ...input, expiresAt: Date.now() + 10 * 60_000 })).toString("base64url");
-  const signature = createHmac("sha256", stateSecret()).update(payload).digest("base64url");
-  return `${payload}.${signature}`;
+const ALLOWED_RETURN_PATHS = new Set(["/admin/organisation", "/portal/min-profil", "/portal/mine-kontrakter"]);
+
+export async function createImportOAuthAttempt(input: {
+  provider: ImportProvider; connectionKind: ImportConnectionKind; orgId: string; userId: string;
+  rightsHolderId?: string | null; returnPath: string;
+}) {
+  const returnPath = ALLOWED_RETURN_PATHS.has(input.returnPath) ? input.returnPath : input.connectionKind === "member" ? "/portal/min-profil" : "/admin/organisation";
+  const state = randomBytes(32).toString("base64url");
+  const codeVerifier = randomBytes(48).toString("base64url");
+  const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+  const db = createServiceClient();
+  const { error } = await db.from("import_oauth_attempts").insert({
+    state_hash: createHash("sha256").update(state).digest("hex"), provider: input.provider,
+    connection_kind: input.connectionKind, org_id: input.orgId, user_id: input.userId,
+    rights_holder_id: input.rightsHolderId ?? null, return_path: returnPath,
+    code_verifier_encrypted: encryptIntegrationCredentials({ codeVerifier }),
+    expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+  });
+  if (error) throw new Error("OAuth-forbindelsen kunne ikke startes");
+  return { state, codeChallenge };
 }
 
-export function verifyImportOAuthState(value: string): OAuthState | null {
-  const [payload, signature] = value.split(".");
-  if (!payload || !signature) return null;
-  const expected = createHmac("sha256", stateSecret()).update(payload).digest();
-  const actual = Buffer.from(signature, "base64url");
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
-  try {
-    const state = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as OAuthState;
-    if (!state.orgId || !state.userId || !["google_drive", "onedrive", "dropbox"].includes(state.provider) || state.expiresAt < Date.now()) return null;
-    return state;
-  } catch {
-    return null;
-  }
+export async function consumeImportOAuthAttempt(state: string, provider: ImportProvider, userId: string): Promise<OAuthAttempt | null> {
+  if (!state || state.length > 256) return null;
+  const db = createServiceClient();
+  const stateHash = createHash("sha256").update(state).digest("hex");
+  const { data } = await db.from("import_oauth_attempts").select("id,provider,connection_kind,org_id,user_id,rights_holder_id,return_path,code_verifier_encrypted,expires_at,used_at")
+    .eq("state_hash", stateHash).eq("provider", provider).eq("user_id", userId).maybeSingle();
+  if (!data || data.used_at || new Date(data.expires_at).getTime() < Date.now()) return null;
+  const usedAt = new Date().toISOString();
+  const { data: consumed } = await db.from("import_oauth_attempts").update({ used_at: usedAt }).eq("id", data.id).is("used_at", null).select("id").maybeSingle();
+  if (!consumed) return null;
+  const credentials = decryptIntegrationCredentials<{ codeVerifier: string }>(data.code_verifier_encrypted);
+  return {
+    id: data.id, provider, connectionKind: data.connection_kind as ImportConnectionKind,
+    orgId: data.org_id, userId: data.user_id, rightsHolderId: data.rights_holder_id,
+    returnPath: ALLOWED_RETURN_PATHS.has(data.return_path) ? data.return_path : "/portal/min-profil",
+    codeVerifier: credentials.codeVerifier,
+  };
 }
 
-export function providerOAuthConfig(provider: ImportProvider, callbackUrl: string) {
+export function providerOAuthConfig(provider: ImportProvider, callbackUrl: string, connectionKind: ImportConnectionKind = "organisation") {
   if (provider === "google_drive") {
     const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
@@ -70,7 +90,7 @@ export function providerOAuthConfig(provider: ImportProvider, callbackUrl: strin
   if (provider === "onedrive") {
     const clientId = process.env.MICROSOFT_GRAPH_CLIENT_ID;
     const clientSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET;
-    const tenant = process.env.MICROSOFT_GRAPH_TENANT_ID || "organizations";
+    const tenant = process.env.MICROSOFT_GRAPH_TENANT_ID || (connectionKind === "member" ? "common" : "organizations");
     if (!clientId || !clientSecret) throw new Error("Microsoft OneDrive er ikke konfigureret");
     return {
       clientId, clientSecret,

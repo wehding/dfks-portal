@@ -1,7 +1,7 @@
 import "server-only";
 
 import { MAX_CONTRACT_IMPORT_BYTES } from "@/lib/contract-import";
-import { decryptIntegrationCredentials, providerOAuthConfig, type ImportProvider } from "@/lib/server/import-connection-oauth";
+import { decryptIntegrationCredentials, providerOAuthConfig, type ImportConnectionKind, type ImportProvider } from "@/lib/server/import-connection-oauth";
 
 type Credentials = { refreshToken?: string };
 export type ProviderFile = {
@@ -13,10 +13,10 @@ export type ProviderFile = {
   downloadPath?: string;
 };
 
-async function providerAccessToken(provider: ImportProvider, encryptedCredentials: string) {
+export async function providerAccessToken(provider: ImportProvider, encryptedCredentials: string, connectionKind: ImportConnectionKind = "organisation") {
   const credentials = decryptIntegrationCredentials<Credentials>(encryptedCredentials);
   if (!credentials.refreshToken) throw new Error("Forbindelsen mangler et refresh-token");
-  const config = providerOAuthConfig(provider, "http://localhost/oauth-callback");
+  const config = providerOAuthConfig(provider, "http://localhost/oauth-callback", connectionKind);
   const body = new URLSearchParams({
     refresh_token: credentials.refreshToken,
     client_id: config.clientId,
@@ -118,14 +118,35 @@ export async function listProviderFiles(input: {
   encryptedCredentials: string;
   folderId: string;
   recursive: boolean;
+  connectionKind?: ImportConnectionKind;
 }) {
-  const token = await providerAccessToken(input.provider, input.encryptedCredentials);
+  const token = await providerAccessToken(input.provider, input.encryptedCredentials, input.connectionKind);
   const files = input.provider === "google_drive"
     ? await listGoogleFolder(token, input.folderId, input.recursive)
     : input.provider === "onedrive"
       ? await listOneDriveFolder(token, input.folderId, input.recursive)
       : await listDropboxFolder(token, input.folderId, input.recursive);
   return { token, files };
+}
+
+export async function getProviderFile(provider: ImportProvider, token: string, id: string): Promise<ProviderFile> {
+  if (!id || id.length > 1024) throw new Error("Ugyldig filreference");
+  if (provider === "google_drive") {
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,modifiedTime,md5Checksum,version`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    if (!response.ok) throw new Error("Google Drive-filen kunne ikke læses");
+    const file = await response.json() as { id: string; name: string; mimeType?: string; size?: string; modifiedTime?: string; md5Checksum?: string; version?: string };
+    return { id: file.id, name: file.name, contentType: file.mimeType ?? null, size: Number(file.size) || 0, revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown" };
+  }
+  if (provider === "onedrive") {
+    const response = await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(id)}?$select=id,name,size,file,eTag,lastModifiedDateTime`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    if (!response.ok) throw new Error("OneDrive-filen kunne ikke læses");
+    const file = await response.json() as { id: string; name: string; size?: number; file?: { mimeType?: string }; eTag?: string; lastModifiedDateTime?: string };
+    return { id: file.id, name: file.name, contentType: file.file?.mimeType ?? null, size: file.size ?? 0, revision: file.eTag ?? file.lastModifiedDateTime ?? "unknown" };
+  }
+  const response = await fetch("https://api.dropboxapi.com/2/files/get_metadata", { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ path: id }), cache: "no-store" });
+  if (!response.ok) throw new Error("Dropbox-filen kunne ikke læses");
+  const file = await response.json() as { id: string; name: string; path_lower?: string; size?: number; rev?: string };
+  return { id: file.id, name: file.name, contentType: null, size: file.size ?? 0, revision: file.rev ?? "unknown", downloadPath: file.path_lower };
 }
 
 export async function downloadProviderFile(provider: ImportProvider, token: string, file: ProviderFile) {

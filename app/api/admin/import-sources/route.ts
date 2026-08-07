@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     mode: "summary",
   } });
   const { data: connection } = await db.from("import_connections").select("id")
-    .eq("id", body.connectionId).eq("org_id", caller.orgId).eq("status", "connected").maybeSingle();
+    .eq("id", body.connectionId).eq("org_id", caller.orgId).eq("connection_kind", "organisation").eq("status", "connected").maybeSingle();
   if (!connection) return NextResponse.json({ error: "Drevforbindelsen blev ikke fundet" }, { status: 404 });
   const { data, error } = await db.from("import_sources").insert({
     org_id: caller.orgId,

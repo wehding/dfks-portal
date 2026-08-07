@@ -161,6 +161,7 @@ begin
     'contract_file_fingerprints',
     'contract_episode_confirmations',
     'import_connections',
+    'import_oauth_attempts',
     'import_sources'
   ] loop
     if not exists (

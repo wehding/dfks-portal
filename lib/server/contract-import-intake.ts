@@ -35,7 +35,7 @@ export async function intakeContractFile(input: {
     actorUserId: actor.userId,
     actorOrgId: actor.orgId,
     actorRole: actor.role,
-    source: "admin",
+    source: actor.role === "member" ? "portal" : "admin",
     correlationId: input.batchId,
     mode: "summary",
   } });
