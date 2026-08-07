@@ -33,7 +33,7 @@ export function MemberDriveConnections({ allowImport = false, onImported }: { al
 
   const connect = (provider: Provider) => {
     const returnTo = allowImport ? "/portal/mine-kontrakter" : "/portal/min-profil";
-    window.location.assign(`/api/portal/import-connections/${provider}/authorize?returnTo=${encodeURIComponent(returnTo)}`);
+    window.location.assign(`/api/portal/import-connections/authorize/${provider}?returnTo=${encodeURIComponent(returnTo)}`);
   };
   const disconnect = async (id: string) => {
     if (!window.confirm("Fjern drevforbindelsen? Allerede importerede kontrakter påvirkes ikke.")) return;
