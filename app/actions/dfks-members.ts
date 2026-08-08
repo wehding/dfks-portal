@@ -85,6 +85,7 @@ async function fetchMembers<TStatus extends "active" | "resigned">(
       Accept: "application/json",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (res.status === 429) {
@@ -160,12 +161,12 @@ async function loadImportCandidates(orgId: string): Promise<ImportCandidate[]> {
   });
 }
 
-async function updateExistingMemberships(orgId: string) {
+async function updateExistingMemberships(orgId: string, candidates: ImportCandidate[]) {
   const admin = createServiceClient();
-  const candidates = await loadImportCandidates(orgId);
-  let updated = 0;
-  for (const candidate of candidates) {
-    if (!candidate.rights_holder_id || candidate.match === "ambiguous") continue;
+  const existingCandidates = candidates.filter(
+    candidate => candidate.rights_holder_id && candidate.match !== "ambiguous"
+  );
+  const results = await Promise.all(existingCandidates.map(async candidate => {
     const isActive = candidate.status !== "resigned";
     const { error } = await admin
       .from("org_affiliations")
@@ -176,9 +177,9 @@ async function updateExistingMemberships(orgId: string) {
       })
       .eq("org_id", orgId)
       .eq("rights_holder_id", candidate.rights_holder_id);
-    if (!error) updated += 1;
-  }
-  return updated;
+    return !error;
+  }));
+  return results.filter(Boolean).length;
 }
 
 export async function syncDfksMembers() {
@@ -190,16 +191,15 @@ export async function syncDfksMembers() {
     const orgId = caller.orgId;
     const credentials = await resolveForeningLetCredentials(createServiceClient(), orgId);
     const now = new Date().toISOString();
-    const activeMembers = await fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "", "active");
+    const [activeResult, resignedResult] = await Promise.allSettled([
+      fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "", "active"),
+      fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "/status/resigned", "resigned"),
+    ]);
+    if (activeResult.status === "rejected") throw activeResult.reason;
+    const activeMembers = activeResult.value;
     let resignedMembers: Array<ForeningLetMember & { status: "resigned" }> = [];
-    let resignedFetchComplete = false;
-
-    try {
-      resignedMembers = await fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "/status/resigned", "resigned");
-      resignedFetchComplete = true;
-    } catch {
-      resignedMembers = [];
-    }
+    const resignedFetchComplete = resignedResult.status === "fulfilled";
+    if (resignedResult.status === "fulfilled") resignedMembers = resignedResult.value;
 
     const rows = [...activeMembers, ...resignedMembers]
       .map(member => {
@@ -246,11 +246,12 @@ export async function syncDfksMembers() {
         .delete().eq("org_id", orgId).in("foreninglet_id", staleIds.slice(index, index + 100));
       if (deleteError) return { success: false, error: "Medlemslisten blev hentet, men gamle poster kunne ikke ryddes sikkert." };
     }
-    const updatedExisting = await updateExistingMemberships(orgId);
     const candidates = await loadImportCandidates(orgId);
+    const updatedExisting = await updateExistingMemberships(orgId, candidates);
     return {
       success: true,
-      count: rows.length,
+      count: activeMembers.length,
+      totalCount: rows.length,
       syncedAt: now,
       updatedExisting,
       newCount: candidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length,
@@ -382,7 +383,8 @@ export async function getDfksMembersSyncStatus() {
   const { count, error: countError } = await admin
     .from("dfks_members")
     .select("id", { count: "exact", head: true })
-    .eq("org_id", orgId);
+    .eq("org_id", orgId)
+    .eq("status", "active");
   if (countError) return { success: false, error: countError.message };
 
   const { data, error } = await admin
