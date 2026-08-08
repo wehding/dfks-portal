@@ -194,7 +194,7 @@ export default function RettighedshavereAdminPage() {
     const [importingMembers, setImportingMembers] = useState(false)
     const [importSearch, setImportSearch] = useState("")
     const [importMatchFilter, setImportMatchFilter] = useState<ImportMatchFilter>("all")
-    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("all")
+    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("active")
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
@@ -1277,7 +1277,7 @@ export default function RettighedshavereAdminPage() {
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-sm text-muted-foreground">
-                                {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                                {importCandidates.filter(candidate => candidate.status === "active").length} aktive medlemmer · {importCandidates.filter(candidate => candidate.status === "resigned").length} udmeldte · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
                                 {memberSyncSummary && (
                                     <span className="block text-xs">
                                         {memberSyncSummary.updated} eksisterende opdateret · {memberSyncSummary.ambiguous} kræver afklaring
