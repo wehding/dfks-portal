@@ -250,7 +250,8 @@ export async function syncDfksMembers() {
     const candidates = await loadImportCandidates(orgId);
     return {
       success: true,
-      count: rows.length,
+      count: activeMembers.length,
+      totalCount: rows.length,
       syncedAt: now,
       updatedExisting,
       newCount: candidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length,
@@ -382,7 +383,8 @@ export async function getDfksMembersSyncStatus() {
   const { count, error: countError } = await admin
     .from("dfks_members")
     .select("id", { count: "exact", head: true })
-    .eq("org_id", orgId);
+    .eq("org_id", orgId)
+    .eq("status", "active");
   if (countError) return { success: false, error: countError.message };
 
   const { data, error } = await admin
