@@ -1283,17 +1283,18 @@ export default function RettighedshavereAdminPage() {
                             <label className="flex items-start gap-3">
                                 <input
                                     type="checkbox"
+                                    id="edit-reset-onboarding"
                                     checked={editForm.reset_onboarding}
-                                    disabled={!editTarget.onboarding_completed}
                                     onChange={event => setEditForm(form => ({ ...form, reset_onboarding: event.target.checked }))}
-                                    className="mt-0.5 h-4 w-4"
+                                    aria-describedby="edit-reset-onboarding-help"
+                                    className="mt-0.5 h-4 w-4 cursor-pointer"
                                 />
                                 <span>
                                     <span className="block text-sm font-medium">Nulstil onboarding</span>
-                                    <span className="block text-xs text-muted-foreground">
+                                    <span id="edit-reset-onboarding-help" className="block text-xs text-muted-foreground">
                                         {editTarget.onboarding_completed
                                             ? "Lader rettighedshaveren gennemgå onboarding igen efter gemning."
-                                            : "Afventer at rettighedshaveren færdiggør onboarding. Markeringen fjernes automatisk bagefter."}
+                                            : "Onboarding er allerede nulstillet. Rettighedshaveren sendes til onboarding ved næste login, og markeringen fjernes automatisk, når forløbet er færdigt."}
                                     </span>
                                 </span>
                             </label>
