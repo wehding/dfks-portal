@@ -16,7 +16,7 @@ export type PublicForeningLetIntegration = {
   has_credentials: boolean;
   has_username: boolean;
   has_password: boolean;
-  credential_source: "organisation" | "environment" | "missing";
+  credential_source: "organisation" | "missing";
 };
 
 const DEFAULT_FORENINGLET_BASE_URL = "https://foreninglet.dk/api/members";
@@ -73,15 +73,14 @@ export async function getForeningLetIntegration(
 
   const config = parseConfig(data?.config_encrypted as string | null | undefined);
   const hasOrgCredentials = Boolean(config.username && config.password);
-  const hasEnvironmentCredentials = Boolean(process.env.FORENINGLET_USERNAME && process.env.FORENINGLET_PASSWORD);
   return {
     provider: "foreninglet",
     base_url: assertAllowedForeningLetUrl(data?.base_url as string | null),
     enabled: data?.enabled !== false,
-    has_credentials: hasOrgCredentials || hasEnvironmentCredentials,
-    has_username: Boolean(config.username) || Boolean(process.env.FORENINGLET_USERNAME),
-    has_password: Boolean(config.password) || Boolean(process.env.FORENINGLET_PASSWORD),
-    credential_source: hasOrgCredentials ? "organisation" : hasEnvironmentCredentials ? "environment" : "missing",
+    has_credentials: hasOrgCredentials,
+    has_username: Boolean(config.username),
+    has_password: Boolean(config.password),
+    credential_source: hasOrgCredentials ? "organisation" : "missing",
   };
 }
 
@@ -122,36 +121,16 @@ export async function resolveForeningLetCredentials(
     .eq("provider", "foreninglet")
     .maybeSingle();
 
-  if (data?.enabled !== false) {
-    const config = parseConfig(data?.config_encrypted as string | null | undefined);
-    const orgBaseUrl = data?.base_url as string | null;
-    if (config.username && config.password) {
-      return {
-        baseUrl: assertAllowedForeningLetUrl(orgBaseUrl),
-        username: config.username,
-        password: config.password,
-        source: "org",
-      };
-    }
-    if (orgBaseUrl && assertAllowedForeningLetUrl(orgBaseUrl) !== DEFAULT_FORENINGLET_BASE_URL) {
-      throw new Error("Organisationens ForeningLet-URL kræver egne credentials.");
-    }
-  }
-
-  const username = process.env.FORENINGLET_USERNAME;
-  const password = process.env.FORENINGLET_PASSWORD;
-  if (!username || !password) {
-    throw new Error("ForeningLet-login mangler i miljøet eller i organisationens opsætning.");
-  }
-  const envBaseUrl = assertAllowedForeningLetUrl(process.env.FORENINGLET_BASE_URL || DEFAULT_FORENINGLET_BASE_URL);
-  if (envBaseUrl !== assertAllowedForeningLetUrl(DEFAULT_FORENINGLET_BASE_URL)) {
-    throw new Error("Globale ForeningLet-credentials må kun bruges mod standard ForeningLet-URL'en.");
+  if (data?.enabled === false) throw new Error("ForeningLet-import er deaktiveret for organisationen.");
+  const config = parseConfig(data?.config_encrypted as string | null | undefined);
+  if (!config.username || !config.password) {
+    throw new Error("Organisationen mangler sit eget ForeningLet-login under Opsætning → Organisation.");
   }
   return {
-    baseUrl: envBaseUrl,
-    username,
-    password,
-    source: "env",
+    baseUrl: assertAllowedForeningLetUrl(data?.base_url as string | null),
+    username: config.username,
+    password: config.password,
+    source: "org",
   };
 }
 

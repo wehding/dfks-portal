@@ -263,7 +263,7 @@ export default function RettighedshavereAdminPage() {
             toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
             return
         }
-        toast.success(`${result.count ?? 0} medlemmer hentet. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret.`)
+        toast.success(`${result.count ?? 0} medlemmer hentet fra den aktive organisation. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret${result.removedCount ? `, ${result.removedCount} gamle cacheposter fjernet` : ""}.`)
         setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
         setMemberSyncSummary({
             updated: result.updatedExisting ?? 0,
