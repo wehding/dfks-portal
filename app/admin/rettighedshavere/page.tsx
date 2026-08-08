@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
@@ -37,7 +37,7 @@ import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHold
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
 type AdminUserResponse = {
     error?: string
@@ -144,6 +144,7 @@ export default function RettighedshavereAdminPage() {
     const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
+    const loadAllPromiseRef = useRef<Promise<void> | null>(null)
     const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
     const [search, setSearch] = useState("")
@@ -236,6 +237,40 @@ export default function RettighedshavereAdminPage() {
         } catch (error) {
             toast.error(errorMessage(error))
         } finally { setLoadingMore(false) }
+    }
+
+    function loadAllRightsHolders() {
+        if (loadAllPromiseRef.current) return loadAllPromiseRef.current
+        const promise = (async () => {
+            setLoadingMore(true)
+            try {
+                let accumulatedRows = [...rows]
+                let accumulatedCounts = { ...countsByRightsHolder }
+                let more = hasMore
+                while (more) {
+                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200 })
+                    accumulatedRows = [...accumulatedRows, ...result.rows.filter(row => !accumulatedRows.some(existing => existing.id === row.id))]
+                    accumulatedCounts = { ...accumulatedCounts, ...result.countsByRightsHolder }
+                    more = result.hasMore
+                }
+                setRows(accumulatedRows)
+                setCountsByRightsHolder(accumulatedCounts)
+                setHasMore(false)
+            } catch (error) {
+                toast.error(errorMessage(error))
+            }
+        })().finally(() => {
+            setLoadingMore(false)
+            loadAllPromiseRef.current = null
+        })
+        loadAllPromiseRef.current = promise
+        return promise
+    }
+
+    function applyListFilter(nextFilter: Filter, clearSearch = false) {
+        if (clearSearch) setSearch("")
+        setFilter(nextFilter)
+        if (hasMore) void loadAllRightsHolders()
     }
 
     async function loadDfksMembers(oid: string) {
@@ -404,8 +439,9 @@ export default function RettighedshavereAdminPage() {
             }
             if (filter === "medlemmer" && !aff?.is_member) return false
             if (filter === "ikke-medlemmer" && aff?.is_member) return false
+            if (filter === "inviteret" && !rh.user_id) return false
             if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
-            const invStatus = rh.onboarding_completed ? "registreret" : rh.invite_sent_at ? "afventer" : "ikke-inviteret"
+            const invStatus = rh.onboarding_completed ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
             if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
             if (q) {
                 return (
@@ -787,14 +823,20 @@ export default function RettighedshavereAdminPage() {
             {!loading && (
                 <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     {[
-                        { label: "Rettighedshavere", value: rightsHolderSummary.total },
-                        { label: "Inviteret", value: rightsHolderSummary.invited },
-                        { label: "Færdiggjort onboarding", value: rightsHolderSummary.onboardingCompleted },
+                        { label: "Rettighedshavere", value: rightsHolderSummary.total, targetFilter: "alle" as Filter },
+                        { label: "Inviteret", value: rightsHolderSummary.invited, targetFilter: "inviteret" as Filter },
+                        { label: "Færdiggjort onboarding", value: rightsHolderSummary.onboardingCompleted, targetFilter: "registreret" as Filter },
                     ].map(s => (
-                        <div key={s.label} className="min-w-0 rounded-lg border bg-card px-2.5 py-2 text-card-foreground sm:px-5 sm:py-4">
+                        <button
+                            type="button"
+                            key={s.label}
+                            aria-pressed={filter === s.targetFilter && !search}
+                            onClick={() => applyListFilter(s.targetFilter, true)}
+                            className={`min-w-0 rounded-lg border px-2.5 py-2 text-left text-card-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5 sm:py-4 ${filter === s.targetFilter && !search ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/50"}`}
+                        >
                             <p className="mb-0.5 text-[11px] font-medium leading-tight text-muted-foreground sm:mb-1 sm:text-sm">{s.label}</p>
                             <p className="text-lg font-bold text-foreground tabular-nums sm:text-2xl">{s.value}</p>
-                        </div>
+                        </button>
                     ))}
                 </div>
             )}
@@ -802,18 +844,19 @@ export default function RettighedshavereAdminPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => { setSearch(e.target.value); if (e.target.value.trim() && hasMore) void loadAllRightsHolders() }} />
                     {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
-                <Select value={filter} onValueChange={v => setFilter(v as Filter)}>
+                <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
                     <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
                         <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
-                        <SelectItem value="afventer">Afventer invitation</SelectItem>
+                        <SelectItem value="inviteret">Inviteret</SelectItem>
+                        <SelectItem value="afventer">Afventer onboarding</SelectItem>
                         <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
-                        <SelectItem value="registreret">Registreret</SelectItem>
+                        <SelectItem value="registreret">Færdiggjort onboarding</SelectItem>
                         <SelectItem value="alle-kontrakter-valideret">Alle kontrakter valideret</SelectItem>
                         <SelectItem value="arkiverede">Arkiverede</SelectItem>
                     </SelectContent>
@@ -828,6 +871,33 @@ export default function RettighedshavereAdminPage() {
                     {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
                 </Button>
             </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                <span>
+                    {loadingMore ? "Indlæser hele listen…" : `${visible.length} på listen`}
+                    {hasMore && !loadingMore ? " · flere kan indlæses" : ""}
+                </span>
+                <span>
+                    {selectedVisibleCount} valgt på listen
+                    {selectedIds.size > selectedVisibleCount ? ` · ${selectedIds.size} valgt i alt` : ""}
+                </span>
+            </div>
+
+            <details className="rounded-lg border bg-muted/20 px-3 py-2 text-sm">
+                <summary className="cursor-pointer font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Forklaring af filtre</summary>
+                <div className="mt-3 grid gap-2 text-muted-foreground sm:grid-cols-2">
+                    <p><strong className="text-foreground">Alle:</strong> Alle ikke-arkiverede rettighedshavere.</p>
+                    <p><strong className="text-foreground">Kun medlemmer:</strong> Rettighedshavere med aktivt medlemskab i den valgte organisation.</p>
+                    <p><strong className="text-foreground">Ikke-medlemmer:</strong> Rettighedshavere uden aktivt medlemskab i den valgte organisation.</p>
+                    <p><strong className="text-foreground">Inviteret:</strong> Rettighedshavere, der har fået oprettet en portalbruger.</p>
+                    <p><strong className="text-foreground">Afventer onboarding:</strong> Inviterede, som endnu ikke har færdiggjort onboarding.</p>
+                    <p><strong className="text-foreground">Ikke inviteret:</strong> Rettighedshavere uden en oprettet portalbruger.</p>
+                    <p><strong className="text-foreground">Færdiggjort onboarding:</strong> Rettighedshavere, der har afsluttet onboarding.</p>
+                    <p><strong className="text-foreground">Alle kontrakter valideret:</strong> Rettighedshavere med mindst én kontrakt, hvor alle kontrakter er valideret eller arkiveret.</p>
+                    <p><strong className="text-foreground">Arkiverede:</strong> Rettighedshavere, der er fjernet fra den aktive liste, men ikke permanent slettet.</p>
+                    <p><strong className="text-foreground">Søgning:</strong> Søger i navn, e-mail, telefon og medlemsnummer og kombineres med det valgte filter.</p>
+                </div>
+            </details>
 
             {selectedIds.size > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">

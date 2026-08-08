@@ -160,11 +160,12 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
   const holderRows = (holderPage ?? []).slice(0, limit);
 
   const createSummaryQuery = () => canSeeAllOrganisations
-    ? db.from("rettighedshavere").select("id", { count: "exact", head: true })
+    ? db.from("rettighedshavere").select("id", { count: "exact", head: true }).is("archived_at", null)
     : db
         .from("rettighedshavere")
         .select("id, org_affiliations!inner(org_id)", { count: "exact", head: true })
-        .eq("org_affiliations.org_id", caller.orgId);
+        .eq("org_affiliations.org_id", caller.orgId)
+        .is("archived_at", null);
   const [totalResult, invitedResult, onboardingResult] = await Promise.all([
     createSummaryQuery(),
     createSummaryQuery().not("user_id", "is", null),
