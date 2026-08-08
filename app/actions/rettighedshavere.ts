@@ -159,6 +159,20 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
   const hasMore = (holderPage?.length ?? 0) > limit;
   const holderRows = (holderPage ?? []).slice(0, limit);
 
+  const createSummaryQuery = () => canSeeAllOrganisations
+    ? db.from("rettighedshavere").select("id", { count: "exact", head: true })
+    : db
+        .from("rettighedshavere")
+        .select("id, org_affiliations!inner(org_id)", { count: "exact", head: true })
+        .eq("org_affiliations.org_id", caller.orgId);
+  const [totalResult, invitedResult, onboardingResult] = await Promise.all([
+    createSummaryQuery(),
+    createSummaryQuery().not("user_id", "is", null),
+    createSummaryQuery().eq("onboarding_completed", true),
+  ]);
+  const summaryError = totalResult.error ?? invitedResult.error ?? onboardingResult.error;
+  if (summaryError) throw new Error(summaryError.message);
+
   const orgIds = Array.from(new Set((holderRows ?? [])
     .flatMap(holder => (holder.org_affiliations ?? []).map((affiliation: { org_id: string }) => affiliation.org_id))));
   const { data: organisations, error: organisationsError } = orgIds.length
@@ -215,6 +229,11 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
     orgId: caller.orgId,
     canSeeAllOrganisations,
     hasMore,
+    summary: {
+      total: totalResult.count ?? 0,
+      invited: invitedResult.count ?? 0,
+      onboardingCompleted: onboardingResult.count ?? 0,
+    },
   };
 }
 

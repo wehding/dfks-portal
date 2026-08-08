@@ -176,6 +176,7 @@ export default function RettighedshavereAdminPage() {
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
+    const [rightsHolderSummary, setRightsHolderSummary] = useState({ total: 0, invited: 0, onboardingCompleted: 0 })
     const [memberSyncSummary, setMemberSyncSummary] = useState<{ updated: number; newCount: number; ambiguous: number; source: "org" | "env" | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
@@ -215,6 +216,7 @@ export default function RettighedshavereAdminPage() {
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
             setHasMore(result.hasMore)
+            setRightsHolderSummary(result.summary)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
@@ -738,11 +740,6 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    const memberCount    = rows.filter(rh => orgId && getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
-    const nonMemberCount = rows.filter(rh => orgId && !getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
-    const portalCount    = rows.filter(rh => rh.user_id).length
-    const validatedCount = rows.filter(rh => countsByRightsHolder[rh.id]?.allContractsValidated).length
-
     function setSort(nextKey: SortKey) {
         if (sortKey === nextKey) {
             setSortDirection(direction => direction === "asc" ? "desc" : "asc")
@@ -768,17 +765,19 @@ export default function RettighedshavereAdminPage() {
                 subtitle={canSeeAllOrganisations ? "Rettighedshavere på tværs af alle organisationer" : "Rettighedshavere tilknyttet organisationen"}
                 actions={
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-                        {memberSyncStatus && (
-                            <span className="text-xs text-muted-foreground">
-                                Medlemsliste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
-                            </span>
-                        )}
-                        <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
-                            {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Hent fra medlemssystem
-                        </Button>
+                        <div className="flex flex-col items-start gap-1 sm:items-end">
+                            <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
+                                {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
+                                Hent fra medlemssystem
+                            </Button>
+                            {memberSyncStatus && (
+                                <span className="text-xs text-muted-foreground">
+                                    Medlemsliste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
+                                </span>
+                            )}
+                        </div>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
-                            <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
+                            <Plus className="h-4 w-4 mr-1" />Indtast rettighedshaver manuelt
                         </Button>
                     </div>
                 }
@@ -786,17 +785,15 @@ export default function RettighedshavereAdminPage() {
 
             {/* Stats strip */}
             {!loading && (
-                <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-5">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     {[
-                        { label: "I alt",             value: rows.length    },
-                        { label: "Aktive medlemmer",  value: memberCount    },
-                        { label: "Ikke-medlemmer",    value: nonMemberCount },
-                        { label: "Med portal-adgang", value: portalCount    },
-                        { label: "Kontrakter valideret", value: validatedCount },
+                        { label: "Rettighedshavere", value: rightsHolderSummary.total },
+                        { label: "Inviteret", value: rightsHolderSummary.invited },
+                        { label: "Færdiggjort onboarding", value: rightsHolderSummary.onboardingCompleted },
                     ].map(s => (
-                        <div key={s.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
-                            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
-                            <p className="text-2xl font-bold text-foreground tabular-nums">{s.value}</p>
+                        <div key={s.label} className="min-w-0 rounded-lg border bg-card px-2.5 py-2 text-card-foreground sm:px-5 sm:py-4">
+                            <p className="mb-0.5 text-[11px] font-medium leading-tight text-muted-foreground sm:mb-1 sm:text-sm">{s.label}</p>
+                            <p className="text-lg font-bold text-foreground tabular-nums sm:text-2xl">{s.value}</p>
                         </div>
                     ))}
                 </div>
