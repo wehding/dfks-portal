@@ -73,6 +73,7 @@ type RightsHolderInput = {
   usual_work_mode?: string | null;
   primary_work_region_code?: string | null;
   external_identities?: Partial<Record<ExternalIdSource, string[]>>;
+  reset_onboarding?: boolean;
 };
 
 function securePayload(input: RightsHolderInput) {
@@ -91,6 +92,7 @@ function securePayload(input: RightsHolderInput) {
     ...(input.primary_profession_type_id !== undefined ? { primary_profession_type_id: input.primary_profession_type_id || null } : {}),
     ...(input.usual_work_mode !== undefined ? { usual_work_mode: input.usual_work_mode || null } : {}),
     ...(input.primary_work_region_code !== undefined ? { primary_work_region_code: input.primary_work_region_code || null } : {}),
+    ...(input.reset_onboarding ? { onboarding_completed: false } : {}),
   };
 }
 

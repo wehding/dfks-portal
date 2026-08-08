@@ -132,6 +132,7 @@ const EMPTY_FORM = {
     alternative_names: "", portrait_url: "", professional_start_year: "", primary_profession_type_id: "",
     secondary_profession_type_ids: [] as string[], usual_work_mode: "", primary_work_region_code: "",
     external_dfi: "", external_tmdb: "", external_wikidata: "", external_imdb: "",
+    reset_onboarding: false,
 }
 
 function parseList(value: string) {
@@ -645,7 +646,7 @@ export default function RettighedshavereAdminPage() {
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
-        setEditForm({ ...EMPTY_FORM, full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
+        setEditForm({ ...EMPTY_FORM, full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), reset_onboarding: Boolean(rh.user_id && !rh.onboarding_completed) })
         setEditMemberNoTouched(false)
         setEditProfessionTypes([])
         setEditWorkRegions([])
@@ -702,6 +703,7 @@ export default function RettighedshavereAdminPage() {
                 wikidata: parseList(editForm.external_wikidata),
                 imdb: parseList(editForm.external_imdb),
             },
+            reset_onboarding: Boolean(editTarget.user_id && editTarget.onboarding_completed && editForm.reset_onboarding),
         })
         if (!updateResult.success) {
             setEditSaving(false)
@@ -757,22 +759,6 @@ export default function RettighedshavereAdminPage() {
             toast.error(errorMessage(e))
         } finally {
             setPortalLoading(false)
-        }
-    }
-
-    async function handleResetOnboarding(rh: RettighedshaverWithAffiliation) {
-        try {
-            const res = await fetch("/api/admin/user", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "reset-onboarding", rhId: rh.id }),
-            })
-            const json = await res.json() as AdminUserResponse
-            if (!res.ok) throw new Error(json.error)
-            toast.success(`Onboarding nulstillet for ${rh.full_name}`)
-            setRows(prev => prev.map(r => r.id === rh.id ? { ...r, onboarding_completed: false } : r))
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
         }
     }
 
@@ -882,22 +868,6 @@ export default function RettighedshavereAdminPage() {
                     {selectedIds.size > selectedVisibleCount ? ` · ${selectedIds.size} valgt i alt` : ""}
                 </span>
             </div>
-
-            <details className="rounded-lg border bg-muted/20 px-3 py-2 text-sm">
-                <summary className="cursor-pointer font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Forklaring af filtre</summary>
-                <div className="mt-3 grid gap-2 text-muted-foreground sm:grid-cols-2">
-                    <p><strong className="text-foreground">Alle:</strong> Alle ikke-arkiverede rettighedshavere.</p>
-                    <p><strong className="text-foreground">Kun medlemmer:</strong> Rettighedshavere med aktivt medlemskab i den valgte organisation.</p>
-                    <p><strong className="text-foreground">Ikke-medlemmer:</strong> Rettighedshavere uden aktivt medlemskab i den valgte organisation.</p>
-                    <p><strong className="text-foreground">Inviteret:</strong> Rettighedshavere, der har fået oprettet en portalbruger.</p>
-                    <p><strong className="text-foreground">Afventer onboarding:</strong> Inviterede, som endnu ikke har færdiggjort onboarding.</p>
-                    <p><strong className="text-foreground">Ikke inviteret:</strong> Rettighedshavere uden en oprettet portalbruger.</p>
-                    <p><strong className="text-foreground">Færdiggjort onboarding:</strong> Rettighedshavere, der har afsluttet onboarding.</p>
-                    <p><strong className="text-foreground">Alle kontrakter valideret:</strong> Rettighedshavere med mindst én kontrakt, hvor alle kontrakter er valideret eller arkiveret.</p>
-                    <p><strong className="text-foreground">Arkiverede:</strong> Rettighedshavere, der er fjernet fra den aktive liste, men ikke permanent slettet.</p>
-                    <p><strong className="text-foreground">Søgning:</strong> Søger i navn, e-mail, telefon og medlemsnummer og kombineres med det valgte filter.</p>
-                </div>
-            </details>
 
             {selectedIds.size > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
@@ -1122,14 +1092,6 @@ export default function RettighedshavereAdminPage() {
                                                         <Mail className="h-3.5 w-3.5 mr-2" />Send 2. invitation
                                                     </DropdownMenuItem>
                                                 )}
-                                                {hasLogin && rh.onboarding_completed && (
-                                                    <DropdownMenuItem
-                                                        className="text-amber-600 focus:text-amber-600"
-                                                        onClick={() => handleResetOnboarding(rh)}
-                                                    >
-                                                        <RotateCcw className="h-3.5 w-3.5 mr-2" />Nulstil onboarding
-                                                    </DropdownMenuItem>
-                                                )}
                                                 <DropdownMenuSeparator />
                                                 {rh.archived_at ? (
                                                     <DropdownMenuItem onClick={async () => {
@@ -1317,6 +1279,25 @@ export default function RettighedshavereAdminPage() {
                             <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
                         </div>
+                        {editTarget?.user_id && <div className="rounded-lg border p-3 sm:p-4">
+                            <label className="flex items-start gap-3">
+                                <input
+                                    type="checkbox"
+                                    checked={editForm.reset_onboarding}
+                                    disabled={!editTarget.onboarding_completed}
+                                    onChange={event => setEditForm(form => ({ ...form, reset_onboarding: event.target.checked }))}
+                                    className="mt-0.5 h-4 w-4"
+                                />
+                                <span>
+                                    <span className="block text-sm font-medium">Nulstil onboarding</span>
+                                    <span className="block text-xs text-muted-foreground">
+                                        {editTarget.onboarding_completed
+                                            ? "Lader rettighedshaveren gennemgå onboarding igen efter gemning."
+                                            : "Afventer at rettighedshaveren færdiggør onboarding. Markeringen fjernes automatisk bagefter."}
+                                    </span>
+                                </span>
+                            </label>
+                        </div>}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditTarget(null)}>Annuller</Button>

@@ -127,6 +127,17 @@ function findExistingMemberMatch(
   return { id: null, reason: null, ambiguous: false };
 }
 
+async function resolveForeningLetPrimaryProfessionId(admin: ReturnType<typeof createServiceClient>, orgId: string) {
+  const { data, error } = await admin
+    .from("organisation_profession_types")
+    .select("profession_type_id,profession_types!inner(normalized_name)")
+    .eq("org_id", orgId)
+    .eq("profession_types.normalized_name", "klipper")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.profession_type_id as string | undefined;
+}
+
 async function loadImportCandidates(orgId: string): Promise<ImportCandidate[]> {
   const admin = createServiceClient();
   const [{ data: members, error: membersError }, { data: holders, error: holdersError }] = await Promise.all([
@@ -290,6 +301,7 @@ export async function importDfksMembersToRightsHolders(memberIds: string[]) {
   try {
     const orgId = caller.orgId;
     const admin = createServiceClient();
+    const primaryProfessionTypeId = await resolveForeningLetPrimaryProfessionId(admin, orgId);
     const candidates = await loadImportCandidates(orgId);
     const selected = candidates.filter(candidate => uniqueIds.includes(candidate.id));
     const { data: members, error } = await admin
@@ -321,6 +333,7 @@ export async function importDfksMembersToRightsHolders(memberIds: string[]) {
         phone: getMemberPhone(member),
         address: getMemberAddress(member),
         cpr_no: encryptValue(getMemberCpr(member)),
+        ...(primaryProfessionTypeId ? { primary_profession_type_id: primaryProfessionTypeId } : {}),
       };
 
       if (candidate.rights_holder_id) {
