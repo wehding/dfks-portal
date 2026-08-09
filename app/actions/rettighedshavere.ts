@@ -10,6 +10,7 @@ import { encryptValue } from "@/lib/encryption";
 import { decryptRettighedshaver } from "@/lib/encryption";
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender";
 import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
   organisation_names: string[];
@@ -48,6 +49,8 @@ const ADMIN_RIGHTS_HOLDER_FIELDS = `
   created_at,
   user_id,
   onboarding_completed,
+  onboarding_completed_at,
+  onboarding_required_at,
   archived_at,
   invite_sent_at,
   dfi_person_id,
@@ -73,7 +76,6 @@ type RightsHolderInput = {
   usual_work_mode?: string | null;
   primary_work_region_code?: string | null;
   external_identities?: Partial<Record<ExternalIdSource, string[]>>;
-  reset_onboarding?: boolean;
 };
 
 function securePayload(input: RightsHolderInput) {
@@ -92,7 +94,6 @@ function securePayload(input: RightsHolderInput) {
     ...(input.primary_profession_type_id !== undefined ? { primary_profession_type_id: input.primary_profession_type_id || null } : {}),
     ...(input.usual_work_mode !== undefined ? { usual_work_mode: input.usual_work_mode || null } : {}),
     ...(input.primary_work_region_code !== undefined ? { primary_work_region_code: input.primary_work_region_code || null } : {}),
-    ...(input.reset_onboarding ? { onboarding_completed: false } : {}),
   };
 }
 
@@ -171,7 +172,7 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
   const [totalResult, invitedResult, onboardingResult] = await Promise.all([
     createSummaryQuery(),
     createSummaryQuery().not("user_id", "is", null),
-    createSummaryQuery().eq("onboarding_completed", true),
+    createSummaryQuery().not("onboarding_completed_at", "is", null),
   ]);
   const summaryError = totalResult.error ?? invitedResult.error ?? onboardingResult.error;
   if (summaryError) throw new Error(summaryError.message);
@@ -428,4 +429,50 @@ export async function updateRettighedshaverSecure(
   }
   revalidatePath("/admin/rettighedshavere");
   return { success: true };
+}
+
+export async function requireRightsHolderOnboarding(id: string, orgId: string) {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
+  if (!caller || caller.orgId !== orgId) return { success: false as const, error: "Ikke autoriseret" };
+  const context = { actorUserId: caller.userId, actorOrgId: orgId, actorRole: caller.role, source: "admin" as const, correlationId: crypto.randomUUID() };
+  const db = createServiceClient({ audit: context });
+  try { await assertRightsHolderInOrg(db, id, orgId); } catch { return { success: false as const, error: "Rettighedshaveren tilhører ikke din organisation" }; }
+  const { data: holder, error: holderError } = await db.from("rettighedshavere")
+    .select("id,full_name,user_id,onboarding_completed_at,onboarding_required_at")
+    .eq("id", id).maybeSingle();
+  if (holderError || !holder) return { success: false as const, error: holderError?.message ?? "Rettighedshaveren blev ikke fundet" };
+  if (!holder.user_id) return { success: false as const, error: "Rettighedshaveren har ingen portalbruger" };
+  if (!holder.onboarding_completed_at) return { success: false as const, error: "Rettighedshaveren afventer allerede sin første onboarding" };
+  if (holder.onboarding_required_at) return { success: true as const, requiredAt: holder.onboarding_required_at, alreadyRequired: true };
+  const requiredAt = new Date().toISOString();
+  const { error } = await db.from("rettighedshavere").update({ onboarding_required_at: requiredAt }).eq("id", id);
+  if (error) return { success: false as const, error: error.message };
+  try {
+    await recordAuditEvent({ context, action: "require_onboarding", entityType: "rettighedshavere", entityId: id, entityLabel: holder.full_name, orgIds: [orgId], metadata: { activation: "next_login" } });
+  } catch { console.error("Onboardingkrav: den semantiske auditregistrering fejlede"); }
+  revalidatePath("/admin/rettighedshavere");
+  return { success: true as const, requiredAt, alreadyRequired: false };
+}
+
+export async function cancelRightsHolderOnboarding(id: string, orgId: string) {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
+  if (!caller || caller.orgId !== orgId) return { success: false as const, error: "Ikke autoriseret" };
+  const context = { actorUserId: caller.userId, actorOrgId: orgId, actorRole: caller.role, source: "admin" as const, correlationId: crypto.randomUUID() };
+  const db = createServiceClient({ audit: context });
+  try { await assertRightsHolderInOrg(db, id, orgId); } catch { return { success: false as const, error: "Rettighedshaveren tilhører ikke din organisation" }; }
+  const { data: holder, error: holderError } = await db.from("rettighedshavere")
+    .select("id,full_name,onboarding_completed_at,onboarding_required_at")
+    .eq("id", id).maybeSingle();
+  if (holderError || !holder) return { success: false as const, error: holderError?.message ?? "Rettighedshaveren blev ikke fundet" };
+  if (!holder.onboarding_completed_at) return { success: false as const, error: "Førstegangs-onboarding kan ikke annulleres" };
+  if (!holder.onboarding_required_at) return { success: true as const, alreadyCancelled: true };
+  const { error } = await db.from("rettighedshavere").update({ onboarding_required_at: null }).eq("id", id);
+  if (error) return { success: false as const, error: error.message };
+  try {
+    await recordAuditEvent({ context, action: "cancel_onboarding", entityType: "rettighedshavere", entityId: id, entityLabel: holder.full_name, orgIds: [orgId] });
+  } catch { console.error("Annulleret onboardingkrav: den semantiske auditregistrering fejlede"); }
+  revalidatePath("/admin/rettighedshavere");
+  return { success: true as const, alreadyCancelled: false };
 }

@@ -56,10 +56,12 @@ export default function OnboardingClient({
   rh,
   user,
   statisticsProfile,
+  isRepeatOnboarding,
 }: {
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
   statisticsProfile: StatisticsProfileOptions;
+  isRepeatOnboarding: boolean;
 }) {
   const { locale, t } = useI18n();
   const router = useRouter();
@@ -209,8 +211,8 @@ export default function OnboardingClient({
     payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
 
     const result = await completeOnboarding(payload);
-    if (result.success) {
-      router.push("/portal");
+    if (result.success && result.destination) {
+      router.replace(result.destination);
       router.refresh();
     } else {
       toast.error(result.error || "Der opstod en fejl. Prøv igen.");
@@ -456,11 +458,12 @@ export default function OnboardingClient({
               <div style={{ textAlign: "center", marginBottom: "32px" }}>
                 <div style={{ fontSize: "48px", marginBottom: "16px" }}>👋</div>
                 <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 12px", color: "var(--on-surface)" }}>
-                  Velkommen til DFKS Rettighedssystem
+                  {isRepeatOnboarding ? t("onboarding.repeatTitle") : "Velkommen til DFKS Rettighedssystem"}
                 </h1>
                 <p style={{ color: "var(--on-surface-variant)", fontSize: "16px", lineHeight: 1.7, margin: 0 }}>
-                  Vi hjælper dig igennem a kort opsætning, så du er klar til at administrere
-                  dine rettigheder, kontrakter og udbetalinger.
+                  {isRepeatOnboarding
+                    ? t("onboarding.repeatIntro")
+                    : "Vi hjælper dig igennem en kort opsætning, så du er klar til at administrere dine rettigheder, kontrakter og udbetalinger."}
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>

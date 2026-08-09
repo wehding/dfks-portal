@@ -10,7 +10,7 @@ import {
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
-import { createRettighedshaverSecure, getAdminRightsHolderProfile, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
+import { cancelRightsHolderOnboarding, createRettighedshaverSecure, getAdminRightsHolderProfile, getAdminRightsHolders, requireRightsHolderOnboarding, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
@@ -132,7 +132,6 @@ const EMPTY_FORM = {
     alternative_names: "", portrait_url: "", professional_start_year: "", primary_profession_type_id: "",
     secondary_profession_type_ids: [] as string[], usual_work_mode: "", primary_work_region_code: "",
     external_dfi: "", external_tmdb: "", external_wikidata: "", external_imdb: "",
-    reset_onboarding: false,
 }
 
 function parseList(value: string) {
@@ -169,6 +168,8 @@ export default function RettighedshavereAdminPage() {
     const [editMemberNoTouched, setEditMemberNoTouched] = useState(false)
     const [editProfessionTypes, setEditProfessionTypes] = useState<Array<{ id: string; name: string }>>([])
     const [editWorkRegions, setEditWorkRegions] = useState<Array<{ code: string; name_da: string; name_en: string }>>([])
+    const [onboardingAction, setOnboardingAction] = useState<{ type: "require" | "cancel"; rh: RettighedshaverWithAffiliation } | null>(null)
+    const [onboardingActionLoading, setOnboardingActionLoading] = useState(false)
 
     // Portal-adgang
     const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reminder" | "reset" } | null>(null)
@@ -442,7 +443,7 @@ export default function RettighedshavereAdminPage() {
             if (filter === "ikke-medlemmer" && aff?.is_member) return false
             if (filter === "inviteret" && !rh.user_id) return false
             if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
-            const invStatus = rh.onboarding_completed ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
+            const invStatus = rh.onboarding_completed_at && !rh.onboarding_required_at ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
             if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
             if (q) {
                 return (
@@ -556,7 +557,7 @@ export default function RettighedshavereAdminPage() {
     }
 
     function inviteTargets() {
-        return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed)
+        return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed_at)
     }
 
     function handleBulkSendInvitation() {
@@ -646,7 +647,7 @@ export default function RettighedshavereAdminPage() {
     function openEdit(rh: RettighedshaverWithAffiliation) {
         const aff = orgId ? getVisibleAffiliation(rh, orgId, canSeeAllOrganisations) : null
         const extra = rh as { gender?: string | null; opt_out_statistics?: boolean | null }
-        setEditForm({ ...EMPTY_FORM, full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics), reset_onboarding: Boolean(rh.user_id && !rh.onboarding_completed) })
+        setEditForm({ ...EMPTY_FORM, full_name: rh.full_name, email: rh.email ?? "", phone: rh.phone ?? "", address: rh.address ?? "", member_no: aff?.member_no ?? "", is_member: aff?.is_member ?? false, gender: extra.gender ?? "", opt_out_statistics: Boolean(extra.opt_out_statistics) })
         setEditMemberNoTouched(false)
         setEditProfessionTypes([])
         setEditWorkRegions([])
@@ -703,7 +704,6 @@ export default function RettighedshavereAdminPage() {
                 wikidata: parseList(editForm.external_wikidata),
                 imdb: parseList(editForm.external_imdb),
             },
-            reset_onboarding: Boolean(editTarget.user_id && editTarget.onboarding_completed && editForm.reset_onboarding),
         })
         if (!updateResult.success) {
             setEditSaving(false)
@@ -715,6 +715,24 @@ export default function RettighedshavereAdminPage() {
         toast.success("Gemt")
         setEditTarget(null)
         load()
+    }
+
+    async function handleOnboardingAction() {
+        if (!onboardingAction || !orgId) return
+        setOnboardingActionLoading(true)
+        const result = onboardingAction.type === "require"
+            ? await requireRightsHolderOnboarding(onboardingAction.rh.id, orgId)
+            : await cancelRightsHolderOnboarding(onboardingAction.rh.id, orgId)
+        setOnboardingActionLoading(false)
+        if (!result.success) {
+            toast.error(result.error)
+            return
+        }
+        toast.success(onboardingAction.type === "require" ? "Ny onboarding kræves ved næste login" : "Kravet om ny onboarding er annulleret")
+        window.dispatchEvent(new Event("onboarding-requirement-changed"))
+        setOnboardingAction(null)
+        setEditTarget(null)
+        await load()
     }
 
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
@@ -1034,7 +1052,7 @@ export default function RettighedshavereAdminPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {rh.onboarding_completed
+                                        {rh.onboarding_completed_at
                                             ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
                                             : rh.invite_sent_at
                                                 ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
@@ -1043,8 +1061,10 @@ export default function RettighedshavereAdminPage() {
                                     <TableCell>
                                         {!hasLogin
                                             ? <span className="text-xs text-muted-foreground">—</span>
-                                            : rh.onboarding_completed
-                                                ? <Badge className="bg-emerald-600 text-white text-xs gap-1">✓ Gennemført</Badge>
+                                            : rh.onboarding_required_at
+                                                ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">Planlagt igen</Badge>
+                                                : rh.onboarding_completed_at
+                                                    ? <Badge className="bg-emerald-600 text-white text-xs gap-1">✓ Gennemført</Badge>
                                                 : <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Ikke påbegyndt</Badge>}
                                     </TableCell>
                                     <TableCell>
@@ -1077,7 +1097,7 @@ export default function RettighedshavereAdminPage() {
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
-                                                {!rh.onboarding_completed && rh.email && (
+                                                {!rh.onboarding_completed_at && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend invitation" : "Send invitation"}
                                                     </DropdownMenuItem>
@@ -1087,7 +1107,7 @@ export default function RettighedshavereAdminPage() {
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                                     </DropdownMenuItem>
                                                 )}
-                                                {rh.invite_sent_at && !rh.onboarding_completed && rh.email && (
+                                                {rh.invite_sent_at && !rh.onboarding_completed_at && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reminder" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <Mail className="h-3.5 w-3.5 mr-2" />Send 2. invitation
                                                     </DropdownMenuItem>
@@ -1279,31 +1299,59 @@ export default function RettighedshavereAdminPage() {
                             <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
                         </div>
-                        {editTarget?.user_id && <div className="rounded-lg border p-3 sm:p-4">
-                            <label className="flex items-start gap-3">
-                                <input
-                                    type="checkbox"
-                                    id="edit-reset-onboarding"
-                                    checked={editForm.reset_onboarding}
-                                    onChange={event => setEditForm(form => ({ ...form, reset_onboarding: event.target.checked }))}
-                                    aria-describedby="edit-reset-onboarding-help"
-                                    className="mt-0.5 h-4 w-4 cursor-pointer"
-                                />
-                                <span>
-                                    <span className="block text-sm font-medium">Nulstil onboarding</span>
-                                    <span id="edit-reset-onboarding-help" className="block text-xs text-muted-foreground">
-                                        {editTarget.onboarding_completed
-                                            ? "Lader rettighedshaveren gennemgå onboarding igen efter gemning."
-                                            : "Onboarding er allerede nulstillet. Rettighedshaveren sendes til onboarding ved næste login, og markeringen fjernes automatisk, når forløbet er færdigt."}
-                                    </span>
-                                </span>
-                            </label>
+                        {editTarget?.user_id && <div className="space-y-3 rounded-lg border p-3 sm:p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-medium">Onboardingstatus</p>
+                                    {!editTarget.onboarding_completed_at ? (
+                                        <p className="text-xs text-muted-foreground">Afventer første onboarding. Dette krav kan ikke annulleres.</p>
+                                    ) : editTarget.onboarding_required_at ? (
+                                        <p className="text-xs text-muted-foreground">Ny onboarding er planlagt til næste login. Den nuværende session fortsætter indtil logout.</p>
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground">Senest gennemført {new Date(editTarget.onboarding_completed_at).toLocaleString("da-DK")}.</p>
+                                    )}
+                                </div>
+                                <Badge variant={editTarget.onboarding_required_at || !editTarget.onboarding_completed_at ? "secondary" : "outline"}>
+                                    {!editTarget.onboarding_completed_at ? "Første onboarding" : editTarget.onboarding_required_at ? "Planlagt" : "Gennemført"}
+                                </Badge>
+                            </div>
+                            {editTarget.onboarding_completed_at && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setOnboardingAction({ type: editTarget.onboarding_required_at ? "cancel" : "require", rh: editTarget })}
+                                >
+                                    <RotateCcw className="mr-2 h-4 w-4" />
+                                    {editTarget.onboarding_required_at ? "Annuller krav" : "Kræv onboarding igen"}
+                                </Button>
+                            )}
                         </div>}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditTarget(null)}>Annuller</Button>
                         <Button onClick={handleEdit} disabled={editLoading || editSaving || !editForm.full_name.trim()}>
                             {editSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Gem
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!onboardingAction} onOpenChange={open => { if (!open && !onboardingActionLoading) setOnboardingAction(null) }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{onboardingAction?.type === "require" ? "Kræv onboarding igen?" : "Annuller krav om onboarding?"}</DialogTitle>
+                        <DialogDescription>
+                            {onboardingAction?.type === "require"
+                                ? "Rettighedshaverens eksisterende oplysninger bevares. Kravet aktiveres ved næste login, og portal- samt administratoradgang er derefter blokeret, indtil hele onboardingforløbet er afsluttet."
+                                : "Rettighedshaveren beholder sin senest gennemførte onboarding og får igen normal adgang ved næste sideindlæsning."}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setOnboardingAction(null)} disabled={onboardingActionLoading}>Tilbage</Button>
+                        <Button type="button" variant={onboardingAction?.type === "require" ? "default" : "outline"} onClick={handleOnboardingAction} disabled={onboardingActionLoading}>
+                            {onboardingActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {onboardingAction?.type === "require" ? "Kræv onboarding" : "Annuller krav"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>

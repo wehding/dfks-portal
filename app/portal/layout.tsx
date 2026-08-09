@@ -47,6 +47,7 @@ import { SidebarCloseOnNavigation, SidebarNavigationLink } from "@/components/na
 import { AppShellTopBar } from "@/components/navigation/app-shell-top-bar"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
 import { PortalContextualHelp } from "@/components/portal/portal-contextual-help"
+import { OnboardingRequirementBanner } from "@/components/onboarding-requirement-banner"
 
 const ALL_ADMIN_NAV_ITEMS = [
     { key: "kontrakter",           href: "/admin/kontrakter",           icon: SHARED_NAV_ICONS.contracts,   labelKey: "nav.contracts"          },
@@ -455,6 +456,7 @@ export default function PortalLayout({
                         <ThemeToggle />
                     </div>
                 </AppShellTopBar>
+                <OnboardingRequirementBanner />
                 <main className="min-w-0 max-w-full flex-1 overflow-x-clip p-3 sm:p-4 lg:p-6">{children}</main>
             </SidebarInset>
         </SidebarProvider>

@@ -832,6 +832,9 @@ const translations = {
         "onboarding.addVariant": "Tilføj variant",
         "onboarding.removeNameVariant": "Fjern navnevariant",
         "onboarding.choosePortrait": "Vælg profilbillede",
+        "onboarding.repeatTitle": "Gennemgå dine oplysninger igen",
+        "onboarding.repeatIntro": "Din organisation har bedt dig gennemgå hele onboardingforløbet igen. Dine eksisterende oplysninger er bevaret og kan kontrolleres undervejs.",
+        "onboarding.scheduledBanner": "Ny onboarding er planlagt. Du kan fortsætte denne session, men skal gennemgå onboarding næste gang du logger ind.",
     },
     en: {
         // Navigation
@@ -1543,6 +1546,9 @@ const translations = {
         "onboarding.addVariant": "Add variant",
         "onboarding.removeNameVariant": "Remove name variant",
         "onboarding.choosePortrait": "Choose profile picture",
+        "onboarding.repeatTitle": "Review your details again",
+        "onboarding.repeatIntro": "Your organisation has asked you to complete the full onboarding flow again. Your existing information has been preserved for review.",
+        "onboarding.scheduledBanner": "New onboarding is scheduled. You can continue this session, but must complete onboarding the next time you sign in.",
 
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
