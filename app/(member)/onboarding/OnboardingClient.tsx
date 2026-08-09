@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { parseOnboardingAddress } from "@/lib/onboarding-address";
+import { isTransientNetworkError, retryTransientNetwork } from "@/lib/transient-network-retry";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -175,7 +176,22 @@ export default function OnboardingClient({
     episodeRequestIds.current[credit.id] = requestId;
     setEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
     setEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
-    const result = await resolveOnboardingEpisodeOptions(credit, season);
+    let result: Awaited<ReturnType<typeof resolveOnboardingEpisodeOptions>>;
+    try {
+      result = await retryTransientNetwork(() => resolveOnboardingEpisodeOptions(credit, season));
+    } catch (error) {
+      if (episodeRequestIds.current[credit.id] !== requestId) return;
+      setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
+      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
+      setEpisodeErrors(prev => ({
+        ...prev,
+        [credit.id]: isTransientNetworkError(error)
+          ? t("onboarding.networkError")
+          : seasonLookupMessage(locale, "error", season),
+      }));
+      setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
+      return;
+    }
     if (episodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
@@ -282,12 +298,12 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, isOrganisationMember ? selectedPortraitUrl : null);
+        const confirmation = await retryTransientNetwork(() => confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, isOrganisationMember ? selectedPortraitUrl : null));
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
         }
-        const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
+        const searchResult = await retryTransientNetwork(() => searchOnboardingCredits(undefined, undefined, dfiSearchQuery));
         if (searchResult.success && searchResult.credits?.length > 0) {
           setDfiPersonId(searchResult.dfiPersonId);
           setTmdbPersonId(searchResult.tmdbPersonId);
@@ -297,6 +313,8 @@ export default function OnboardingClient({
           await revealCreditsProgressively(searchResult.credits);
         }
         setStep(4);
+      } catch (error) {
+        setPersonSearchError(isTransientNetworkError(error) ? t("onboarding.networkError") : t("onboarding.searchError"));
       } finally {
         setIsSearchingDfi(false);
       }
@@ -323,7 +341,10 @@ export default function OnboardingClient({
           for (let index = 0; index < approved.length; index++) {
             const credit = approved[index];
             setImportProgress({ current: index + 1, total: approved.length, title: credit.title });
-            const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, [credit]);
+            const result = await retryTransientNetwork(
+              () => importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, [credit]),
+              { attempts: 2, delayMs: 750 }
+            );
             if (!result.success) {
               collectedErrors.push(result.error ?? `${credit.title}: import fejlede.`);
             } else {
@@ -338,7 +359,7 @@ export default function OnboardingClient({
           if (collectedErrors.length) setImportError(`Nogle værker mangler data: ${collectedErrors.join(" ")}`);
           setStep(5);
         } catch (error: unknown) {
-          setImportError(error instanceof Error ? error.message : "Værkerne kunne ikke importeres. Prøv igen.");
+          setImportError(isTransientNetworkError(error) ? t("onboarding.networkError") : "Værkerne kunne ikke importeres. Prøv igen.");
         } finally {
           setImportProgress(null);
           setIsImportingDfi(false);

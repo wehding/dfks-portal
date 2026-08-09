@@ -835,6 +835,8 @@ const translations = {
         "onboarding.repeatTitle": "Gennemgå dine oplysninger igen",
         "onboarding.repeatIntro": "Din organisation har bedt dig gennemgå hele onboardingforløbet igen. Dine eksisterende oplysninger er bevaret og kan kontrolleres undervejs.",
         "onboarding.scheduledBanner": "Ny onboarding er planlagt. Du kan fortsætte denne session, men skal gennemgå onboarding næste gang du logger ind.",
+        "onboarding.networkError": "Forbindelsen blev afbrudt. Kontrollér netværket, og prøv igen. Allerede importerede værker er gemt.",
+        "onboarding.searchError": "Film og serier kunne ikke hentes. Prøv igen.",
     },
     en: {
         // Navigation
@@ -1549,6 +1551,8 @@ const translations = {
         "onboarding.repeatTitle": "Review your details again",
         "onboarding.repeatIntro": "Your organisation has asked you to complete the full onboarding flow again. Your existing information has been preserved for review.",
         "onboarding.scheduledBanner": "New onboarding is scheduled. You can continue this session, but must complete onboarding the next time you sign in.",
+        "onboarding.networkError": "The connection was interrupted. Check your network and try again. Works already imported have been saved.",
+        "onboarding.searchError": "Films and series could not be loaded. Please try again.",
 
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
