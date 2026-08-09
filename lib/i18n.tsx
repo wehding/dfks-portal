@@ -837,6 +837,12 @@ const translations = {
         "onboarding.scheduledBanner": "Ny onboarding er planlagt. Du kan fortsætte denne session, men skal gennemgå onboarding næste gang du logger ind.",
         "onboarding.networkError": "Forbindelsen blev afbrudt. Kontrollér netværket, og prøv igen. Allerede importerede værker er gemt.",
         "onboarding.searchError": "Film og serier kunne ikke hentes. Prøv igen.",
+        "onboarding.importRunning": "Film og serier importeres i baggrunden",
+        "onboarding.importComplete": "Film og serier er importeret",
+        "onboarding.importNeedsRetry": "Nogle film eller serier mangler at blive importeret",
+        "onboarding.importBackgroundInfo": "Du kan fortsætte onboarding eller forlade siden. Importen fortsætter og genoptages fra det senest gemte værk.",
+        "onboarding.importCurrent": "Behandler",
+        "onboarding.importRetry": "Genoptag manglende importer",
     },
     en: {
         // Navigation
@@ -1553,6 +1559,12 @@ const translations = {
         "onboarding.scheduledBanner": "New onboarding is scheduled. You can continue this session, but must complete onboarding the next time you sign in.",
         "onboarding.networkError": "The connection was interrupted. Check your network and try again. Works already imported have been saved.",
         "onboarding.searchError": "Films and series could not be loaded. Please try again.",
+        "onboarding.importRunning": "Films and series are importing in the background",
+        "onboarding.importComplete": "Films and series have been imported",
+        "onboarding.importNeedsRetry": "Some films or series still need to be imported",
+        "onboarding.importBackgroundInfo": "You can continue onboarding or leave this page. Import continues and resumes from the most recently saved work.",
+        "onboarding.importCurrent": "Processing",
+        "onboarding.importRetry": "Resume missing imports",
 
         // Admin - Producer Payments
         "nav.producerPayments": "Producer Payments",
