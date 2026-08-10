@@ -17,7 +17,9 @@ import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
-import { ADMIN_CONTRACT_UPLOAD_ACCEPT, isSupportedAdminContractFile } from "@/lib/contract-upload-format"
+import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
+import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
+import { findOwnersForContracts, getContractImportStates } from "@/app/actions/contract-imports"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
@@ -80,6 +82,7 @@ type ContractRow = {
     validation_has_overenskomst_incorporation?: boolean | null
     ai_job_status?: string | null
     ai_job_error?: string | null
+    import_status?: string | null
 }
 
 type ContractComment = {
@@ -145,8 +148,10 @@ type NavneTjekResult = {
 
 type UploadItem = {
     file: File
-    status: "pending" | "uploading" | "queued" | "extracting" | "done" | "error"
+    clientToken: string
+    status: "pending" | "uploading" | "queued" | "duplicate" | "extracting" | "done" | "error"
     error?: string
+    contractId?: string | null
     employerId?: string
     rightsHolderId?: string
 }
@@ -242,6 +247,11 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
             {isMissingOwner(contract) && (
                 <Badge variant="outline" className={`w-fit border-red-300 bg-red-50 font-normal text-red-700 ${badgeClass}`}>
                     Mangler ejer
+                </Badge>
+            )}
+            {contract.import_status === "awaiting_episode_confirmation" && (
+                <Badge variant="outline" className={`w-fit border-amber-300 bg-amber-50 font-normal text-amber-800 ${badgeClass}`}>
+                    Afventer bekræftelse af afsnit
                 </Badge>
             )}
         </div>
@@ -608,6 +618,7 @@ function AdminKontrakterContent() {
                             attachmentsByContract[attachment.contract_id].push(attachment)
                         }
                     }
+                    const importStates = await getContractImportStates(rawContracts.map(contract => contract.id))
                     setContracts(rawContracts.map((r) => {
                         const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
                         return ({
@@ -637,6 +648,7 @@ function AdminKontrakterContent() {
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                         ai_job_status: latestJobByContract[r.id]?.status ?? null,
                         ai_job_error: latestJobByContract[r.id]?.error_message ?? null,
+                        import_status: importStates.states[r.id] ?? null,
                         })
                     }))
                 }
@@ -742,135 +754,64 @@ function AdminKontrakterContent() {
 
     const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files ?? [])
-        const unsupported = files.filter(file => !isSupportedAdminContractFile(file.name))
-        if (unsupported.length > 0) {
-            toast.error("Kun PDF, Word-filer (.doc og .docx) og TXT understøttes")
+        const invalid = files.map(file => ({ file, error: validateContractImportFile(file) })).filter(item => item.error)
+        if (invalid.length > 0) {
+            toast.error(`${invalid[0].file.name}: ${invalid[0].error}`)
             e.target.value = ""
             return
         }
-        if (files.length > 15) {
-            toast.error("Du kan maks. uploade 15 kontrakter ad gangen")
-            e.target.value = ""
-            return
-        }
-        setUploadItems(files.map(f => ({ file: f, status: "pending" })))
+        setUploadItems(files.map(file => ({ file, clientToken: crypto.randomUUID(), status: "pending" })))
     }
 
     // ── Upload: gem kontrakter + opret AI-jobs ───────────────────
 
     const handleExtractAndSave = async () => {
         if (uploadItems.length === 0 || !orgId) return
-        if (uploadItems.length > 15) {
-            toast.error("Du kan maks. uploade 15 kontrakter ad gangen")
-            return
-        }
         setUploadPhase("processing")
         setSaving(true)
-        const supabase = createClient()
-        const saved: ContractRow[] = []
         const updated = [...uploadItems]
-        const jobs: { jobId?: string; contractId: string }[] = []
-
-        for (let i = 0; i < updated.length; i++) {
-            updated[i] = { ...updated[i], status: "uploading" }
-            setUploadItems([...updated])
-
-            try {
-                const filePath = `${orgId}/${Date.now()}_${updated[i].file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`
-                const { error: storageErr } = await supabase.storage.from("kontrakter").upload(filePath, updated[i].file, { contentType: updated[i].file.type })
-                if (storageErr) throw new Error(`Upload fejl: ${storageErr.message}`)
-
-                const { data: newContract, error: contractErr } = await supabase.from("contracts").insert({
-                    org_id: orgId,
-                    type: "a-løn",
-                    overenskomst: null,
-                    status: "kladde",
-                    pdf_url: filePath,
-                    working_title: updated[i].file.name.replace(/\.[^.]+$/, ""),
-                    work_id: prefillWorkIdRef.current,
-                    rights_holder_id: uploadItems.length === 1 && uploadRightsHolderId ? uploadRightsHolderId : null,
-                }).select().single()
-                if (contractErr) throw new Error(`Kontrakt fejl: ${contractErr.message}`)
-
-                if (newContract) {
-                    const { data: job, error: jobErr } = await supabase.from("contract_ai_jobs").insert({
-                        contract_id: newContract.id,
-                        org_id: orgId,
-                        status: "queued",
-                        priority: i === 0 ? 0 : 100 + i,
-                    }).select("id").single()
-                    const useDirectFallback = jobErr && (
-                        jobErr.message.includes("contract_ai_jobs") ||
-                        jobErr.message.includes("schema cache") ||
-                        jobErr.code === "PGRST205" ||
-                        jobErr.code === "42P01"
-                    )
-                    if (jobErr && !useDirectFallback) throw new Error(`AI-job fejl: ${jobErr.message}`)
-                    jobs.push({ jobId: job?.id, contractId: newContract.id })
-                    saved.push({
-                        id: newContract.id, type: newContract.type, overenskomst: newContract.overenskomst,
-                        status: newContract.status, pdf_url: newContract.pdf_url,
-                        contract_date: newContract.contract_date, start_date: newContract.start_date,
-                        end_date: newContract.end_date, created_at: newContract.created_at,
-                        employer_id: null, rights_holder_id: uploadItems.length === 1 && uploadRightsHolderId ? uploadRightsHolderId : null,
-                        work_id: prefillWorkIdRef.current,
-                        working_title: newContract.working_title,
-                        employer_name: null,
-                        rights_holder_name: uploadItems.length === 1 && uploadRightsHolderId ? rightsHolders.find(r => r.id === uploadRightsHolderId)?.full_name ?? null : null,
-                        work_title: null,
-                        work_poster_url: null,
-                        season_number: null,
-                        episode_numbers: null,
-                        contract_comments: [],
-                        validation_data: null,
-                        validation_has_credit_clause: null,
-                        validation_has_overenskomst_incorporation: null,
-                        ai_job_status: "queued",
-                        ai_job_error: null,
-                    })
-                }
-
-                updated[i] = { ...updated[i], status: "queued" }
-            } catch (err: unknown) {
-                updated[i] = { ...updated[i], status: "error", error: err instanceof Error ? err.message : String(err) }
-            }
-            setUploadItems([...updated])
-        }
-
-        setContracts(prev => [...saved, ...prev])
-        const queuedCount = updated.filter(i => i.status === "queued").length
-        const errCount  = updated.filter(i => i.status === "error").length
-        if (queuedCount > 0) {
-            toast.success(`${queuedCount} kontrakt${queuedCount !== 1 ? "er" : ""} gemt som kladde — indlæsning starter nu`)
-        }
-        if (errCount  > 0) toast.error(`${errCount} kontrakt${errCount !== 1 ? "er" : ""} fejlede`)
-
-        if (jobs.length > 0) {
-            updated[0] = { ...updated[0], status: "extracting" }
-            setUploadItems([...updated])
-            try {
-                const firstRes = await fetch("/api/contracts/jobs/process", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(jobs[0].jobId ? { jobId: jobs[0].jobId } : { contractId: jobs[0].contractId }),
-                })
-                const firstJson = await firstRes.json()
-                if (!firstRes.ok || !firstJson.ok) throw new Error(firstJson.error ?? "Indlæsning fejlede")
-                updated[0] = { ...updated[0], status: "done" }
-                toast.success("Første kontrakt er indlæst og klar som kladde")
-                setShowUpload(false)
-                setUploadItems([])
-                setUploadPhase("select")
-                await refreshContractRow(firstJson.contractId ?? jobs[0].contractId)
-            } catch (err: unknown) {
-                updated[0] = { ...updated[0], status: "error", error: err instanceof Error ? err.message : String(err) }
-                toast.error(err instanceof Error ? err.message : "Første AI-job fejlede")
+        try {
+            const batchResponse = await fetch("/api/admin/contract-imports", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ source: "computer", discoveredCount: updated.length }),
+            })
+            const batchJson = await batchResponse.json()
+            if (!batchResponse.ok || !batchJson.batch?.id) throw new Error(batchJson.error ?? "Importbatch kunne ikke oprettes")
+            let nextIndex = 0
+            const uploadNext = async (): Promise<void> => {
+                const index = nextIndex++
+                if (index >= updated.length) return
+                updated[index] = { ...updated[index], status: "uploading" }
                 setUploadItems([...updated])
+                try {
+                    const formData = new FormData()
+                    formData.set("file", updated[index].file)
+                    formData.set("clientToken", updated[index].clientToken)
+                    if (updated.length === 1 && uploadRightsHolderId) formData.set("rightsHolderId", uploadRightsHolderId)
+                    if (prefillWorkIdRef.current) formData.set("workId", prefillWorkIdRef.current)
+                    const response = await fetch(`/api/admin/contract-imports/${batchJson.batch.id}/items`, { method: "POST", body: formData })
+                    const json = await response.json()
+                    if (!response.ok) throw new Error(json.error ?? "Upload fejlede")
+                    updated[index] = { ...updated[index], status: json.duplicate ? "duplicate" : "queued", contractId: json.item?.contract_id ?? null }
+                } catch (error) {
+                    updated[index] = { ...updated[index], status: "error", error: error instanceof Error ? error.message : "Upload fejlede" }
+                }
+                setUploadItems([...updated])
+                await uploadNext()
             }
-
+            await Promise.all(Array.from({ length: Math.min(CONTRACT_IMPORT_CONCURRENCY, updated.length) }, () => uploadNext()))
+            const queuedCount = updated.filter(item => item.status === "queued").length
+            const duplicateCount = updated.filter(item => item.status === "duplicate").length
+            const failedCount = updated.filter(item => item.status === "error").length
+            if (queuedCount) toast.success(`${queuedCount} kontrakt${queuedCount === 1 ? "" : "er"} er lagt i analysekø`)
+            if (duplicateCount) toast.info(`${duplicateCount} dublet${duplicateCount === 1 ? "" : "ter"} blev afvist`)
+            if (failedCount) toast.error(`${failedCount} fil${failedCount === 1 ? "" : "er"} fejlede`)
             window.dispatchEvent(new CustomEvent("contracts-updated"))
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Importen kunne ikke startes")
+        } finally {
+            setSaving(false)
         }
-        setSaving(false)
     }
 
     // ── Upload: extract all files ─────────────────────────────
@@ -934,6 +875,31 @@ function AdminKontrakterContent() {
             setSelectedIds([])
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : "Kunne ikke validere kontrakter")
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const handleFindOwners = async () => {
+        if (selectedIds.length === 0) return
+        setSaving(true)
+        try {
+            const result = await findOwnersForContracts(selectedIds)
+            if (!result.success) throw new Error(result.error)
+            const matchMap = new Map(result.matches.map(match => [match.contractId, match.rightsHolderId]))
+            setContracts(previous => previous.map(contract => {
+                const rightsHolderId = matchMap.get(contract.id)
+                if (!rightsHolderId) return contract
+                return {
+                    ...contract,
+                    rights_holder_id: rightsHolderId,
+                    rights_holder_name: rightsHolders.find(holder => holder.id === rightsHolderId)?.full_name ?? contract.rights_holder_name,
+                }
+            }))
+            if (result.matched) toast.success(`${result.matched} kontrakt${result.matched === 1 ? "" : "er"} blev koblet til en rettighedshaver`)
+            if (result.unresolved) toast.info(`${result.unresolved} kontrakt${result.unresolved === 1 ? "" : "er"} mangler fortsat ejer`)
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Ejersøgningen fejlede")
         } finally {
             setSaving(false)
         }
@@ -1750,6 +1716,10 @@ function AdminKontrakterContent() {
                         <MessageSquare className="h-4 w-4" />
                         Besked læst
                     </Button>
+                    <Button size="sm" variant="outline" className="gap-2" onClick={handleFindOwners} disabled={saving}>
+                        <Search className="h-4 w-4" />
+                        Find ejer
+                    </Button>
                     <Button
                         size="sm"
                         variant="destructive"
@@ -1975,7 +1945,8 @@ function AdminKontrakterContent() {
                                 >
                                     <Upload className="h-10 w-10 text-muted-foreground mb-3" />
                                     <p className="text-sm font-medium">Klik for at vælge filer</p>
-                                    <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — maks. 15 filer ad gangen</p>
+                                    <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — ingen samlet batchgrænse, maks. 25 MB pr. fil</p>
+                                    <p className="mt-1 text-[11px] text-muted-foreground">Filerne uploades i små bidder og analyseres automatisk i baggrunden.</p>
                                     <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
                 </div>
             </div>
@@ -1985,7 +1956,7 @@ function AdminKontrakterContent() {
                                     <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>
                                     <div className="max-h-36 overflow-y-auto space-y-1 rounded-md border p-2">
                                         {uploadItems.map((item, i) => (
-                                            <div key={i} className="flex items-center justify-between text-xs py-1 px-2 rounded hover:bg-muted">
+                                            <div key={item.clientToken} className="flex items-center justify-between text-xs py-1 px-2 rounded hover:bg-muted">
                                                 <span className="truncate flex-1 font-medium">{item.file.name}</span>
                                                 <button type="button" onClick={() => removeUploadItem(i)} className="text-muted-foreground hover:text-destructive ml-2">
                                                     <X className="h-3.5 w-3.5" />
@@ -1995,7 +1966,7 @@ function AdminKontrakterContent() {
                                     </div>
                                 </div>
                             )}
-                            {uploadItems.length > 0 && (
+                            {uploadItems.length === 1 && (
                                 <div className="space-y-2 pt-2 border-t">
                                     <Label className="text-xs font-semibold">Tilknyt rettighedshaver (valgfrit)</Label>
                                     <p className="text-[11px] text-muted-foreground">
@@ -2044,12 +2015,13 @@ function AdminKontrakterContent() {
                     {/* Phase: processing */}
                     {uploadPhase === "processing" && (() => {
                         return (
-                            <div className="py-2 space-y-2">
-                                {uploadItems.map((item, i) => (
-                                    <div key={i} className="flex items-center gap-2.5 rounded-md border p-3">
+                            <div className="max-h-[55vh] space-y-2 overflow-y-auto py-2 pr-1">
+                                {uploadItems.map(item => (
+                                    <div key={item.clientToken} className="flex items-center gap-2.5 rounded-md border p-3">
                                         {item.status === "pending"    && <FileText className="h-4 w-4 text-muted-foreground shrink-0" />}
                                         {item.status === "uploading"  && <Loader2  className="h-4 w-4 animate-spin text-primary shrink-0" />}
                                         {item.status === "queued"     && <Clock    className="h-4 w-4 text-amber-500 shrink-0" />}
+                                        {item.status === "duplicate"  && <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />}
                                         {item.status === "extracting" && <Loader2  className="h-4 w-4 animate-spin text-primary shrink-0" />}
                                         {item.status === "done"       && <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
                                         {item.status === "error"      && <AlertCircle  className="h-4 w-4 text-destructive shrink-0" />}
@@ -2057,6 +2029,7 @@ function AdminKontrakterContent() {
                                             <p className="text-sm truncate">{item.file.name}</p>
                                             {item.status === "uploading"  && <p className="text-xs text-muted-foreground">Uploader...</p>}
                                             {item.status === "queued"     && <p className="text-xs text-amber-600">I kø</p>}
+                                            {item.status === "duplicate"  && <p className="text-xs text-amber-700">Dublet — ikke importeret</p>}
                                             {item.status === "extracting" && <p className="text-xs text-muted-foreground">Analyserer...</p>}
                                             {item.status === "done"       && <p className="text-xs text-emerald-600">Indlæst som kladde</p>}
                                             {item.status === "error"      && <p className="text-xs text-destructive">{item.error}</p>}
@@ -2068,11 +2041,17 @@ function AdminKontrakterContent() {
                     })()}
 
                     <DialogFooter className="pt-2 border-t shrink-0">
-                        <Button variant="outline" onClick={() => { setShowUpload(false); setUploadItems([]); setUploadPhase("select") }} disabled={saving}>
-                            {uploadPhase === "processing" && uploadItems.some(i => i.status === "done") ? "Luk" : "Annuller"}
+                        <Button variant="outline" onClick={() => {
+                            const imported = uploadItems.some(item => item.contractId)
+                            setShowUpload(false)
+                            setUploadItems([])
+                            setUploadPhase("select")
+                            if (imported) window.location.reload()
+                        }} disabled={saving}>
+                            {uploadPhase === "processing" && uploadItems.every(item => !["pending", "uploading", "extracting"].includes(item.status)) ? "Luk" : "Annuller"}
                         </Button>
                         {uploadPhase === "select" && (
-                            <Button onClick={handleExtractAndSave} disabled={uploadItems.length === 0 || uploadItems.length > 15}>
+                            <Button onClick={handleExtractAndSave} disabled={uploadItems.length === 0}>
                                 {uploadItems.length > 0 ? `Upload og læs (${uploadItems.length})` : "Upload og læs"}
                             </Button>
                         )}

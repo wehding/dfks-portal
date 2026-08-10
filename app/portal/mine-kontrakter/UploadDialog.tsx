@@ -18,6 +18,7 @@ import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { createClientId } from "@/lib/client-id";
+import { MemberDriveConnections } from "@/components/portal/member-drive-connections";
 
 const BUCKET = "kontrakter";
 const MAX_FILES = 15;
@@ -782,6 +783,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           )}
 
           {/* Drop zone */}
+          {!isBatchUpload && (
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <p className="mb-3 text-sm font-medium">Eller vælg fra dit online-drev</p>
+            <MemberDriveConnections allowImport onImported={() => { toast.success("Importen fortsætter i baggrunden"); onClose(); }} />
+          </div>
+          )}
+
           {!isBatchUpload && (
           <div
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}

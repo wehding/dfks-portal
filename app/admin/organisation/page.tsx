@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { ImportConnectionsSettings } from "@/components/admin/import-connections-settings";
 
 type FormState = {
   org_id: string;
@@ -268,6 +269,8 @@ export default function OrganisationSettingsPage() {
           Gem ændringer
         </Button>
       </div>
+
+      <ImportConnectionsSettings />
 
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Branding</h2>

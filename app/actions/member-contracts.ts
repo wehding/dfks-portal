@@ -44,6 +44,19 @@ async function assertAdminForOrg(db: ReturnType<typeof createServiceClient>, use
   return (data ?? []).some(row => ADMIN_ROLES.includes(row.role));
 }
 
+async function contractValidationBlocker(
+  db: ReturnType<typeof createServiceClient>,
+  contract: { id: string; work_id: string | null; rights_holder_id: string | null },
+) {
+  if (!contract.work_id) return "Kontrakten skal have et tilknyttet værk.";
+  if (!contract.rights_holder_id) return "Kontrakten skal have en tilknyttet rettighedshaver.";
+  const { data: work } = await db.from("works").select("type").eq("id", contract.work_id).maybeSingle();
+  if (!String(work?.type ?? "").includes("serie")) return null;
+  const { data: confirmation } = await db.from("contract_episode_confirmations")
+    .select("id").eq("contract_id", contract.id).is("invalidated_at", null).maybeSingle();
+  return confirmation ? null : "Rettighedshaveren skal bekræfte sæson og afsnit, før seriekontrakten kan valideres.";
+}
+
 type SeriesEpisodeWork = { id: string; title: string | null; season_number: number | null; episode_number: number | null; parent_work_id: string | null };
 
 // Henter alle afsnit-værker for en serie (selve serien + dens børneværker) i en org.
@@ -1089,8 +1102,27 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   const db = createServiceClient();
   const orgId = await requireOrgId(db, user.id);
   if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
-  const { data: existing } = await db.from("contracts").select("id,status,org_id").eq("id", contractId).eq("org_id", orgId).maybeSingle();
+  const { data: existing } = await db.from("contracts").select("id,status,org_id,work_id,rights_holder_id,season_number,episode_numbers").eq("id", contractId).eq("org_id", orgId).maybeSingle();
   if (!existing) return { success: false, error: "Kontrakten blev ikke fundet" };
+  const requestedEpisodeScopeChange =
+    (values.work_id !== undefined && values.work_id !== existing.work_id) ||
+    (values.season_number !== undefined && values.season_number !== existing.season_number) ||
+    (values.episode_numbers !== undefined && JSON.stringify(values.episode_numbers ?? null) !== JSON.stringify(existing.episode_numbers ?? null));
+  if (values.status === "valideret" && existing.status !== "valideret") {
+    const targetWorkId = values.work_id === undefined ? existing.work_id : values.work_id;
+    const { data: targetWork } = targetWorkId
+      ? await db.from("works").select("type").eq("id", targetWorkId).maybeSingle()
+      : { data: null };
+    if (requestedEpisodeScopeChange && String(targetWork?.type ?? "").includes("serie")) {
+      return { success: false, error: "Gem værks- og afsnitsændringerne først. Rettighedshaveren skal derefter bekræfte afsnittene før validering." };
+    }
+    const blocker = await contractValidationBlocker(db, {
+      id: existing.id,
+      work_id: targetWorkId,
+      rights_holder_id: values.rights_holder_id === undefined ? existing.rights_holder_id : values.rights_holder_id,
+    });
+    if (blocker) return { success: false, error: blocker };
+  }
   const writeDb = createServiceClient({ audit: {
     actorUserId: user.id,
     actorOrgId: orgId,
@@ -1100,6 +1132,9 @@ export async function updateAdminContract(contractId: string, values: AdminContr
   const { producer_selections: producerSelections, ...contractValues } = values;
   const { error } = await writeDb.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
   if (error) return { success: false, error: error.message };
+  if (requestedEpisodeScopeChange) {
+    await writeDb.from("contract_episode_confirmations").update({ invalidated_at: new Date().toISOString() }).eq("contract_id", contractId).is("invalidated_at", null);
+  }
   if (producerSelections) {
     try {
       await syncContractProducerRelations(writeDb, contractId, producerSelections, "admin");
@@ -1129,7 +1164,10 @@ export async function validateAdminContracts(contractIds: string[]) {
   if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
   const { data: contracts, error: fetchError } = await db.from("contracts").select("id,status,work_id,rights_holder_id").eq("org_id", orgId).in("id", ids);
   if (fetchError) return { success: false, error: fetchError.message };
-  if ((contracts ?? []).some(contract => !contract.work_id)) return { success: false, error: "Alle valgte kontrakter skal have et tilknyttet værk." };
+  for (const contract of contracts ?? []) {
+    const blocker = await contractValidationBlocker(db, contract);
+    if (blocker) return { success: false, error: blocker };
+  }
   const toValidate = (contracts ?? []).filter(contract => contract.status !== "valideret");
   if (toValidate.length) {
     const writeDb = createServiceClient({ audit: {

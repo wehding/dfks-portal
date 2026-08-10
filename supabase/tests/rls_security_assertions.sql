@@ -150,6 +150,49 @@ begin
   end if;
 end $$;
 
+-- Importkoe, filfingerprints, episodebekraeftelser og OAuth-tokens er server-only.
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'contract_import_batches',
+    'contract_import_items',
+    'contract_file_fingerprints',
+    'contract_episode_confirmations',
+    'import_connections',
+    'import_oauth_attempts',
+    'import_sources',
+    'drive_import_runs',
+    'drive_import_folders',
+    'drive_import_queue_items'
+  ] loop
+    if not exists (
+      select 1 from pg_class relation
+      join pg_namespace namespace on namespace.oid = relation.relnamespace
+      where namespace.nspname = 'public'
+        and relation.relname = table_name
+        and relation.relrowsecurity
+    ) then
+      raise exception 'RLS failure: public.% is missing or RLS is disabled', table_name;
+    end if;
+    if has_table_privilege('anon', format('public.%I', table_name), 'SELECT')
+      or has_table_privilege('authenticated', format('public.%I', table_name), 'SELECT')
+      or has_table_privilege('authenticated', format('public.%I', table_name), 'INSERT')
+      or has_table_privilege('authenticated', format('public.%I', table_name), 'UPDATE')
+      or has_table_privilege('authenticated', format('public.%I', table_name), 'DELETE') then
+      raise exception 'RLS failure: browser role can access server-only import table public.%', table_name;
+    end if;
+  end loop;
+
+  if has_function_privilege('anon', 'public.claim_drive_import_folder(uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_drive_import_folder(uuid)', 'EXECUTE')
+    or has_function_privilege('anon', 'public.claim_drive_import_item(uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_drive_import_item(uuid)', 'EXECUTE') then
+    raise exception 'RLS failure: browser role can claim server-only drive import work';
+  end if;
+end $$;
+
 do $$
 declare
   audit_id uuid;
