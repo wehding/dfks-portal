@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo, useState } from "react";
 import { TrendingUp } from "lucide-react";
 import { CartesianGrid, Legend, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResponsiveChartContainer } from "@/components/charts/responsive-chart-container";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { EXPERIENCE_GROUPS, type ExperienceGroup } from "@/lib/experience-groups";
 
 export type SalaryStatPoint = { year: number; egen: number | null; gennemsnit: number | null };
 
@@ -55,12 +58,16 @@ function MockOverlay({ title, children }: { title: string; children: React.React
   );
 }
 
-export function SalaryStatsCard({ points, optedOut, benchmarkAvailable, contracts }: {
+export function SalaryStatsCard({ points, benchmarkPointsByExperience, optedOut, benchmarkAvailable, contracts }: {
   points: SalaryStatPoint[];
+  benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
   optedOut: boolean;
   benchmarkAvailable: boolean;
   contracts: Array<{ id: string; title: string; year: number; weekly: number }>;
 }) {
+  const [experienceGroup, setExperienceGroup] = useState<"all" | ExperienceGroup>("all");
+  const displayedPoints = useMemo(() => experienceGroup === "all" ? points : (benchmarkPointsByExperience[experienceGroup] ?? points.map(point => ({ ...point, gennemsnit: null }))), [benchmarkPointsByExperience, experienceGroup, points]);
+  const displayedBenchmarkAvailable = experienceGroup === "all" ? benchmarkAvailable : displayedPoints.some(point => point.gennemsnit != null);
   const ownPoints = points.filter(point => point.egen != null);
   return (
     <Card>
@@ -73,13 +80,14 @@ export function SalaryStatsCard({ points, optedOut, benchmarkAvailable, contract
       <CardContent className="space-y-5">
         <section aria-labelledby="salary-own-title" className="space-y-2">
           <h3 id="salary-own-title" className="font-semibold">Min lønudvikling</h3>
-          {ownPoints.length ? <Chart points={points} /> : <MockOverlay title="Lønstatistikken er på vej"><p className="mt-1 text-sm text-muted-foreground">Din egen kurve vises, når mindst én kontrakt har en brugbar løn og dato.</p></MockOverlay>}
+          {ownPoints.length ? <Chart points={displayedPoints} /> : <MockOverlay title="Lønstatistikken er på vej"><p className="mt-1 text-sm text-muted-foreground">Din egen kurve vises, når mindst én kontrakt har en brugbar løn og dato.</p></MockOverlay>}
           <p className="text-xs text-muted-foreground">Grundløn pr. uge beregnet ud fra dine egne kontrakter. Dine egne tal kan ses, selv om organisationssammenligningen endnu ikke kan vises.</p>
         </section>
 
         <section aria-labelledby="salary-benchmark-title" className="space-y-2 rounded-lg border bg-muted/20 p-4">
           <h3 id="salary-benchmark-title" className="font-semibold">Sammenlign med organisationen</h3>
-          {optedOut ? <p className="text-sm text-muted-foreground">Du har fravalgt fælles statistik. Dine egne tal vises fortsat, men organisationsbenchmark er slået fra.</p> : benchmarkAvailable ? <p className="text-sm text-muted-foreground">Den gule kurve viser organisationens personvægtede gennemsnit for år med mindst 10 kvalificerede kontrakter og et sikkert antal bidragydere.</p> : <p className="text-sm text-muted-foreground">Benchmark vises først ved mindst 10 kvalificerede kontrakter og et sikkert antal bidragydere. Skjulte benchmarktal sendes ikke til din browser.</p>}
+          {!optedOut && <Select value={experienceGroup} onValueChange={value => setExperienceGroup(value as "all" | ExperienceGroup)}><SelectTrigger className="w-full sm:max-w-sm"><SelectValue placeholder="Vælg erfaringsgruppe" /></SelectTrigger><SelectContent><SelectItem value="all">Alle erfaringsgrupper</SelectItem>{EXPERIENCE_GROUPS.map(group => <SelectItem key={group.value} value={group.value}>{group.label} ({group.description})</SelectItem>)}</SelectContent></Select>}
+          {optedOut ? <p className="text-sm text-muted-foreground">Du har fravalgt fælles statistik. Dine egne tal vises fortsat, men organisationsbenchmark er slået fra.</p> : displayedBenchmarkAvailable ? <p className="text-sm text-muted-foreground">Den gule kurve viser organisationens personvægtede gennemsnit for den valgte erfaringsgruppe. Erfaring beregnes i det år, kontrakten er indgået.</p> : <p className="text-sm text-muted-foreground">Benchmark vises først ved mindst 10 kvalificerede kontrakter og et sikkert antal bidragydere i den valgte gruppe. Skjulte benchmarktal sendes ikke til din browser.</p>}
         </section>
 
         <section aria-labelledby="salary-contracts-title" className="space-y-2">

@@ -197,6 +197,7 @@ export async function GET(req: NextRequest) {
       rights_holder_ids: [...(holderMap.get(employer.id) ?? [])],
     };
   });
+  const totalCount = rows.length;
   if (query) rows = rows.filter(row => [
     row.name,
     row.parent_name ?? "",
@@ -224,7 +225,7 @@ export async function GET(req: NextRequest) {
   const producerTypes = (producerTypeResult.data ?? []).map(row =>
     Array.isArray(row.producer_types) ? row.producer_types[0] : row.producer_types
   ).filter(Boolean);
-  return NextResponse.json({ data: rows, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], producerTypes, canMerge: auth.role === "superadmin", canDelete: auth.role === "superadmin" });
+  return NextResponse.json({ data: rows, filteredCount: rows.length, totalCount, rightsHolders: holders ?? [], broadcasters: broadcasterResult.data ?? [], producerTypes, canMerge: auth.role === "superadmin", canDelete: auth.role === "superadmin" });
 }
 
 export async function POST(req: NextRequest) {

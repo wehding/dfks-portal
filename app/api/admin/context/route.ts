@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createRequestClient } from "@/lib/supabase/request-client";
 import { resolveStaffAccess } from "@/lib/staff-access";
 import { resolveBranding } from "@/lib/branding";
-import { readActiveOrgId, writeActiveOrgId } from "@/lib/active-org-context";
+import { readActiveOrgIdFromRequest, writeActiveOrgIdToResponse } from "@/lib/active-org-context";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  const supabase = await createClient();
-  const access = await resolveStaffAccess(supabase, await readActiveOrgId());
-  if (!access) return NextResponse.json({ error: "Ingen administratoradgang" }, { status: 403 });
+export async function GET(request: NextRequest) {
+  const { supabase, applyCookies } = createRequestClient(request);
+  const access = await resolveStaffAccess(supabase, readActiveOrgIdFromRequest(request));
+  if (!access) return applyCookies(NextResponse.json({ error: "Ingen administratoradgang" }, { status: 403 }));
 
   const [{ data: organisation }, { data: holder }, { data: organisations }] = await Promise.all([
     supabase.from("organisations").select("name,logo_url,branding").eq("id", access.activeOrgId).maybeSingle(),
@@ -23,7 +23,7 @@ export async function GET() {
   ]);
 
   const branding = organisation ? resolveBranding(organisation as never) : { short_name: "DFKS" };
-  return NextResponse.json({
+  return applyCookies(NextResponse.json({
     userId: access.userId,
     orgId: access.activeOrgId,
     role: access.activeRole,
@@ -36,17 +36,18 @@ export async function GET() {
       logo_url: organisation?.logo_url ?? null,
       short_name: branding.short_name,
     },
-  });
+  }));
 }
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null) as { orgId?: unknown } | null;
   if (!body || typeof body.orgId !== "string") return NextResponse.json({ error: "Organisation mangler" }, { status: 400 });
-  const supabase = await createClient();
+  const { supabase, applyCookies } = createRequestClient(request);
   const access = await resolveStaffAccess(supabase, body.orgId);
   if (!access || access.activeOrgId !== body.orgId || !access.allowedOrgIds.includes(body.orgId)) {
-    return NextResponse.json({ error: "Ingen adgang til organisationen" }, { status: 403 });
+    return applyCookies(NextResponse.json({ error: "Ingen adgang til organisationen" }, { status: 403 }));
   }
-  await writeActiveOrgId(body.orgId);
-  return NextResponse.json({ ok: true, orgId: body.orgId });
+  const response = NextResponse.json({ ok: true, orgId: body.orgId });
+  writeActiveOrgIdToResponse(response, body.orgId);
+  return applyCookies(response);
 }

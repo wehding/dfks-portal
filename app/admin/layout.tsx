@@ -23,6 +23,8 @@ import {
     Home,
     FileClock,
     BadgeCheck,
+    AlertCircle,
+    RefreshCw,
 } from "lucide-react"
 import { useI18n } from "@/lib/i18n"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -152,6 +154,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const [isAssociationMember, setIsAssociationMember] = useState(false)
     const [activeOrgId, setActiveOrgId] = useState("")
     const [organisations, setOrganisations] = useState<Array<{ id: string; name: string }>>([])
+    const [contextError, setContextError] = useState<string | null>(null)
+    const [contextReload, setContextReload] = useState(0)
 
     // Kollaps-tilstand per sektion. Opsætning er lukket som standard.
     const [brugerOpen, setBrugerOpen] = useState(true)
@@ -164,9 +168,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         const supabase = createClient()
 
         const loadContextAndCounts = async () => {
+            setContextError(null)
             const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
             if (!contextResponse.ok) {
                 setUserRole(null)
+                setContextError("Menuen kunne ikke indlæses")
                 return
             }
             const context = await contextResponse.json() as {
@@ -209,7 +215,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             window.removeEventListener("works-updated", loadContextAndCounts)
             window.removeEventListener("admin-context-updated", loadContextAndCounts)
         }
-    }, [])
+    }, [contextReload])
 
     const setupRouteActive = SETUP_NAV_ITEMS.some(item => pathname === item.href || pathname.startsWith(`${item.href}/`))
 
@@ -335,7 +341,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         isOpen={adminOpen}
                         onToggle={() => setAdminOpen(o => !o)}
                     >
-                        {adminItems.map(renderItem)}
+                        {contextError ? (
+                            <SidebarMenuItem>
+                                <div className="mx-2 space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+                                    <div className="flex items-center gap-2 font-medium"><AlertCircle className="h-4 w-4" />{contextError}</div>
+                                    <button type="button" className="inline-flex items-center gap-1 underline underline-offset-2" onClick={() => setContextReload(value => value + 1)}>
+                                        <RefreshCw className="h-3.5 w-3.5" />Prøv igen
+                                    </button>
+                                </div>
+                            </SidebarMenuItem>
+                        ) : adminItems.map(renderItem)}
                     </NavSection>
 
                     <Separator className="mx-4 my-1 w-auto" />

@@ -20,6 +20,7 @@ export type StatisticsQueryPlan = {
     producerTypeCodes: string[];
     membershipTypes: Array<"member" | "associate" | "none" | "unknown">;
     professionType: string | null;
+    experienceGroup: "new_graduate" | "early_career" | "experienced" | "veteran" | null;
   };
   chart: "line" | "bar" | "table";
 };
@@ -29,6 +30,7 @@ const allowedGenders = new Set(["male", "female", "other"]);
 const allowedCategories = new Set<StatisticsCategory>(["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"]);
 const allowedContractTypes = new Set(["a-løn", "leverandør"]);
 const allowedMembershipTypes = new Set(["member", "associate", "none", "unknown"]);
+const allowedExperienceGroups = new Set(["new_graduate", "early_career", "experienced", "veteran"]);
 
 function stringArray(value: unknown, maximum: number, maxLength = 120) {
   const values = Array.isArray(value) ? value : typeof value === "string" && value.trim() ? [value] : [];
@@ -62,6 +64,9 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
       producerTypeCodes: stringArray(rawFilters.producerTypeCodes, 20, 80).filter(code => /^[a-z0-9_]+$/.test(code)),
       membershipTypes: stringArray(rawFilters.membershipTypes, 4, 20).filter((type): type is StatisticsQueryPlan["filters"]["membershipTypes"][number] => allowedMembershipTypes.has(type)),
       professionType: typeof rawFilters.professionType === "string" ? rawFilters.professionType.trim().slice(0, 120) || null : null,
+      experienceGroup: allowedExperienceGroups.has(String(rawFilters.experienceGroup))
+        ? rawFilters.experienceGroup as StatisticsQueryPlan["filters"]["experienceGroup"]
+        : null,
     },
     chart: raw.chart === "bar" || raw.chart === "table" ? raw.chart : "line",
   };

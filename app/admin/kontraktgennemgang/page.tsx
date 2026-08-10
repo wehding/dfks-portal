@@ -22,6 +22,7 @@ import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
 import { resolveAnker, bygFeedbackPayload } from "@/lib/resolveAnker"
 import { PageHeader } from "@/components/page-header"
+import { ListResultSummary } from "@/components/list-result-summary"
 import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -444,6 +445,8 @@ function Indbakke() {
             <Button type="button" variant="outline" className="w-full md:hidden" onClick={toggleAllVisible} disabled={!reviews.length}>
                 {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
             </Button>
+
+            <ListResultSummary filteredCount={totalCount} totalCount={totalCount} selectedCount={selectedIds.size} loading={loading} />
 
             {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                 <span className="text-sm font-medium">{selectedIds.size} valgt</span>

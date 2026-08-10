@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import type { NextRequest, NextResponse } from "next/server";
 
 const COOKIE_NAME = "dfks_active_org";
 
@@ -15,8 +16,7 @@ function signature(orgId: string) {
   return createHmac("sha256", secret()).update(orgId).digest("base64url");
 }
 
-export async function readActiveOrgId() {
-  const value = (await cookies()).get(COOKIE_NAME)?.value;
+function parseCookieValue(value: string | undefined) {
   if (!value) return null;
   const separator = value.lastIndexOf(".");
   if (separator < 1) return null;
@@ -27,6 +27,14 @@ export async function readActiveOrgId() {
   return orgId;
 }
 
+export async function readActiveOrgId() {
+  return parseCookieValue((await cookies()).get(COOKIE_NAME)?.value);
+}
+
+export function readActiveOrgIdFromRequest(request: NextRequest) {
+  return parseCookieValue(request.cookies.get(COOKIE_NAME)?.value);
+}
+
 export async function writeActiveOrgId(orgId: string) {
   (await cookies()).set(COOKIE_NAME, `${orgId}.${signature(orgId)}`, {
     httpOnly: true,
@@ -35,4 +43,15 @@ export async function writeActiveOrgId(orgId: string) {
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
+}
+
+export function writeActiveOrgIdToResponse(response: NextResponse, orgId: string) {
+  response.cookies.set(COOKIE_NAME, `${orgId}.${signature(orgId)}`, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  return response;
 }
