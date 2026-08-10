@@ -58,6 +58,7 @@ export default async function MineKontrakterPage() {
 
   let contracts: unknown[] = [];
   let unreadCommentsByContract: Record<string, Contract["contract_comments"]> = {};
+  const confirmedEpisodeContractIds = new Set<string>();
   if (rh) {
     const listRes = await db
       .from("contracts")
@@ -71,13 +72,19 @@ export default async function MineKontrakterPage() {
       contracts = listRes.data ?? [];
       const contractIds = contracts.map(row => (row as { id?: string }).id).filter((id): id is string => Boolean(id));
       if (contractIds.length) {
-        const { data: unreadComments } = await db
-          .from("contract_comments")
-          .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-          .in("contract_id", contractIds)
-          .eq("author_role", "admin")
-          .is("member_read_at", null)
-          .order("created_at", { ascending: true });
+        const [{ data: unreadComments }, { data: episodeConfirmations }] = await Promise.all([
+          db.from("contract_comments")
+            .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+            .in("contract_id", contractIds)
+            .eq("author_role", "admin")
+            .is("member_read_at", null)
+            .order("created_at", { ascending: true }),
+          db.from("contract_episode_confirmations")
+            .select("contract_id")
+            .in("contract_id", contractIds)
+            .is("invalidated_at", null),
+        ]);
+        for (const confirmation of episodeConfirmations ?? []) confirmedEpisodeContractIds.add(confirmation.contract_id);
         unreadCommentsByContract = ((unreadComments ?? []) as Array<ContractComment & { contract_id: string }>).reduce<Record<string, Contract["contract_comments"]>>((acc, comment) => {
           if (!acc[comment.contract_id]) acc[comment.contract_id] = [];
           acc[comment.contract_id].push(comment);
@@ -110,6 +117,7 @@ export default async function MineKontrakterPage() {
     employers: firstRelation(contract.employers),
     contract_attachments: [],
     contract_comments: unreadCommentsByContract[contract.id] ?? [],
+    episode_confirmed: confirmedEpisodeContractIds.has(contract.id),
   }));
 
   return (

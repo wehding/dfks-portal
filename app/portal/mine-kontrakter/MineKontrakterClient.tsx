@@ -6,6 +6,7 @@ import { addMemberContractComment, deleteMemberContract, fetchMemberContractDeta
 import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
+import { confirmContractEpisodes } from "@/app/actions/contract-episode-confirmations";
 import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
 import { toast } from "sonner";
 import { useSearchParams } from "next/navigation";
@@ -48,6 +49,7 @@ export type Contract = {
   created_at: string | null;
   season_number?: number | null;
   episode_numbers?: number[] | null;
+  episode_confirmed?: boolean;
   works: { id: string; title: string; year: number | null; type: string | null } | null;
   employers: { id: string; name: string } | null;
   contract_validations: Validation[] | Validation;
@@ -217,6 +219,46 @@ export default function MineKontrakterClient({
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
+  const [confirmationSeason, setConfirmationSeason] = useState(1);
+  const [confirmationEpisodes, setConfirmationEpisodes] = useState("");
+  const [confirmEntireSeason, setConfirmEntireSeason] = useState(false);
+  const [confirmationSaving, setConfirmationSaving] = useState(false);
+
+  useEffect(() => {
+    if (!selectedContract) return;
+    setConfirmationSeason(selectedContract.season_number ?? 1);
+    setConfirmationEpisodes((selectedContract.episode_numbers ?? []).join(", "));
+    setConfirmEntireSeason(false);
+  }, [selectedContract?.id, selectedContract?.season_number, selectedContract?.episode_numbers]);
+
+  async function handleConfirmEpisodes() {
+    if (!selectedContract) return;
+    const episodeNumbers = confirmationEpisodes
+      .split(/[,;\s]+/)
+      .map(Number)
+      .filter(value => Number.isInteger(value) && value > 0);
+    setConfirmationSaving(true);
+    const result = await confirmContractEpisodes({
+      contractId: selectedContract.id,
+      seasonNumber: confirmationSeason,
+      episodeNumbers,
+      entireSeason: confirmEntireSeason,
+    });
+    setConfirmationSaving(false);
+    if (!result.success) {
+      toast.error(result.error ?? "Afsnittene kunne ikke bekræftes");
+      return;
+    }
+    const updated = {
+      ...selectedContract,
+      season_number: confirmationSeason,
+      episode_numbers: confirmEntireSeason ? null : episodeNumbers,
+      episode_confirmed: true,
+    };
+    setSelectedContract(updated);
+    setContracts(previous => previous.map(contract => contract.id === updated.id ? updated : contract));
+    toast.success("Afsnittene er bekræftet");
+  }
 
   // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
   // Afled et stabilt boolean-flag, så polling-effekten kun genstarter når behovet ændrer sig
@@ -1231,6 +1273,52 @@ export default function MineKontrakterClient({
                   </div>
                 )}
               </div>
+
+              {selectedContract.works && String(selectedContract.works.type ?? "").includes("serie") && !selectedContract.episode_confirmed && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                  <p className="text-sm font-semibold">Bekræft dine serieafsnit</p>
+                  <p className="mt-1 text-xs">Før kontrakten kan valideres, skal du bekræfte, hvilken sæson og hvilke afsnit du har arbejdet på.</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <Label htmlFor="confirmation-season" className="text-xs">Sæson</Label>
+                      <Input
+                        id="confirmation-season"
+                        type="number"
+                        min={1}
+                        value={confirmationSeason}
+                        onChange={event => setConfirmationSeason(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
+                        disabled={confirmationSaving}
+                        className="mt-1 bg-background"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="confirmation-episodes" className="text-xs">Afsnit</Label>
+                      <Input
+                        id="confirmation-episodes"
+                        value={confirmationEpisodes}
+                        onChange={event => setConfirmationEpisodes(event.target.value)}
+                        placeholder="Fx 1, 2, 3"
+                        disabled={confirmationSaving || confirmEntireSeason}
+                        className="mt-1 bg-background"
+                      />
+                    </div>
+                  </div>
+                  <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={confirmEntireSeason}
+                      onChange={event => setConfirmEntireSeason(event.target.checked)}
+                      disabled={confirmationSaving}
+                      className="h-4 w-4"
+                    />
+                    Jeg arbejdede på hele sæsonen
+                  </label>
+                  <Button type="button" size="sm" className="mt-3 w-full" disabled={confirmationSaving} onClick={() => void handleConfirmEpisodes()}>
+                    {confirmationSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Bekræft afsnit
+                  </Button>
+                </div>
+              )}
 
               <StatusBadge status={selectedContract.status} />
               {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}

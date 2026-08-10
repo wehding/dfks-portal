@@ -18,6 +18,7 @@ import { PersonIdentityPicker } from "@/components/works/person-identity-picker"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useI18n } from "@/lib/i18n"
 import { getMemberStatisticsProfile, updateMemberStatisticsProfile, updateSensitiveMemberProfile } from "@/app/actions/member-profile"
+import { MemberDriveConnections } from "@/components/portal/member-drive-connections"
 
 interface ProfileData {
     id: string
@@ -460,6 +461,11 @@ export default function MinProfilPage() {
                         <Input value={kinNotes} onChange={e => setKinNotes(e.target.value)} placeholder={t("profile.notesPlaceholder")} />
                     </div>
                 </div>
+            </section>
+
+            <section className="rounded-lg border">
+                <div className="border-b px-5 py-4"><h2 className="font-medium">Online-drev</h2><p className="mt-1 text-sm text-muted-foreground">Forbind dit eget drev, så du kan vælge kontrakter direkte ved upload.</p></div>
+                <div className="p-5"><MemberDriveConnections /></div>
             </section>
 
             <section className="rounded-lg border">
