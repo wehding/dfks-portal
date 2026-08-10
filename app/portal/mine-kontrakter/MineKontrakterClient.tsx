@@ -229,7 +229,7 @@ export default function MineKontrakterClient({
     setConfirmationSeason(selectedContract.season_number ?? 1);
     setConfirmationEpisodes((selectedContract.episode_numbers ?? []).join(", "));
     setConfirmEntireSeason(false);
-  }, [selectedContract?.id, selectedContract?.season_number, selectedContract?.episode_numbers]);
+  }, [selectedContract]);
 
   async function handleConfirmEpisodes() {
     if (!selectedContract) return;
