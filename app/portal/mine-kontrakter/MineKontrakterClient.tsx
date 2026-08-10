@@ -29,6 +29,7 @@ import { ManualWorkFormFields } from "@/components/works/manual-work-form";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
+import { ListResultSummary } from "@/components/list-result-summary";
 
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
 
@@ -951,6 +952,8 @@ export default function MineKontrakterClient({
 	            </Button>
 	          )}
 	        </div>
+
+        <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} className="px-1" />
 
 	        {/* Kolonnehoveder */}
 	        <div className="hidden px-5 py-2.5 border-b text-sm font-medium text-muted-foreground md:grid md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]">

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog"
 import { useI18n } from "@/lib/i18n"
 import { isStaffRole } from "@/lib/admin-roles"
+import { ListResultSummary } from "@/components/list-result-summary"
 
 // ── Typer ─────────────────────────────────────────────────
 
@@ -635,6 +636,12 @@ export default function AdminBrugerePage() {
                     className="pl-8 h-8 text-sm"
                 />
             </div>
+
+            <ListResultSummary
+                filteredCount={tab === "unassigned" ? filteredUnassigned.length : filtered.length}
+                totalCount={tab === "unassigned" ? unassigned.length : users.length}
+                loading={loading}
+            />
 
             {/* Tabel */}
             {tab === "unassigned" && (

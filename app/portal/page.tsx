@@ -10,6 +10,7 @@ import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
 import { salaryDataToWeekly } from "@/lib/statistics-calculations";
+import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
@@ -79,29 +80,31 @@ export default async function PortalDashboardPage() {
   const optedOut = Boolean((holder as { opt_out_statistics?: boolean | null }).opt_out_statistics);
   let salaryPoints: SalaryStatPoint[] = [];
   let benchmarkAvailable = false;
+  let benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>> = {};
   let ownStatisticsContracts: Array<{ id: string; title: string; year: number; weekly: number }> = [];
   {
     const { data: orgContracts } = await db.from("contracts")
-      .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(opt_out_statistics)")
+      .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(opt_out_statistics,professional_start_year)")
       .eq("org_id", orgId);
     const contractIds = (orgContracts ?? []).map(contract => contract.id);
     const { data: validations } = contractIds.length
       ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds)
       : { data: [] as Array<{ contract_id: string; extracted_data: Record<string, unknown> | null }> };
     const extractedMap = new Map((validations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
-    const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null }> = [];
+    const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null }> = [];
     for (const contract of orgContracts ?? []) {
       const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
       if (!extracted?.salary || contract.type === "leverandør") continue;
       const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
-      const contributes = !(holderRow as { opt_out_statistics?: boolean | null } | null)?.opt_out_statistics;
+      const holderDetails = holderRow as { opt_out_statistics?: boolean | null; professional_start_year?: number | null } | null;
+      const contributes = !holderDetails?.opt_out_statistics;
       const isMine = contract.rights_holder_id === holder.id;
       if (!contributes && !isMine) continue;
       const dateStr = (typeof extracted.startDate === "string" ? extracted.startDate : null) ?? contract.start_date ?? (typeof extracted.contractDate === "string" ? extracted.contractDate : null) ?? contract.contract_date ?? null;
       const year = dateStr ? new Date(dateStr).getFullYear() : Number.NaN;
       const weekly = salaryDataToWeekly(extracted);
       if (!Number.isFinite(weekly) || weekly <= 0 || !Number.isFinite(year)) continue;
-      salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null });
+      salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null, professionalStartYear: holderDetails?.professional_start_year ?? null });
       if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
     }
     const MIN_BENCHMARK_CONTRACTS = 10;
@@ -130,6 +133,17 @@ export default async function PortalDashboardPage() {
         gennemsnit: yearlyAverage(yearRows),
       };
     });
+    if (!optedOut) {
+      benchmarkPointsByExperience = Object.fromEntries(EXPERIENCE_GROUPS.map(group => [
+        group.value,
+        salaryPoints.map(point => ({
+          ...point,
+          gennemsnit: yearlyAverage(salaryRows.filter(row => row.year === point.year && experienceGroupAt(row.professionalStartYear, row.year) === group.value)),
+        })),
+      ])) as Partial<Record<ExperienceGroup, SalaryStatPoint[]>>;
+    } else {
+      salaryPoints = salaryPoints.map(point => ({ ...point, gennemsnit: null }));
+    }
     benchmarkAvailable = salaryPoints.some(point => point.gennemsnit != null);
     ownStatisticsContracts = ownStatisticsContracts.sort((left, right) => right.year - left.year || left.title.localeCompare(right.title, "da"));
   }
@@ -143,7 +157,7 @@ export default async function PortalDashboardPage() {
       <DashboardCard title="Kræver handling" count={actionItems.length} icon={AlertCircle} items={actionItems} empty="Du har ingen åbne opgaver." />
       <DashboardCard title="Afventer DFKS" count={waitingItems.length} icon={Clock3} items={waitingItems} empty="Intet afventer behandling." />
     </div>
-    <SalaryStatsCard points={salaryPoints} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} contracts={ownStatisticsContracts} />
+    <SalaryStatsCard points={salaryPoints} benchmarkPointsByExperience={benchmarkPointsByExperience} optedOut={optedOut} benchmarkAvailable={benchmarkAvailable} contracts={ownStatisticsContracts} />
     <section className="space-y-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold"><MessageSquare className="h-5 w-5 text-amber-500" />Beskeder fra DFKS</h2>
       <MemberInboxPanel />

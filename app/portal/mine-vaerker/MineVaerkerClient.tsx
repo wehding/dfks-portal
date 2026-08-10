@@ -18,6 +18,7 @@ import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { WORK_TYPES } from "@/lib/work-types";
 import { ExpandableListTrigger, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
+import { ListResultSummary } from "@/components/list-result-summary";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -764,6 +765,8 @@ export default function MineVaerkerClient({
               {sortKey === "date" ? (sortDir === "asc" ? "Ældst" : "Nyest") : sortKey === "contract" ? (sortDir === "asc" ? "Mangler" : "OK") : sortDir === "asc" ? "A-Z" : "Z-A"}
             </Button>
           </div>
+
+          <ListResultSummary filteredCount={filtered.length} totalCount={assignments.length} selectedCount={selected.length} className="lg:col-span-full" />
         </div>
 
 		        {/* Kolonnehoveder */}

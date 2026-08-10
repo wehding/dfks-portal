@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   XCircle,
 } from "lucide-react";
@@ -30,6 +31,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
+import { ListResultSummary } from "@/components/list-result-summary";
 import {
   archiveAdminWorks,
   approveAdminWorks,
@@ -51,6 +53,7 @@ import {
   syncAdminSeasonAssignments,
   updateAdminWorkData,
 } from "@/app/actions/work-management";
+import { applyWorkEnrichment, previewWorkEnrichment, type WorkEnrichmentPreview } from "@/app/actions/work-identity";
 import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
@@ -775,6 +778,8 @@ export default function VaerksadministrationPage() {
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterType, setFilterType] = useState("all");
+  const [filterConnection, setFilterConnection] = useState("all");
+  const [filterMissingConnection, setFilterMissingConnection] = useState("none");
   const [pageSize, setPageSize] = useState(20);
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -828,6 +833,9 @@ export default function VaerksadministrationPage() {
   const [masterId, setMasterId] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [enrichmentOpen, setEnrichmentOpen] = useState(false);
+  const [enrichmentLoading, setEnrichmentLoading] = useState(false);
+  const [enrichmentPreviews, setEnrichmentPreviews] = useState<WorkEnrichmentPreview[]>([]);
   const [expandedSeasons, setExpandedSeasons] = useState<Set<string>>(new Set());
   const [seasonEpisodes, setSeasonEpisodes] = useState<Record<string, WorkRow[]>>({});
   const [loadingSeasons, setLoadingSeasons] = useState<Set<string>>(new Set());
@@ -862,6 +870,45 @@ export default function VaerksadministrationPage() {
       setNotice(errorMessage(err, "Kunne ikke hente værker."));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePreviewEnrichment = async () => {
+    setEnrichmentOpen(true);
+    setEnrichmentLoading(true);
+    setEnrichmentPreviews([]);
+    try {
+      const result = await previewWorkEnrichment(selectedIds);
+      if (!result.success) throw new Error(result.error ?? "Værkerne kunne ikke undersøges.");
+      setEnrichmentPreviews(result.previews ?? []);
+    } catch (error) {
+      setNotice(errorMessage(error, "Værkerne kunne ikke undersøges."));
+      setEnrichmentOpen(false);
+    } finally {
+      setEnrichmentLoading(false);
+    }
+  };
+
+  const handleApplyEnrichment = async () => {
+    const safe = enrichmentPreviews.filter(preview => preview.status === "safe_match" && preview.candidateImdbId);
+    if (!safe.length) return;
+    setEnrichmentLoading(true);
+    try {
+      const result = await applyWorkEnrichment(safe.map(preview => ({
+        workId: preview.workId,
+        inputFingerprint: preview.inputFingerprint,
+        candidateImdbId: preview.candidateImdbId,
+      })));
+      const applied = result.results.filter(item => item.applied).length;
+      const failed = result.results.length - applied;
+      setNotice(`${applied} værk(er) blev suppleret${failed ? ` · ${failed} kræver nyt opslag` : ""}.`);
+      setEnrichmentOpen(false);
+      setSelectedIds([]);
+      await load();
+    } catch (error) {
+      setNotice(errorMessage(error, "Værkdata kunne ikke suppleres."));
+    } finally {
+      setEnrichmentLoading(false);
     }
   };
 
@@ -945,6 +992,13 @@ export default function VaerksadministrationPage() {
     if (filterStatus === "beskeder") list = list.filter(work => unreadMemberMessageCount(work) > 0);
     else if (filterStatus !== "all") list = list.filter(work => displayStatus(work) === filterStatus);
     if (filterType !== "all") list = list.filter(work => work.type === filterType);
+    if (filterConnection === "dfi") list = list.filter(work => Boolean(work.dfi_id));
+    else if (filterConnection === "tmdb") list = list.filter(work => Boolean(work.tmdb_id));
+    else if (filterConnection === "imdb") list = list.filter(work => Boolean(work.imdb_id));
+    else if (filterConnection === "local") list = list.filter(work => !work.dfi_id && !work.tmdb_id && !work.imdb_id);
+    if (filterMissingConnection === "dfi") list = list.filter(work => !work.dfi_id);
+    else if (filterMissingConnection === "tmdb") list = list.filter(work => !work.tmdb_id);
+    else if (filterMissingConnection === "imdb") list = list.filter(work => !work.imdb_id);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(work =>
@@ -977,7 +1031,7 @@ export default function VaerksadministrationPage() {
       return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction;
     });
     return list;
-  }, [works, activeRh, filterStatus, filterType, search, sortKey, sortDir]);
+  }, [works, activeRh, filterStatus, filterType, filterConnection, filterMissingConnection, search, sortKey, sortDir]);
   const visibleWorks = filtered.slice(0, pageSize);
 
   const stats = useMemo(() => {
@@ -2030,10 +2084,29 @@ export default function VaerksadministrationPage() {
             {WORK_TYPES.map(type => <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={filterConnection} onValueChange={value => { setFilterConnection(value); if (value === "local") setFilterMissingConnection("none"); }}>
+          <SelectTrigger className="w-full lg:w-[170px]"><SelectValue placeholder="Kobling" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Alle koblinger</SelectItem>
+            <SelectItem value="dfi">DFI</SelectItem>
+            <SelectItem value="tmdb">TMDB</SelectItem>
+            <SelectItem value="imdb">IMDb</SelectItem>
+            <SelectItem value="local">Kun lokal</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterMissingConnection} onValueChange={value => { setFilterMissingConnection(value); if (value !== "none" && filterConnection === "local") setFilterConnection("all"); }}>
+          <SelectTrigger className="w-full lg:w-[170px]"><SelectValue placeholder="Mangler kobling" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Ingen modsat filter</SelectItem>
+            <SelectItem value="dfi">Ikke DFI</SelectItem>
+            <SelectItem value="tmdb">Ikke TMDB</SelectItem>
+            <SelectItem value="imdb">Ikke IMDb</SelectItem>
+          </SelectContent>
+        </Select>
         <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
         <ResetFiltersButton
-          active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
-          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
+          active={Boolean(search || filterStatus !== "all" || filterType !== "all" || filterConnection !== "all" || filterMissingConnection !== "none" || activeRh)}
+          onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setFilterConnection("all"); setFilterMissingConnection("none"); setActiveRh(null); setSelectedIds([]); setPageSize(20); }}
         />
         <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
           <Search className="h-4 w-4" />
@@ -2069,6 +2142,8 @@ export default function VaerksadministrationPage() {
         )}
       </div>
 
+      <ListResultSummary filteredCount={filtered.length} totalCount={works.length} selectedCount={selectedIds.length} />
+
       {selectedIds.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
           <span className="text-sm font-medium">{selectedIds.length} valgt</span>
@@ -2079,6 +2154,10 @@ export default function VaerksadministrationPage() {
           <Button size="sm" variant="outline" className="gap-2" onClick={handleMarkSelectedMessagesRead} disabled={saving}>
             <MessageSquare className="h-4 w-4" />
             Besked læst
+          </Button>
+          <Button size="sm" variant="outline" className="gap-2" onClick={() => void handlePreviewEnrichment()} disabled={saving || enrichmentLoading}>
+            <Sparkles className="h-4 w-4" />
+            Suppler data
           </Button>
           <Button size="sm" variant="outline" className="gap-2" onClick={() => setArchiveOpen(true)}>
             <Trash2 className="h-4 w-4" />
@@ -3189,6 +3268,38 @@ export default function VaerksadministrationPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setArchiveOpen(false)}>Annuller</Button>
             <Button variant="destructive" onClick={handleArchive} disabled={saving}>{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Arkiver</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={enrichmentOpen} onOpenChange={open => { if (!enrichmentLoading) setEnrichmentOpen(open); }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Suppler værkdata</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Kun sikre match kan godkendes. Værker uden et sikkert match ændres ikke.</p>
+          {enrichmentLoading && enrichmentPreviews.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Søger i eksterne databaser…</div>
+          ) : (
+            <div className="space-y-3">
+              {enrichmentPreviews.map(preview => (
+                <div key={preview.workId} className="rounded-lg border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{preview.title}</span>
+                    <Badge variant={preview.status === "safe_match" ? "default" : "secondary"}>
+                      {preview.status === "safe_match" ? `Sikkert match · ${preview.confidence ?? 0}%` : preview.status === "unchanged" ? "Allerede opdateret" : preview.status === "not_found" ? "Ikke fundet" : "Kræver manuel kontrol"}
+                    </Badge>
+                  </div>
+                  {preview.changes.length > 0 ? <div className="mt-3 divide-y rounded-md border text-sm">{preview.changes.map(change => <div key={change.field} className="grid gap-1 px-3 py-2 sm:grid-cols-[10rem_1fr]"><span className="text-muted-foreground">{change.label}</span><span><span className="line-through opacity-60">{change.oldValue ?? "Mangler"}</span> → <strong>{change.newValue}</strong></span></div>)}</div> : <p className="mt-2 text-sm text-muted-foreground">{preview.message ?? "Ingen sikre ændringer fundet."}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEnrichmentOpen(false)} disabled={enrichmentLoading}>Annuller</Button>
+            <Button onClick={() => void handleApplyEnrichment()} disabled={enrichmentLoading || !enrichmentPreviews.some(preview => preview.status === "safe_match")}>
+              {enrichmentLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Godkend sikre match
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

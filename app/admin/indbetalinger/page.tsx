@@ -286,7 +286,7 @@ export default function AdminIndbetalingerPage() {
             />
 
             {/* Summary cards */}
-            <div className="hidden gap-4 sm:grid sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
                 <Card>
                     <CardHeader className="pb-2">
                         <CardDescription>Indberetninger i alt</CardDescription>

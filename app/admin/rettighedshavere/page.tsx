@@ -36,6 +36,7 @@ import { getDfksMemberImportPreview, getDfksMembersSyncStatus, importDfksMembers
 import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHolders } from "@/app/actions/rights-holder-admin"
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
+import { ListResultSummary } from "@/components/list-result-summary"
 
 type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
@@ -876,16 +877,12 @@ export default function RettighedshavereAdminPage() {
                 </Button>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                <span>
-                    {loadingMore ? "Indlæser hele listen…" : `${visible.length} på listen`}
-                    {hasMore && !loadingMore ? " · flere kan indlæses" : ""}
-                </span>
-                <span>
-                    {selectedVisibleCount} valgt på listen
-                    {selectedIds.size > selectedVisibleCount ? ` · ${selectedIds.size} valgt i alt` : ""}
-                </span>
-            </div>
+            <ListResultSummary
+                filteredCount={visible.length}
+                totalCount={Math.max(rightsHolderSummary.total, visible.length)}
+                selectedCount={selectedIds.size}
+                loading={loadingMore}
+            />
 
             {selectedIds.size > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">

@@ -182,7 +182,7 @@ export default function AdminHelligdagsfondPage() {
 
             {/* Summary Cards */}
             {summary && (
-                <div className="hidden gap-4 sm:grid sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
                     <Card>
                         <CardContent className="pt-6">
                             <div className="flex items-center gap-3">

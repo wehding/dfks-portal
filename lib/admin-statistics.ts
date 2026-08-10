@@ -2,6 +2,7 @@ import "server-only";
 
 import { contributionForContract, salaryDataToMonthly, salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { createServiceClient } from "@/lib/supabase/service";
+import { experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 
 export const MIN_STATISTICS_CONTRACTS = 1;
 export const LOW_SAMPLE_CONTRACTS = 5;
@@ -15,6 +16,7 @@ export type StatisticsFilters = {
   producerTypeCodes?: string[];
   membershipTypes?: string[];
   professionType?: string | null;
+  experienceGroup?: ExperienceGroup | null;
 };
 
 type FactRow = {
@@ -175,6 +177,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
       if (!overlaps(memberships, filters.membershipTypes)) return false;
     }
     if (filters.professionType && row.professionType !== filters.professionType.trim().toLocaleLowerCase("da")) return false;
+    if (filters.experienceGroup && experienceGroupAt(row.professionalStartYear, row.year) !== filters.experienceGroup) return false;
     return true;
   });
 

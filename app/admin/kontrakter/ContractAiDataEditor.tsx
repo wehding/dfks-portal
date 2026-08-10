@@ -13,6 +13,7 @@ import {
   saveContractValidationSection,
   type ContractValidationSectionKey,
 } from "@/app/actions/member-contracts";
+import { findContractWorkExternalIds } from "@/app/actions/work-identity";
 import { SourceBtn } from "@/components/source-btn";
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
@@ -207,6 +208,7 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   const [errors, setErrors] = useState<Partial<Record<ContractValidationSectionKey, string>>>({});
   const [locks, setLocks] = useState<Partial<Record<ContractValidationSectionKey, Set<string>>>>({});
   const [saving, setSaving] = useState<Set<ContractValidationSectionKey>>(new Set());
+  const [findingIds, setFindingIds] = useState(false);
   const timers = useRef<Partial<Record<ContractValidationSectionKey, number>>>({});
 
   const loadSummary = async () => {
@@ -340,7 +342,8 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     </div>;
     if (section === "ids") {
       const sectionValues = values.ids ?? {};
-      return <div className="grid gap-3 sm:grid-cols-3">{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="space-y-1"><Label>{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="bg-muted/30" /></div>)}</div>;
+      const hasExternalId = ["dfiId", "tmdbId", "imdbId"].some(key => String(sectionValues[key] ?? "").trim());
+      return <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-3">{[["dfiId", "DFI-id"], ["tmdbId", "TMDB-id"], ["imdbId", "IMDb-id"]].map(([key, label]) => <div key={key} className="space-y-1"><Label>{label}</Label><Input readOnly value={String(sectionValues[key] ?? "")} className="bg-muted/30" /></div>)}</div>{!hasExternalId && <Button type="button" variant="outline" disabled={findingIds} onClick={async () => { setFindingIds(true); try { const result = await findContractWorkExternalIds(props.contractId); if (!result.success || !result.ids) toast.error(result.error ?? "ID-opslaget gav intet sikkert match"); else { setValues(current => ({ ...current, ids: { ...(current.ids ?? {}), ...result.ids } })); toast.success("Eksterne ID’er blev fundet og gemt"); } } finally { setFindingIds(false); } }}>{findingIds && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Find ID’er i eksterne databaser</Button>}</div>;
     }
     if (section === "work") return <div className="space-y-4">
       <div className="space-y-1"><Label>Arbejdstitel</Label><Input value={props.workingTitle ?? ""} placeholder="Produktionens arbejdstitel…" onChange={event => props.onWorkingTitleChange?.(event.target.value)} /></div>
