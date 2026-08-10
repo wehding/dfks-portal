@@ -35,17 +35,22 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Ingen bruger fundet med e-mail: ${email}` }, { status: 404 })
     }
 
-    // Nulstil onboarding_completed og de indsamlede data i rettighedshavere
+    // Bevar alle profildata. Et gennemført forløb planlægges til ny onboarding;
+    // en førstegangsbruger forbliver blot afventende.
+    const { data: currentHolder, error: holderError } = await supabase
+        .from("rettighedshavere")
+        .select("id,onboarding_completed,onboarding_completed_at,created_at")
+        .eq("user_id", user.id)
+        .maybeSingle()
+    if (holderError || !currentHolder) {
+        return NextResponse.json({ error: holderError?.message ?? `Ingen rettighedshaver-række fundet for brugeren: ${email}` }, { status: 404 })
+    }
     const { data: updatedRows, error: updateError } = await supabase
         .from("rettighedshavere")
         .update({
-            full_name: "",
-            phone: null,
-            address: null,
-            cpr_no: null,
-            bank_account: null,
-            opt_out_statistics: false,
-            onboarding_completed: false
+            onboarding_completed: currentHolder.onboarding_completed || Boolean(currentHolder.onboarding_completed_at),
+            onboarding_completed_at: currentHolder.onboarding_completed_at ?? (currentHolder.onboarding_completed ? currentHolder.created_at : null),
+            onboarding_required_at: currentHolder.onboarding_completed || currentHolder.onboarding_completed_at ? new Date().toISOString() : null,
         })
         .eq("user_id", user.id)
         .select()

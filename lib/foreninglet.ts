@@ -76,3 +76,15 @@ export function normalizeForeningLetMember(record: Record<string, unknown>): Nor
     },
   };
 }
+
+export function findStaleForeningLetMemberIds(
+  cached: Array<{ foreninglet_id: string; status: string }>,
+  receivedIds: Iterable<string>,
+  resignedFetchComplete: boolean
+) {
+  const received = new Set(receivedIds);
+  return cached
+    .filter(member => !received.has(member.foreninglet_id))
+    .filter(member => resignedFetchComplete || member.status !== "resigned")
+    .map(member => member.foreninglet_id);
+}

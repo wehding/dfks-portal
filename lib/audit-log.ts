@@ -1,6 +1,7 @@
 export const AUDIT_ACTIONS = [
   "create", "update", "delete", "archive", "restore", "validate", "approve", "merge",
   "link", "unlink", "invite", "reset_link", "export", "download", "import", "sync", "job", "security_failure", "retention",
+  "require_onboarding", "cancel_onboarding", "complete_onboarding",
 ] as const;
 
 export const AUDIT_SOURCES = ["portal", "admin", "api", "cron", "import", "database"] as const;

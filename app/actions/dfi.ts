@@ -543,8 +543,16 @@ export async function importApprovedDFIWorks(personId: number, selectedCredits: 
     context = await currentRightsHolderAndOrg();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Du skal være logget ind for at importere værker.";
-    return { success: false, error: message };
+    return { success: false, error: message, importedCount: 0, linkedExistingCount: 0, errors: [message] };
   }
+  return importApprovedDFIWorksForContext(context, personId, selectedCredits);
+}
+
+async function importApprovedDFIWorksForContext(
+  context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>,
+  personId: number,
+  selectedCredits: DfiCredit[]
+) {
   const { db, rightsHolderId, orgId } = context;
   logInfo("DFI import", "Starter import", { credits: selectedCredits.length });
 
@@ -1472,8 +1480,17 @@ export async function importApprovedOnboardingWorks(
     context = await currentRightsHolderAndOrg();
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Du skal være logget ind for at importere.";
-    return { success: false, error: message };
+    return { success: false, error: message, importedCount: 0, linkedExistingCount: 0, errors: [message] };
   }
+  return importApprovedOnboardingWorksForContext(context, dfiPersonId, tmdbPersonId, approvedCredits);
+}
+
+async function importApprovedOnboardingWorksForContext(
+  context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>,
+  dfiPersonId: number | null,
+  tmdbPersonId: number | null,
+  approvedCredits: OnboardingCredit[]
+) {
   const { db, rightsHolderId, orgId } = context;
 
   if (dfiPersonId) {
@@ -1537,7 +1554,7 @@ export async function importApprovedOnboardingWorks(
 
   // 2. Importer DFI credits
   if (dfiCredits.length > 0 && dfiPersonId) {
-    const dfiRes = await importApprovedDFIWorks(dfiPersonId, dfiCredits);
+    const dfiRes = await importApprovedDFIWorksForContext(context, dfiPersonId, dfiCredits);
     if (dfiRes.success) {
       importedCount += dfiRes.importedCount ?? 0;
       linkedExistingCount += dfiRes.linkedExistingCount ?? 0;
@@ -1712,4 +1729,42 @@ export async function importApprovedOnboardingWorks(
     linkedExistingCount,
     errors: errors.length > 0 ? errors : null,
   };
+}
+
+export async function processQueuedOnboardingWorkImportItem(secret: string, itemId: string) {
+  const allowedSecrets = [process.env.INTERNAL_API_SECRET, process.env.CONTRACT_AI_JOB_SECRET, process.env.CRON_SECRET].filter(Boolean);
+  if (!secret || !allowedSecrets.includes(secret)) return { success: false as const, error: "Ikke autoriseret" };
+
+  const db = createServiceClient();
+  const { data: item, error: itemError } = await db
+    .from("onboarding_work_import_items")
+    .select("id,job_id,payload,status")
+    .eq("id", itemId)
+    .maybeSingle();
+  if (itemError || !item || item.status !== "processing") {
+    return { success: false as const, error: itemError?.message ?? "Importelementet er ikke klar til behandling" };
+  }
+
+  const { data: job, error: jobError } = await db
+    .from("onboarding_work_import_jobs")
+    .select("user_id,rights_holder_id,org_id,dfi_person_id,tmdb_person_id")
+    .eq("id", item.job_id)
+    .maybeSingle();
+  if (jobError || !job) return { success: false as const, error: jobError?.message ?? "Importjobbet blev ikke fundet" };
+
+  const context = {
+    db,
+    userId: String(job.user_id),
+    rightsHolderId: String(job.rights_holder_id),
+    orgId: String(job.org_id),
+  };
+  const result = await importApprovedOnboardingWorksForContext(
+    context,
+    job.dfi_person_id == null ? null : Number(job.dfi_person_id),
+    job.tmdb_person_id == null ? null : Number(job.tmdb_person_id),
+    [item.payload as OnboardingCredit]
+  );
+  return result.success
+    ? { success: true as const, errors: result.errors ?? null }
+    : { success: false as const, error: result.errors?.join(" ") ?? "Værket kunne ikke importeres" };
 }

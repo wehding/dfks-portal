@@ -2,7 +2,8 @@
 
 import React, { useState } from "react";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchOnboardingCredits, importApprovedOnboardingWorks, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
+import { searchOnboardingCredits, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
+import { getOnboardingWorkImportStatus, retryOnboardingWorkImport, startOnboardingWorkImport, type OnboardingImportStatus } from "@/app/actions/onboarding-work-import";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery";
@@ -14,6 +15,8 @@ import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { parseOnboardingAddress } from "@/lib/onboarding-address";
+import { isTransientNetworkError, retryTransientNetwork } from "@/lib/transient-network-retry";
+import { firstOnboardingSeriesMissingEpisodes, needsOnboardingEpisodeSelection } from "@/lib/onboarding-series-validation";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -52,14 +55,25 @@ type FormField = {
   full?: boolean;
 };
 
+async function kickOnboardingImport(jobId: string) {
+  const response = await fetch("/api/onboarding/work-import/process", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId }),
+  });
+  if (!response.ok) throw new Error("Baggrundsimporten kunne ikke startes.");
+}
+
 export default function OnboardingClient({
   rh,
   user,
   statisticsProfile,
+  isRepeatOnboarding,
 }: {
   rh: OnboardingProfile | null;
   user: OnboardingUser | null;
   statisticsProfile: StatisticsProfileOptions;
+  isRepeatOnboarding: boolean;
 }) {
   const { locale, t } = useI18n();
   const router = useRouter();
@@ -93,6 +107,7 @@ export default function OnboardingClient({
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [importJob, setImportJob] = useState<OnboardingImportStatus | null>(null);
   const [personCandidates, setPersonCandidates] = useState<PersonCandidate[]>([]);
   const [selectedPersonCandidates, setSelectedPersonCandidates] = useState<Record<string, boolean>>({});
   const [personSearchError, setPersonSearchError] = useState<string | null>(null);
@@ -101,9 +116,36 @@ export default function OnboardingClient({
   const [newAlternativeName, setNewAlternativeName] = useState("");
   const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
   const isOrganisationMember = Boolean(rh?.is_member);
+  const seriesCardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
 
   // Import-fremdrift
   const [importProgress, setImportProgress] = useState<{ current: number; total: number; title: string } | null>(null);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let pollCount = 0;
+    const refresh = async () => {
+      try {
+        const result = await retryTransientNetwork(() => getOnboardingWorkImportStatus(importJob?.id));
+        if (cancelled || !result.success || !result.job) return;
+        setImportJob(result.job);
+        if (result.job.status === "queued" || result.job.status === "processing") {
+          if (pollCount % 6 === 0) void retryTransientNetwork(() => kickOnboardingImport(result.job!.id)).catch(() => undefined);
+          pollCount += 1;
+          timer = setTimeout(refresh, 2500);
+        }
+      } catch {
+        if (!cancelled) timer = setTimeout(refresh, 5000);
+      }
+    };
+    const initial = setTimeout(refresh, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(initial);
+      if (timer) clearTimeout(timer);
+    };
+  }, [importJob?.id]);
 
   // Formulardata præ-udfyldt fra rettighedshaveren
   const invitedName = rh?.full_name?.trim() || "";
@@ -173,7 +215,22 @@ export default function OnboardingClient({
     episodeRequestIds.current[credit.id] = requestId;
     setEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
     setEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
-    const result = await resolveOnboardingEpisodeOptions(credit, season);
+    let result: Awaited<ReturnType<typeof resolveOnboardingEpisodeOptions>>;
+    try {
+      result = await retryTransientNetwork(() => resolveOnboardingEpisodeOptions(credit, season));
+    } catch (error) {
+      if (episodeRequestIds.current[credit.id] !== requestId) return;
+      setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
+      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
+      setEpisodeErrors(prev => ({
+        ...prev,
+        [credit.id]: isTransientNetworkError(error)
+          ? t("onboarding.networkError")
+          : seasonLookupMessage(locale, "error", season),
+      }));
+      setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
+      return;
+    }
     if (episodeRequestIds.current[credit.id] !== requestId) return;
     if (result.success) {
       setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
@@ -201,6 +258,17 @@ export default function OnboardingClient({
     }
   };
 
+  const handleRetryBackgroundImport = async () => {
+    if (!importJob) return;
+    const result = await retryOnboardingWorkImport(importJob.id);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
+    }
+    setImportJob(current => current ? { ...current, status: "queued", failedItems: 0, errorMessage: null } : current);
+    await retryTransientNetwork(() => kickOnboardingImport(importJob.id)).catch(() => undefined);
+  };
+
   const handleComplete = async () => {
     setIsSaving(true);
     const payload = new FormData();
@@ -209,8 +277,8 @@ export default function OnboardingClient({
     payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
 
     const result = await completeOnboarding(payload);
-    if (result.success) {
-      router.push("/portal");
+    if (result.success && result.destination) {
+      router.replace(result.destination);
       router.refresh();
     } else {
       toast.error(result.error || "Der opstod en fejl. Prøv igen.");
@@ -280,12 +348,12 @@ export default function OnboardingClient({
       setIsSearchingDfi(true);
       setPersonSearchError(null);
       try {
-        const confirmation = await confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, isOrganisationMember ? selectedPortraitUrl : null);
+        const confirmation = await retryTransientNetwork(() => confirmExternalPersonIdentity(selected, dfiSearchQuery, alternativeNames, isOrganisationMember ? selectedPortraitUrl : null));
         if (!confirmation.success) {
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
         }
-        const searchResult = await searchOnboardingCredits(undefined, undefined, dfiSearchQuery);
+        const searchResult = await retryTransientNetwork(() => searchOnboardingCredits(undefined, undefined, dfiSearchQuery));
         if (searchResult.success && searchResult.credits?.length > 0) {
           setDfiPersonId(searchResult.dfiPersonId);
           setTmdbPersonId(searchResult.tmdbPersonId);
@@ -295,6 +363,8 @@ export default function OnboardingClient({
           await revealCreditsProgressively(searchResult.credits);
         }
         setStep(4);
+      } catch (error) {
+        setPersonSearchError(isTransientNetworkError(error) ? t("onboarding.networkError") : t("onboarding.searchError"));
       } finally {
         setIsSearchingDfi(false);
       }
@@ -305,38 +375,36 @@ export default function OnboardingClient({
           ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
           : c
         );
-      const missingSeriesEpisodes = approved.some((c) => isSeriesCredit(c) && (!c.selected_episodes || c.selected_episodes.length === 0));
-      if (missingSeriesEpisodes) {
+      const firstMissingSeries = firstOnboardingSeriesMissingEpisodes(approved, isSeriesCredit, credit => credit.selected_episodes);
+      if (firstMissingSeries) {
         setImportError("Vælg mindst ét afsnit for hver serie, du vil importere.");
+        setExpandedSeries(current => ({ ...current, [firstMissingSeries.id]: true }));
+        if (!Object.prototype.hasOwnProperty.call(episodeOptions, firstMissingSeries.id)) void loadEpisodes(firstMissingSeries);
+        window.requestAnimationFrame(() => {
+          const card = seriesCardRefs.current[firstMissingSeries.id];
+          card?.scrollIntoView({ behavior: "smooth", block: "center" });
+          card?.focus({ preventScroll: true });
+        });
         return;
       }
       if (approved.length > 0) {
         setIsImportingDfi(true);
         setImportError(null);
+        setImportProgress({ current: 0, total: approved.length, title: "Forbereder baggrundsimport" });
         try {
-          // Importér én titel ad gangen, så brugeren kan se hvad der aktuelt hentes.
-          // Serverens upserts er idempotente, så del-import er sikker.
-          const collectedErrors: string[] = [];
-          let anySuccess = false;
-          for (let index = 0; index < approved.length; index++) {
-            const credit = approved[index];
-            setImportProgress({ current: index + 1, total: approved.length, title: credit.title });
-            const result = await importApprovedOnboardingWorks(dfiPersonId, tmdbPersonId, [credit]);
-            if (!result.success) {
-              collectedErrors.push(result.error ?? `${credit.title}: import fejlede.`);
-            } else {
-              anySuccess = true;
-              if (result.errors?.length) collectedErrors.push(...result.errors);
-            }
-          }
-          if (!anySuccess) {
-            setImportError(collectedErrors.join("\n") || "Værkerne kunne ikke importeres. Prøv igen.");
+          const result = await retryTransientNetwork(
+            () => startOnboardingWorkImport(dfiPersonId, tmdbPersonId, approved),
+            { attempts: 2, delayMs: 750 }
+          );
+          if (!result.success) {
+            setImportError(result.error);
             return;
           }
-          if (collectedErrors.length) setImportError(`Nogle værker mangler data: ${collectedErrors.join(" ")}`);
+          setImportJob(result.job);
+          void retryTransientNetwork(() => kickOnboardingImport(result.job.id)).catch(() => undefined);
           setStep(5);
         } catch (error: unknown) {
-          setImportError(error instanceof Error ? error.message : "Værkerne kunne ikke importeres. Prøv igen.");
+          setImportError(isTransientNetworkError(error) ? t("onboarding.networkError") : "Værkerne kunne ikke importeres. Prøv igen.");
         } finally {
           setImportProgress(null);
           setIsImportingDfi(false);
@@ -358,6 +426,14 @@ export default function OnboardingClient({
   ) : [];
 
   const progress = ((step - 1) / (steps.length - 1)) * 100;
+  const workImportPercent = importJob?.totalItems
+    ? Math.round(((importJob.completedItems + importJob.failedItems) / importJob.totalItems) * 100)
+    : 0;
+  const workImportStatusLabel = importJob?.status === "complete"
+    ? t("onboarding.importComplete")
+    : importJob?.status === "partial" || importJob?.status === "error"
+      ? t("onboarding.importNeedsRetry")
+      : t("onboarding.importRunning");
 
   if (isImportingDfi) {
     const approvedCount = dfiCredits.filter((c) => selectedDfiCredits[c.id]).length;
@@ -456,11 +532,12 @@ export default function OnboardingClient({
               <div style={{ textAlign: "center", marginBottom: "32px" }}>
                 <div style={{ fontSize: "48px", marginBottom: "16px" }}>👋</div>
                 <h1 style={{ fontSize: "28px", fontWeight: 800, margin: "0 0 12px", color: "var(--on-surface)" }}>
-                  Velkommen til DFKS Rettighedssystem
+                  {isRepeatOnboarding ? t("onboarding.repeatTitle") : "Velkommen til DFKS Rettighedssystem"}
                 </h1>
                 <p style={{ color: "var(--on-surface-variant)", fontSize: "16px", lineHeight: 1.7, margin: 0 }}>
-                  Vi hjælper dig igennem a kort opsætning, så du er klar til at administrere
-                  dine rettigheder, kontrakter og udbetalinger.
+                  {isRepeatOnboarding
+                    ? t("onboarding.repeatIntro")
+                    : "Vi hjælper dig igennem en kort opsætning, så du er klar til at administrere dine rettigheder, kontrakter og udbetalinger."}
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginBottom: "32px" }}>
@@ -705,11 +782,17 @@ export default function OnboardingClient({
                       const isSeries = isSeriesCredit(c);
                       const episodeCount = episodeCountForCredit(c);
                       const selectedEpisodes = selectedEpisodesForCredit(c);
+                      const missingEpisodeSelection = needsOnboardingEpisodeSelection({ selected: Boolean(selectedDfiCredits[c.id]), isSeries, selectedEpisodes });
                       return (
-                        <div key={`${c.id}-${i}`} style={{
+                        <div
+                          key={c.id}
+                          ref={element => { seriesCardRefs.current[c.id] = element; }}
+                          tabIndex={-1}
+                          className={missingEpisodeSelection ? "scroll-mt-24 border-l-4 border-amber-500 bg-amber-50 outline-none dark:bg-amber-950/35" : "scroll-mt-24 outline-none"}
+                          style={{
                           padding: "14px 16px",
                           borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid var(--input)",
-                          backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
+                          backgroundColor: missingEpisodeSelection ? undefined : selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                           transition: "background-color 0.2s ease",
                         }}>
                           <label style={{ display: "flex", alignItems: "flex-start", gap: "12px", cursor: "pointer", userSelect: "none" }}>
@@ -730,6 +813,7 @@ export default function OnboardingClient({
                                 <span>•</span>
                                 <span>{c.source.toUpperCase()}</span>
                                 {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
+                                {missingEpisodeSelection && <span className="font-semibold text-amber-800 dark:text-amber-200">• Vælg afsnit</span>}
                               </div>
                             </div>
                           </label>
@@ -765,7 +849,10 @@ export default function OnboardingClient({
                                           seasonNumber: 1,
                                         })}
                                     selected={selectedEpisodes}
-                                    onSelectedChange={episodes => setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }))}
+                                    onSelectedChange={episodes => {
+                                      setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }));
+                                      if (episodes.length > 0) setImportError(null);
+                                    }}
                                     loading={Boolean(episodeLoading[c.id])}
                                     error={episodeErrors[c.id]}
                                     label="Vælg afsnit"
@@ -810,6 +897,27 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px" }}>
                 Bestem, hvordan vi må bruge dine oplysninger.
               </p>
+
+              {importJob && (
+                <div className={`mb-5 rounded-lg border p-4 ${importJob.status === "complete" ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/30" : importJob.status === "partial" || importJob.status === "error" ? "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30" : "border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30"}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="m-0 text-sm font-semibold">{workImportStatusLabel}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{t("onboarding.importBackgroundInfo")}</p>
+                    </div>
+                    <span className="shrink-0 text-sm font-semibold">{importJob.completedItems}/{importJob.totalItems}</span>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                    <div className="h-full rounded-full bg-foreground transition-[width]" style={{ width: `${workImportPercent}%` }} />
+                  </div>
+                  {importJob.currentTitle && (importJob.status === "queued" || importJob.status === "processing") && <p className="mt-2 text-xs">{t("onboarding.importCurrent")}: {importJob.currentTitle}</p>}
+                  {(importJob.status === "partial" || importJob.status === "error") && (
+                    <button type="button" onClick={() => void handleRetryBackgroundImport()} className="mt-3 rounded-md border bg-background px-3 py-2 text-sm font-medium">
+                      {t("onboarding.importRetry")}
+                    </button>
+                  )}
+                </div>
+              )}
               
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
                 {/* Lønstatistik Checkbox */}

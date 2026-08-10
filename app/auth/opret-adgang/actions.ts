@@ -34,6 +34,6 @@ export async function setAccountPassword(input: {
 
   return {
     ok: true,
-    destination: await resolvePostLoginDestination(supabase, user.id),
+    destination: await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at),
   };
 }

@@ -5,9 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { encryptValue } from "@/lib/encryption";
 import { resolveForeningLetCredentials } from "@/lib/org-integrations";
-import { normalizeForeningLetMember, parseForeningLetMemberPayload, type NormalizedForeningLetMember } from "@/lib/foreninglet";
-
-import { requireOrgId } from "@/lib/org";
+import { findStaleForeningLetMemberIds, normalizeForeningLetMember, parseForeningLetMemberPayload, type NormalizedForeningLetMember } from "@/lib/foreninglet";
 
 type ForeningLetMember = NormalizedForeningLetMember & { status: "active" | "resigned" };
 
@@ -39,19 +37,6 @@ type ImportCandidate = {
 
 function authHeader(username: string, password: string) {
   return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
-}
-
-async function currentAdminOrgId(userId: string) {
-  const admin = createServiceClient();
-  const { data } = await admin
-    .from("user_org_roles")
-    .select("org_id")
-    .eq("user_id", userId)
-    .in("role", ["superadmin", "admin", "org-admin"])
-    .limit(1)
-    .maybeSingle();
-  if (data?.org_id) return data.org_id;
-  return requireOrgId(admin, userId);
 }
 
 function stringValue(value: unknown): string | null {
@@ -100,6 +85,7 @@ async function fetchMembers<TStatus extends "active" | "resigned">(
       Accept: "application/json",
     },
     cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (res.status === 429) {
@@ -141,6 +127,17 @@ function findExistingMemberMatch(
   return { id: null, reason: null, ambiguous: false };
 }
 
+async function resolveForeningLetPrimaryProfessionId(admin: ReturnType<typeof createServiceClient>, orgId: string) {
+  const { data, error } = await admin
+    .from("organisation_profession_types")
+    .select("profession_type_id,profession_types!inner(normalized_name)")
+    .eq("org_id", orgId)
+    .eq("profession_types.normalized_name", "klipper")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.profession_type_id as string | undefined;
+}
+
 async function loadImportCandidates(orgId: string): Promise<ImportCandidate[]> {
   const admin = createServiceClient();
   const [{ data: members, error: membersError }, { data: holders, error: holdersError }] = await Promise.all([
@@ -175,12 +172,12 @@ async function loadImportCandidates(orgId: string): Promise<ImportCandidate[]> {
   });
 }
 
-async function updateExistingMemberships(orgId: string) {
+async function updateExistingMemberships(orgId: string, candidates: ImportCandidate[]) {
   const admin = createServiceClient();
-  const candidates = await loadImportCandidates(orgId);
-  let updated = 0;
-  for (const candidate of candidates) {
-    if (!candidate.rights_holder_id || candidate.match === "ambiguous") continue;
+  const existingCandidates = candidates.filter(
+    candidate => candidate.rights_holder_id && candidate.match !== "ambiguous"
+  );
+  const results = await Promise.all(existingCandidates.map(async candidate => {
     const isActive = candidate.status !== "resigned";
     const { error } = await admin
       .from("org_affiliations")
@@ -191,9 +188,9 @@ async function updateExistingMemberships(orgId: string) {
       })
       .eq("org_id", orgId)
       .eq("rights_holder_id", candidate.rights_holder_id);
-    if (!error) updated += 1;
-  }
-  return updated;
+    return !error;
+  }));
+  return results.filter(Boolean).length;
 }
 
 export async function syncDfksMembers() {
@@ -202,17 +199,18 @@ export async function syncDfksMembers() {
   if (!caller) return { success: false, error: "Du har ikke adgang til at opdatere medlemslisten." };
 
   try {
-    const orgId = await currentAdminOrgId(caller.userId);
+    const orgId = caller.orgId;
     const credentials = await resolveForeningLetCredentials(createServiceClient(), orgId);
     const now = new Date().toISOString();
-    const activeMembers = await fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "", "active");
+    const [activeResult, resignedResult] = await Promise.allSettled([
+      fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "", "active"),
+      fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "/status/resigned", "resigned"),
+    ]);
+    if (activeResult.status === "rejected") throw activeResult.reason;
+    const activeMembers = activeResult.value;
     let resignedMembers: Array<ForeningLetMember & { status: "resigned" }> = [];
-
-    try {
-      resignedMembers = await fetchMembers(credentials.baseUrl, credentials.username, credentials.password, "/status/resigned", "resigned");
-    } catch {
-      resignedMembers = [];
-    }
+    const resignedFetchComplete = resignedResult.status === "fulfilled";
+    if (resignedResult.status === "fulfilled") resignedMembers = resignedResult.value;
 
     const rows = [...activeMembers, ...resignedMembers]
       .map(member => {
@@ -239,21 +237,38 @@ export async function syncDfksMembers() {
     }
 
     const admin = createServiceClient();
+    const { data: cachedRows, error: cachedError } = await admin
+      .from("dfks_members")
+      .select("foreninglet_id,status")
+      .eq("org_id", orgId);
+    if (cachedError) return { success: false, error: cachedError.message };
     const { error } = await admin
       .from("dfks_members")
       .upsert(rows, { onConflict: "org_id,foreninglet_id" });
 
     if (error) return { success: false, error: error.message };
-    const updatedExisting = await updateExistingMemberships(orgId);
+    const staleIds = findStaleForeningLetMemberIds(
+      (cachedRows ?? []).map(member => ({ foreninglet_id: String(member.foreninglet_id), status: String(member.status) })),
+      rows.map(member => member.foreninglet_id),
+      resignedFetchComplete
+    );
+    for (let index = 0; index < staleIds.length; index += 100) {
+      const { error: deleteError } = await admin.from("dfks_members")
+        .delete().eq("org_id", orgId).in("foreninglet_id", staleIds.slice(index, index + 100));
+      if (deleteError) return { success: false, error: "Medlemslisten blev hentet, men gamle poster kunne ikke ryddes sikkert." };
+    }
     const candidates = await loadImportCandidates(orgId);
+    const updatedExisting = await updateExistingMemberships(orgId, candidates);
     return {
       success: true,
-      count: rows.length,
+      count: activeMembers.length,
+      totalCount: rows.length,
       syncedAt: now,
       updatedExisting,
       newCount: candidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length,
       existingCount: candidates.filter(candidate => candidate.match === "existing").length,
       ambiguousCount: candidates.filter(candidate => candidate.match === "ambiguous").length,
+      removedCount: staleIds.length,
       source: credentials.source,
     };
   } catch (error) {
@@ -267,7 +282,7 @@ export async function getDfksMemberImportPreview() {
   if (!caller) return { success: false, error: "Du har ikke adgang til medlemslisten.", candidates: [] as ImportCandidate[] };
 
   try {
-    const orgId = await currentAdminOrgId(caller.userId);
+    const orgId = caller.orgId;
     const candidates = await loadImportCandidates(orgId);
     return { success: true, candidates };
   } catch (error) {
@@ -284,8 +299,9 @@ export async function importDfksMembersToRightsHolders(memberIds: string[]) {
   if (!caller) return { success: false, error: "Du har ikke adgang til at importere medlemmer.", created: 0, updated: 0, skipped: 0 };
 
   try {
-    const orgId = await currentAdminOrgId(caller.userId);
+    const orgId = caller.orgId;
     const admin = createServiceClient();
+    const primaryProfessionTypeId = await resolveForeningLetPrimaryProfessionId(admin, orgId);
     const candidates = await loadImportCandidates(orgId);
     const selected = candidates.filter(candidate => uniqueIds.includes(candidate.id));
     const { data: members, error } = await admin
@@ -317,6 +333,7 @@ export async function importDfksMembersToRightsHolders(memberIds: string[]) {
         phone: getMemberPhone(member),
         address: getMemberAddress(member),
         cpr_no: encryptValue(getMemberCpr(member)),
+        ...(primaryProfessionTypeId ? { primary_profession_type_id: primaryProfessionTypeId } : {}),
       };
 
       if (candidate.rights_holder_id) {
@@ -374,12 +391,13 @@ export async function getDfksMembersSyncStatus() {
   const caller = await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"]);
   if (!caller) return { success: false, error: "Du har ikke adgang til medlemslisten." };
 
-  const orgId = await currentAdminOrgId(caller.userId);
+  const orgId = caller.orgId;
   const admin = createServiceClient();
   const { count, error: countError } = await admin
     .from("dfks_members")
     .select("id", { count: "exact", head: true })
-    .eq("org_id", orgId);
+    .eq("org_id", orgId)
+    .eq("status", "active");
   if (countError) return { success: false, error: countError.message };
 
   const { data, error } = await admin

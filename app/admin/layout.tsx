@@ -49,6 +49,7 @@ import { AdminCommandMenu } from "@/components/admin/admin-command-menu"
 import { AdminContextualHelp } from "@/components/admin/admin-contextual-help"
 import { AdminListAutoTools } from "@/components/admin/admin-list-tools"
 import { resolveNavigationTitle } from "@/lib/navigation-title"
+import { OnboardingRequirementBanner } from "@/components/onboarding-requirement-banner"
 
 const ADMIN_NAV_ITEMS = [
     { key: "overblik",            href: "/admin",                     icon: Home,        labelKey: "nav.dashboard"        },
@@ -403,6 +404,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         <ThemeToggle />
                     </div>
                 </AppShellTopBar>
+                <OnboardingRequirementBanner />
                 <main className="min-w-0 max-w-full flex-1 overflow-x-clip p-3 sm:p-4 lg:p-6">{children}</main>
                 <AdminListAutoTools />
             </SidebarInset>

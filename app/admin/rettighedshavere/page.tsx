@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
@@ -10,7 +10,7 @@ import {
     setAffiliationEnd,
     type RettighedshaverWithAffiliation,
 } from "@/lib/db/rettighedshavere"
-import { createRettighedshaverSecure, getAdminRightsHolderProfile, getAdminRightsHolders, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
+import { cancelRightsHolderOnboarding, createRettighedshaverSecure, getAdminRightsHolderProfile, getAdminRightsHolders, requireRightsHolderOnboarding, updateRettighedshaverSecure, type AdminRightsHolderListItem } from "@/app/actions/rettighedshavere"
 import { PageHeader } from "@/components/page-header"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
@@ -37,7 +37,7 @@ import { archiveRightsHolders, permanentlyDeleteRightsHolders, restoreRightsHold
 import { ListSkeleton, TableSkeleton } from "@/components/ui/data-skeletons"
 import { RightsHolderRelations } from "@/components/admin/rights-holder-relations"
 
-type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
+type Filter = "alle" | "medlemmer" | "ikke-medlemmer" | "inviteret" | "afventer" | "ikke-inviteret" | "registreret" | "alle-kontrakter-valideret" | "arkiverede"
 type SortKey = "name" | "email" | "member_no" | "contracts" | "works" | "status" | "portal" | "validated"
 type AdminUserResponse = {
     error?: string
@@ -144,6 +144,7 @@ export default function RettighedshavereAdminPage() {
     const [canSeeAllOrganisations, setCanSeeAllOrganisations] = useState(false)
     const [loading, setLoading] = useState(true)
     const [loadingMore, setLoadingMore] = useState(false)
+    const loadAllPromiseRef = useRef<Promise<void> | null>(null)
     const [expandedRightsHolderId, setExpandedRightsHolderId] = useState<string | null>(null)
     const [hasMore, setHasMore] = useState(false)
     const [search, setSearch] = useState("")
@@ -167,6 +168,8 @@ export default function RettighedshavereAdminPage() {
     const [editMemberNoTouched, setEditMemberNoTouched] = useState(false)
     const [editProfessionTypes, setEditProfessionTypes] = useState<Array<{ id: string; name: string }>>([])
     const [editWorkRegions, setEditWorkRegions] = useState<Array<{ code: string; name_da: string; name_en: string }>>([])
+    const [onboardingAction, setOnboardingAction] = useState<{ type: "require" | "cancel"; rh: RettighedshaverWithAffiliation } | null>(null)
+    const [onboardingActionLoading, setOnboardingActionLoading] = useState(false)
 
     // Portal-adgang
     const [portalAction, setPortalAction] = useState<{ rh: RettighedshaverWithAffiliation; type: "invite" | "reminder" | "reset" } | null>(null)
@@ -176,6 +179,7 @@ export default function RettighedshavereAdminPage() {
 
     const [syncingMembers, setSyncingMembers] = useState(false)
     const [memberSyncStatus, setMemberSyncStatus] = useState<{ count: number; syncedAt: string | null } | null>(null)
+    const [rightsHolderSummary, setRightsHolderSummary] = useState({ total: 0, invited: 0, onboardingCompleted: 0 })
     const [memberSyncSummary, setMemberSyncSummary] = useState<{ updated: number; newCount: number; ambiguous: number; source: "org" | "env" | null } | null>(null)
     const [dfksMembers, setDfksMembers] = useState<DfksMemberOption[]>([])
     const [countsByRightsHolder, setCountsByRightsHolder] = useState<Record<string, RightsHolderCounts>>({})
@@ -194,7 +198,7 @@ export default function RettighedshavereAdminPage() {
     const [importingMembers, setImportingMembers] = useState(false)
     const [importSearch, setImportSearch] = useState("")
     const [importMatchFilter, setImportMatchFilter] = useState<ImportMatchFilter>("all")
-    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("all")
+    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("active")
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
@@ -215,6 +219,7 @@ export default function RettighedshavereAdminPage() {
             setOrgId(result.orgId)
             setCanSeeAllOrganisations(result.canSeeAllOrganisations)
             setHasMore(result.hasMore)
+            setRightsHolderSummary(result.summary)
             return result
         } catch (error) {
             toast.error(errorMessage(error))
@@ -234,6 +239,40 @@ export default function RettighedshavereAdminPage() {
         } catch (error) {
             toast.error(errorMessage(error))
         } finally { setLoadingMore(false) }
+    }
+
+    function loadAllRightsHolders() {
+        if (loadAllPromiseRef.current) return loadAllPromiseRef.current
+        const promise = (async () => {
+            setLoadingMore(true)
+            try {
+                let accumulatedRows = [...rows]
+                let accumulatedCounts = { ...countsByRightsHolder }
+                let more = hasMore
+                while (more) {
+                    const result = await getAdminRightsHolders({ offset: accumulatedRows.length, limit: 200 })
+                    accumulatedRows = [...accumulatedRows, ...result.rows.filter(row => !accumulatedRows.some(existing => existing.id === row.id))]
+                    accumulatedCounts = { ...accumulatedCounts, ...result.countsByRightsHolder }
+                    more = result.hasMore
+                }
+                setRows(accumulatedRows)
+                setCountsByRightsHolder(accumulatedCounts)
+                setHasMore(false)
+            } catch (error) {
+                toast.error(errorMessage(error))
+            }
+        })().finally(() => {
+            setLoadingMore(false)
+            loadAllPromiseRef.current = null
+        })
+        loadAllPromiseRef.current = promise
+        return promise
+    }
+
+    function applyListFilter(nextFilter: Filter, clearSearch = false) {
+        if (clearSearch) setSearch("")
+        setFilter(nextFilter)
+        if (hasMore) void loadAllRightsHolders()
     }
 
     async function loadDfksMembers(oid: string) {
@@ -257,54 +296,49 @@ export default function RettighedshavereAdminPage() {
 
     async function handleSyncDfksMembers() {
         setSyncingMembers(true)
-        const result = await syncDfksMembers()
-        setSyncingMembers(false)
-        if (!result.success) {
-            toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
-            return
+        try {
+            const result = await syncDfksMembers()
+            if (!result.success) {
+                toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
+                return
+            }
+            toast.success(`${result.count ?? 0} aktive medlemmer hentet fra den aktive organisation. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret${result.removedCount ? `, ${result.removedCount} gamle cacheposter fjernet` : ""}.`)
+            setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+            setMemberSyncSummary({
+                updated: result.updatedExisting ?? 0,
+                newCount: result.newCount ?? 0,
+                ambiguous: result.ambiguousCount ?? 0,
+                source: result.source ?? null,
+            })
+            if (orgId) await loadDfksMembers(orgId)
+            await refreshImportPreview()
+        } catch {
+            toast.error("Forbindelsen til medlemslisten blev afbrudt. Prøv igen.")
+        } finally {
+            setSyncingMembers(false)
         }
-        toast.success(`${result.count ?? 0} medlemmer hentet. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret.`)
-        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        setMemberSyncSummary({
-            updated: result.updatedExisting ?? 0,
-            newCount: result.newCount ?? 0,
-            ambiguous: result.ambiguousCount ?? 0,
-            source: result.source ?? null,
-        })
-        if (orgId) await loadDfksMembers(orgId)
-        await refreshImportPreview()
     }
 
     async function refreshImportPreview() {
         setImportLoading(true)
-        const preview = await getDfksMemberImportPreview()
-        setImportLoading(false)
-        if (!preview.success) {
-            toast.error(preview.error ?? "Kunne ikke hente importlisten")
-            return
+        try {
+            const preview = await getDfksMemberImportPreview()
+            if (!preview.success) {
+                toast.error(preview.error ?? "Kunne ikke hente importlisten")
+                return
+            }
+            setImportCandidates(preview.candidates)
+            setSelectedImportIds(new Set())
+        } catch {
+            toast.error("Medlemslisten kunne ikke hentes. Prøv igen.")
+        } finally {
+            setImportLoading(false)
         }
-        setImportCandidates(preview.candidates)
-        setSelectedImportIds(new Set())
     }
 
     async function openImportDialog() {
         setImportOpen(true)
-        setImportLoading(true)
-        const result = await syncDfksMembers()
-        if (!result.success) {
-            toast.error(result.error ?? "Kunne ikke hente medlemslisten")
-            setImportLoading(false)
-            await refreshImportPreview()
-            return
-        }
-        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        setMemberSyncSummary({
-            updated: result.updatedExisting ?? 0,
-            newCount: result.newCount ?? 0,
-            ambiguous: result.ambiguousCount ?? 0,
-            source: result.source ?? null,
-        })
-        if (orgId) await loadDfksMembers(orgId)
+        setImportMembershipFilter("active")
         await refreshImportPreview()
     }
 
@@ -407,8 +441,9 @@ export default function RettighedshavereAdminPage() {
             }
             if (filter === "medlemmer" && !aff?.is_member) return false
             if (filter === "ikke-medlemmer" && aff?.is_member) return false
+            if (filter === "inviteret" && !rh.user_id) return false
             if (filter === "alle-kontrakter-valideret" && !counts.allContractsValidated) return false
-            const invStatus = rh.onboarding_completed ? "registreret" : rh.invite_sent_at ? "afventer" : "ikke-inviteret"
+            const invStatus = rh.onboarding_completed_at && !rh.onboarding_required_at ? "registreret" : rh.user_id ? "afventer" : "ikke-inviteret"
             if ((filter === "afventer" || filter === "ikke-inviteret" || filter === "registreret") && invStatus !== filter) return false
             if (q) {
                 return (
@@ -522,7 +557,7 @@ export default function RettighedshavereAdminPage() {
     }
 
     function inviteTargets() {
-        return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed)
+        return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed_at)
     }
 
     function handleBulkSendInvitation() {
@@ -682,6 +717,24 @@ export default function RettighedshavereAdminPage() {
         load()
     }
 
+    async function handleOnboardingAction() {
+        if (!onboardingAction || !orgId) return
+        setOnboardingActionLoading(true)
+        const result = onboardingAction.type === "require"
+            ? await requireRightsHolderOnboarding(onboardingAction.rh.id, orgId)
+            : await cancelRightsHolderOnboarding(onboardingAction.rh.id, orgId)
+        setOnboardingActionLoading(false)
+        if (!result.success) {
+            toast.error(result.error)
+            return
+        }
+        toast.success(onboardingAction.type === "require" ? "Ny onboarding kræves ved næste login" : "Kravet om ny onboarding er annulleret")
+        window.dispatchEvent(new Event("onboarding-requirement-changed"))
+        setOnboardingAction(null)
+        setEditTarget(null)
+        await load()
+    }
+
     async function toggleMember(rh: RettighedshaverWithAffiliation) {
         if (!orgId) return
         const aff = getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)
@@ -727,27 +780,6 @@ export default function RettighedshavereAdminPage() {
         }
     }
 
-    async function handleResetOnboarding(rh: RettighedshaverWithAffiliation) {
-        try {
-            const res = await fetch("/api/admin/user", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: "reset-onboarding", rhId: rh.id }),
-            })
-            const json = await res.json() as AdminUserResponse
-            if (!res.ok) throw new Error(json.error)
-            toast.success(`Onboarding nulstillet for ${rh.full_name}`)
-            setRows(prev => prev.map(r => r.id === rh.id ? { ...r, onboarding_completed: false } : r))
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
-        }
-    }
-
-    const memberCount    = rows.filter(rh => orgId && getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
-    const nonMemberCount = rows.filter(rh => orgId && !getVisibleAffiliation(rh, orgId, canSeeAllOrganisations)?.is_member).length
-    const portalCount    = rows.filter(rh => rh.user_id).length
-    const validatedCount = rows.filter(rh => countsByRightsHolder[rh.id]?.allContractsValidated).length
-
     function setSort(nextKey: SortKey) {
         if (sortKey === nextKey) {
             setSortDirection(direction => direction === "asc" ? "desc" : "asc")
@@ -773,17 +805,19 @@ export default function RettighedshavereAdminPage() {
                 subtitle={canSeeAllOrganisations ? "Rettighedshavere på tværs af alle organisationer" : "Rettighedshavere tilknyttet organisationen"}
                 actions={
                     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-                        {memberSyncStatus && (
-                            <span className="text-xs text-muted-foreground">
-                                Medlemsliste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
-                            </span>
-                        )}
-                        <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
-                            {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
-                            Hent fra medlemssystem
-                        </Button>
+                        <div className="flex flex-col items-start gap-1 sm:items-end">
+                            <Button size="sm" variant="outline" onClick={openImportDialog} disabled={syncingMembers || importLoading}>
+                                {syncingMembers || importLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RotateCcw className="h-4 w-4 mr-1" />}
+                                Hent fra medlemssystem
+                            </Button>
+                            {memberSyncStatus && (
+                                <span className="text-xs text-muted-foreground">
+                                    Medlemsliste: {memberSyncStatus.count} · {memberSyncStatus.syncedAt ? new Date(memberSyncStatus.syncedAt).toLocaleString("da-DK") : "aldrig"}
+                                </span>
+                            )}
+                        </div>
                         <Button size="sm" onClick={() => { setCreateForm({ ...EMPTY_FORM }); setCreateMemberNoTouched(false); setCreateOpen(true) }}>
-                            <Plus className="h-4 w-4 mr-1" />Indtast medlem manuelt
+                            <Plus className="h-4 w-4 mr-1" />Indtast rettighedshaver manuelt
                         </Button>
                     </div>
                 }
@@ -791,18 +825,22 @@ export default function RettighedshavereAdminPage() {
 
             {/* Stats strip */}
             {!loading && (
-                <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-5">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                     {[
-                        { label: "I alt",             value: rows.length    },
-                        { label: "Aktive medlemmer",  value: memberCount    },
-                        { label: "Ikke-medlemmer",    value: nonMemberCount },
-                        { label: "Med portal-adgang", value: portalCount    },
-                        { label: "Kontrakter valideret", value: validatedCount },
+                        { label: "Rettighedshavere", value: rightsHolderSummary.total, targetFilter: "alle" as Filter },
+                        { label: "Inviteret", value: rightsHolderSummary.invited, targetFilter: "inviteret" as Filter },
+                        { label: "Færdiggjort onboarding", value: rightsHolderSummary.onboardingCompleted, targetFilter: "registreret" as Filter },
                     ].map(s => (
-                        <div key={s.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
-                            <p className="text-sm font-medium text-muted-foreground mb-1">{s.label}</p>
-                            <p className="text-2xl font-bold text-foreground tabular-nums">{s.value}</p>
-                        </div>
+                        <button
+                            type="button"
+                            key={s.label}
+                            aria-pressed={filter === s.targetFilter && !search}
+                            onClick={() => applyListFilter(s.targetFilter, true)}
+                            className={`min-w-0 rounded-lg border px-2.5 py-2 text-left text-card-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-5 sm:py-4 ${filter === s.targetFilter && !search ? "border-primary bg-primary/5" : "bg-card hover:bg-muted/50"}`}
+                        >
+                            <p className="mb-0.5 text-[11px] font-medium leading-tight text-muted-foreground sm:mb-1 sm:text-sm">{s.label}</p>
+                            <p className="text-lg font-bold text-foreground tabular-nums sm:text-2xl">{s.value}</p>
+                        </button>
                     ))}
                 </div>
             )}
@@ -810,18 +848,19 @@ export default function RettighedshavereAdminPage() {
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="relative w-full sm:max-w-xs">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
+                    <Input placeholder="Søg navn, email, telefon..." className="pl-8" value={search} onChange={e => { setSearch(e.target.value); if (e.target.value.trim() && hasMore) void loadAllRightsHolders() }} />
                     {search && <button type="button" aria-label="Ryd søgning" className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onClick={() => setSearch("")}><X className="h-4 w-4" /></button>}
                 </div>
-                <Select value={filter} onValueChange={v => setFilter(v as Filter)}>
+                <Select value={filter} onValueChange={v => applyListFilter(v as Filter)}>
                     <SelectTrigger className="w-full sm:w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="alle">Alle</SelectItem>
                         <SelectItem value="medlemmer">Kun medlemmer</SelectItem>
                         <SelectItem value="ikke-medlemmer">Ikke-medlemmer</SelectItem>
-                        <SelectItem value="afventer">Afventer invitation</SelectItem>
+                        <SelectItem value="inviteret">Inviteret</SelectItem>
+                        <SelectItem value="afventer">Afventer onboarding</SelectItem>
                         <SelectItem value="ikke-inviteret">Ikke inviteret</SelectItem>
-                        <SelectItem value="registreret">Registreret</SelectItem>
+                        <SelectItem value="registreret">Færdiggjort onboarding</SelectItem>
                         <SelectItem value="alle-kontrakter-valideret">Alle kontrakter valideret</SelectItem>
                         <SelectItem value="arkiverede">Arkiverede</SelectItem>
                     </SelectContent>
@@ -835,6 +874,17 @@ export default function RettighedshavereAdminPage() {
                 >
                     {allVisibleSelected ? "Fravælg alle viste" : "Vælg alle viste"}
                 </Button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                <span>
+                    {loadingMore ? "Indlæser hele listen…" : `${visible.length} på listen`}
+                    {hasMore && !loadingMore ? " · flere kan indlæses" : ""}
+                </span>
+                <span>
+                    {selectedVisibleCount} valgt på listen
+                    {selectedIds.size > selectedVisibleCount ? ` · ${selectedIds.size} valgt i alt` : ""}
+                </span>
             </div>
 
             {selectedIds.size > 0 && (
@@ -1002,7 +1052,7 @@ export default function RettighedshavereAdminPage() {
                                         </div>
                                     </TableCell>
                                     <TableCell>
-                                        {rh.onboarding_completed
+                                        {rh.onboarding_completed_at
                                             ? <Badge variant="secondary" className="gap-1 text-xs"><LogIn className="h-3 w-3" />Registreret</Badge>
                                             : rh.invite_sent_at
                                                 ? <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Afventer</Badge>
@@ -1011,8 +1061,10 @@ export default function RettighedshavereAdminPage() {
                                     <TableCell>
                                         {!hasLogin
                                             ? <span className="text-xs text-muted-foreground">—</span>
-                                            : rh.onboarding_completed
-                                                ? <Badge className="bg-emerald-600 text-white text-xs gap-1">✓ Gennemført</Badge>
+                                            : rh.onboarding_required_at
+                                                ? <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">Planlagt igen</Badge>
+                                                : rh.onboarding_completed_at
+                                                    ? <Badge className="bg-emerald-600 text-white text-xs gap-1">✓ Gennemført</Badge>
                                                 : <Badge variant="outline" className="text-amber-600 border-amber-300 text-xs">Ikke påbegyndt</Badge>}
                                     </TableCell>
                                     <TableCell>
@@ -1045,7 +1097,7 @@ export default function RettighedshavereAdminPage() {
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
-                                                {!rh.onboarding_completed && rh.email && (
+                                                {!rh.onboarding_completed_at && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend invitation" : "Send invitation"}
                                                     </DropdownMenuItem>
@@ -1055,17 +1107,9 @@ export default function RettighedshavereAdminPage() {
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
                                                     </DropdownMenuItem>
                                                 )}
-                                                {rh.invite_sent_at && !rh.onboarding_completed && rh.email && (
+                                                {rh.invite_sent_at && !rh.onboarding_completed_at && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reminder" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <Mail className="h-3.5 w-3.5 mr-2" />Send 2. invitation
-                                                    </DropdownMenuItem>
-                                                )}
-                                                {hasLogin && rh.onboarding_completed && (
-                                                    <DropdownMenuItem
-                                                        className="text-amber-600 focus:text-amber-600"
-                                                        onClick={() => handleResetOnboarding(rh)}
-                                                    >
-                                                        <RotateCcw className="h-3.5 w-3.5 mr-2" />Nulstil onboarding
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
@@ -1255,11 +1299,59 @@ export default function RettighedshavereAdminPage() {
                             <input type="checkbox" id="edit-is-member" checked={editForm.is_member} onChange={e => setEditForm(f => ({ ...f, is_member: e.target.checked }))} className="h-4 w-4" />
                             <Label htmlFor="edit-is-member" className="cursor-pointer">Aktivt medlem</Label>
                         </div>
+                        {editTarget?.user_id && <div className="space-y-3 rounded-lg border p-3 sm:p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-medium">Onboardingstatus</p>
+                                    {!editTarget.onboarding_completed_at ? (
+                                        <p className="text-xs text-muted-foreground">Afventer første onboarding. Dette krav kan ikke annulleres.</p>
+                                    ) : editTarget.onboarding_required_at ? (
+                                        <p className="text-xs text-muted-foreground">Ny onboarding er planlagt til næste login. Den nuværende session fortsætter indtil logout.</p>
+                                    ) : (
+                                        <p className="text-xs text-muted-foreground">Senest gennemført {new Date(editTarget.onboarding_completed_at).toLocaleString("da-DK")}.</p>
+                                    )}
+                                </div>
+                                <Badge variant={editTarget.onboarding_required_at || !editTarget.onboarding_completed_at ? "secondary" : "outline"}>
+                                    {!editTarget.onboarding_completed_at ? "Første onboarding" : editTarget.onboarding_required_at ? "Planlagt" : "Gennemført"}
+                                </Badge>
+                            </div>
+                            {editTarget.onboarding_completed_at && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setOnboardingAction({ type: editTarget.onboarding_required_at ? "cancel" : "require", rh: editTarget })}
+                                >
+                                    <RotateCcw className="mr-2 h-4 w-4" />
+                                    {editTarget.onboarding_required_at ? "Annuller krav" : "Kræv onboarding igen"}
+                                </Button>
+                            )}
+                        </div>}
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setEditTarget(null)}>Annuller</Button>
                         <Button onClick={handleEdit} disabled={editLoading || editSaving || !editForm.full_name.trim()}>
                             {editSaving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Gem
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!onboardingAction} onOpenChange={open => { if (!open && !onboardingActionLoading) setOnboardingAction(null) }}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{onboardingAction?.type === "require" ? "Kræv onboarding igen?" : "Annuller krav om onboarding?"}</DialogTitle>
+                        <DialogDescription>
+                            {onboardingAction?.type === "require"
+                                ? "Rettighedshaverens eksisterende oplysninger bevares. Kravet aktiveres ved næste login, og portal- samt administratoradgang er derefter blokeret, indtil hele onboardingforløbet er afsluttet."
+                                : "Rettighedshaveren beholder sin senest gennemførte onboarding og får igen normal adgang ved næste sideindlæsning."}
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setOnboardingAction(null)} disabled={onboardingActionLoading}>Tilbage</Button>
+                        <Button type="button" variant={onboardingAction?.type === "require" ? "default" : "outline"} onClick={handleOnboardingAction} disabled={onboardingActionLoading}>
+                            {onboardingActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {onboardingAction?.type === "require" ? "Kræv onboarding" : "Annuller krav"}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
@@ -1271,13 +1363,13 @@ export default function RettighedshavereAdminPage() {
                     <DialogHeader>
                         <DialogTitle>Hent og importér medlemmer</DialogTitle>
                         <DialogDescription>
-                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
+                            Den senest synkroniserede liste vises med det samme. Vælg “Hent igen” for at hente friske data fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-sm text-muted-foreground">
-                                {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                                {importCandidates.filter(candidate => candidate.status === "active").length} aktive medlemmer · {importCandidates.filter(candidate => candidate.status === "resigned").length} udmeldte · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
                                 {memberSyncSummary && (
                                     <span className="block text-xs">
                                         {memberSyncSummary.updated} eksisterende opdateret · {memberSyncSummary.ambiguous} kræver afklaring

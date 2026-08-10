@@ -42,7 +42,7 @@ type FormState = {
   foreninglet_has_credentials: boolean;
   foreninglet_has_username: boolean;
   foreninglet_has_password: boolean;
-  foreninglet_credential_source: "organisation" | "environment" | "missing";
+  foreninglet_credential_source: "organisation" | "missing";
 };
 
 const emptyForm: FormState = {
@@ -446,7 +446,7 @@ export default function OrganisationSettingsPage() {
       <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
         <h2 className="text-base font-semibold">Medlems-API</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Bruges til at hente medlemslisten fra organisationens medlemssystem. Login gemmes krypteret og vises ikke igen.
+          Bruges til at hente medlemslisten fra den aktive organisations medlemssystem. Hver organisation skal have sit eget login; oplysningerne gemmes krypteret og vises ikke igen.
         </p>
         <div className={`mt-4 flex items-start gap-3 rounded-md border px-3 py-3 ${
           !form.foreninglet_enabled
@@ -468,7 +468,7 @@ export default function OrganisationSettingsPage() {
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Brugernavn: {form.foreninglet_has_username ? "gemt" : "mangler"} · Kodeord: {form.foreninglet_has_password ? "gemt" : "mangler"}
-              {form.foreninglet_credential_source === "environment" ? " · Bruger systemets fælles login" : ""}
+              {form.foreninglet_credential_source === "organisation" ? " · Kun denne organisation" : ""}
             </p>
           </div>
         </div>
