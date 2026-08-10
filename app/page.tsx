@@ -94,7 +94,7 @@ export default function LoginPage() {
         if (authError) { setError(authError.message); setLoading(false); return }
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { setError("Kunne ikke hente den indloggede bruger."); setLoading(false); return }
-        router.push(await resolvePostLoginDestination(supabase, user.id))
+        router.push(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at))
         router.refresh()
     }
 
@@ -120,7 +120,7 @@ export default function LoginPage() {
 
         const { data: { user } } = await supabase.auth.getUser()
         if (!user) { setError("Kunne ikke hente den indloggede bruger."); setLoading(false); return }
-        router.push(await resolvePostLoginDestination(supabase, user.id))
+        router.push(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at))
         router.refresh()
     }
 

@@ -58,6 +58,8 @@ export interface DbRettighedshaver {
     cpr_no: string | null
     bank_account: string | null
     onboarding_completed: boolean
+    onboarding_completed_at: string | null
+    onboarding_required_at: string | null
     invite_sent_at: string | null
     dfi_person_id: number | null
     tmdb_person_id: number | null

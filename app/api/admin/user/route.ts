@@ -331,23 +331,6 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: true })
         }
 
-        // ── Reset onboarding ──────────────────────────────────────
-        if (body.action === "reset-onboarding") {
-            const { rhId } = body
-            if (!rhId) return NextResponse.json({ error: "rhId påkrævet" }, { status: 400 })
-            try {
-                await assertRightsHolderInOrg(admin, String(rhId), caller.orgId)
-            } catch {
-                return NextResponse.json({ error: "Rettighedshaveren tilhører ikke din organisation" }, { status: 403 })
-            }
-            const { error: upErr } = await admin
-                .from("rettighedshavere")
-                .update({ onboarding_completed: false })
-                .eq("id", rhId)
-            if (upErr) throw new Error(upErr.message)
-            return NextResponse.json({ ok: true })
-        }
-
         return NextResponse.json({ error: "Ukendt action" }, { status: 400 })
 
     } catch (err: unknown) {

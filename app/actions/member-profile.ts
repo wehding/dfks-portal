@@ -5,6 +5,8 @@ import { encryptValue } from "@/lib/encryption";
 import { revalidatePath } from "next/cache";
 import { normalizeBankAccount, normalizeCpr, validateOnboardingField } from "@/lib/onboarding-validation";
 import { createServiceClient } from "@/lib/supabase/service";
+import { resolvePostLoginDestination } from "@/lib/auth/post-login";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 export async function completeOnboarding(formData: FormData) {
   const supabase = await createClient();
@@ -90,7 +92,6 @@ export async function completeOnboarding(formData: FormData) {
       primary_profession_type_id: primaryProfessionTypeId,
       usual_work_mode: workMode,
       primary_work_region_code: workRegionCode,
-      onboarding_completed: true,
     })
     .eq("user_id", user.id);
 
@@ -105,7 +106,6 @@ export async function completeOnboarding(formData: FormData) {
         cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
         bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
         opt_out_statistics: formData.get("opt_out_statistics") === "true",
-        onboarding_completed: true,
       })
       .eq("user_id", user.id);
     
@@ -126,9 +126,35 @@ export async function completeOnboarding(formData: FormData) {
     }
   }
 
+  const completedAt = new Date().toISOString();
+  const { error: completionError } = await supabase
+    .from("rettighedshavere")
+    .update({
+      onboarding_completed: true,
+      onboarding_completed_at: completedAt,
+      onboarding_required_at: null,
+    })
+    .eq("user_id", user.id);
+  if (completionError) return { success: false as const, error: "Onboarding blev gemt, men kunne ikke markeres som færdig. Prøv igen." };
+
+  try {
+    await recordAuditEvent({
+      context: { actorUserId: user.id, actorOrgId: orgId ?? null, actorRole: "member", source: "portal" },
+      action: "complete_onboarding",
+      entityType: "rettighedshavere",
+      entityId: holderContext?.id ?? null,
+      entityLabel: fullName,
+      orgIds: orgId ? [orgId] : [],
+    });
+  } catch {
+    // Række-triggeren har allerede registreret statusændringen. Auditfejl må ikke
+    // sende brugeren gennem et færdiggjort onboardingforløb igen.
+    console.error("Onboarding: den semantiske auditregistrering fejlede");
+  }
+
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/portal/min-profil");
-  return { success: true };
+  return { success: true as const, destination: await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at) };
 }
 
 export async function updateSensitiveMemberProfile(formData: FormData) {

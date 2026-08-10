@@ -14,6 +14,8 @@ const PUBLIC_RIGHTS_HOLDER_SELECT = `
     created_at,
     user_id,
     onboarding_completed,
+    onboarding_completed_at,
+    onboarding_required_at,
     archived_at,
     invite_sent_at,
     dfi_person_id,

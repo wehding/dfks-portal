@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
+import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
 
 // Stier der altid er tilgængelige uden session
 const PUBLIC_PATHS = [
@@ -73,6 +74,33 @@ export async function proxy(req: NextRequest) {
         const url = req.nextUrl.clone()
         url.pathname = "/"
         return NextResponse.redirect(url)
+    }
+
+    // Førstegangs-onboarding og et aktiveret gen-onboardingkrav har forrang
+    // over både medlems- og administratorroller. Et genkrav aktiveres først,
+    // når Supabase registrerer et nyt login efter kravets tidspunkt.
+    const guardsOnboarding = pathname.startsWith("/admin") || pathname.startsWith("/portal") || pathname.startsWith("/superadmin")
+    if (guardsOnboarding && user) {
+        const { data: holder } = await supabase
+            .from("rettighedshavere")
+            .select("user_id,onboarding_completed_at,onboarding_required_at")
+            .eq("user_id", user.id)
+            .limit(1)
+            .maybeSingle()
+        if (holder) {
+            const status = resolveOnboardingStatus({
+                hasPortalUser: Boolean(holder.user_id),
+                completedAt: holder.onboarding_completed_at,
+                requiredAt: holder.onboarding_required_at,
+                lastSignInAt: user.last_sign_in_at,
+            })
+            if (mustCompleteOnboarding(status)) {
+                const url = req.nextUrl.clone()
+                url.pathname = "/onboarding"
+                url.search = ""
+                return NextResponse.redirect(url)
+            }
+        }
     }
 
     // /superadmin/* kræver superadmin-rolle fra user_org_roles

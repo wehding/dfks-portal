@@ -10,6 +10,7 @@ import { encryptValue } from "@/lib/encryption";
 import { decryptRettighedshaver } from "@/lib/encryption";
 import { isMissingGenderColumn } from "@/lib/rights-holder-gender";
 import type { RettighedshaverWithAffiliation } from "@/lib/db/rettighedshavere";
+import { recordAuditEvent } from "@/lib/audit-log-server";
 
 export type AdminRightsHolderListItem = RettighedshaverWithAffiliation & {
   organisation_names: string[];
@@ -48,6 +49,8 @@ const ADMIN_RIGHTS_HOLDER_FIELDS = `
   created_at,
   user_id,
   onboarding_completed,
+  onboarding_completed_at,
+  onboarding_required_at,
   archived_at,
   invite_sent_at,
   dfi_person_id,
@@ -159,6 +162,21 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
   const hasMore = (holderPage?.length ?? 0) > limit;
   const holderRows = (holderPage ?? []).slice(0, limit);
 
+  const createSummaryQuery = () => canSeeAllOrganisations
+    ? db.from("rettighedshavere").select("id", { count: "exact", head: true }).is("archived_at", null)
+    : db
+        .from("rettighedshavere")
+        .select("id, org_affiliations!inner(org_id)", { count: "exact", head: true })
+        .eq("org_affiliations.org_id", caller.orgId)
+        .is("archived_at", null);
+  const [totalResult, invitedResult, onboardingResult] = await Promise.all([
+    createSummaryQuery(),
+    createSummaryQuery().not("user_id", "is", null),
+    createSummaryQuery().not("onboarding_completed_at", "is", null),
+  ]);
+  const summaryError = totalResult.error ?? invitedResult.error ?? onboardingResult.error;
+  if (summaryError) throw new Error(summaryError.message);
+
   const orgIds = Array.from(new Set((holderRows ?? [])
     .flatMap(holder => (holder.org_affiliations ?? []).map((affiliation: { org_id: string }) => affiliation.org_id))));
   const { data: organisations, error: organisationsError } = orgIds.length
@@ -215,6 +233,11 @@ export async function getAdminRightsHolders(options: { offset?: number; limit?: 
     orgId: caller.orgId,
     canSeeAllOrganisations,
     hasMore,
+    summary: {
+      total: totalResult.count ?? 0,
+      invited: invitedResult.count ?? 0,
+      onboardingCompleted: onboardingResult.count ?? 0,
+    },
   };
 }
 
@@ -406,4 +429,50 @@ export async function updateRettighedshaverSecure(
   }
   revalidatePath("/admin/rettighedshavere");
   return { success: true };
+}
+
+export async function requireRightsHolderOnboarding(id: string, orgId: string) {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
+  if (!caller || caller.orgId !== orgId) return { success: false as const, error: "Ikke autoriseret" };
+  const context = { actorUserId: caller.userId, actorOrgId: orgId, actorRole: caller.role, source: "admin" as const, correlationId: crypto.randomUUID() };
+  const db = createServiceClient({ audit: context });
+  try { await assertRightsHolderInOrg(db, id, orgId); } catch { return { success: false as const, error: "Rettighedshaveren tilhører ikke din organisation" }; }
+  const { data: holder, error: holderError } = await db.from("rettighedshavere")
+    .select("id,full_name,user_id,onboarding_completed_at,onboarding_required_at")
+    .eq("id", id).maybeSingle();
+  if (holderError || !holder) return { success: false as const, error: holderError?.message ?? "Rettighedshaveren blev ikke fundet" };
+  if (!holder.user_id) return { success: false as const, error: "Rettighedshaveren har ingen portalbruger" };
+  if (!holder.onboarding_completed_at) return { success: false as const, error: "Rettighedshaveren afventer allerede sin første onboarding" };
+  if (holder.onboarding_required_at) return { success: true as const, requiredAt: holder.onboarding_required_at, alreadyRequired: true };
+  const requiredAt = new Date().toISOString();
+  const { error } = await db.from("rettighedshavere").update({ onboarding_required_at: requiredAt }).eq("id", id);
+  if (error) return { success: false as const, error: error.message };
+  try {
+    await recordAuditEvent({ context, action: "require_onboarding", entityType: "rettighedshavere", entityId: id, entityLabel: holder.full_name, orgIds: [orgId], metadata: { activation: "next_login" } });
+  } catch { console.error("Onboardingkrav: den semantiske auditregistrering fejlede"); }
+  revalidatePath("/admin/rettighedshavere");
+  return { success: true as const, requiredAt, alreadyRequired: false };
+}
+
+export async function cancelRightsHolderOnboarding(id: string, orgId: string) {
+  const supabase = await createClient();
+  const caller = await assertAdminRole(supabase, USER_ADMIN_ROLES);
+  if (!caller || caller.orgId !== orgId) return { success: false as const, error: "Ikke autoriseret" };
+  const context = { actorUserId: caller.userId, actorOrgId: orgId, actorRole: caller.role, source: "admin" as const, correlationId: crypto.randomUUID() };
+  const db = createServiceClient({ audit: context });
+  try { await assertRightsHolderInOrg(db, id, orgId); } catch { return { success: false as const, error: "Rettighedshaveren tilhører ikke din organisation" }; }
+  const { data: holder, error: holderError } = await db.from("rettighedshavere")
+    .select("id,full_name,onboarding_completed_at,onboarding_required_at")
+    .eq("id", id).maybeSingle();
+  if (holderError || !holder) return { success: false as const, error: holderError?.message ?? "Rettighedshaveren blev ikke fundet" };
+  if (!holder.onboarding_completed_at) return { success: false as const, error: "Førstegangs-onboarding kan ikke annulleres" };
+  if (!holder.onboarding_required_at) return { success: true as const, alreadyCancelled: true };
+  const { error } = await db.from("rettighedshavere").update({ onboarding_required_at: null }).eq("id", id);
+  if (error) return { success: false as const, error: error.message };
+  try {
+    await recordAuditEvent({ context, action: "cancel_onboarding", entityType: "rettighedshavere", entityId: id, entityLabel: holder.full_name, orgIds: [orgId] });
+  } catch { console.error("Annulleret onboardingkrav: den semantiske auditregistrering fejlede"); }
+  revalidatePath("/admin/rettighedshavere");
+  return { success: true as const, alreadyCancelled: false };
 }

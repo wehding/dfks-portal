@@ -4,6 +4,8 @@ import { decryptRettighedshaver } from "@/lib/encryption";
 import OnboardingClient from "./OnboardingClient";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveTerminology } from "@/lib/branding";
+import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state";
+import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 
 export default async function OnboardingPage() {
   const supabase = await createClient();
@@ -15,13 +17,17 @@ export default async function OnboardingPage() {
 
   const { data: rh } = await supabase
     .from("rettighedshavere")
-    .select("id, full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed, alternative_names, professional_start_year, primary_profession_type_id, usual_work_mode, primary_work_region_code, org_affiliations(org_id,is_member)")
+    .select("id, full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed, onboarding_completed_at, onboarding_required_at, alternative_names, professional_start_year, primary_profession_type_id, usual_work_mode, primary_work_region_code, org_affiliations(org_id,is_member)")
     .eq("user_id", user.id)
     .single();
 
-  if (rh?.onboarding_completed) {
-    redirect("/portal");
-  }
+  const onboardingStatus = resolveOnboardingStatus({
+    hasPortalUser: Boolean(rh?.id),
+    completedAt: rh?.onboarding_completed_at,
+    requiredAt: rh?.onboarding_required_at,
+    lastSignInAt: user.last_sign_in_at,
+  });
+  if (rh && !mustCompleteOnboarding(onboardingStatus)) redirect(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at));
 
   const affiliation = Array.isArray(rh?.org_affiliations) ? rh?.org_affiliations[0] : rh?.org_affiliations;
   const profile = rh ? { ...rh, is_member: Boolean(affiliation?.is_member) } : null;
@@ -42,5 +48,5 @@ export default async function OnboardingPage() {
     secondaryProfessionTypeIds: (secondaryRows ?? []).map(row => row.profession_type_id as string),
   };
 
-  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} />;
+  return <OnboardingClient rh={decryptRettighedshaver(profile)} user={user} statisticsProfile={statisticsProfile} isRepeatOnboarding={onboardingStatus === "reset_required"} />;
 }
