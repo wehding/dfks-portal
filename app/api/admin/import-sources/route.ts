@@ -26,7 +26,6 @@ export async function POST(request: NextRequest) {
     folderId?: string;
     displayName?: string;
     recursive?: boolean;
-    autoSync?: boolean;
   };
   const allowedTypes = ["contracts", "contract_reviews", "screenings", "members", "producers", "works"];
   if (!body.connectionId || !body.folderId?.trim() || !body.displayName?.trim() || !allowedTypes.includes(body.importType ?? "")) {
@@ -50,7 +49,7 @@ export async function POST(request: NextRequest) {
     provider_folder_id: body.folderId.trim(),
     display_name: body.displayName.trim(),
     recursive: body.recursive !== false,
-    auto_sync: body.autoSync !== false,
+    auto_sync: false,
   }).select("id").single();
   if (error) return NextResponse.json({ error: error.code === "23505" ? "Mappen er allerede oprettet" : "Importmappen kunne ikke gemmes" }, { status: 500 });
   return NextResponse.json({ source: data });

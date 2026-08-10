@@ -1,79 +1,64 @@
-# Opsæt online-drev til filimport
+# Google Drive-import
 
-Portalen understøtter både organisationsforbindelser under Opsætning og personlige forbindelser under Min profil. Alle forbindelser er skrivebeskyttede. OAuth-tokens krypteres server-side og må aldrig gemmes i Git, browserkode eller logs.
+Portalen bruger to adskilte OAuth-klienter med samme skrivebeskyttede scope:
 
-## Fælles miljøvariabler
+- **Organisation/admin:** en intern Google Workspace-app, der forbindes til en særlig arbejdskonto med adgang til den valgte importmappe.
+- **Medlem:** en ekstern app, hvor hvert medlem forbinder sit eget Google Drive og vælger konkrete filer.
 
-Tilføj disse server-only variabler i `.env.local` og i Vercel for de miljøer, hvor forbindelserne skal virke:
+OneDrive og Dropbox er ikke brugeraktiveret i denne version. Hjælpekode til en senere udvidelse findes fortsat, men ingen knapper eller autorisationsruter giver adgang til dem.
+
+## Servervariabler
+
+Følgende skal stå i `.env.local` ved lokal udvikling og som Sensitive Environment Variables i Vercel:
 
 ```text
 INTEGRATION_ENCRYPTION_KEY=<mindst 32 tilfældige bytes>
+GOOGLE_DRIVE_ADMIN_CLIENT_ID=<client-id fra dfks-portal-drive-admin>
+GOOGLE_DRIVE_ADMIN_CLIENT_SECRET=<client-secret fra dfks-portal-drive-admin>
+GOOGLE_DRIVE_MEMBER_CLIENT_ID=<client-id fra dfks-portal-drive-medlemmer>
+GOOGLE_DRIVE_MEMBER_CLIENT_SECRET=<client-secret fra dfks-portal-drive-medlemmer>
+INTERNAL_API_SECRET=<eksisterende intern arbejdskø-secret>
+NEXT_PUBLIC_SITE_URL=https://dfks-portal-hazel.vercel.app
 ```
 
-Variablen må ikke have `NEXT_PUBLIC_`-prefix. En ændring af `INTEGRATION_ENCRYPTION_KEY` gør eksisterende forbindelser ulæselige og kræver, at kontiene forbindes igen. OAuth-state er one-time og gemmes som en hash i databasen; der bruges derfor ikke længere en separat state-secret.
+Client secrets og krypteringsnøglen må aldrig have `NEXT_PUBLIC_`-prefix. De må ikke committes, logges eller sendes til browseren. Skiftes `INTEGRATION_ENCRYPTION_KEY`, skal alle drevkonti forbindes igen.
 
-## Google Drive
+## Fælles Google-indstillinger
 
-Opret en OAuth 2.0 Web application i Google Cloud og aktivér Google Drive API. Tilføj callback-adressen:
+I begge Google Cloud-projekter:
 
-```text
-https://<portalens-domæne>/api/admin/import-connections/google_drive/callback
-```
+1. Aktivér **Google Drive API**.
+2. Åbn **Google Auth Platform → Data Access**.
+3. Tilføj kun `https://www.googleapis.com/auth/drive.readonly`.
+4. Opret en **OAuth client ID → Web application**.
+5. Tilføj disse redirect URI'er:
+   - `http://localhost:3000/api/admin/import-connections/google_drive/callback`
+   - `https://dfks-portal-hazel.vercel.app/api/admin/import-connections/google_drive/callback`
+6. Når portalen får eget domæne, tilføjes den samme callback-sti på det nye domæne, før `NEXT_PUBLIC_SITE_URL` ændres. Den gamle URI beholdes under overgangen.
 
-Tilføj derefter:
+## Adminprojektet
 
-```text
-GOOGLE_DRIVE_CLIENT_ID=...
-GOOGLE_DRIVE_CLIENT_SECRET=...
-```
+I `dfks-portal-drive-admin` sættes **Audience** til **Internal**. Brug en særskilt Workspace-konto til importen og giv den kun adgang til de mapper, DFKS vil importere fra. Client ID og secret gemmes i variablerne med `ADMIN` i navnet.
 
-Portalen anmoder kun om `https://www.googleapis.com/auth/drive.readonly`. Google klassificerer dette som et restricted scope. OAuth consent screen skal derfor være korrekt udfyldt, og en offentlig produktion kan kræve Googles app-verifikation. Brugeren vælger selv de kontraktfiler, der importeres; portalen ændrer aldrig filer på drevet.
+Under **Opsætning → Organisation → Importforbindelser** forbinder en admin kontoen, vælger mappen visuelt og starter selv synkroniseringen. Der er ingen tidsplan eller cron. Når kørslen først er startet, fortsætter den server-side i genoptagelige bidder, også når browseren lukkes.
 
-## Microsoft OneDrive
+## Medlemsprojektet
 
-Opret en app registration i Microsoft Entra ID og tilføj callback-adressen:
+I `dfks-portal-drive-medlemmer`:
 
-```text
-https://<portalens-domæne>/api/admin/import-connections/onedrive/callback
-```
+1. Udfyld **Branding** med appnavn, supportmail og kontaktmail.
+2. Vælg **Audience → External**.
+3. Behold appen i **Testing**, mens opsætningen afprøves.
+4. Tilføj de Google-konti, der skal teste, under **Test users**.
+5. Opret webklienten og gem Client ID/secret i variablerne med `MEMBER` i navnet.
 
-Tilføj:
+Medlemmer forbinder kontoen under **Min profil → Online-drev** eller fra **Mine kontrakter → Upload kontrakt**. Portalen viser mapper og filer sidevis; den scanner ikke hele drevet. Kun markerede PDF-, DOC- og DOCX-filer sættes i baggrundskø.
 
-```text
-MICROSOFT_GRAPH_CLIENT_ID=...
-MICROSOFT_GRAPH_CLIENT_SECRET=...
-MICROSOFT_GRAPH_TENANT_ID=common
-```
+## Sikkerhed og drift
 
-De delegerede scopes er `Files.Read`, `User.Read` og `offline_access`. Brug `common`, når både private Microsoft-konti og arbejds-/skolekonti skal kunne forbindes. Brug organisationens tenant-id i stedet, hvis kun jeres egen Microsoft-tenant må logge ind.
-
-## Dropbox
-
-Opret en scoped Dropbox-app med read-only filadgang og callback-adressen:
-
-```text
-https://<portalens-domæne>/api/admin/import-connections/dropbox/callback
-```
-
-Tilføj:
-
-```text
-DROPBOX_APP_KEY=...
-DROPBOX_APP_SECRET=...
-```
-
-Scopes er `account_info.read`, `files.metadata.read` og `files.content.read`.
-
-## Vercel
-
-Opret variablerne under **Project → Settings → Environment Variables** for både Preview og Production, markér hemmeligheder som Sensitive, og lav en ny deployment. Brug ikke Vercels skiftende deployment-URL som callback. Tilføj i stedet projektets stabile domæne og eventuelt et fast preview-/stagingdomæne hos alle tre udbydere.
-
-Når portalen senere flyttes til eget domæne, tilføjes de tre callback-adresser med det nye domæne hos Google, Microsoft og Dropbox, før `NEXT_PUBLIC_SITE_URL` ændres og Vercel redeployes. Behold de gamle callback-adresser under overgangen; klient-id og klient-secret behøver normalt ikke at blive ændret.
-
-Når en konto er forbundet, oprettes importmapper under **Opsætning → Organisation → Importforbindelser**. Google Drive og OneDrive bruger mappens ID fra URL'en; Dropbox bruger stien, fx `/Kontrakter`.
-
-Automatisk tidsplan er ikke aktiveret af denne ændring. Den kræver en særskilt driftsbeslutning om frekvens og belastning. Indtil da bruges knappen **Synkroniser**; hver kørsel tager næste bid på op til 20 nye filer.
-
-## Personlige forbindelser
-
-Medlemmer forbinder og fjerner konti under **Min profil → Online-drev**. Under **Mine kontrakter → Upload kontrakt** kan medlemmet åbne en forbundet konto, markere PDF-/Word-filer og sende dem til den eksisterende dubletkontrol og analysekø. Admin kan ikke browse medlemsforbindelser, og medlemmet kan ikke oprette automatiske synkroniseringsmapper.
+- OAuth-state kan kun bruges én gang, udløber efter ti minutter og er bundet til den indloggede bruger.
+- Refresh tokens krypteres med AES-256-GCM i serverdatabasen.
+- Drev-, kø- og token-tabeller er lukket for `anon` og `authenticated`; kun service role har direkte adgang.
+- Filer valideres igen på serveren, har en grænse på 25 MB og går gennem den eksisterende dubletkontrol.
+- Afbrydelse forsøger først at tilbagekalde Google-tokenet og fjerner derefter den krypterede forbindelse lokalt.
+- En udløbet eller tilbagekaldt forbindelse markeres til ny godkendelse uden at vise tokens eller Google-fejldetaljer.

@@ -13,6 +13,54 @@ export type ProviderFile = {
   downloadPath?: string;
 };
 
+export type ProviderBrowseEntry = ProviderFile & {
+  kind: "file" | "folder";
+};
+
+function googleDriveQueryValue(value: string) {
+  return value.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
+}
+
+export async function browseGoogleDrive(input: {
+  encryptedCredentials: string;
+  connectionKind: ImportConnectionKind;
+  folderId?: string;
+  pageToken?: string;
+  sharedWithMe?: boolean;
+  pageSize?: number;
+}) {
+  const token = await providerAccessToken("google_drive", input.encryptedCredentials, input.connectionKind);
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  const q = input.sharedWithMe
+    ? "sharedWithMe=true and trashed=false"
+    : `'${googleDriveQueryValue(input.folderId || "root")}' in parents and trashed=false`;
+  url.searchParams.set("q", q);
+  url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,version)");
+  url.searchParams.set("pageSize", String(Math.min(200, Math.max(10, input.pageSize ?? 100))));
+  url.searchParams.set("orderBy", "folder,name_natural");
+  url.searchParams.set("supportsAllDrives", "true");
+  url.searchParams.set("includeItemsFromAllDrives", "true");
+  if (input.pageToken) url.searchParams.set("pageToken", input.pageToken);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new Error("Google Drive-forbindelsen skal godkendes igen");
+    throw new Error("Google Drive-mappen kunne ikke læses");
+  }
+  const json = await response.json() as {
+    nextPageToken?: string;
+    files?: Array<{ id: string; name: string; mimeType?: string; size?: string; modifiedTime?: string; md5Checksum?: string; version?: string }>;
+  };
+  const entries: ProviderBrowseEntry[] = (json.files ?? []).map(file => ({
+    id: file.id,
+    name: file.name,
+    size: Number(file.size) || 0,
+    contentType: file.mimeType ?? null,
+    revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown",
+    kind: file.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file",
+  }));
+  return { entries, nextPageToken: json.nextPageToken ?? null };
+}
+
 export async function providerAccessToken(provider: ImportProvider, encryptedCredentials: string, connectionKind: ImportConnectionKind = "organisation") {
   const credentials = decryptIntegrationCredentials<Credentials>(encryptedCredentials);
   if (!credentials.refreshToken) throw new Error("Forbindelsen mangler et refresh-token");
@@ -42,7 +90,7 @@ async function listGoogleFolder(token: string, folderId: string, recursive: bool
     let pageToken = "";
     do {
       const url = new URL("https://www.googleapis.com/drive/v3/files");
-      url.searchParams.set("q", `'${parent.replaceAll("'", "\\'")}' in parents and trashed=false`);
+      url.searchParams.set("q", `'${googleDriveQueryValue(parent)}' in parents and trashed=false`);
       url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,version)");
       url.searchParams.set("pageSize", "1000");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
@@ -162,4 +210,19 @@ export async function downloadProviderFile(provider: ImportProvider, token: stri
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
   return buffer;
+}
+
+export async function revokeProviderCredentials(provider: ImportProvider, encryptedCredentials: string) {
+  if (provider !== "google_drive") return;
+  const credentials = decryptIntegrationCredentials<Credentials>(encryptedCredentials);
+  if (!credentials.refreshToken) return;
+  try {
+    await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(credentials.refreshToken)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      cache: "no-store",
+    });
+  } catch {
+    // Best effort: a local disconnect must still remove the encrypted token.
+  }
 }

@@ -162,7 +162,10 @@ begin
     'contract_episode_confirmations',
     'import_connections',
     'import_oauth_attempts',
-    'import_sources'
+    'import_sources',
+    'drive_import_runs',
+    'drive_import_folders',
+    'drive_import_queue_items'
   ] loop
     if not exists (
       select 1 from pg_class relation
@@ -181,6 +184,13 @@ begin
       raise exception 'RLS failure: browser role can access server-only import table public.%', table_name;
     end if;
   end loop;
+
+  if has_function_privilege('anon', 'public.claim_drive_import_folder(uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_drive_import_folder(uuid)', 'EXECUTE')
+    or has_function_privilege('anon', 'public.claim_drive_import_item(uuid)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.claim_drive_import_item(uuid)', 'EXECUTE') then
+    raise exception 'RLS failure: browser role can claim server-only drive import work';
+  end if;
 end $$;
 
 do $$

@@ -6,7 +6,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
   const member = await requireMemberDriveContext();
   if (!member) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const rawProvider = (await context.params).provider;
-  if (!["google_drive", "onedrive", "dropbox"].includes(rawProvider)) return NextResponse.json({ error: "Ukendt provider" }, { status: 404 });
+  if (rawProvider !== "google_drive") return NextResponse.json({ error: "Kun Google Drive er tilgængelig i denne version" }, { status: 404 });
   const provider = rawProvider as ImportProvider;
   try {
     const returnPath = request.nextUrl.searchParams.get("returnTo") === "/portal/mine-kontrakter" ? "/portal/mine-kontrakter" : "/portal/min-profil";

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireMemberDriveContext } from "@/lib/server/member-drive-context";
-import { downloadProviderFile, getProviderFile, listProviderFiles, providerAccessToken } from "@/lib/server/import-provider-files";
-import { intakeContractFile } from "@/lib/server/contract-import-intake";
-import { processPendingContractJobs } from "@/app/api/contracts/jobs/process/route";
-import type { ImportProvider } from "@/lib/server/import-connection-oauth";
+import { browseGoogleDrive } from "@/lib/server/import-provider-files";
+import { driveImportWorkerSecret, triggerDriveImportWorker } from "@/lib/drive-import-worker";
 
 async function ownedConnection(connectionId: string, userId: string) {
   const db = createServiceClient();
@@ -14,18 +12,39 @@ async function ownedConnection(connectionId: string, userId: string) {
   return data;
 }
 
-export async function GET(_request: NextRequest, context: { params: Promise<{ connectionId: string }> }) {
+export async function GET(request: NextRequest, context: { params: Promise<{ connectionId: string }> }) {
   const member = await requireMemberDriveContext();
   if (!member) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const connection = await ownedConnection((await context.params).connectionId, member.userId);
   if (!connection || connection.org_id !== member.orgId || connection.status !== "connected") return NextResponse.json({ error: "Forbindelsen blev ikke fundet" }, { status: 404 });
+  const runId = request.nextUrl.searchParams.get("runId");
+  if (runId) {
+    const db = createServiceClient();
+    const { data: run } = await db.from("drive_import_runs")
+      .select("id,status,discovered_count,imported_count,duplicate_count,failed_count,last_error")
+      .eq("id", runId).eq("connection_id", connection.id).eq("started_by", member.userId).maybeSingle();
+    if (!run) return NextResponse.json({ error: "Importjobbet blev ikke fundet" }, { status: 404 });
+    return NextResponse.json({ run }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (connection.provider !== "google_drive") return NextResponse.json({ error: "Kun Google Drive er tilgængelig i denne version" }, { status: 409 });
   try {
-    const root = connection.provider === "dropbox" ? "/" : "root";
-    const result = await listProviderFiles({ provider: connection.provider as ImportProvider, encryptedCredentials: connection.credentials_encrypted, folderId: root, recursive: true, connectionKind: "member" });
-    const files = result.files.filter(file => /\.(pdf|doc|docx)$/i.test(file.name)).slice(0, 500);
-    return NextResponse.json({ files, truncated: result.files.length > 500 });
+    const result = await browseGoogleDrive({
+      encryptedCredentials: connection.credentials_encrypted,
+      connectionKind: "member",
+      folderId: request.nextUrl.searchParams.get("folderId") || "root",
+      pageToken: request.nextUrl.searchParams.get("cursor") || undefined,
+      sharedWithMe: request.nextUrl.searchParams.get("view") === "shared",
+      pageSize: 100,
+    });
+    const folders = result.entries.filter(entry => entry.kind === "folder");
+    const files = result.entries.filter(entry => entry.kind === "file" && /\.(pdf|doc|docx)$/i.test(entry.name));
+    return NextResponse.json({ folders, files, nextCursor: result.nextPageToken }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Filerne kunne ikke hentes" }, { status: 502 });
+    const message = error instanceof Error ? error.message : "Filerne kunne ikke hentes";
+    if (message.includes("godkendes igen")) {
+      await createServiceClient().from("import_connections").update({ status: "reauthorization_required", last_error: message }).eq("id", connection.id);
+    }
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }
 
@@ -35,22 +54,23 @@ export async function POST(request: NextRequest, context: { params: Promise<{ co
   const connection = await ownedConnection((await context.params).connectionId, member.userId);
   if (!connection || connection.org_id !== member.orgId || connection.status !== "connected" || connection.rights_holder_id !== member.rightsHolderId) return NextResponse.json({ error: "Forbindelsen blev ikke fundet" }, { status: 404 });
   const body = await request.json().catch(() => ({})) as { fileIds?: unknown };
-  const fileIds = Array.isArray(body.fileIds) ? [...new Set(body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 1024))].slice(0, 100) : [];
+  const fileIds = Array.isArray(body.fileIds) ? [...new Set(body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 1024))].slice(0, 500) : [];
   if (!fileIds.length) return NextResponse.json({ error: "Vælg mindst én kontrakt" }, { status: 400 });
-  const provider = connection.provider as ImportProvider;
+  if (connection.provider !== "google_drive") return NextResponse.json({ error: "Kun Google Drive er tilgængelig i denne version" }, { status: 409 });
+  if (!driveImportWorkerSecret()) return NextResponse.json({ error: "Baggrundsimport er ikke konfigureret" }, { status: 503 });
   const db = createServiceClient({ audit: { actorUserId: member.userId, actorOrgId: member.orgId, actorRole: "member", source: "portal", correlationId: crypto.randomUUID(), mode: "summary" } });
-  const { data: batch, error: batchError } = await db.from("contract_import_batches").insert({ org_id: member.orgId, created_by: member.userId, source: provider, connection_id: connection.id, status: "processing", discovered_count: fileIds.length }).select("id").single();
+  const { data: batch, error: batchError } = await db.from("contract_import_batches").insert({ org_id: member.orgId, created_by: member.userId, source: "google_drive", connection_id: connection.id, status: "processing", discovered_count: fileIds.length }).select("id").single();
   if (batchError || !batch) return NextResponse.json({ error: "Importen kunne ikke startes" }, { status: 500 });
-  const token = await providerAccessToken(provider, connection.credentials_encrypted, "member");
-  const results: Array<{ id: string; name?: string; status: string; error?: string }> = [];
-  for (const id of fileIds) {
-    try {
-      const file = await getProviderFile(provider, token, id);
-      const buffer = await downloadProviderFile(provider, token, file);
-      const result = await intakeContractFile({ batchId: batch.id, actor: { userId: member.userId, orgId: member.orgId, role: "member" }, rightsHolderId: member.rightsHolderId, file: { name: file.name, contentType: file.contentType, buffer, clientToken: crypto.randomUUID(), providerFileId: file.id, providerRevision: file.revision } });
-      results.push(result.ok ? { id, name: file.name, status: result.duplicate ? "duplicate" : "queued" } : { id, name: file.name, status: "error", error: result.error });
-    } catch (error) { results.push({ id, status: "error", error: error instanceof Error ? error.message : "Filen kunne ikke importeres" }); }
-  }
-  if (results.some(result => result.status === "queued")) after(async () => { await processPendingContractJobs(member.orgId); });
-  return NextResponse.json({ batchId: batch.id, results });
+  const { data: run, error: runError } = await db.from("drive_import_runs").insert({
+    org_id: member.orgId, connection_id: connection.id, batch_id: batch.id,
+    connection_kind: "member", started_by: member.userId, rights_holder_id: member.rightsHolderId,
+    status: "queued", recursive: false, discovered_count: fileIds.length,
+  }).select("id,status").single();
+  if (runError || !run) return NextResponse.json({ error: "Importkøen kunne ikke oprettes" }, { status: 500 });
+  const { error: queueError } = await db.from("drive_import_queue_items").insert(fileIds.map(id => ({
+    run_id: run.id, provider_file_id: id, provider_revision: "selected", file_name: id, file_size_bytes: 0,
+  })));
+  if (queueError) return NextResponse.json({ error: "De valgte filer kunne ikke sættes i kø" }, { status: 500 });
+  after(() => triggerDriveImportWorker(run.id));
+  return NextResponse.json({ batchId: batch.id, runId: run.id, status: run.status, queued: fileIds.length }, { status: 202 });
 }

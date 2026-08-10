@@ -9,7 +9,7 @@ type TokenResponse = { access_token?: string; refresh_token?: string; expires_in
 export async function GET(request: NextRequest, context: { params: Promise<{ provider: string }> }) {
   const rawProvider = (await context.params).provider;
   const fallback = new URL("/portal/min-profil", request.nextUrl.origin);
-  if (!["google_drive", "onedrive", "dropbox"].includes(rawProvider)) return NextResponse.redirect(fallback);
+  if (rawProvider !== "google_drive") return NextResponse.redirect(fallback);
   const provider = rawProvider as ImportProvider;
   const session = await createClient();
   const { data: { user } } = await session.auth.getUser();

@@ -1,89 +1,50 @@
-# Besked til Martin — Vercel og online-drev
+# Besked til Martin — Vercel og Google Drive
 
-Hej Martin
+Google Drive-funktionen bruger nu to forskellige OAuth-klienter: én til DFKS' adminimport og én til medlemmernes personlige drev. Værdierne skal kopieres direkte fra Google Cloud til Vercel og må ikke sendes i mail/chat eller lægges i Git.
 
-Jeg har implementeret skrivebeskyttede forbindelser til Google Drive, Microsoft OneDrive og Dropbox for både organisationen og det enkelte medlem. OAuth-tokens gemmes krypteret server-side og må ikke sendes i mail/chat eller lægges i Git.
+## 1. Åbn projektets miljøvariabler
 
-## 1. Opret krypteringsnøglen
+1. Log ind på Vercel.
+2. Vælg teamet **martin-wehdings-projects**.
+3. Åbn projektet **dfks-portal**.
+4. Gå til **Settings → Environment Variables**.
 
-Generér værdien lokalt i Terminal (kommandoen viser én ny hemmelig værdi):
+## 2. Tilføj de fem Google Drive-variable
 
-```bash
-openssl rand -base64 48
-```
+Opret én variabel ad gangen, markér hver hemmelig værdi som **Sensitive**, og aktivér den for både **Preview** og **Production**:
 
-Kopiér resultatet direkte til din password manager. Brug den samme værdi i Preview og Production, hvis de to miljøer bruger samme Supabase-database. Send ikke værdien tilbage i chat.
+- `INTEGRATION_ENCRYPTION_KEY` — den eksisterende krypteringsnøgle. Hvis den allerede findes, må værdien ikke ændres.
+- `GOOGLE_DRIVE_ADMIN_CLIENT_ID` — Client ID fra webklienten i `dfks-portal-drive-admin`.
+- `GOOGLE_DRIVE_ADMIN_CLIENT_SECRET` — Client secret fra samme admin-webklient.
+- `GOOGLE_DRIVE_MEMBER_CLIENT_ID` — Client ID fra webklienten i `dfks-portal-drive-medlemmer`.
+- `GOOGLE_DRIVE_MEMBER_CLIENT_SECRET` — Client secret fra samme medlems-webklient.
 
-I Vercel: **martin-wehdings-projects → dfks-portal → Settings → Environment Variables → Add**:
+De gamle `GOOGLE_DRIVE_CLIENT_ID` og `GOOGLE_DRIVE_CLIENT_SECRET` bruges ikke længere og kan fjernes efter en vellykket test.
 
-- navn: `INTEGRATION_ENCRYPTION_KEY`
-- værdi: resultatet fra kommandoen
-- miljøer: `Preview` og `Production`
-- markér `Sensitive`
+## 3. Kontrollér baggrundskøen
 
-Nøglen må ikke ændres efter konti er forbundet; ellers kan eksisterende OAuth-tokens ikke dekrypteres.
-
-## 2. Google Drive
-
-I Google Cloud-projektet:
-
-1. Aktivér **Google Drive API**.
-2. Åbn **APIs & Services → OAuth consent screen** og udfyld appnavn, supportmail, domæne og privacy policy.
-3. Tilføj scopet `https://www.googleapis.com/auth/drive.readonly`.
-4. Bemærk: Google klassificerer scopet som restricted; offentlig produktion kan kræve app-verifikation.
-5. Gå til **Credentials → Create credentials → OAuth client ID → Web application**.
-6. Tilføj redirect URI:
-   `https://dfks-portal-hazel.vercel.app/api/admin/import-connections/google_drive/callback`
-7. Kopiér Client ID og Client secret direkte til Vercel som Sensitive:
-   - `GOOGLE_DRIVE_CLIENT_ID`
-   - `GOOGLE_DRIVE_CLIENT_SECRET`
-
-## 3. Microsoft OneDrive
-
-I Microsoft Entra admin center:
-
-1. Gå til **Identity → Applications → App registrations → New registration**.
-2. Vælg kontotyper, der tillader både arbejds-/skolekonti og personlige Microsoft-konti.
-3. Under **Authentication → Add a platform → Web** tilføjes:
-   `https://dfks-portal-hazel.vercel.app/api/admin/import-connections/onedrive/callback`
-4. Under **API permissions → Microsoft Graph → Delegated permissions** tilføjes `Files.Read`, `User.Read` og `offline_access`.
-5. Under **Certificates & secrets → New client secret** kopieres **Value** med det samme.
-6. Tilføj i Vercel som Sensitive:
-   - `MICROSOFT_GRAPH_CLIENT_ID` = Application (client) ID
-   - `MICROSOFT_GRAPH_CLIENT_SECRET` = secret Value (ikke Secret ID)
-   - `MICROSOFT_GRAPH_TENANT_ID` = `common`
-
-## 4. Dropbox
-
-I Dropbox App Console:
-
-1. Vælg **Create app → Scoped access → Full Dropbox**.
-2. Under **Permissions** aktiveres kun `account_info.read`, `files.metadata.read` og `files.content.read`.
-3. Under OAuth 2 tilføjes redirect URI:
-   `https://dfks-portal-hazel.vercel.app/api/admin/import-connections/dropbox/callback`
-4. Kopiér App key og App secret til Vercel som Sensitive:
-   - `DROPBOX_APP_KEY`
-   - `DROPBOX_APP_SECRET`
-
-## 5. Kontrollér øvrige Vercel-variable
-
-De eksisterende servervariable skal fortsat være sat for Preview og Production:
+Kontrollér, at disse allerede findes for både Preview og Production:
 
 - `INTERNAL_API_SECRET`
-- `NEXT_PUBLIC_SITE_URL=https://dfks-portal-hazel.vercel.app`
-- Supabase URL, anon key og service-role key
+- `NEXT_PUBLIC_SITE_URL` med værdien `https://dfks-portal-hazel.vercel.app`
+- projektets eksisterende Supabase URL, anon key og service-role key
 
-Der bruges ikke `NEXT_PUBLIC_` på OAuth-client-secrets eller krypteringsnøglen.
+Ingen Client secret, service-role key eller krypteringsnøgle må have `NEXT_PUBLIC_` foran navnet.
 
-## 6. Redeploy og test
+## 4. Lav en ny deployment
 
-1. Gå til **Deployments** i Vercel.
-2. Åbn nyeste deployment fra featurebranchen/PR'en.
-3. Vælg **⋯ → Redeploy** og slå eventuelt build-cache fra.
-4. Når deploymentet er `Ready`, test én forbindelse fra **Min profil → Online-drev**.
-5. Test derefter **Mine kontrakter → Upload kontrakt → Vælg fra online-drev** med en ufarlig test-PDF.
-6. Kontrollér, at dubletter afvises, og at forbindelsen kan fjernes fra Min profil.
+1. Åbn **Deployments** i Vercel.
+2. Åbn den nyeste deployment af den relevante featurebranch/PR.
+3. Tryk på menuen **…** øverst til højre.
+4. Vælg **Redeploy**.
+5. Fjern eventuelt **Use existing Build Cache**.
+6. Bekræft **Redeploy**, og vent til status er **Ready**.
 
-## Ved nyt domæne
+## 5. Test begge forbindelser
 
-Før `NEXT_PUBLIC_SITE_URL` ændres, tilføjes de samme tre callback-stier med det nye domæne hos Google, Microsoft og Dropbox. Behold de gamle callbacks under overgangen, deploy, test og fjern først de gamle efter en stabil overgang.
+1. Som admin: gå til **Opsætning → Organisation → Importforbindelser**, forbind admin-Google-kontoen, vælg en mappe og start manuel import.
+2. Kontrollér, at importen fortsætter, hvis siden forlades, og at samme fil ikke importeres igen.
+3. Som testmedlem: gå til **Min profil → Online-drev**, forbind Google Drive, og vælg derefter enkelte testfiler via **Mine kontrakter → Upload kontrakt**.
+4. Afbryd forbindelsen igen og kontrollér, at allerede importerede kontrakter bevares.
+
+Hvis deployment eller forbindelse fejler, send kun den første røde fejllinje og navnet på den manglende variabel. Send aldrig værdien af en secret.

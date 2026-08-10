@@ -2,6 +2,7 @@ import "server-only";
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
+import { googleDriveOAuthCredentials } from "@/lib/import-oauth-environment";
 
 export type ImportProvider = "google_drive" | "onedrive" | "dropbox";
 
@@ -76,9 +77,7 @@ export async function consumeImportOAuthAttempt(state: string, provider: ImportP
 
 export function providerOAuthConfig(provider: ImportProvider, callbackUrl: string, connectionKind: ImportConnectionKind = "organisation") {
   if (provider === "google_drive") {
-    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET;
-    if (!clientId || !clientSecret) throw new Error("Google Drive er ikke konfigureret");
+    const { clientId, clientSecret } = googleDriveOAuthCredentials(connectionKind, process.env);
     return {
       clientId, clientSecret,
       authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",

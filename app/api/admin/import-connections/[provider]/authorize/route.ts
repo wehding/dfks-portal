@@ -8,11 +8,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
   const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin"]);
   if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
   const rawProvider = (await context.params).provider;
-  if (!["google_drive", "onedrive", "dropbox"].includes(rawProvider)) return NextResponse.json({ error: "Ukendt provider" }, { status: 404 });
+  if (rawProvider !== "google_drive") return NextResponse.json({ error: "Kun Google Drive er tilgængelig i denne version" }, { status: 404 });
   const provider = rawProvider as ImportProvider;
   try {
     const callbackUrl = canonicalImportCallback(request.nextUrl.origin, provider);
-    const config = providerOAuthConfig(provider, callbackUrl);
+    const config = providerOAuthConfig(provider, callbackUrl, "organisation");
     const attempt = await createImportOAuthAttempt({ provider, connectionKind: "organisation", orgId: caller.orgId, userId: caller.userId, returnPath: "/admin/organisation" });
     const url = new URL(config.authorizeUrl);
     url.searchParams.set("client_id", config.clientId);
