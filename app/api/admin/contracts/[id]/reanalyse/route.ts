@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/error-message";
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
@@ -82,8 +83,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             actorUserId:          user.id,
             source:               "admin",
         })
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message ?? "Analyse fejlede" }, { status: 500 })
+    } catch (err: unknown) {
+        return NextResponse.json({ error: errorMessage(err) ?? "Analyse fejlede" }, { status: 500 })
     }
 
     const { result: parsed, contractText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult

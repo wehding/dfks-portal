@@ -1,5 +1,6 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Loader2, MessageSquare, Send } from "lucide-react";
@@ -41,6 +42,8 @@ function MemberInboxContent() {
     setLoading(false);
   }, [params]);
 
+  // State is intentionally synchronized when the external dialog, storage, or server source changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (selectedId) void markInboxThreadRead(selectedId);

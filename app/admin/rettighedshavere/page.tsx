@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Fragment, type ReactNode } from "react"
+import Image from "next/image"
 import { Search, Plus, Pencil, UserCheck, UserX, X, Loader2, Mail, KeyRound, Link, LogIn, RotateCcw, Trash2, ArchiveRestore, ArrowUpDown } from "lucide-react"
 import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
@@ -1283,7 +1284,7 @@ export default function RettighedshavereAdminPage() {
                             <div><h3 className="font-semibold">Navneprofil og portræt</h3><p className="text-xs text-muted-foreground">Navnevarianter og portræt blev valgt under onboardingens personsøgning.</p></div>
                             <div className="space-y-1"><Label>Navnevarianter</Label><Textarea rows={3} value={editForm.alternative_names} onChange={event => setEditForm(form => ({ ...form, alternative_names: event.target.value }))} placeholder="Ét navn pr. linje" /></div>
                             <div className="space-y-1"><Label>Portræt-URL</Label><Input type="url" value={editForm.portrait_url} onChange={event => setEditForm(form => ({ ...form, portrait_url: event.target.value }))} placeholder="https://…" /></div>
-                            {editForm.portrait_url && <div className="flex items-center gap-3 rounded-md bg-muted p-2"><img src={editForm.portrait_url} alt={`Portræt af ${editForm.full_name}`} className="h-16 w-16 rounded-md object-cover" /><span className="min-w-0 break-all text-xs text-muted-foreground">Aktuelt portræt</span></div>}
+                            {editForm.portrait_url && <div className="flex items-center gap-3 rounded-md bg-muted p-2"><Image src={editForm.portrait_url} alt={`Portræt af ${editForm.full_name}`} width={64} height={64} unoptimized className="h-16 w-16 rounded-md object-cover" /><span className="min-w-0 break-all text-xs text-muted-foreground">Aktuelt portræt</span></div>}
                         </section>
 
                         <section className="space-y-3 rounded-lg border p-3 sm:p-4">

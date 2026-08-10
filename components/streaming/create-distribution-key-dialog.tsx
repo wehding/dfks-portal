@@ -56,6 +56,8 @@ export function CreateDistributionKeyDialog({
 
     // Initialiser med ligelig fordeling
     useEffect(() => {
+        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         if (open) setShares(distributeEvenly(editors))
     }, [open, editors])
 

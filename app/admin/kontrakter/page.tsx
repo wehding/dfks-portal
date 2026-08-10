@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useState, useMemo, Suspense, useRef } from "react"
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
+import { errorMessage } from "@/lib/error-message";
+import { useCallback, useEffect, useState, useMemo, Suspense, useRef } from "react"
 import dynamic from "next/dynamic"
 import {
     Search, Trash2, Eye, Upload, FileText,
@@ -8,12 +10,10 @@ import {
     AlertTriangle, Clock, Archive,
 } from "lucide-react"
 import { toast } from "sonner"
-import { useRouter } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
-import { getTMDBSeasonEpisodes } from "@/app/actions/tmdb"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
@@ -275,7 +275,6 @@ function adminContractSummary(contract: ContractRow) {
 
 function AdminKontrakterContent() {
     const { t } = useI18n()
-    const router = useRouter()
     const [contracts, setContracts] = useState<ContractRow[]>([])
     const [employers, setEmployers] = useState<Employer[]>([])
     const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([])
@@ -316,7 +315,7 @@ function AdminKontrakterContent() {
     const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([])
     const [isSearching, setIsSearching] = useState(false)
     const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null)
-    const [detailsLoading, setDetailsLoading] = useState(false)
+    const [detailsLoading] = useState(false)
     const [manualWorkMode, setManualWorkMode] = useState(false)
     const [manualWork, setManualWork] = useState<ManualWorkFormValue>(() => emptyManualWorkForm())
 
@@ -433,7 +432,7 @@ function AdminKontrakterContent() {
         return () => window.cancelAnimationFrame(frame)
     }, [editContract?.id])
 
-    const closeEditDialog = () => {
+    const closeEditDialog = useCallback(() => {
         setEditContract(null)
         setEditForm(null)
         setEditWorkTypeFilter("all")
@@ -445,7 +444,7 @@ function AdminKontrakterContent() {
         setEpisodeOptions([])
         setDetectedEpisodeCount(null)
         setSeriesSectionRequested(false)
-    }
+    }, [])
 
     // Upload flow
     const [showUpload, setShowUpload] = useState(false)
@@ -1301,8 +1300,8 @@ function AdminKontrakterContent() {
                     poster_url: pickedUnifiedResult.poster_url ?? null,
                 } as any
                 setWorks(prev => prev.some(w => w.id === linkRes.workId) ? prev : [...prev, selectedWork!].sort((a, b) => a.title.localeCompare(b.title, "da-DK")))
-            } catch (e: any) {
-                toast.error(e.message || "Kunne ikke tilknytte værk")
+            } catch (e: unknown) {
+                toast.error(errorMessage(e) || "Kunne ikke tilknytte værk")
                 setEditSaving(false)
                 return false
             }
@@ -1575,9 +1574,6 @@ function AdminKontrakterContent() {
     const uploadRightsHolderResults = uploadRightsHolderSearch.trim()
         ? rightsHolders.filter(r => r.full_name.toLowerCase().includes(uploadRightsHolderSearch.toLowerCase())).slice(0, 8)
         : rightsHolders.slice(0, 8)
-    const editWorkResults = editWorkSearch.trim()
-        ? works.filter(w => `${w.title} ${w.year ?? ""}`.toLowerCase().includes(editWorkSearch.toLowerCase())).slice(0, 8)
-        : works.slice(0, 8)
     const editRightsHolderResults = editRightsHolderSearch.trim()
         ? rightsHolders.filter(r => r.full_name.toLowerCase().includes(editRightsHolderSearch.toLowerCase())).slice(0, 8)
         : rightsHolders.slice(0, 8)

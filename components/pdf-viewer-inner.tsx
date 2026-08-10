@@ -1,5 +1,6 @@
 "use client"
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { useState, useCallback, useEffect, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
@@ -20,7 +21,6 @@ interface PdfViewerProps {
     url: string
     highlights?: string[]
     sectionHighlights?: string[]
-    sectionEndMarkers?: string[]
     activeHighlight?: string | null
     pageNavigationHint?: string
 }
@@ -71,7 +71,7 @@ function ensureHighlightCSS() {
     document.head.appendChild(style)
 }
 
-function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null, sectionHighlights: string[] = [], sectionEndMarkers: string[] = []) {
+function applyHighlights(container: HTMLElement, highlights: string[], activeHighlight: string | null, sectionHighlights: string[] = []) {
     ensureHighlightCSS()
 
     container.querySelectorAll("span[data-hl]").forEach((el) => {
@@ -87,7 +87,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
 
     let normFull = ""
     const spanMap: { start: number; end: number; span: HTMLElement }[] = []
-    spans.forEach((span, i) => {
+    spans.forEach((span) => {
         const t = span.textContent ?? ""
         if (!t) return
         const normed = norm(t)
@@ -172,7 +172,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], sectionEndMarkers = [], activeHighlight = null, pageNavigationHint }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
@@ -184,11 +184,9 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     const activeHighlightRef = useRef(activeHighlight)
     const highlightsRef = useRef(highlights)
     const sectionHighlightsRef = useRef(sectionHighlights)
-    const sectionEndMarkersRef = useRef(sectionEndMarkers)
     activeHighlightRef.current = activeHighlight
     highlightsRef.current = highlights
     sectionHighlightsRef.current = sectionHighlights
-    sectionEndMarkersRef.current = sectionEndMarkers
 
     useEffect(() => {
         if (!activeHighlight || !pdfDoc || !numPages) return
@@ -206,7 +204,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 setPageNumber(targetPage)
             } else {
                 if (containerRef.current) {
-                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current, sectionHighlightsRef.current, sectionEndMarkersRef.current)
+                    applyHighlights(containerRef.current, highlightsRef.current, activeHighlightRef.current, sectionHighlightsRef.current)
                 }
             }
         })
@@ -229,21 +227,16 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             if (!containerRef.current) return
             const textLayer = containerRef.current.querySelector(".react-pdf__Page__textContent")
             const spans = textLayer ? Array.from(textLayer.querySelectorAll("span")) as HTMLElement[] : []
-            // Build a quick normFull to check if this is the right page
-            let testNorm = ""
-            spans.slice(0, 20).forEach(sp => { testNorm += (sp.textContent ?? "").toLowerCase() + " " })
             // If any regular highlight is on this page, OR no highlights exist, proceed
             const hasPageContent = spans.length > 10
             if (!hasPageContent) {
                 if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            // Log all page elements
-            const allPages = containerRef.current?.querySelectorAll(".react-pdf__Page")
-            applyHighlights(containerRef.current, highlights, activeHighlight, sectionHighlights, sectionEndMarkers)
+            applyHighlights(containerRef.current, highlights, activeHighlight, sectionHighlights)
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, sectionHighlights, sectionEndMarkers, activeHighlight, pageNumber, pageRendered])
+    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered])
 
 
     if (error) {

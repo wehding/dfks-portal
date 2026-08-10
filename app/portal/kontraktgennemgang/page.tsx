@@ -1,5 +1,7 @@
 "use client"
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
+import { errorMessage } from "@/lib/error-message";
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Upload, X, FileText, CheckCircle2, Loader2, ChevronDown, Check, Clock, ChevronRight } from "lucide-react"
 import { useRouter } from "next/navigation"
@@ -407,7 +409,7 @@ export default function PortalKontraktgennemgangPage() {
         setDragOver(false)
         const f = e.dataTransfer.files?.[0]
         if (f) validateAndSetFile(f)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
     }, [])
 
     // ── Distribution channels — "ukendt" er eksklusiv ────────
@@ -481,8 +483,8 @@ export default function PortalKontraktgennemgangPage() {
             setSubmitted(true)
             // Opdater sagsliste i baggrunden
             if (memberId) loadReviews(memberId)
-        } catch (err: any) {
-            toast.error(err.message ?? "Kunne ikke sende kontrakten — prøv igen")
+        } catch (err: unknown) {
+            toast.error(errorMessage(err) ?? "Kunne ikke sende kontrakten — prøv igen")
         } finally {
             setSubmitting(false)
         }

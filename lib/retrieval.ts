@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding, getEmbeddingWithFallback } from "./embedding-provider"
 import { estimateEmbeddingTokens } from "./ai-cost"

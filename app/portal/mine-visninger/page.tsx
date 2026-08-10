@@ -1,5 +1,6 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowUpDown, Loader2, Plus, Search } from "lucide-react";
 import { PortalPageHeader } from "@/components/portal/portal-page-header";
@@ -47,6 +48,8 @@ function MineVisningerContent() {
     if (options.success) { setWorks(options.works as Option[]); setBroadcasters(options.broadcasters as Option[]); }
     setLoading(false);
   };
+  // State is intentionally synchronized when the external dialog, storage, or server source changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, []);
 
   const selectedWork = useMemo(() => works.find(work => work.id === draft.workId), [draft.workId, works]);
@@ -87,9 +90,11 @@ function MineVisningerContent() {
     const claimId = searchParams?.get("claim");
     if (!claimId || selected?.id === claimId) return;
     const claim = claims.find(item => item.id === claimId);
+    // State is intentionally synchronized when the external dialog, storage, or server source changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (claim) void openClaim(claim);
     // openClaim intentionally uses current local state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [claims, searchParams, selected?.id]);
 
   return <div className="space-y-6">

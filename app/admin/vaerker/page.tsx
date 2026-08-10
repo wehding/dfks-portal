@@ -51,16 +51,16 @@ import {
   syncAdminSeasonAssignments,
   updateAdminWorkData,
 } from "@/app/actions/work-management";
-import { getDFIFilmDetails, searchDFIFilms } from "@/app/actions/dfi";
+import { getDFIFilmDetails } from "@/app/actions/dfi";
 import { resolveUnifiedSearchResultDetails, searchWorksUnified, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
-import { findTMDBPoster, getTMDBWorkDetails, searchTMDB } from "@/app/actions/tmdb";
-import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, type DfiMetadata, type DfiWorkType } from "@/lib/dfi-metadata";
+import { findTMDBPoster, getTMDBWorkDetails } from "@/app/actions/tmdb";
+import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, type DfiMetadata } from "@/lib/dfi-metadata";
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
-import { WORK_TYPES, WORK_TYPE_VALUES, workTypeLabel } from "@/lib/work-types";
+import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
@@ -108,10 +108,6 @@ function dfiRecord(metadata: DfiMetadata | null | undefined, key: string) {
 function dfiArray(metadata: DfiMetadata | null | undefined, key: string) {
   const value = metadata?.[key];
   return Array.isArray(value) ? value : [];
-}
-
-function workTypeFallback(value: string | null | undefined): DfiWorkType {
-  return WORK_TYPE_VALUES.includes(value as DfiWorkType) ? value as DfiWorkType : "spillefilm";
 }
 
 type SortKey = "title" | "type" | "year" | "data" | "broadcaster" | "status";
@@ -422,27 +418,6 @@ function displayCreditRole(role: string | null | undefined) {
   return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  title: "Titel",
-  type: "Type",
-  year: "Premiereår",
-  duration_minutes: "Varighed",
-  season_count: "Sæson",
-  episode_count: "Afsnit",
-  genre: "Genre",
-  director: "Instruktør",
-  alternative_titles: "Alternative titler",
-  production_countries: "Produktionslande",
-  production_companies: "Produktionsselskaber",
-  description: "Beskrivelse",
-  dfi_id: "DFI-id",
-  tmdb_id: "TMDB-id",
-  poster_url: "Poster-url",
-  dfi_original_title: "Arbejdstitel",
-  status: "Status",
-  memberRole: "Medlemsrolle",
-};
-
 const DIFF_KEYS = [
   "title",
   "type",
@@ -698,16 +673,6 @@ function dfiDirector(metadata: SearchResult) {
   return extractDfiDirectors(metadata).join(", ");
 }
 
-function resultYear(item: SearchResult) {
-  const dateYear = textValue(item.release_date).substring(0, 4) || textValue(item.first_air_date).substring(0, 4);
-  const year = extractDfiPremiereYear(item) ?? Number(dateYear || 0);
-  return Number.isFinite(year) ? year : 0;
-}
-
-function newestFirst<T extends SearchResult>(items: T[]) {
-  return [...items].sort((a, b) => resultYear(b) - resultYear(a));
-}
-
 function notifyWorksUpdated() {
   window.dispatchEvent(new Event("works-updated"));
 }
@@ -821,8 +786,6 @@ export default function VaerksadministrationPage() {
   const [newAssignment, setNewAssignment] = useState<AssignmentDraft>({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
   const [importPreview, setImportPreview] = useState<{ source: "DFI" | "TMDB"; rows: { key: string; oldValue: unknown; newValue: unknown }[] } | null>(null);
   const [editLookupQuery, setEditLookupQuery] = useState("");
-  const [editDfiResults, setEditDfiResults] = useState<SearchResult[]>([]);
-  const [editTmdbResults, setEditTmdbResults] = useState<SearchResult[]>([]);
   const [editUnifiedResults, setEditUnifiedResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [isSearchingEdit, setIsSearchingEdit] = useState(false);
   const [masterId, setMasterId] = useState("");
@@ -1187,8 +1150,6 @@ export default function VaerksadministrationPage() {
     setAdminComment("");
     setImportPreview(null);
     setEditLookupQuery(work.title ?? "");
-    setEditDfiResults([]);
-    setEditTmdbResults([]);
 
     const detail = await fetchAdminWorkDetail(work.id);
     if (!detail.success || !detail.work) return;
@@ -1689,74 +1650,6 @@ export default function VaerksadministrationPage() {
       setNotice("Kombinerede værksdata er hentet. Gennemgå ændringerne og gem værket.");
     } catch (err: unknown) {
       setNotice(errorMessage(err, "Kunne ikke hente kombinerede værksdata."));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const applyDfiToEdit = async (result: SearchResult) => {
-    if (!editForm) return;
-
-    setSaving(true);
-    try {
-      const details = await getDFIFilmDetails(Number(result.Id));
-      const film = (details.success ? (details as { film?: SearchResult }).film : result) ?? result;
-      const type = mapDfiWorkType(film.Category, film.Type, workTypeFallback(editForm.type));
-      const title = textValue(film.Title) || textValue(film.DanishTitle) || textValue(film.OriginalTitle) || editForm.title;
-      const year = extractDfiPremiereYear(film);
-      const dfiPoster = (details.success ? details.posterDataUrl : null) ?? extractDfiPosterUrl(film);
-      const tmdbPoster = dfiPoster ? null : await findTMDBPoster(title, year);
-      const nextValues: Partial<WorkForm> = {
-        title,
-        type,
-        year: year ? String(year) : editForm.year,
-        duration_minutes: firstNumber(film.LengthInMin) ? String(firstNumber(film.LengthInMin)) : editForm.duration_minutes,
-        genre: textValue(film.Genre) || editForm.genre,
-        director: dfiDirector(film) || editForm.director,
-        alternative_titles: mergeLists(splitList(editForm.alternative_titles), dfiAlternativeTitles(film)).join(", "),
-        production_countries: mergeLists(splitList(editForm.production_countries), dfiProductionCountries(film)).join(", "),
-        production_companies: mergeLists(splitList(editForm.production_companies), dfiProductionCompanies(film)).join(", "),
-        ...dfiFieldValues(film),
-        dfi_id: String(result.Id),
-        poster_url: dfiPoster ?? (tmdbPoster ? `${TMDB_IMG_W185}${tmdbPoster}` : editForm.poster_url),
-        dfi_metadata: film as DfiMetadata,
-      };
-      setImportPreview({ source: "DFI", rows: importDiffRows(editForm, nextValues) });
-      setEditForm({
-        ...editForm,
-        ...nextValues,
-      });
-      setNotice("DFI-data er hentet ind i redigeringsformularen. Husk at gemme værket.");
-    } catch (err: unknown) {
-      setNotice(errorMessage(err, "Kunne ikke hente DFI-data."));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const applyTmdbToEdit = async (result: SearchResult) => {
-    if (!editForm) return;
-    setSaving(true);
-    try {
-      const details = await getTMDBWorkDetails(Number(result.id), textValue(result.media_type) || "movie");
-      const work = (details.success ? (details as { details?: SearchResult }).details : result) ?? result;
-      const releaseDate = textValue(work.release_date);
-      const firstAirDate = textValue(work.first_air_date);
-      const nextValues: Partial<WorkForm> = {
-        title: textValue(work.title) || textValue(work.name) || editForm.title,
-        type: result.media_type === "tv" ? "tv-serie" : editForm.type,
-        year: releaseDate ? releaseDate.substring(0, 4) : firstAirDate ? firstAirDate.substring(0, 4) : editForm.year,
-        tmdb_id: String(result.id),
-        poster_url: textValue(work.poster_path) ? `${TMDB_IMG_W185}${textValue(work.poster_path)}` : editForm.poster_url,
-      };
-      setImportPreview({ source: "TMDB", rows: importDiffRows(editForm, nextValues) });
-      setEditForm({
-        ...editForm,
-        ...nextValues,
-      });
-      setNotice("TMDB-data er hentet ind i redigeringsformularen. Husk at gemme værket.");
-    } catch (err: unknown) {
-      setNotice(errorMessage(err, "Kunne ikke hente TMDB-data."));
     } finally {
       setSaving(false);
     }
@@ -3318,93 +3211,6 @@ function InfoPanel({ title, children }: { title: string; children: React.ReactNo
     <div className="space-y-2 rounded-md border p-3">
       <p className="text-sm font-medium">{title}</p>
       {children}
-    </div>
-  );
-}
-
-function SearchColumn({
-  title,
-  items,
-  selected,
-  getKey,
-  getTitle,
-  getMeta,
-  getPoster,
-  onSelect,
-}: {
-  title: string;
-  items: SearchResult[];
-  selected: SearchResult | null;
-  getKey: (item: SearchResult) => string;
-  getTitle: (item: SearchResult) => string;
-  getMeta: (item: SearchResult) => string;
-  getPoster?: (item: SearchResult) => string | null;
-  onSelect: (item: SearchResult) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">{title}</p>
-      <div className="max-h-64 space-y-2 overflow-auto">
-        {items.length === 0 ? (
-          <p className="rounded-md border px-3 py-2 text-sm text-muted-foreground">Ingen resultater</p>
-        ) : items.map(item => {
-          const key = getKey(item);
-          const isSelected = selected ? getKey(selected) === key : false;
-          const poster = getPoster?.(item);
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onSelect(item)}
-              className={`flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors ${isSelected ? "border-foreground bg-muted" : "hover:bg-muted"}`}
-            >
-              {poster && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={poster} alt={getTitle(item)} className="h-12 w-8 rounded object-cover" />
-              )}
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{getTitle(item)}</span>
-                <span className="block text-xs text-muted-foreground">{getMeta(item)}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function DiffPanel({
-  title,
-  rows,
-  emptyText,
-}: {
-  title: string;
-  rows: { key: string; oldValue: unknown; newValue: unknown }[];
-  emptyText: string;
-}) {
-  return (
-    <div className="space-y-2">
-      <p className="text-sm font-medium">{title}</p>
-      {rows.length === 0 ? (
-        <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{emptyText}</p>
-      ) : (
-        <div className="space-y-2">
-          {rows.map(row => (
-            <div key={row.key} className="grid gap-2 rounded-md border px-3 py-2 text-sm md:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="font-medium">{FIELD_LABELS[row.key] ?? row.key}</div>
-              <div>
-                <div className="text-xs text-muted-foreground">Gammel værdi</div>
-                <div className="break-words">{formatDiffValue(row.oldValue)}</div>
-              </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Ny værdi</div>
-                <div className="break-words font-medium text-foreground">{formatDiffValue(row.newValue)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

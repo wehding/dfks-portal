@@ -128,7 +128,7 @@ export function AddEditorDialog({
     function handleClose() { reset(); onClose() }
 
     // Fælles episode + kontrakt felter
-    const SharedFields = () => (
+    const sharedFields = (
         <>
             {isSeries && (
                 <div className="space-y-1.5">
@@ -251,7 +251,7 @@ export function AddEditorDialog({
                                 <p className="font-medium">Kontraktdokumentation</p>
                                 <p>Systemet tjekker automatisk om klipperen har en valideret kontrakt for denne produktion i arkivet. Mangler den, vil klipperen blive bedt om at uploade den på sin brugerside.</p>
                             </div>
-                            <SharedFields />
+                            {sharedFields}
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setStep("search")}>Tilbage</Button>

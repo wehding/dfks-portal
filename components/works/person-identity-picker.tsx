@@ -1,6 +1,7 @@
 "use client";
 
 import type { PersonCandidate } from "@/app/actions/person-discovery";
+import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
@@ -29,7 +30,7 @@ export function PersonIdentityPicker({ candidates, selected, loading, error, sou
           const reason = candidate.reason === "exact" ? t("works.matchFullName") : candidate.reason === "without-middle-name" ? t("works.matchWithoutMiddleName") : candidate.reason === "initial-variant" ? t("works.matchInitial") : t("works.matchCloseSpelling");
           return <button type="button" aria-pressed={checked} onClick={() => onSelect(candidate)} key={candidate.key} className={`flex w-full cursor-pointer gap-3 rounded-lg border p-3 text-left ${checked ? "border-foreground bg-muted ring-1 ring-foreground" : "hover:bg-muted/50"}`}>
             <span aria-hidden className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${checked ? "bg-foreground text-background" : "bg-background"}`}>{checked ? "✓" : ""}</span>
-            {candidate.imageUrl && <img src={candidate.imageUrl} alt="" className="h-14 w-11 rounded object-cover" />}
+            {candidate.imageUrl && <Image src={candidate.imageUrl} alt="" width={44} height={56} unoptimized className="h-14 w-11 rounded object-cover" />}
             <span className="min-w-0"><strong className="block text-sm">{candidate.name}</strong><span className="block text-xs text-muted-foreground">{reason}</span>{candidate.description && <span className="mt-1 block text-xs text-muted-foreground">{candidate.description}</span>}{candidate.knownFor.length > 0 && <span className="mt-1 block text-xs text-muted-foreground">{t("works.knownFor")}: {candidate.knownFor.join(", ")}</span>}</span>
           </button>;
         })}

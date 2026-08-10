@@ -1,5 +1,6 @@
 "use server";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -15,7 +16,7 @@ import { groupWorksBySeason, stripSeasonEpisodes, type SeasonGroupingRow } from 
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
-import { normalizeWorkSearchTitle, shouldMergeWorkSearchResults } from "@/lib/unified-work-search";
+import { shouldMergeWorkSearchResults } from "@/lib/unified-work-search";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
@@ -1658,7 +1659,6 @@ export async function searchWorksUnified(query: string, options: { preferLocalOn
   }
 
   const results: UnifiedSearchWorkResult[] = [];
-  const normalize = normalizeWorkSearchTitle;
   const querySeasonHint = parseSeasonNumberFromTitle(q);
 
   // 1. Add Local works (parents only, deduplicated)

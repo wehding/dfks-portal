@@ -141,6 +141,7 @@ export function groupWorksBySeason<T extends SeasonGroupingRow>(rows: T[]): Work
 
 export function stripSeasonEpisodes<T extends SeasonGroupingRow>(group: WorkSeasonGroup<T>) {
   if (group.kind === "work") return group;
-  const { episodes: _episodes, ...summary } = group;
+  const { episodes, ...summary } = group;
+  void episodes;
   return summary;
 }

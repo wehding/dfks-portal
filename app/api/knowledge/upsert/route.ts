@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/error-message";
 /**
  * app/api/knowledge/upsert/route.ts
  *
@@ -22,9 +23,9 @@ export async function POST(req: NextRequest) {
 
         await upsertKnowledgeChunk({ kilde_id, kilde_type, kilde_titel: kilde_titel ?? tekst.slice(0, 60), tekst, org_id: org_id ?? null, metadata })
         return NextResponse.json({ ok: true })
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[knowledge/upsert]", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
     }
 }
 
@@ -36,8 +37,8 @@ export async function DELETE(req: NextRequest) {
         if (!kilde_id) return NextResponse.json({ error: "kilde_id påkrævet" }, { status: 400 })
         await deleteKnowledgeChunk(kilde_id)
         return NextResponse.json({ ok: true })
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[knowledge/delete]", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
     }
 }

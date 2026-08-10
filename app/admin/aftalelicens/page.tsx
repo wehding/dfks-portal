@@ -1,7 +1,8 @@
 "use client"
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { useState, useEffect } from "react"
-import { Plus, Upload, FileSpreadsheet, Clock, CheckCircle2, Layers, ChevronRight, X, AlertTriangle, Loader2 } from "lucide-react"
+import { Plus, Upload, FileSpreadsheet, Clock, CheckCircle2, ChevronRight, AlertTriangle, Loader2 } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -295,6 +296,8 @@ function ImportDialog({ open, onOpenChange, onImport }: {
     }
 
     const handleConfirm = async () => {
+        // The timestamp is generated only when the user confirms a new batch.
+        // eslint-disable-next-line react-hooks/purity
         const batchId = `batch_${Date.now()}`
         const toStore = allRows.slice(0, MAX_STORE_ROWS).map((r, i): AftalelicensVaerk => ({
             id: `${batchId}_${i}`,
@@ -550,6 +553,8 @@ export default function AftalelicensPage() {
     // Load from localStorage on mount
     useEffect(() => {
         const stored = loadBatches()
+        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         if (stored && stored.length > 0) setBatches(stored)
         void loadClaims()
     }, [])

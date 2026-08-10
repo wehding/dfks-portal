@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/error-message";
 import { NextResponse } from "next/server"
 import { requireAdminApi } from "@/lib/api-auth"
 
@@ -85,8 +86,8 @@ Husk at inkludere standardklausuler på både dansk og engelsk hvis relevant.`,
         const parsed = JSON.parse(raw.slice(first, last + 1))
         return NextResponse.json(parsed)
 
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[generer-notering] Fejl:", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
     }
 }

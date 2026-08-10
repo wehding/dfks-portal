@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Image from "next/image";
 import { completeOnboarding } from "@/app/actions/member-profile";
 import { searchOnboardingCredits, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
 import { getOnboardingWorkImportStatus, retryOnboardingWorkImport, startOnboardingWorkImport, type OnboardingImportStatus } from "@/app/actions/onboarding-work-import";
@@ -722,7 +723,7 @@ export default function OnboardingClient({
                         onClick={() => setSelectedPortraitUrl(url)}
                         style={{ display: "flex", alignItems: "center", gap: "8px", border: selectedPortraitUrl === url ? "2px solid var(--foreground)" : "1px solid var(--input)", borderRadius: "8px", padding: "6px 8px", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}
                       >
-                        <img src={url} alt="" style={{ width: "36px", height: "44px", borderRadius: "6px", objectFit: "cover" }} />
+                        <Image src={url} alt="" width={36} height={44} unoptimized style={{ width: "36px", height: "44px", borderRadius: "6px", objectFit: "cover" }} />
                         <span style={{ fontSize: "12px", fontWeight: 600 }}>{candidate.source.toUpperCase()}</span>
                       </button>
                     ))}
