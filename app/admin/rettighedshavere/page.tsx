@@ -194,7 +194,7 @@ export default function RettighedshavereAdminPage() {
     const [importingMembers, setImportingMembers] = useState(false)
     const [importSearch, setImportSearch] = useState("")
     const [importMatchFilter, setImportMatchFilter] = useState<ImportMatchFilter>("all")
-    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("all")
+    const [importMembershipFilter, setImportMembershipFilter] = useState<ImportMembershipFilter>("active")
     const [importSortKey, setImportSortKey] = useState<ImportSortKey>("name")
     const [importSortDirection, setImportSortDirection] = useState<"asc" | "desc">("asc")
 
@@ -257,54 +257,49 @@ export default function RettighedshavereAdminPage() {
 
     async function handleSyncDfksMembers() {
         setSyncingMembers(true)
-        const result = await syncDfksMembers()
-        setSyncingMembers(false)
-        if (!result.success) {
-            toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
-            return
+        try {
+            const result = await syncDfksMembers()
+            if (!result.success) {
+                toast.error(result.error ?? "Kunne ikke opdatere DFKS medlemslisten")
+                return
+            }
+            toast.success(`${result.count ?? 0} aktive medlemmer hentet fra den aktive organisation. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret${result.removedCount ? `, ${result.removedCount} gamle cacheposter fjernet` : ""}.`)
+            setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
+            setMemberSyncSummary({
+                updated: result.updatedExisting ?? 0,
+                newCount: result.newCount ?? 0,
+                ambiguous: result.ambiguousCount ?? 0,
+                source: result.source ?? null,
+            })
+            if (orgId) await loadDfksMembers(orgId)
+            await refreshImportPreview()
+        } catch {
+            toast.error("Forbindelsen til medlemslisten blev afbrudt. Prøv igen.")
+        } finally {
+            setSyncingMembers(false)
         }
-        toast.success(`${result.count ?? 0} medlemmer hentet fra den aktive organisation. ${result.updatedExisting ?? 0} eksisterende rettighedshavere opdateret${result.removedCount ? `, ${result.removedCount} gamle cacheposter fjernet` : ""}.`)
-        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        setMemberSyncSummary({
-            updated: result.updatedExisting ?? 0,
-            newCount: result.newCount ?? 0,
-            ambiguous: result.ambiguousCount ?? 0,
-            source: result.source ?? null,
-        })
-        if (orgId) await loadDfksMembers(orgId)
-        await refreshImportPreview()
     }
 
     async function refreshImportPreview() {
         setImportLoading(true)
-        const preview = await getDfksMemberImportPreview()
-        setImportLoading(false)
-        if (!preview.success) {
-            toast.error(preview.error ?? "Kunne ikke hente importlisten")
-            return
+        try {
+            const preview = await getDfksMemberImportPreview()
+            if (!preview.success) {
+                toast.error(preview.error ?? "Kunne ikke hente importlisten")
+                return
+            }
+            setImportCandidates(preview.candidates)
+            setSelectedImportIds(new Set())
+        } catch {
+            toast.error("Medlemslisten kunne ikke hentes. Prøv igen.")
+        } finally {
+            setImportLoading(false)
         }
-        setImportCandidates(preview.candidates)
-        setSelectedImportIds(new Set())
     }
 
     async function openImportDialog() {
         setImportOpen(true)
-        setImportLoading(true)
-        const result = await syncDfksMembers()
-        if (!result.success) {
-            toast.error(result.error ?? "Kunne ikke hente medlemslisten")
-            setImportLoading(false)
-            await refreshImportPreview()
-            return
-        }
-        setMemberSyncStatus({ count: result.count ?? 0, syncedAt: result.syncedAt ?? new Date().toISOString() })
-        setMemberSyncSummary({
-            updated: result.updatedExisting ?? 0,
-            newCount: result.newCount ?? 0,
-            ambiguous: result.ambiguousCount ?? 0,
-            source: result.source ?? null,
-        })
-        if (orgId) await loadDfksMembers(orgId)
+        setImportMembershipFilter("active")
         await refreshImportPreview()
     }
 
@@ -1271,13 +1266,13 @@ export default function RettighedshavereAdminPage() {
                     <DialogHeader>
                         <DialogTitle>Hent og importér medlemmer</DialogTitle>
                         <DialogDescription>
-                            Listen hentes fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
+                            Den senest synkroniserede liste vises med det samme. Vælg “Hent igen” for at hente friske data fra medlemssystemet. Eksisterende matches får opdateret medlemsstatus og medlemsnummer; nye personer oprettes først, når du importerer de valgte. Systemet kontrollerer igen ved import, om personen allerede er oprettet.
                         </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="text-sm text-muted-foreground">
-                                {importCandidates.length} medlemmer i listen · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
+                                {importCandidates.filter(candidate => candidate.status === "active").length} aktive medlemmer · {importCandidates.filter(candidate => candidate.status === "resigned").length} udmeldte · {importCandidates.filter(candidate => candidate.match === "new" && candidate.status !== "resigned").length} nye aktive
                                 {memberSyncSummary && (
                                     <span className="block text-xs">
                                         {memberSyncSummary.updated} eksisterende opdateret · {memberSyncSummary.ambiguous} kræver afklaring
