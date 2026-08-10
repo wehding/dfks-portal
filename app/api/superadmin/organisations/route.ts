@@ -11,7 +11,7 @@ function getAdmin() {
     )
 }
 
-export async function GET(req: NextRequest) {
+export async function GET() {
     const supabase = await createClient()
     const caller = await assertAdminRole(supabase, ["superadmin"])
     if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })

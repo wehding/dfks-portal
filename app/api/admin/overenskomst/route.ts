@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
+import { errorMessage } from "@/lib/error-message";
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
@@ -108,8 +110,8 @@ Kategorier: helligdagsbetaling, beta-fond, copydan-forbehold, streaming-forbehol
         const parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1))
         // Returner sektioner + fuld tekst til klienten
         return NextResponse.json({ ...parsed, pdfTekst })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
 }
 
@@ -155,8 +157,8 @@ export async function PUT(req: NextRequest) {
 
                 indekseret++
                 await new Promise(r => setTimeout(r, 100))
-            } catch (e: any) {
-                fejl.push(`${sektion.kategori}: ${e.message}`)
+            } catch (e: unknown) {
+                fejl.push(`${sektion.kategori}: ${errorMessage(e)}`)
             }
         }
 
@@ -190,8 +192,8 @@ export async function PUT(req: NextRequest) {
 
                     fuldeChunks++
                     await new Promise(r => setTimeout(r, 100))
-                } catch (e: any) {
-                    fejl.push(`chunk ${i}: ${e.message}`)
+                } catch (e: unknown) {
+                    fejl.push(`chunk ${i}: ${errorMessage(e)}`)
                 }
             }
         }
@@ -212,8 +214,8 @@ export async function PUT(req: NextRequest) {
             total: indekseret + fuldeChunks,
             fejl,
         })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
 }
 
@@ -268,8 +270,8 @@ export async function PATCH(req: NextRequest) {
             .eq("gyldig_fra", gyldigFra)
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         return NextResponse.json({ ok: true })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
 }
 
@@ -297,9 +299,10 @@ export async function DELETE(req: NextRequest) {
         ])
 
         if (chunksRes.error) return NextResponse.json({ error: chunksRes.error.message }, { status: 500 })
+        if (uploadsRes.error) return NextResponse.json({ error: uploadsRes.error.message }, { status: 500 })
         return NextResponse.json({ ok: true })
-    } catch (e: any) {
-        return NextResponse.json({ error: e.message }, { status: 500 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
 }
 

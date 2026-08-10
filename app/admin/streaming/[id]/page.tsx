@@ -6,7 +6,7 @@ import { useParams } from "next/navigation"
 import {
     ArrowLeft, Plus, Lock, CheckCircle2, Clock, AlertCircle,
     ExternalLink, ChevronDown, ChevronUp, Download, Users, Pencil,
-    Film, Tv, Copy, Database,
+    Film, Tv,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -461,28 +461,12 @@ function PayoutStatusBadge({ status }: { status: PayoutStatus }) {
     return null
 }
 
-function generatePayoutText(production: MockProductionDetail, exploitation: MockExploitation, payout: MockPayout): string {
-    const typeStr = PAYOUT_TYPE_LABELS[payout.type]
-    const lines = [
-        `${typeStr} — ${production.title} (${payout.payoutYear})`,
-        `Platform: ${exploitation.platform}`,
-        `Modtaget: ${fmt2(payout.grossAmount)}`,
-        `Administrationsgebyr (${payout.adminFeePercent}%): ${fmt2(payout.adminFeeAmount)}`,
-        `Til fordeling: ${fmt2(payout.netAmount)}`,
-        ``,
-        `Fordeling:`,
-        ...payout.distributions.map(d => `  ${d.name} — ${d.sharePercent}% — ${fmt2(d.amount)}`),
-    ]
-    return lines.join("\n")
-}
-
 // ── Page ─────────────────────────────────────────────────────
 
 export default function StreamingDetailPage() {
     const params = useParams()
     const id = params?.id as string
     const [expandedPayout, setExpandedPayout] = useState<string | null>(null)
-    const [copiedId, setCopiedId] = useState<string | null>(null)
     const [showRegister, setShowRegister] = useState(false)
     const [activeExploitationId, setActiveExploitationId] = useState<string | undefined>(undefined)
     const [showAddEditor, setShowAddEditor] = useState(false)
@@ -499,20 +483,6 @@ export default function StreamingDetailPage() {
 
     const [alBetalinger, setAlBetalinger] = useState<{ entry: AlEntry; vaerk: AlVaerk }[]>([])
     const [expandedAl, setExpandedAl] = useState<string | null>(null)
-
-    const markAlPaid = (entryId: string, workId: string | undefined) => {
-        const stored: AlEntry[] = JSON.parse(localStorage.getItem("dfks_al_udbetalinger") ?? "[]")
-        const updated = stored.map(e => {
-            if (e.id !== entryId) return e
-            return { ...e, vaerker: e.vaerker.map(v => v.workId === workId ? { ...v, status: "paid" as const } : v) }
-        })
-        localStorage.setItem("dfks_al_udbetalinger", JSON.stringify(updated))
-        setAlBetalinger(prev => prev.map(({ entry, vaerk }) =>
-            entry.id === entryId && vaerk.workId === workId
-                ? { entry, vaerk: { ...vaerk, status: "paid" as const } }
-                : { entry, vaerk }
-        ))
-    }
 
     useEffect(() => {
         // Persist all distribution keys so aftalelicens can look them up by workId
@@ -595,6 +565,8 @@ export default function StreamingDetailPage() {
                 if (vaerk.workId === id) result.push({ entry, vaerk })
             }
         }
+        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setAlBetalinger(result)
     }, [id])
 
@@ -623,9 +595,6 @@ export default function StreamingDetailPage() {
     const totalAdmin = allPayouts.reduce((s, p) => s + p.adminFeeAmount, 0)
     const alTotal = alBetalinger.reduce((s, { vaerk }) => s + vaerk.totalAmount, 0)
     const alAdminFee = alBetalinger.reduce((s, { vaerk }) => s + (vaerk.adminFeeAmount ?? 0), 0)
-    const pendingPayouts = allPayouts.filter(p => p.status === "pending" || p.status === "distributing")
-    const canExport = distKey?.status === "locked" && pendingPayouts.length > 0
-
     const acceptedCount = distKey?.shares.filter(s => s.acceptedAt).length ?? 0
     const totalShares = distKey?.shares.length ?? 0
 
@@ -650,13 +619,6 @@ export default function StreamingDetailPage() {
     const exploitationOptions = production.exploitations.map(e => ({
         id: e.id, platform: e.platform, type: e.type, payer: e.payer,
     }))
-
-    function copyPayoutText(exploitation: MockExploitation, payout: MockPayout) {
-        const text = generatePayoutText(production, exploitation, payout)
-        navigator.clipboard.writeText(text)
-        setCopiedId(payout.id)
-        setTimeout(() => setCopiedId(null), 2000)
-    }
 
     const licenseYearsRemaining = production.licenseStartYear + production.licenseDurationYears - new Date().getFullYear()
 
@@ -925,7 +887,7 @@ export default function StreamingDetailPage() {
                                                     {ev.type === "rejected" && "afviste"}
                                                     {ev.type === "locked" && "låste nøglen"}
                                                 </span>
-                                                {ev.comment && <span className="italic">"{ev.comment}"</span>}
+                                                {ev.comment && <span className="italic">&quot;{ev.comment}&quot;</span>}
                                             </div>
                                         ))}
                                     </div>

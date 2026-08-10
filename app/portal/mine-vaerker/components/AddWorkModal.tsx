@@ -8,10 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
 import { linkContractToWork } from "@/app/actions/member-contracts";
-import { searchDFIFilms, getDFIFilmDetails } from "@/app/actions/dfi";
-import { searchTMDB, getTMDBWorkDetails, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";
-import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchLocalWorksForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
-import { cleanDfiTitle, extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, type DfiMetadata } from "@/lib/dfi-metadata";
+import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
@@ -20,7 +17,6 @@ import { WorkSelectionPanel } from "@/components/works/work-selection-panel";
 import { emptyManualWorkForm, isManualSeries, validateManualWork, type ManualWorkFormSeed, type ManualWorkFormValue } from "@/lib/manual-work";
 import { createClientId } from "@/lib/client-id";
 
-const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 const DEFAULT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
 
 const selectCls =
@@ -65,67 +61,6 @@ interface WorkAssignmentPreview {
   } | null;
 }
 
-interface DfiPersonCredit {
-  TypeCode?: string | null;
-  Type?: string | null;
-  Function?: string | null;
-  Credit?: string | null;
-  Description?: string | null;
-  Name?: string | null;
-}
-
-interface DfiSearchResult {
-  Id: number;
-  Title?: string;
-  ReleaseYear?: number;
-  ProductionYear?: number;
-  Premiere?: unknown;
-  Category?: string;
-  Description?: string;
-  Type?: string;
-  PersonCredits?: DfiPersonCredit[];
-  Synopsis?: string;
-  ShortSynopsis?: string;
-  DanishTitle?: string;
-}
-
-type DfiFilm = DfiSearchResult & {
-  Id: number | string;
-  OriginalTitle?: string | null;
-  Comment?: string | null;
-  Duration?: number | string | null;
-  Parent?: { Id?: number | string | null; Title?: string | null } | null;
-  Children?: Array<{ Id?: number | string | null; Title?: string | null }>;
-};
-
-interface TmdbSearchResult {
-  id: number;
-  title?: string;
-  name?: string;
-  release_date?: string | null;
-  first_air_date?: string | null;
-  media_type?: string;
-  poster_path?: string | null;
-  overview?: string | null;
-}
-
-type TmdbDetails = TmdbSearchResult & {
-  seasons?: Array<{ season_number: number; episode_count?: number | null }>;
-};
-
-type SearchItem = LocalWorkResult | DfiSearchResult | TmdbSearchResult;
-
-interface ResultColumnDef {
-  label: string;
-  items: SearchItem[];
-  getKey: (item: SearchItem) => string;
-  isSelected: (item: SearchItem) => boolean;
-  onSelect: (item: SearchItem) => void;
-  getTitle: (item: SearchItem) => string;
-  getMeta: (item: SearchItem) => string;
-  getPoster: (item: SearchItem) => string | null;
-}
-
 interface EpisodeOption {
   number: number;
   title: string;
@@ -151,19 +86,6 @@ function displayRole(role: string | null | undefined) {
   return role === "Hovedklipper" ? "Konceptuerende klipper" : role ?? "Klipper";
 }
 
-function searchItemTitle(item: SearchItem | null) {
-  if (!item) return "";
-  if ("Title" in item) {
-    const dfiItem = item as DfiSearchResult;
-    return cleanDfiTitle(dfiItem.Title || dfiItem.DanishTitle || "");
-  }
-  if ("media_type" in item || "name" in item) {
-    const tmdbItem = item as TmdbSearchResult;
-    return tmdbItem.title || tmdbItem.name || "";
-  }
-  return (item as LocalWorkResult).title;
-}
-
 function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
   return (work?.work_assignments ?? []).map(assignment => ({
     id: assignment.id,
@@ -175,143 +97,9 @@ function localWorkToCoEditors(work: LocalWorkResult | null): CoEditorDraft[] {
   }));
 }
 
-// Kun rene klipper/editor-krediteringer — ikke klipassistenter, colorister
-// eller andre postproduktionsroller (DFI TypeCode for klipper er "klip").
-const DFI_EDITOR_CODES = new Set(["klip", "editor", "edit"]);
-const DFI_EDITOR_TYPES = new Set(["klip", "editor"]);
-
-function extractDfiCoEditors(film: DfiSearchResult): CoEditorDraft[] {
-  const credits = Array.isArray(film.PersonCredits) ? film.PersonCredits : [];
-  return credits
-    .filter(credit => {
-      const code = String(credit.TypeCode ?? "").toLowerCase().trim();
-      const type = String(credit.Type ?? "").toLowerCase().trim();
-      // DFI angiver den specifikke rolle i Description (fx "Klipper" vs "Klippeassistent").
-      const roleText = `${credit.Description ?? ""} ${credit.Function ?? ""} ${credit.Credit ?? ""}`.toLowerCase();
-      const isEditorCategory = DFI_EDITOR_CODES.has(code) || DFI_EDITOR_TYPES.has(type);
-      // Kun rene klippere — ikke klipassistenter, colorister, lyd osv.
-      const isAssistantOrOther = /assist|elev|trainee|prakt|farve|color|grade|online|vfx|lyd|sound/.test(`${code} ${type} ${roleText}`);
-      return isEditorCategory && !isAssistantOrOther;
-    })
-    .map(credit => ({
-      id: createClientId("co-editor"),
-      name: credit.Name ?? "",
-      role: "Klipper",
-      action: "add" as const,
-    }))
-    .filter(editor => editor.name.trim());
-}
-
 function numberOrNull(val: string) {
   const n = parseInt(val);
   return isNaN(n) ? null : n;
-}
-
-function asDfiFilm(film: DfiSearchResult | DfiFilm): DfiFilm {
-  return film as DfiFilm;
-}
-
-function dfiNumericId(value: number | string | null | undefined) {
-  const id = Number(value);
-  return Number.isFinite(id) ? id : null;
-}
-
-function dfiResultFromFilm(film: DfiFilm, fallback: DfiSearchResult): DfiSearchResult {
-  const id = dfiNumericId(film.Id) ?? fallback.Id;
-  return {
-    ...fallback,
-    Id: id,
-    Title: film.Title || film.DanishTitle || fallback.Title,
-    DanishTitle: film.DanishTitle || fallback.DanishTitle,
-    Category: film.Category || fallback.Category,
-    Type: film.Type || fallback.Type,
-    ReleaseYear: film.ReleaseYear || fallback.ReleaseYear,
-    ProductionYear: film.ProductionYear || fallback.ProductionYear,
-    Synopsis: film.Synopsis || fallback.Synopsis,
-    ShortSynopsis: film.ShortSynopsis || fallback.ShortSynopsis,
-    PersonCredits: film.PersonCredits || fallback.PersonCredits,
-  };
-}
-
-function countDfiEpisodes(film: DfiFilm) {
-  const commentCount = parseDfiEpisodeCount(film.Comment || film.Synopsis || "");
-  if (commentCount) return commentCount;
-  const children = Array.isArray(film.Children) ? film.Children : [];
-  const episodeChildren = children.filter(child => parseDfiEpisodeTitleInfo(child.Title ?? ""));
-  return episodeChildren.length || null;
-}
-
-function isDfiChildResult(result: DfiSearchResult) {
-  const film = result as DfiFilm;
-  return Boolean(dfiNumericId(film.Parent?.Id)) || Boolean(parseDfiEpisodeTitleInfo(result.Title ?? ""));
-}
-
-function dfiEpisodeOptions(film: DfiFilm): EpisodeOption[] {
-  const children = Array.isArray(film.Children) ? film.Children : [];
-  const options = children
-    .map((child, index) => {
-      const parsed = parseDfiEpisodeTitleInfo(child.Title ?? "");
-      const number = parsed?.episodeNumber ?? index + 1;
-      const title = parsed?.subtitle || child.Title || `Afsnit ${number}`;
-      return {
-        number,
-        title,
-        dfiId: child.Id ? String(child.Id) : null,
-      };
-    })
-    .filter(option => Number.isFinite(option.number) && option.number > 0);
-
-  if (options.length) {
-    return Array.from(new Map(options.map(option => [option.number, option])).values())
-      .sort((a, b) => a.number - b.number);
-  }
-
-  const count = countDfiEpisodes(film);
-  return count
-    ? Array.from({ length: count }, (_, index) => ({
-        number: index + 1,
-        title: `Afsnit ${index + 1}`,
-      }))
-    : [];
-}
-
-function findDfiEpisodeNumber(parentFilm: DfiFilm, childFilm: DfiFilm) {
-  const childId = dfiNumericId(childFilm.Id);
-  const children = Array.isArray(parentFilm.Children) ? parentFilm.Children : [];
-  const matchingChild = children.find(child => childId && dfiNumericId(child.Id) === childId);
-  const parsed = parseDfiEpisodeTitleInfo(matchingChild?.Title ?? childFilm.Title ?? "");
-  if (parsed?.episodeNumber) return parsed.episodeNumber;
-  const index = matchingChild ? children.indexOf(matchingChild) : -1;
-  return index >= 0 ? index + 1 : null;
-}
-
-async function resolveDfiSelection(result: DfiSearchResult) {
-  const details = await getDFIFilmDetails(Number(result.Id));
-  const firstFilm = asDfiFilm((details.success ? (details as { film?: DfiSearchResult }).film : result) ?? result);
-  const parentId = dfiNumericId(firstFilm.Parent?.Id);
-
-  if (!parentId) {
-    return {
-      film: firstFilm,
-      result: dfiResultFromFilm(firstFilm, result),
-      posterDataUrl: details.success ? details.posterDataUrl ?? null : null,
-      selectedEpisode: null as number | null,
-    };
-  }
-
-  const parentDetails = await getDFIFilmDetails(parentId);
-  const parentFilm = asDfiFilm((parentDetails.success ? (parentDetails as { film?: DfiSearchResult }).film : undefined) ?? {
-    ...result,
-    Id: parentId,
-    Title: firstFilm.Parent?.Title || result.Title,
-  });
-
-  return {
-    film: parentFilm,
-    result: dfiResultFromFilm(parentFilm, { ...result, Id: parentId }),
-    posterDataUrl: (parentDetails.success ? parentDetails.posterDataUrl ?? null : null) ?? (details.success ? details.posterDataUrl ?? null : null),
-    selectedEpisode: findDfiEpisodeNumber(parentFilm, firstFilm),
-  };
 }
 
 export function AddWorkModal({
@@ -488,6 +276,8 @@ export function AddWorkModal({
       void handleSearch(key);
     }, 0);
     return () => window.clearTimeout(timer);
+    // autoSearchKeyRef makes this deliberately depend on the requested query, not a new function identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialQuery]);
 
   const pickUnifiedResult = async (result: UnifiedSearchWorkResult) => {

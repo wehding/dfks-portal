@@ -46,6 +46,8 @@ export function AdminInboxPanel() {
     }
     if (!recipientResult.success) toast.error(recipientResult.error); else setRecipients((recipientResult.recipients ?? []) as Recipient[]);
   }, []);
+  // State is intentionally synchronized when the external dialog, storage, or server source changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (selectedThread) void markInboxThreadRead(selectedThread); }, [selectedThread]);
   const active = useMemo(() => threads.find(thread => thread.id === selectedThread) ?? null, [threads, selectedThread]);

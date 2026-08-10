@@ -219,6 +219,7 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     setSummaryLoading(false);
   };
 
+  // State is intentionally synchronized when the external dialog, storage, or server source changes.
   useEffect(() => { void loadSummary(); }, [props.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => Object.values(timers.current).forEach(timer => timer && window.clearTimeout(timer)), []);
 
@@ -239,7 +240,12 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
 
   const toggleSection = (section: ContractValidationSectionKey) => {
     const willOpen = !open.has(section);
-    setOpen(current => { const next = new Set(current); willOpen ? next.add(section) : next.delete(section); return next; });
+    setOpen(current => {
+      const next = new Set(current);
+      if (willOpen) next.add(section);
+      else next.delete(section);
+      return next;
+    });
     if (willOpen) {
       if (section === "series") props.onSeriesOpen?.();
       void loadSection(section);
@@ -276,7 +282,8 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
 
   const toggleLock = (section: ContractValidationSectionKey, key: string) => {
     const nextLocks = new Set(locks[section] ?? []);
-    nextLocks.has(key) ? nextLocks.delete(key) : nextLocks.add(key);
+    if (nextLocks.has(key)) nextLocks.delete(key);
+    else nextLocks.add(key);
     setLocks(current => ({ ...current, [section]: nextLocks }));
     scheduleSave(section, values[section] ?? {}, nextLocks);
   };

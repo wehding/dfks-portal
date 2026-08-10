@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/error-message";
 import { NextRequest, NextResponse } from "next/server";
 import { requireSessionApi } from "@/lib/api-auth";
 
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
 
     const data = await res.json();
     return NextResponse.json(data);
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    return NextResponse.json({ error: errorMessage(err) }, { status: 500 });
   }
 }

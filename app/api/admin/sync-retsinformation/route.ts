@@ -1,3 +1,4 @@
+import { errorMessage } from "@/lib/error-message";
 /**
  * POST /api/admin/sync-retsinformation
  *
@@ -23,9 +24,9 @@ export async function POST(req: NextRequest) {
     try {
         const result = await syncRetsinformation()
         return NextResponse.json(result)
-    } catch (err: any) {
+    } catch (err: unknown) {
         console.error("[sync-retsinformation]", err)
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
     }
 }
 
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
     try {
         const result = await syncRetsinformation()
         return NextResponse.json(result)
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message ?? "Ukendt fejl" }, { status: 500 })
+    } catch (err: unknown) {
+        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
     }
 }

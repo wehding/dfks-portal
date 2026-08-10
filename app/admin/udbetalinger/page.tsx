@@ -245,6 +245,8 @@ export default function AdminUdbetalingerPage() {
         if (!stored || !stored[0]?.userId) {
             localStorage.setItem(DEMO_RETTIGHED_KEY, JSON.stringify(DEMO_RETTIGHED))
         }
+        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setBatches(JSON.parse(localStorage.getItem("dfks_bulk_batches") ?? "[]"))
         setExportCols(loadExportCols())
     }, [])

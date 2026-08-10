@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
+import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
@@ -230,7 +232,7 @@ export default function MineKontrakterClient({
     setConfirmationSeason(selectedContract.season_number ?? 1);
     setConfirmationEpisodes((selectedContract.episode_numbers ?? []).join(", "));
     setConfirmEntireSeason(false);
-  }, [selectedContract?.id, selectedContract?.season_number, selectedContract?.episode_numbers]);
+  }, [selectedContract]);
 
   async function handleConfirmEpisodes() {
     if (!selectedContract) return;
@@ -666,8 +668,8 @@ export default function MineKontrakterClient({
       } else {
         toast.error(res.error || "Kunne ikke tilknytte værk.");
       }
-    } catch (e: any) {
-      toast.error(e.message || "Der skete en fejl.");
+    } catch (e: unknown) {
+      toast.error(errorMessage(e) || "Der skete en fejl.");
     } finally {
       setLinkingSaving(false);
     }
@@ -1404,7 +1406,11 @@ export default function MineKontrakterClient({
                         </span>
                       </button>
                       <p className="mt-1 px-1 text-xs text-muted-foreground">Automatisk aflæst, men ikke medregnet i rettighedsbetaling eller statistik.</p>
-                      {a.ai_status === "fejl" && <button type="button" className="mt-1 px-1 text-xs font-medium text-primary underline focus-visible:ring-2 focus-visible:ring-ring" onClick={async () => { const result = await retryMemberAttachmentAnalysis(a.id); result.success ? toast.success("Analysen er sat i gang igen") : toast.error(result.error); }}>Prøv igen</button>}
+                      {a.ai_status === "fejl" && <button type="button" className="mt-1 px-1 text-xs font-medium text-primary underline focus-visible:ring-2 focus-visible:ring-ring" onClick={async () => {
+                        const result = await retryMemberAttachmentAnalysis(a.id);
+                        if (result.success) toast.success("Analysen er sat i gang igen");
+                        else toast.error(result.error);
+                      }}>Prøv igen</button>}
                       </div>
                     ))}
                   </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { Building2, Plus, Pencil, PowerOff, Power, FileText, Play, Archive } from "lucide-react"
+import {  Plus, Pencil, PowerOff, Power, FileText, Play, Archive } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -72,6 +72,8 @@ export function OrganisationerAdmin() {
         setLoading(false)
     }
 
+    // State is intentionally synchronized when the external dialog, storage, or server source changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     useEffect(() => { fetchOrgs() }, [])
 
     function openCreate() {

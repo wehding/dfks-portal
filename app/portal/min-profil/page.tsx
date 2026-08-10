@@ -2,6 +2,7 @@
 "use client"
 
 import { useState, useEffect, type ChangeEvent } from "react"
+import Image from "next/image"
 import { Lock, Heart, User, Save, Info, Loader2, X, RefreshCw, Film, Upload } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -336,7 +337,7 @@ export default function MinProfilPage() {
                             title={profile?.portrait_url ? "Vis billede i fuld størrelse" : undefined}
                         >
                             {profile?.portrait_url ? (
-                                <img src={profile.portrait_url} alt="" className="h-full w-full object-cover" />
+                                <Image src={profile.portrait_url} alt="" width={80} height={80} unoptimized className="h-full w-full object-cover" />
                             ) : (
                                 <User className="h-8 w-8 text-muted-foreground" />
                             )}
@@ -548,7 +549,7 @@ export default function MinProfilPage() {
                                         onClick={() => setSelectedPortraitUrl(url)}
                                         className={`flex items-center gap-2 rounded-md border bg-background p-2 text-left text-xs ${selectedPortraitUrl === url ? "border-foreground ring-1 ring-foreground" : ""}`}
                                     >
-                                        <img src={url} alt="" className="h-12 w-10 rounded object-cover" />
+                                        <Image src={url} alt="" width={40} height={48} unoptimized className="h-12 w-10 rounded object-cover" />
                                         <span className="font-medium">{candidate.source.toUpperCase()}</span>
                                     </button>
                                 ))}
@@ -562,7 +563,7 @@ export default function MinProfilPage() {
                 <DialogContent className="max-w-3xl">
                     <DialogHeader><DialogTitle>Profilbillede</DialogTitle></DialogHeader>
                     {profile?.portrait_url && (
-                        <img src={profile.portrait_url} alt="Profilbillede" className="max-h-[75vh] w-full rounded-md object-contain" />
+                        <Image src={profile.portrait_url} alt="Profilbillede" width={960} height={960} unoptimized className="max-h-[75vh] w-full rounded-md object-contain" />
                     )}
                 </DialogContent>
             </Dialog>

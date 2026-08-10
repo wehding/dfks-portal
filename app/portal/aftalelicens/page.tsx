@@ -187,7 +187,6 @@ export default function PortalAftalelicensPage() {
     const [claimTarget, setClaimTarget] = useState<PublicTitle | null>(null)
     const [showClaims, setShowClaims] = useState(true)
 
-    const claimedIds = useMemo(() => new Set(claims.map(c => c.titleId)), [claims])
     const claimByTitleId = useMemo(() => {
         const map = new Map<string, Claim>()
         claims.forEach(c => map.set(c.titleId, c))

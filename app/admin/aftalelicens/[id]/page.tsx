@@ -4,15 +4,13 @@ import React, { useState, useMemo, useEffect, useRef } from "react"
 import Link from "next/link"
 import { useParams } from "next/navigation"
 import {
-    ArrowLeft, Check, X, Flag, Search, ChevronDown, Download,
-    Users, Calculator, Lock, Loader2, ExternalLink, Info, Save,
+    ArrowLeft, Check, X, Flag, Search, ChevronDown, Download, Calculator, Lock, Loader2, ExternalLink, Info,
     ChevronsUpDown, ChevronUp, FileText, Clock, AlertTriangle,
     Link2, Link2Off, Database, Plus, Trash2, SlidersHorizontal, Ban, Eye, EyeOff, Pencil,
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
 import { loadAiConfig } from "@/lib/ai-providers"
-import { PageHeader } from "@/components/page-header"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -48,7 +46,7 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
-    AftalelicensBatch, AftalelicensVaerk, AftalelicensRettighed,
+    AftalelicensBatch, AftalelicensVaerk,
     AftalelicensVaegtet, SortStatus, VaerkType, AftalelicensVaegtExtra, FilterRule,
 } from "@/lib/streaming-types"
 import { mockWorks, mockContracts } from "@/lib/mock-data"
@@ -76,12 +74,6 @@ const VAERK_TYPE_LABELS: Record<VaerkType, string> = {
     dokuDrama:       "DokuDrama",
     kort_dokumentar: "Kort dokumentar",
     ikke_relevant:   "Ikke relevant",
-}
-
-const KILDE_LABELS: Record<string, string> = {
-    copydan_verdenstv: "Copydan Verdens TV",
-    copydan_arkiv: "Copydan Arkiv",
-    tv2play: "TV2 Play",
 }
 
 function genMockVaerker(): AftalelicensVaerk[] {
@@ -182,12 +174,6 @@ function genMockVaerker(): AftalelicensVaerk[] {
 
     return [...filmItems, ...noiseItems, ...s1e2Extra]
 }
-
-const MOCK_KLIPPERE = [
-    { id: "u1", name: "Mads Eriksen" },
-    { id: "u2", name: "Sara Lund" },
-    { id: "u3", name: "Peter Mollerup" },
-]
 
 // DFI mock lookup
 async function dfiLookup(title: string): Promise<AftalelicensVaerk["dfiData"] | null> {
@@ -573,7 +559,7 @@ function SortTable({ vaerker, onUpdate }: {
     }
 
     // Re-anvend filtreringsregler når vaerker-data udskiftes (real data erstatter mock)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
     useEffect(() => {
         if (vaerker.length > 0 && currentRulesRef.current.some(r => r.active)) {
             autoRejectedRef.current = new Set()
@@ -837,9 +823,8 @@ function SortTable({ vaerker, onUpdate }: {
             .trim()
             .toLowerCase()
 
-    const STATUS_ORDER: Record<SortStatus, number> = { pending: 0, flagged: 1, approved: 2, rejected: 3 }
-
     const filtered = useMemo(() => {
+        const statusOrder: Record<SortStatus, number> = { pending: 0, flagged: 1, approved: 2, rejected: 3 }
         setPage(0)
         let list = vaerker
         if (filter !== "all") list = list.filter(v => v.sortStatus === filter)
@@ -866,7 +851,7 @@ function SortTable({ vaerker, onUpdate }: {
                 case "channel":  cmp = (a.channel ?? "").localeCompare(b.channel ?? "", "da"); break
                 case "duration": cmp = (a.duration ?? 0) - (b.duration ?? 0); break
                 case "vaerkType":cmp = (a.vaerkType ?? "").localeCompare(b.vaerkType ?? "", "da"); break
-                case "status":   cmp = STATUS_ORDER[a.sortStatus] - STATUS_ORDER[b.sortStatus]; break
+                case "status":   cmp = statusOrder[a.sortStatus] - statusOrder[b.sortStatus]; break
             }
             return sortDir === "asc" ? cmp : -cmp
         })
@@ -2542,7 +2527,7 @@ const MOCK_KRAV: KlipperKrav[] = [
     },
 ]
 
-function ClaimsTab({ batchId, batchStatus }: { batchId: string; batchStatus: string }) {
+function ClaimsTab({ batchStatus }: { batchStatus: string }) {
     const [krav, setKrav] = useState<KlipperKrav[]>(MOCK_KRAV)
     const [rejectDialog, setRejectDialog] = useState<string | null>(null)
     const [rejectNote, setRejectNote] = useState("")
@@ -2843,6 +2828,8 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
     useEffect(() => {
         try {
             const h = localStorage.getItem("dfks_hensaettelser_pct")
+            // State is intentionally synchronized when the external dialog, storage, or server source changes.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             if (h !== null) setHensaettelserPct(h)
             const s = localStorage.getItem("dfks_sociale_pct")
             if (s !== null) setSocialPct(s)
@@ -2908,7 +2895,7 @@ function WeightingTab({ vaerker, confirmedMatches, batchLabel }: {
         toast.success("Vægte beregnet")
     }
 
-    const { netEfterAdmin, hensaettelserBeloeb, socialtBeloeb, tilFordeling } = useMemo(() => {
+    const { hensaettelserBeloeb, socialtBeloeb, tilFordeling } = useMemo(() => {
         const gross = Number(klumpBeloeb)
         const fee = gross * Number(adminPct) / 100
         const netEfterAdmin = gross - fee
@@ -3517,6 +3504,8 @@ export default function AftalelicensDetailPage() {
             if (stored) {
                 const parsed = JSON.parse(stored) as AftalelicensVaerk[]
                 if (Array.isArray(parsed) && parsed.length > 0) {
+                    // State is intentionally synchronized when the external dialog, storage, or server source changes.
+                    // eslint-disable-next-line react-hooks/set-state-in-effect
                     setVaerker(parsed)
                     return
                 }
@@ -3624,7 +3613,7 @@ export default function AftalelicensDetailPage() {
                 </TabsContent>
 
                 <TabsContent value="krav" className="mt-4">
-                    <ClaimsTab batchId={batch.id} batchStatus={batch.status} />
+                    <ClaimsTab batchStatus={batch.status} />
                 </TabsContent>
             </Tabs>
         </div>

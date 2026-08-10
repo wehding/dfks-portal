@@ -112,6 +112,8 @@ export function RegisterPayoutDialog({
     useEffect(() => {
         if (open) {
             const initial = preselectedExploitationId ?? (existingExploitations.length === 0 ? "__new" : "")
+            // State is intentionally synchronized when the external dialog, storage, or server source changes.
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setExploitationId(initial)
         }
     }, [open, preselectedExploitationId, existingExploitations.length])

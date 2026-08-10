@@ -1,5 +1,6 @@
 "use client"
 
+import { errorMessage } from "@/lib/error-message";
 /**
  * app/admin/kontraktgennemgang/[id]/page.tsx
  *
@@ -323,8 +324,8 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             setReview(json.data)
             setContractText(json.contractText ?? "")
             toast.success("Ny analyse fuldført")
-        } catch (e: any) {
-            toast.error(`Analyse fejlede: ${e.message}`)
+        } catch (e: unknown) {
+            toast.error(`Analyse fejlede: ${errorMessage(e)}`)
         }
         setReanalysing(false)
     }
@@ -425,7 +426,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                     {review.notes && (
                         <div className="sm:col-span-4">
                             <p className="text-muted-foreground mb-0.5">Bemærkning fra medlem</p>
-                            <p className="italic text-foreground/80">"{review.notes}"</p>
+                            <p className="italic text-foreground/80">&quot;{review.notes}&quot;</p>
                         </div>
                     )}
                 </div>
@@ -544,7 +545,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                             <div className="px-4 py-8 text-center text-xs text-muted-foreground">
                                 <Sparkles className="h-8 w-8 mx-auto mb-3 opacity-20" />
                                 <p>Ingen analyse endnu.</p>
-                                <p className="mt-1">Klik "Kør ny analyse" for at analysere kontrakten.</p>
+                                <p className="mt-1">Klik &quot;Kør ny analyse&quot; for at analysere kontrakten.</p>
                             </div>
                         ) : (
                             result.feedbackpunkter.map((fp) => {
@@ -575,7 +576,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                                                             </div>
                                                         )}
                                                         {fp.citat && (
-                                                            <p className="text-[10px] italic text-muted-foreground border-l-2 pl-2 border-muted-foreground/30 line-clamp-3">"{fp.citat}"</p>
+                                                            <p className="text-[10px] italic text-muted-foreground border-l-2 pl-2 border-muted-foreground/30 line-clamp-3">&quot;{fp.citat}&quot;</p>
                                                         )}
                                                         <div className="pt-1 border-t border-border/50" onClick={e => e.stopPropagation()}>
                                                             <p className="text-[10px] text-muted-foreground mb-1.5">Var dette fund korrekt?</p>

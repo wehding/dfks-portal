@@ -15,7 +15,6 @@ export default function AdminMinProfilPage() {
   const [saving, setSaving] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
 
-  const [userId, setUserId] = useState<string>("");
   const [email, setEmail] = useState<string>("");
   const [fullName, setFullName] = useState<string>("");
   const [phone, setPhone] = useState<string>("");
@@ -34,7 +33,6 @@ export default function AdminMinProfilPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      setUserId(user.id);
       setEmail(user.email ?? "");
       const meta = user.user_metadata ?? {};
       setFullName(meta.full_name || meta.name || "");

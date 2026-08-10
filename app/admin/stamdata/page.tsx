@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Filter, Save, Loader2 } from "lucide-react"
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Save, Loader2 } from "lucide-react"
 import type { FilterRule, VaerkType, VaerkVaegt, AftalelicensVaegtExtra } from "@/lib/streaming-types"
 import { AI_PROVIDERS, AI_CONFIG_DEFAULTS, loadAiConfig, saveAiConfig, getProviderDef, type AiUseCase, type AiConfig, type AiProvider } from "@/lib/ai-providers"
 import { useI18n } from "@/lib/i18n"
@@ -317,14 +317,6 @@ const DEFAULT_FILTER_RULES: FilterRule[] = [
     { id: "fr5", name: "Vejret", type: "title_keyword", value: "vejret", active: true, createdAt: "2024-01-01" },
 ]
 
-function loadFilterRules(): FilterRule[] {
-    if (typeof window === "undefined") return DEFAULT_FILTER_RULES
-    try {
-        const stored = localStorage.getItem("dfks_filter_rules")
-        return stored ? JSON.parse(stored) : DEFAULT_FILTER_RULES
-    } catch { return DEFAULT_FILTER_RULES }
-}
-
 const RULE_TYPE_LABELS: Record<FilterRule["type"], string> = {
     title_keyword: "Nøgleord i titel",
     title_regex: "Regex-mønster",
@@ -567,6 +559,8 @@ function VaegteTab() {
 
     // Hydrate from localStorage (avoids SSR mismatch)
     useEffect(() => {
+        // State is intentionally synchronized when the external dialog, storage, or server source changes.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setHensaettelserPct(loadHensaettelserPct())
         setSocialPct(loadSocialPct())
     }, [])
