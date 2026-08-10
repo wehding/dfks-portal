@@ -1705,6 +1705,8 @@ function AdminKontrakterContent() {
                 )}
             </div>
 
+            <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} />
+
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
                     <span className="text-sm font-medium">{selectedIds.length} valgt</span>
@@ -1950,7 +1952,6 @@ function AdminKontrakterContent() {
                                     <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
                 </div>
             </div>
-            <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} />
                             {uploadItems.length > 0 && (
                                 <div className="space-y-2">
                                     <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>
