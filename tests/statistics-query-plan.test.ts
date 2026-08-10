@@ -7,11 +7,12 @@ test("queryplan accepterer kun kendte mål og renser fritekstfiltre", () => {
     metric: "average_monthly_salary",
     groupBy: "year",
     chart: "line",
-    filters: { producerName: "  Nordisk Film  ", professionType: " Klipper ", year: 2025 },
+    filters: { producerName: "  Nordisk Film  ", professionType: " Klipper ", experienceGroup: "experienced", year: 2025 },
   });
   assert.deepEqual(plan.filters.producerNames, ["Nordisk Film"]);
   assert.equal(plan.filters.professionType, "Klipper");
   assert.deepEqual(plan.filters.years, [2025]);
+  assert.equal(plan.filters.experienceGroup, "experienced");
 });
 
 test("queryplan afviser ukendte mål og fri SQL", () => {

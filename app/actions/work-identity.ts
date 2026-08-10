@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
+import { extractDfiDirectors, extractDfiPosterUrl, parseDfiEpisodeTitleInfo } from "@/lib/dfi-metadata";
+import { getDFIFilmDetails } from "@/app/actions/dfi";
+import { getTMDBWorkDetails } from "@/app/actions/tmdb";
 import { recordAuditEvent } from "@/lib/audit-log-server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import {
   identityFingerprint,
@@ -31,6 +34,15 @@ type WorkRow = {
   imdb_id: string | null;
   wikidata_id: string | null;
   dfi_metadata: Record<string, unknown> | null;
+  duration_minutes: number | null;
+  description: string | null;
+  poster_url: string | null;
+  genre: string | null;
+  director: string | null;
+  production_countries: string[] | null;
+  production_companies: string[] | null;
+  season_count: number | null;
+  episode_count: number | null;
 };
 
 export type WorkIdentityQueueItem = {
@@ -53,6 +65,100 @@ async function requireSuperadmin() {
   const caller = await assertAdminRole(session, ["superadmin"]);
   if (!caller) throw new Error("Kun superadmin har adgang til IMDb-kontrol.");
   return caller;
+}
+
+async function requireWorkAdmin() {
+  const session = await createClient();
+  const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
+  if (!caller) throw new Error("Du har ikke adgang til at supplere værkdata.");
+  return caller;
+}
+
+function canAccessWork(actor: { orgId: string; role: string }, work: WorkRow) {
+  return actor.role === "superadmin" || actor.orgId === work.org_id;
+}
+
+export type WorkEnrichmentPreview = {
+  workId: string;
+  title: string;
+  status: "safe_match" | "review_required" | "not_found" | "unchanged" | "error";
+  confidence: number | null;
+  inputFingerprint: string;
+  candidateImdbId: string | null;
+  changes: Array<{ field: string; label: string; oldValue: string | null; newValue: string }>;
+  message?: string;
+};
+
+function metadataTextList(value: unknown) {
+  const values = Array.isArray(value) ? value : value == null ? [] : [value];
+  return values.flatMap(item => {
+    if (typeof item === "string" && item.trim()) return [item.trim()];
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const text = String(record.name ?? record.Name ?? record.title ?? record.Title ?? "").trim();
+    return text ? [text] : [];
+  });
+}
+
+async function candidateSupplement(work: WorkRow, candidate: IdentityCandidate) {
+  const updates: Record<string, unknown> = {};
+  if (candidate.dfiId) {
+    const result = await getDFIFilmDetails(Number(candidate.dfiId));
+    if (result.success && result.film) {
+      const film = result.film as Record<string, unknown>;
+      const countries = metadataTextList(film.ProductionCountries);
+      const companies = metadataTextList(film.ProductionCompanies);
+      const directors = extractDfiDirectors(film);
+      if (!work.duration_minutes) updates.duration_minutes = Number(film.LengthInMin ?? film.Duration) || undefined;
+      if (!work.description) updates.description = String(film.Synopsis ?? film.ShortSynopsis ?? "").trim() || undefined;
+      if (!work.genre) updates.genre = String(film.Genre ?? "").trim() || undefined;
+      if (!work.director && directors.length) updates.director = directors.join(", ");
+      if (!work.poster_url) updates.poster_url = result.posterDataUrl ?? extractDfiPosterUrl(film) ?? undefined;
+      if (!work.production_countries?.length && countries.length) updates.production_countries = countries;
+      if (!work.production_companies?.length && companies.length) updates.production_companies = companies;
+      if (!work.dfi_metadata) updates.dfi_metadata = film;
+    }
+  }
+  if (candidate.tmdbId) {
+    const result = await getTMDBWorkDetails(Number(candidate.tmdbId), candidate.type === "series" ? "tv" : "movie");
+    if (result.success && result.details) {
+      const details = result.details as Record<string, unknown>;
+      const countries = metadataTextList(details.production_countries);
+      const companies = metadataTextList(details.production_companies);
+      const genres = metadataTextList(details.genres);
+      const directors = metadataTextList(details.directors);
+      if (!work.duration_minutes && updates.duration_minutes == null) updates.duration_minutes = Number(details.runtime ?? (Array.isArray(details.episode_run_time) ? details.episode_run_time[0] : null)) || undefined;
+      if (!work.description && updates.description == null) updates.description = String(details.overview ?? "").trim() || undefined;
+      if (!work.genre && updates.genre == null && genres.length) updates.genre = genres.join(", ");
+      if (!work.director && updates.director == null && directors.length) updates.director = directors.join(", ");
+      if (!work.poster_url && updates.poster_url == null && typeof details.poster_path === "string") updates.poster_url = `https://image.tmdb.org/t/p/w500${details.poster_path}`;
+      if (!work.production_countries?.length && updates.production_countries == null && countries.length) updates.production_countries = countries;
+      if (!work.production_companies?.length && updates.production_companies == null && companies.length) updates.production_companies = companies;
+      if (!work.season_count) updates.season_count = Number(details.number_of_seasons) || undefined;
+      if (!work.episode_count) updates.episode_count = Number(details.number_of_episodes) || undefined;
+    }
+  }
+  return Object.fromEntries(Object.entries(updates).filter(([, value]) => value !== undefined && value !== null && value !== ""));
+}
+
+async function candidateChanges(work: WorkRow, candidate: IdentityCandidate) {
+  const supplement = await candidateSupplement(work, candidate);
+  const proposed = [
+    { field: "dfi_id", label: "DFI-ID", oldValue: work.dfi_id, newValue: candidate.dfiId },
+    { field: "tmdb_id", label: "TMDB-ID", oldValue: work.tmdb_id == null ? null : String(work.tmdb_id), newValue: candidate.tmdbId },
+    { field: "imdb_id", label: "IMDb-ID", oldValue: work.imdb_id, newValue: candidate.imdbId },
+    { field: "wikidata_id", label: "Wikidata-ID", oldValue: work.wikidata_id, newValue: candidate.wikidataId },
+    { field: "year", label: "Premiereår", oldValue: work.year == null ? null : String(work.year), newValue: candidate.year == null ? null : String(candidate.year) },
+    { field: "duration_minutes", label: "Varighed", oldValue: work.duration_minutes == null ? null : String(work.duration_minutes), newValue: supplement.duration_minutes == null ? null : String(supplement.duration_minutes) },
+    { field: "genre", label: "Genre", oldValue: work.genre, newValue: supplement.genre == null ? null : String(supplement.genre) },
+    { field: "director", label: "Instruktør", oldValue: work.director, newValue: supplement.director == null ? null : String(supplement.director) },
+    { field: "description", label: "Beskrivelse", oldValue: work.description, newValue: supplement.description == null ? null : String(supplement.description) },
+    { field: "production_countries", label: "Produktionslande", oldValue: work.production_countries?.join(", ") ?? null, newValue: Array.isArray(supplement.production_countries) ? supplement.production_countries.join(", ") : null },
+    { field: "production_companies", label: "Produktionsselskaber", oldValue: work.production_companies?.join(", ") ?? null, newValue: Array.isArray(supplement.production_companies) ? supplement.production_companies.join(", ") : null },
+    { field: "season_count", label: "Antal sæsoner", oldValue: work.season_count == null ? null : String(work.season_count), newValue: supplement.season_count == null ? null : String(supplement.season_count) },
+    { field: "episode_count", label: "Antal afsnit", oldValue: work.episode_count == null ? null : String(work.episode_count), newValue: supplement.episode_count == null ? null : String(supplement.episode_count) },
+  ];
+  return proposed.filter(row => row.newValue && !row.oldValue).map(row => ({ ...row, newValue: String(row.newValue) }));
 }
 
 function dfiChildForEpisode(parent: WorkRow | null, episodeNumber: number | null) {
@@ -105,14 +211,14 @@ function workIdentityInput(work: WorkRow, parent: WorkRow | null): WorkIdentityI
 
 async function loadWork(db: ReturnType<typeof createServiceClient>, workId: string) {
   const { data, error } = await db.from("works")
-    .select("id,org_id,title,type,year,alternative_titles,parent_work_id,season_number,episode_number,dfi_id,tmdb_id,imdb_id,wikidata_id,dfi_metadata")
+    .select("id,org_id,title,type,year,alternative_titles,parent_work_id,season_number,episode_number,dfi_id,tmdb_id,imdb_id,wikidata_id,dfi_metadata,duration_minutes,description,poster_url,genre,director,production_countries,production_companies,season_count,episode_count")
     .eq("id", workId).single();
   if (error || !data) throw new Error(error?.message ?? "Værket blev ikke fundet.");
   const work = data as unknown as WorkRow;
   let parent: WorkRow | null = null;
   if (work.parent_work_id) {
     const parentResult = await db.from("works")
-      .select("id,org_id,title,type,year,alternative_titles,parent_work_id,season_number,episode_number,dfi_id,tmdb_id,imdb_id,wikidata_id,dfi_metadata")
+      .select("id,org_id,title,type,year,alternative_titles,parent_work_id,season_number,episode_number,dfi_id,tmdb_id,imdb_id,wikidata_id,dfi_metadata,duration_minutes,description,poster_url,genre,director,production_countries,production_companies,season_count,episode_count")
       .eq("id", work.parent_work_id).single();
     if (!parentResult.error && parentResult.data) parent = parentResult.data as unknown as WorkRow;
   }
@@ -204,6 +310,8 @@ async function applyCandidate(params: {
 
   const isEpisode = idType === "episode_id";
   const updates: Record<string, unknown> = { imdb_id: candidate.imdbId };
+  Object.assign(updates, await candidateSupplement(work, candidate));
+  if (!work.year && candidate.year) updates.year = candidate.year;
   if (candidate.wikidataId) updates.wikidata_id = candidate.wikidataId;
   else if (isEpisode && work.wikidata_id === parent?.wikidata_id) updates.wikidata_id = null;
   if (candidate.dfiId) updates.dfi_id = candidate.dfiId;
@@ -338,6 +446,96 @@ export async function scanWorkIdentities(workIds: string[]) {
   });
   revalidatePath("/admin/imdb-kontrol");
   return { success: true, results };
+}
+
+export async function previewWorkEnrichment(workIds: string[]): Promise<{ success: boolean; previews?: WorkEnrichmentPreview[]; error?: string }> {
+  const actor = await requireWorkAdmin();
+  const ids = Array.from(new Set(workIds)).filter(id => /^[0-9a-f-]{36}$/i.test(id)).slice(0, 50);
+  if (!ids.length) return { success: false, error: "Vælg mindst ét konkret værk." };
+  const db = createServiceClient();
+  const previews = await mapWithConcurrency(ids, 3, async workId => {
+    try {
+      const { work, parent } = await loadWork(db, workId);
+      if (!canAccessWork(actor, work)) throw new Error("Værket tilhører ikke den aktive organisation.");
+      const input = workIdentityInput(work, parent);
+      const resolution = await resolveWorkIdentity(input);
+      const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
+      const changes = candidate ? await candidateChanges(work, candidate) : [];
+      return {
+        workId,
+        title: work.title,
+        status: candidate ? (changes.length ? "safe_match" : "unchanged") : resolution.status === "not_found" ? "not_found" : "review_required",
+        confidence: resolution.confidence,
+        inputFingerprint: identityFingerprint(input),
+        candidateImdbId: candidate?.imdbId ?? null,
+        changes,
+        message: candidate && !changes.length ? "Værket har allerede de fundne eksterne koblinger." : undefined,
+      } satisfies WorkEnrichmentPreview;
+    } catch (error) {
+      return {
+        workId,
+        title: "Ukendt værk",
+        status: "error",
+        confidence: null,
+        inputFingerprint: "",
+        candidateImdbId: null,
+        changes: [],
+        message: error instanceof Error ? error.message : "Opslaget fejlede.",
+      } satisfies WorkEnrichmentPreview;
+    }
+  });
+  return { success: true, previews };
+}
+
+export async function applyWorkEnrichment(previews: Array<Pick<WorkEnrichmentPreview, "workId" | "inputFingerprint" | "candidateImdbId">>) {
+  const actor = await requireWorkAdmin();
+  const items = previews.slice(0, 50);
+  const results = await mapWithConcurrency(items.map(item => item.workId), 3, async workId => {
+    const expected = items.find(item => item.workId === workId);
+    if (!expected?.candidateImdbId) return { workId, applied: false, error: "Sikkert match mangler." };
+    try {
+      const db = createServiceClient();
+      const { work, parent } = await loadWork(db, workId);
+      if (!canAccessWork(actor, work)) throw new Error("Værket tilhører ikke den aktive organisation.");
+      const input = workIdentityInput(work, parent);
+      if (identityFingerprint(input) !== expected.inputFingerprint) throw new Error("Værket er ændret siden forhåndsvisningen. Kør opslaget igen.");
+      const resolution = await resolveWorkIdentity(input);
+      const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
+      if (!candidate || candidate.imdbId !== expected.candidateImdbId) throw new Error("Det sikre match har ændret sig. Kør opslaget igen.");
+      const applied = await applyCandidate({ db, work, parent, input, candidate, actor, manual: false });
+      if (!applied.applied) throw new Error("En ekstern kobling bruges allerede af et andet værk.");
+      await persistResolution(db, workId, input, resolution, actor.userId);
+      return { workId, applied: true };
+    } catch (error) {
+      return { workId, applied: false, error: error instanceof Error ? error.message : "Værket kunne ikke suppleres." };
+    }
+  });
+  revalidatePath("/admin/vaerker");
+  return { success: true, results };
+}
+
+export async function findContractWorkExternalIds(contractId: string) {
+  const actor = await requireWorkAdmin();
+  if (!/^[0-9a-f-]{36}$/i.test(contractId)) return { success: false, error: "Kontrakten er ugyldig." };
+  const db = createServiceClient();
+  const { data: contract, error: contractError } = await db.from("contracts").select("id,org_id,work_id").eq("id", contractId).single();
+  if (contractError || !contract?.work_id) return { success: false, error: "Forbind kontrakten med et værk før ID-opslag." };
+  if (actor.role !== "superadmin" && actor.orgId !== contract.org_id) return { success: false, error: "Kontrakten tilhører ikke den aktive organisation." };
+  const { work, parent } = await loadWork(db, contract.work_id);
+  const input = workIdentityInput(work, parent);
+  const resolution = await resolveWorkIdentity(input);
+  const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
+  if (!candidate) return { success: false, error: "Der blev ikke fundet et sikkert match. Brug Værksadmin til manuel kontrol." };
+  const applied = await applyCandidate({ db, work, parent, input, candidate, actor, manual: false });
+  if (!applied.applied) return { success: false, error: "Det fundne ID bruges allerede af et andet værk." };
+  await persistResolution(db, work.id, input, resolution, actor.userId);
+  const ids = { dfiId: candidate.dfiId ?? "", tmdbId: candidate.tmdbId ?? "", imdbId: candidate.imdbId ?? "" };
+  const { data: validation } = await db.from("contract_validations").select("extracted_data").eq("contract_id", contractId).maybeSingle();
+  const extracted = validation?.extracted_data && typeof validation.extracted_data === "object" ? validation.extracted_data as Record<string, unknown> : {};
+  const { error: validationError } = await db.from("contract_validations").update({ extracted_data: { ...extracted, ...ids } }).eq("contract_id", contractId);
+  if (validationError) throw new Error(validationError.message);
+  revalidatePath("/admin/kontrakter");
+  return { success: true, ids };
 }
 
 export async function approveWorkIdentityCandidate(workId: string, imdbId: string) {

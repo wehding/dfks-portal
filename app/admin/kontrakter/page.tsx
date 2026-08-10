@@ -40,6 +40,7 @@ import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin
 import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
+import { ListResultSummary } from "@/components/list-result-summary"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
@@ -1976,8 +1977,9 @@ function AdminKontrakterContent() {
                                     <p className="text-sm font-medium">Klik for at vælge filer</p>
                                     <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — maks. 15 filer ad gangen</p>
                                     <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
-                                </div>
-                            </div>
+                </div>
+            </div>
+            <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} />
                             {uploadItems.length > 0 && (
                                 <div className="space-y-2">
                                     <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>

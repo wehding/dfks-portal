@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { LinkedRecordEditorDialog } from "@/components/admin/linked-record-editor-dialog";
 import { AdminListTools } from "@/components/admin/admin-list-tools";
 import { RightsHolderAutocomplete } from "@/components/admin/rights-holder-autocomplete";
+import { ListResultSummary } from "@/components/list-result-summary";
 import { mergeCvrLegalEntity, producerAssociationLabel, resolveProducerAssociationStatus } from "@/lib/admin-producers";
 
 type LegalEntitySummary = { id: string; legal_name: string; registration_country: string; registration_type: string; registration_number: string | null; entity_kind: string; is_primary: boolean; registration_status: string | null; address?: string | null; contact_phone?: string | null; contact_email?: string | null; website?: string | null; industry_code?: string | null; industry_description?: string | null; company_type?: string | null };
@@ -53,6 +54,7 @@ const statusTone = { attention: "border-amber-300 bg-amber-100 text-amber-800", 
 export default function ProducersPage() {
   const { t, locale } = useI18n();
   const [producers, setProducers] = useState<Producer[]>([]);
+  const [producerCounts, setProducerCounts] = useState({ filtered: 0, total: 0 });
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
   const [broadcasters, setBroadcasters] = useState<BroadcasterOption[]>([]);
   const [producerTypes, setProducerTypes] = useState<ProducerTypeOption[]>([]);
@@ -112,7 +114,7 @@ export default function ProducersPage() {
         const response = await fetch(`/api/admin/producers?${params}`, { signal: controller.signal });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error);
-        setProducers(json.data ?? []); setRightsHolders(json.rightsHolders ?? []); setBroadcasters(json.broadcasters ?? []); setProducerTypes(json.producerTypes ?? []); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
+        setProducers(json.data ?? []); setProducerCounts({ filtered: Number(json.filteredCount ?? json.data?.length ?? 0), total: Number(json.totalCount ?? json.data?.length ?? 0) }); setRightsHolders(json.rightsHolders ?? []); setBroadcasters(json.broadcasters ?? []); setProducerTypes(json.producerTypes ?? []); setCanMerge(Boolean(json.canMerge)); setCanDelete(Boolean(json.canDelete));
       } catch (error) {
         if ((error as Error).name !== "AbortError") setProducers([]);
       } finally { if (!controller.signal.aborted) setLoading(false); }
@@ -427,7 +429,7 @@ export default function ProducersPage() {
   return <div className="space-y-6">
     <PageHeader title={t("admin.producers.title")} subtitle={t("admin.producers.subtitle")} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => void previewAssociationSync()}><RefreshCw className="mr-2 h-4 w-4" />Hent fra Producentforeningen</Button><Button onClick={openCreate}><Plus className="mr-2 h-4 w-4" />Tilføj producent</Button></div>} />
     {lastSync && <p className="-mt-4 text-xs text-muted-foreground">Producentforeningen: seneste {lastSync.status === "applied" ? "gennemførte" : "forsøgte"} synkronisering {new Date(lastSync.applied_at ?? lastSync.created_at).toLocaleString("da-DK")}</p>}
-    {!loading && <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+    {!loading && <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-4 xl:grid-cols-8">
       {[
         { label: "Viste producenter", value: producers.length },
         { label: "Aktive", value: activeCount },
@@ -437,9 +439,9 @@ export default function ProducersPage() {
         { label: "Uklassificeret medlemsstatus", value: associationCounts.unknown },
         { label: "Tilknyttede værker", value: totalWorks },
         { label: "Tilknyttede kontrakter", value: totalContracts },
-      ].map(item => <div key={item.label} className="rounded-lg border bg-card px-5 py-4 text-card-foreground">
-        <p className="mb-1 text-sm font-medium text-muted-foreground">{item.label}</p>
-        <p className="text-2xl font-bold tabular-nums text-foreground">{item.value}</p>
+      ].map(item => <div key={item.label} className="min-w-0 rounded-lg border bg-card px-2.5 py-2 text-card-foreground sm:px-5 sm:py-4">
+        <p className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:mb-1 sm:min-h-0 sm:text-sm">{item.label}</p>
+        <p className="text-lg font-bold tabular-nums text-foreground sm:text-2xl">{item.value}</p>
       </div>)}
     </div>}
     <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap">
@@ -451,6 +453,7 @@ export default function ProducersPage() {
       <Button variant="outline" onClick={() => setDirection(value => value === "asc" ? "desc" : "asc")}>{direction === "asc" ? "A–Z" : "Z–A"}</Button>
     </div>
     <Button variant="outline" className="w-full md:hidden" onClick={toggleAll}>{allSelected ? t("common.deselectAll") : t("common.selectAll")}</Button>
+    <ListResultSummary filteredCount={producerCounts.filtered} totalCount={producerCounts.total} selectedCount={selected.length} loading={loading} />
     {selected.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3"><span className="text-sm font-medium">{t("common.selectedCount", { count: selected.length })}</span><div className="flex flex-wrap gap-2">{canMerge && selected.length === 2 && <Button variant="outline" size="sm" disabled={merging} onClick={mergeSelected}>{merging && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t("admin.producers.merge")}</Button>}{canDelete && <Button variant="destructive" size="sm" disabled={deleteLoading} onClick={() => void previewSelectedDeletion()}><Trash2 className="mr-2 h-4 w-4" />Slet valgte</Button>}<Button variant="outline" size="sm" onClick={() => setSelected([])}>{t("common.clearSelection")}</Button></div></div>}
 
     <AdminListTools pageKey="producers" title="Producenter" columns={[{id:"select",label:"Vælg",index:1,required:true},{id:"name",label:"Producent",index:2,required:true},{id:"parent",label:"Broadcaster/moderselskab",index:3},{id:"status",label:"Status",index:4},{id:"works",label:"Værker",index:5},{id:"contracts",label:"Kontrakter",index:6},{id:"latest",label:"Seneste aktivitet",index:7}]} />

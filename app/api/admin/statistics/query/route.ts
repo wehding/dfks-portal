@@ -16,7 +16,8 @@ Returnér kun JSON med: metric, groupBy, filters, chart.
 metric må kun være average_monthly_salary, average_pension, average_working_weeks, contract_count eller contributions.
 Spørgsmål om medianløn bruger average_monthly_salary; statistikmotoren returnerer den personvægtede median.
 groupBy skal være year. chart må være line, bar eller table.
-filters må kun indeholde years, gender, categories, contractType, producerNames, producerTypeCodes, membershipTypes og professionType.
+filters må kun indeholde years, gender, categories, contractType, producerNames, producerTypeCodes, membershipTypes, professionType og experienceGroup.
+experienceGroup må være new_graduate (0-3 år), early_career (4-7 år), experienced (8-17 år), veteran (18+ år) eller null. Erfaring beregnes i kontraktens år.
 years, categories, producerNames, producerTypeCodes og membershipTypes er arrays.
 Brug tomme arrays eller null for filtre, der ikke fremgår. Højst fem producenter.
 Spillefilm er category feature og dokumentarfilm er category documentary.
@@ -155,6 +156,7 @@ export async function POST(request: NextRequest) {
           producerTypeCodes: plan.filters.producerTypeCodes,
           membershipTypes: plan.filters.membershipTypes,
           professionType: plan.filters.professionType,
+          experienceGroup: plan.filters.experienceGroup,
         };
         const statistics = await getAdminStatistics(caller.orgId, filters);
         minimum = statistics.minimum;

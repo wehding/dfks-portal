@@ -939,7 +939,7 @@ function KvalitetTab() {
 
     return (
         <div className="space-y-6">
-            <div className="hidden grid-cols-2 gap-4 sm:grid sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-4">
                 {[
                     { label: "Fund vurderet", value: stats.total },
                     { label: "Samlet præcision", value: stats.pct === null ? "—" : `${stats.pct}%` },

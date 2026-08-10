@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useI18n } from "@/lib/i18n";
 import { evaluateChartEligibility, recommendCharts, STATISTICS_CHART_TYPES, type StatisticsChartType } from "@/lib/statistics-chart-eligibility";
+import { EXPERIENCE_GROUPS } from "@/lib/experience-groups";
 
 type YearRow = { year: number; memberCount: number; contractCount: number; validatedCount: number; draftCount: number; lowSample: boolean };
 type StatisticsPayload = {
@@ -79,6 +80,7 @@ export default function AdminStatistikPage() {
   const [gender, setGender] = useState("all");
   const [category, setCategory] = useState("all");
   const [contractType, setContractType] = useState("all");
+  const [experienceGroup, setExperienceGroup] = useState("all");
   const [data, setData] = useState<StatisticsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,13 +97,14 @@ export default function AdminStatistikPage() {
     if (gender !== "all") params.set("gender", gender);
     if (category !== "all") params.set("category", category);
     if (contractType !== "all") params.set("contractType", contractType);
+    if (experienceGroup !== "all") params.set("experienceGroup", experienceGroup);
     fetch(`/api/admin/statistics?${params}`, { signal: controller.signal, cache: "no-store" })
       .then(async response => { const json = await response.json(); if (!response.ok) throw new Error(json.error ?? "Statistikken kunne ikke hentes"); return json; })
       .then(setData)
       .catch(fetchError => { if (fetchError.name !== "AbortError") setError(fetchError.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [years, gender, category, contractType]);
+  }, [years, gender, category, contractType, experienceGroup]);
 
   const salaryContractCount = useMemo(() => (data?.salary ?? []).reduce((sum, row) => sum + row.contractCount, 0), [data]);
   const availableStatisticsCount = useMemo(() => [
@@ -239,12 +242,13 @@ export default function AdminStatistikPage() {
       </PopoverContent></Popover>
       <Select value={category} onValueChange={setCategory}><SelectTrigger className="w-full"><SelectValue placeholder="Produktionstype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle produktionstyper</SelectItem>{Object.entries(categoryLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
       <Select value={contractType} onValueChange={setContractType}><SelectTrigger className="w-full"><SelectValue placeholder="Kontrakttype" /></SelectTrigger><SelectContent><SelectItem value="all">Alle kontrakttyper</SelectItem><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="leverandør">Leverandør</SelectItem></SelectContent></Select>
+      <Select value={experienceGroup} onValueChange={setExperienceGroup}><SelectTrigger className="w-full"><SelectValue placeholder="Erfaringsgruppe" /></SelectTrigger><SelectContent><SelectItem value="all">Alle erfaringsgrupper</SelectItem>{EXPERIENCE_GROUPS.map(group => <SelectItem key={group.value} value={group.value}>{group.label} ({group.description})</SelectItem>)}</SelectContent></Select>
       <Select value={gender} onValueChange={setGender}><SelectTrigger className="w-full"><SelectValue placeholder="Køn" /></SelectTrigger><SelectContent><SelectItem value="all">Alle køn</SelectItem><SelectItem value="male">Mand</SelectItem><SelectItem value="female">Kvinde</SelectItem><SelectItem value="other">Andet</SelectItem></SelectContent></Select>
       {!data?.suppressed && <Button variant="outline" className="w-full" onClick={exportCsv}><Download className="mr-2 h-4 w-4" />CSV</Button>}
     </div>
 
     {data?.suppressed ? <Card><CardContent className="py-16 text-center"><ShieldCheck className="mx-auto mb-4 h-10 w-10 text-muted-foreground" /><h2 className="font-semibold">Ikke nok kontrakter til statistik</h2><p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">Det valgte udsnit indeholder færre end {data.minimum} kontrakter. Systemet udleverer derfor ingen tal. Prøv bredere filtre.</p></CardContent></Card> : <>
-      <div className="hidden gap-4 sm:grid sm:grid-cols-3"><Card><CardHeader><CardTitle className="text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.memberCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{data?.contractCount}</CardContent></Card><Card><CardHeader><CardTitle className="text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="text-3xl font-bold">{salaryContractCount}</CardContent></Card></div>
+      <div className="grid grid-cols-3 gap-2 sm:gap-4"><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Rettighedshavere i datagrundlaget</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.memberCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Samlet antal kontrakter</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{data?.contractCount}</CardContent></Card><Card><CardHeader className="p-3 sm:p-6"><CardTitle className="text-xs sm:text-sm">Kontrakter med løndata</CardTitle></CardHeader><CardContent className="px-3 pb-3 text-xl font-bold sm:px-6 sm:pb-6 sm:text-3xl">{salaryContractCount}</CardContent></Card></div>
       <Tabs defaultValue="salary"><div className="-mx-3 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden"><TabsList className="w-max min-w-full justify-start"><TabsTrigger value="salary">Løn</TabsTrigger><TabsTrigger value="pension">Pension</TabsTrigger><TabsTrigger value="weeks">Arbejdsuger</TabsTrigger><TabsTrigger value="rights">Rettigheder</TabsTrigger><TabsTrigger value="gender">Køn</TabsTrigger><TabsTrigger value="contracts">Kontrakter</TabsTrigger><TabsTrigger value="contributions">Bidrag</TabsTrigger><TabsTrigger value="ai">AI-forbehold</TabsTrigger><TabsTrigger value="individual">Individdata</TabsTrigger></TabsList></div>
         <TabsContent value="salary" className="space-y-4"><Card><CardContent className="h-[360px] pt-6"><ResponsiveChartContainer><LineChart data={salaryCategoryChart}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis tickFormatter={value => `${value / 1000}k`} /><Tooltip contentStyle={tooltipStyle} formatter={value => formatKr(Number(value))} /><Legend /><Line connectNulls dataKey="feature" name="Spillefilm" stroke="#3b82f6" /><Line connectNulls dataKey="documentary" name="Dokumentarfilm" stroke="#10b981" /></LineChart></ResponsiveChartContainer></CardContent></Card><DataTable headers={["År", "Produktionstype", "Kontrakter", "Median månedsløn", "Grundlag"]} rows={(data?.salaryByCategory ?? []).map(row => [row.year, categoryLabels[row.category] ?? row.category, row.contractCount, formatKr(row.monthlyRate), row.lowSample ? "Statistisk usikkert" : "≥ 5 kontrakter"])} /></TabsContent>
         <TabsContent value="pension"><DataTable headers={["År", "Medlemmer", "Gennemsnitlig pension"]} rows={(data?.pension ?? []).map(row => [row.year, row.memberCount, `${row.avgPensionPercent}%`])} /></TabsContent>

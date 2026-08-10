@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getAdminStatistics } from "@/lib/admin-statistics";
+import { isExperienceGroup } from "@/lib/experience-groups";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,10 @@ export async function GET(req: NextRequest) {
   const producerTypeCodes = params.getAll("producerType").filter(value => /^[a-z0-9_]{2,80}$/.test(value)).slice(0, 20);
   const membershipTypes = params.getAll("membership").filter(value => ["member", "associate", "unknown", "none"].includes(value)).slice(0, 4);
   const professionType = params.get("professionType")?.trim().slice(0, 120) || null;
+  const experienceGroupValue = params.get("experienceGroup");
+  const experienceGroup = isExperienceGroup(experienceGroupValue) ? experienceGroupValue : null;
   try {
-    const data = await getAdminStatistics(caller.orgId, { years, gender, categories, contractType, producerIds, producerTypeCodes, membershipTypes, professionType });
+    const data = await getAdminStatistics(caller.orgId, { years, gender, categories, contractType, producerIds, producerTypeCodes, membershipTypes, professionType, experienceGroup });
     return NextResponse.json(data, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     console.error("[admin-statistics] Aggregation failed", error instanceof Error ? error.message : "Unknown error");
