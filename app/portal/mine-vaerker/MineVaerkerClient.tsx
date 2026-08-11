@@ -357,14 +357,12 @@ export default function MineVaerkerClient({
       const hasPending = (w.overview_pending_count ?? 0) > 0 || requests.some(request => request.status === "pending") || w.status === "til_godkendelse";
       const hasRejected = requests.some(request => request.status === "rejected");
       const hasContract = (w.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(w.id);
-      const missingData = !w.year || !w.type || !w.title?.trim();
       const missingEpisodes = isSeriesType(w.type) && w.episode_selection_status === "pending";
       if (statusFilter === "messages" && !hasUnread) return false;
       if (statusFilter === "pending" && !hasPending) return false;
       if (statusFilter === "rejected" && !hasRejected) return false;
       if (statusFilter === "missingContract" && hasContract) return false;
       if (statusFilter === "hasContract" && !hasContract) return false;
-      if (statusFilter === "missingData" && !missingData) return false;
       if (statusFilter === "missingEpisodes" && !missingEpisodes) return false;
       return true;
     })
@@ -747,8 +745,7 @@ export default function MineVaerkerClient({
                   <SelectItem value="rejected">Afvist rettelse</SelectItem>
                   <SelectItem value="missingContract">Mangler kontrakt</SelectItem>
                   <SelectItem value="hasContract">Har kontrakt</SelectItem>
-                  <SelectItem value="missingData">Mangler værksdata</SelectItem>
-                  <SelectItem value="missingEpisodes">Serie mangler afsnit</SelectItem>
+                  <SelectItem value="missingEpisodes">{t("works.missingEpisodeSelection")}</SelectItem>
                 </SelectContent>
               </Select>
               </>
@@ -1062,7 +1059,7 @@ export default function MineVaerkerClient({
           initialEpisodeOptions={editEpisodeOptions}
           initialEpisodeScope={editEpisodeScope}
           organisationShortName={organisationShortName}
-          onWorkUpdated={(message, success, updatedRole, targetId) => {
+          onWorkUpdated={async (message, success, updatedRole, targetId) => {
             setMsg({ type: success ? "success" : "error", text: message });
             if (success) {
               // Rollerettelse afspejles med det samme. En data-/medklipper-rettelse
@@ -1075,11 +1072,7 @@ export default function MineVaerkerClient({
                   rows.map(a => a.id === targetId ? { ...a, role: updatedRole } : a),
                 ])));
               }
-              const editedWork = editAssignment.works;
-              const seasonGroup = editedWork?.parent_work_id && editedWork.season_number != null
-                ? assignments.find(a => a.works?.is_season_group && a.works.parent_work_id === editedWork.parent_work_id && a.works.season_number === editedWork.season_number)?.works
-                : null;
-              if (seasonGroup) void loadMemberSeason(seasonGroup, true);
+              await reloadAssignments();
               closeEdit();
             }
           }}

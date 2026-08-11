@@ -40,6 +40,7 @@ export async function confirmContractEpisodes(input: {
     selectedEpisodes: episodeNumbers,
     seasonNumber,
     coversWholeSeason: Boolean(input.entireSeason),
+    confirmEpisodeRemoval: true,
   });
   if (!assignmentSync.success) return { success: false, error: assignmentSync.error ?? "Afsnitsvalget kunne ikke overføres til Mine værker" };
   const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
