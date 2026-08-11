@@ -17,7 +17,7 @@ import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-
 import { seasonLookupMessage } from "@/lib/season-selection";
 import { parseOnboardingAddress } from "@/lib/onboarding-address";
 import { isTransientNetworkError, retryTransientNetwork } from "@/lib/transient-network-retry";
-import { firstOnboardingSeriesMissingEpisodes, needsOnboardingEpisodeSelection } from "@/lib/onboarding-series-validation";
+import { needsOnboardingEpisodeSelection } from "@/lib/onboarding-series-validation";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -117,7 +117,6 @@ export default function OnboardingClient({
   const [newAlternativeName, setNewAlternativeName] = useState("");
   const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
   const isOrganisationMember = Boolean(rh?.is_member);
-  const seriesCardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
 
   // Import-fremdrift
   const [importProgress, setImportProgress] = useState<{ current: number; total: number; title: string } | null>(null);
@@ -376,18 +375,6 @@ export default function OnboardingClient({
           ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
           : c
         );
-      const firstMissingSeries = firstOnboardingSeriesMissingEpisodes(approved, isSeriesCredit, credit => credit.selected_episodes);
-      if (firstMissingSeries) {
-        setImportError("Vælg mindst ét afsnit for hver serie, du vil importere.");
-        setExpandedSeries(current => ({ ...current, [firstMissingSeries.id]: true }));
-        if (!Object.prototype.hasOwnProperty.call(episodeOptions, firstMissingSeries.id)) void loadEpisodes(firstMissingSeries);
-        window.requestAnimationFrame(() => {
-          const card = seriesCardRefs.current[firstMissingSeries.id];
-          card?.scrollIntoView({ behavior: "smooth", block: "center" });
-          card?.focus({ preventScroll: true });
-        });
-        return;
-      }
       if (approved.length > 0) {
         setIsImportingDfi(true);
         setImportError(null);
@@ -742,7 +729,7 @@ export default function OnboardingClient({
               <p style={{ color: "var(--on-surface-variant)", fontSize: "14px", margin: "0 0 24px", lineHeight: 1.6 }}>
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Gennemgå og bekræft de titler, du har medvirket til at skabe. Hvis der er titler der mangler kan du tilføje dem senere.
               </p>
-              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>For tv- og dokumentarserier skal du vælge de specifikke afsnit, som du har været med til at skabe. Åbn “Vælg afsnit” under serien, og markér afsnittene.</div>
+              <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>{t("onboarding.episodesOptional")}</div>
               {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--destructive)", background: "var(--muted)", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (
@@ -787,7 +774,6 @@ export default function OnboardingClient({
                       return (
                         <div
                           key={c.id}
-                          ref={element => { seriesCardRefs.current[c.id] = element; }}
                           tabIndex={-1}
                           className={missingEpisodeSelection ? "scroll-mt-24 border-l-4 border-amber-500 bg-amber-50 outline-none dark:bg-amber-950/35" : "scroll-mt-24 outline-none"}
                           style={{
@@ -814,7 +800,7 @@ export default function OnboardingClient({
                                 <span>•</span>
                                 <span>{c.source.toUpperCase()}</span>
                                 {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
-                                {missingEpisodeSelection && <span className="font-semibold text-amber-800 dark:text-amber-200">• Vælg afsnit</span>}
+                                {missingEpisodeSelection && <span className="font-semibold text-amber-800 dark:text-amber-200">• {t("onboarding.chooseEpisodesLater")}</span>}
                               </div>
                             </div>
                           </label>
@@ -831,6 +817,7 @@ export default function OnboardingClient({
                               >
                                 {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
                               </button>
+                              {missingEpisodeSelection && <p className="mt-2 text-xs text-muted-foreground">{t("onboarding.episodesPendingHint")}</p>}
                               {expandedSeries[c.id] && (
                                 <div style={{ marginTop: "10px" }}>
                                   <SeriesEpisodeSelector

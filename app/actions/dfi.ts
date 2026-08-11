@@ -14,6 +14,7 @@ import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
 import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
+import { upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireOrgId } from "@/lib/org";
@@ -776,6 +777,19 @@ async function importApprovedDFIWorksForContext(
         logWarn("DFI import", "Kreditering fejlede", { filmId: String(filmId), error: assignErr.message });
         errors.push(`Fejl ved kreditering af ${filmTitle}: ${assignErr.message}`);
         continue;
+      }
+
+      if (workType === "tv-serie" || workType === "dokumentar-serie") {
+        const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
+          orgId,
+          rightsHolderId,
+          seriesWorkId: workId,
+          seasonNumber,
+          status: selectedEpisodes.length > 0 ? "confirmed" : "pending",
+          episodeNumbers: selectedEpisodes,
+          source: "onboarding",
+        });
+        if (!scopeResult.success) errors.push(`Afsnitsopgave for ${filmTitle}: ${scopeResult.error}`);
       }
 
       if (wasExisting) linkedExistingCount++;
@@ -1545,6 +1559,18 @@ async function importApprovedOnboardingWorksForContext(
       if (assignErr) {
         errors.push(`Fejl ved kreditering af eksisterende værk ${credit.title}: ${assignErr.message}`);
       } else {
+        if (isSeriesParent) {
+          const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
+            orgId,
+            rightsHolderId,
+            seriesWorkId: workId,
+            seasonNumber,
+            status: selectedEpisodes.length > 0 ? "confirmed" : "pending",
+            episodeNumbers: selectedEpisodes,
+            source: "onboarding",
+          });
+          if (!scopeResult.success) errors.push(`Afsnitsopgave for ${credit.title}: ${scopeResult.error}`);
+        }
         linkedExistingCount++;
       }
     } catch (err: unknown) {
@@ -1714,6 +1740,17 @@ async function importApprovedOnboardingWorksForContext(
 
       if (assignErr) {
         errors.push(`Fejl ved kreditering af TMDB værk ${title}: ${assignErr.message}`);
+      } else if (mediaType === "tv") {
+        const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
+          orgId,
+          rightsHolderId,
+          seriesWorkId: workId,
+          seasonNumber,
+          status: selectedEpisodes.length > 0 ? "confirmed" : "pending",
+          episodeNumbers: selectedEpisodes,
+          source: "onboarding",
+        });
+        if (!scopeResult.success) errors.push(`Afsnitsopgave for ${title}: ${scopeResult.error}`);
       }
     } catch (err: unknown) {
       errors.push(`Systemfejl for TMDB værk ${title}: ${err instanceof Error ? err.message : "Ukendt fejl"}`);

@@ -426,6 +426,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           season: isSeries && seriesSeason ? Number(seriesSeason) : undefined,
           episodes: isSeries ? episodeCredits.filter(e => e.role) : undefined,
           coversWholeSeason: isSeries && contractSeriesScope === "season",
+          episodeSelectionConfirmed: isSeries && (contractSeriesScope === "season" || episodesTouched),
           deferAiJob: !isBatchUpload && Boolean(manualMode || pickedUnifiedResult),
           producerSelections: manualMode ? manualWork.production_companies : productionCompanySelections,
         });
@@ -444,7 +445,9 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     }
   };
 
-  const selectedEpisodeNumbers = () => [...new Set(episodeCredits.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0))];
+  const selectedEpisodeNumbers = () => episodesTouched
+    ? [...new Set(episodeCredits.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0))]
+    : [];
   const proposedCoEditors = () => coEditors
     .filter(editor => editor.name.trim())
     .map(editor => ({ name: editor.name.trim(), role: editor.role || "Klipper", action: "add" as const }));
@@ -462,6 +465,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         coEditors: proposedCoEditors(),
         contractId: contract.id,
         forceCreateDuplicate: forceDuplicate,
+        allowPendingEpisodeSelection: true,
+        coversWholeSeason: contractSeriesScope === "season",
         contractScope: isManualSeries(manualWork) ? {
           seasonNumber: Number(manualWork.season_number) || 1,
           episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodeNumbers(),
@@ -521,6 +526,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         seasonNumber,
         episodeNumber: selectedEpisodes.length === 1 ? selectedEpisodes[0] : null,
         selectedEpisodes,
+        coversWholeSeason: contractSeriesScope === "season",
+        allowPendingEpisodeSelection: true,
       });
       if (!linked.success) return { success: false as const, error: linked.error ?? "Kunne ikke vælge værket." };
       const workIdToLink = linked.workId ?? pickedUnifiedResult.local_id;
@@ -528,6 +535,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       const contractLink = await linkContractToWork(contract.id, contractWorkId, linked.parentWorkId ? {
         seasonNumber,
         episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodes,
+        coversWholeSeason: contractSeriesScope === "season",
+        episodeSelectionConfirmed: contractSeriesScope === "season" || selectedEpisodes.length > 0,
       } : undefined);
       if (!contractLink.success) return { success: false as const, error: contractLink.error ?? "Kontrakten kunne ikke tilknyttes værket." };
       return { success: true as const, workId: contractWorkId, pending: Boolean(linked.pending) };
@@ -544,6 +553,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
       comment: "",
       coEditors: proposedCoEditors(),
       source: pickedUnifiedResult.sources.includes("dfi") ? "dfi" : "tmdb",
+      allowPendingEpisodeSelection: true,
+      coversWholeSeason: contractSeriesScope === "season",
       workData: {
         dfi_id: details.dfi_id ? String(details.dfi_id) : null,
         tmdb_id: details.tmdb_id ? Number(details.tmdb_id) : null,
@@ -659,6 +670,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
         contractId: manualLinkRetry.contract.id,
         reuseWorkId: manualLinkRetry.workId,
         reusePending: manualLinkRetry.pending,
+        allowPendingEpisodeSelection: true,
+        coversWholeSeason: contractSeriesScope === "season",
         contractScope: isManualSeries(manualWork) ? {
           seasonNumber: Number(manualWork.season_number) || 1,
           episodeNumbers: contractSeriesScope === "season" ? [] : selectedEpisodeNumbers(),
@@ -782,14 +795,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             </div>
           )}
 
-          {/* Drop zone */}
-          {!isBatchUpload && (
-          <div className="rounded-lg border bg-muted/20 p-4">
-            <p className="mb-3 text-sm font-medium">Eller vælg fra dit online-drev</p>
-            <MemberDriveConnections allowImport onImported={() => { toast.success("Importen fortsætter i baggrunden"); onClose(); }} />
-          </div>
-          )}
-
+          {/* Lokal filvælger */}
           {!isBatchUpload && (
           <div
             onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
@@ -806,6 +812,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
               </span>
             </label>
             <p className="text-xs text-muted-foreground mt-2">PDF eller Word (.doc og .docx). Maks. {MAX_FILES} filer.</p>
+          </div>
+          )}
+
+          {!isBatchUpload && (
+          <div className="rounded-lg border bg-muted/20 p-4">
+            <p className="mb-3 text-sm font-medium">Eller vælg fra dit online-drev</p>
+            <MemberDriveConnections allowImport onImported={() => { toast.success("Importen fortsætter i baggrunden"); onClose(); }} />
           </div>
           )}
 

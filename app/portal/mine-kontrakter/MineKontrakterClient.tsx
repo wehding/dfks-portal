@@ -255,7 +255,7 @@ export default function MineKontrakterClient({
     const updated = {
       ...selectedContract,
       season_number: confirmationSeason,
-      episode_numbers: confirmEntireSeason ? null : episodeNumbers,
+      episode_numbers: confirmEntireSeason ? [] : episodeNumbers,
       episode_confirmed: true,
     };
     setSelectedContract(updated);

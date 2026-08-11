@@ -13,6 +13,7 @@ import { resolveTerminology } from "@/lib/branding";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
+import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
 
 import { requireOrgId } from "@/lib/org";
 const BUCKET = "kontrakter"; // samme bucket som admin-validering
@@ -50,8 +51,22 @@ async function contractValidationBlocker(
 ) {
   if (!contract.work_id) return "Kontrakten skal have et tilknyttet værk.";
   if (!contract.rights_holder_id) return "Kontrakten skal have en tilknyttet rettighedshaver.";
-  const { data: work } = await db.from("works").select("type").eq("id", contract.work_id).maybeSingle();
+  const { data: work } = await db.from("works").select("id,type,parent_work_id,season_number").eq("id", contract.work_id).maybeSingle();
   if (!String(work?.type ?? "").includes("serie")) return null;
+  const { data: contractScope } = await db.from("contracts")
+    .select("org_id,season_number,episode_scope_id")
+    .eq("id", contract.id).maybeSingle();
+  const seriesWorkId = work?.parent_work_id ?? work?.id;
+  const seasonNumber = contractScope?.season_number ?? work?.season_number ?? 1;
+  let scopeQuery = db.from("member_series_episode_scopes").select("id,status").eq("status", "confirmed");
+  if (contractScope?.episode_scope_id) scopeQuery = scopeQuery.eq("id", contractScope.episode_scope_id);
+  else scopeQuery = scopeQuery
+    .eq("org_id", contractScope?.org_id)
+    .eq("rights_holder_id", contract.rights_holder_id)
+    .eq("series_work_id", seriesWorkId)
+    .eq("season_number", seasonNumber);
+  const { data: sharedScope } = await scopeQuery.maybeSingle();
+  if (sharedScope) return null;
   const { data: confirmation } = await db.from("contract_episode_confirmations")
     .select("id").eq("contract_id", contract.id).is("invalidated_at", null).maybeSingle();
   return confirmation ? null : "Rettighedshaveren skal bekræfte sæson og afsnit, før seriekontrakten kan valideres.";
@@ -182,6 +197,7 @@ export async function saveUploadedContract(params: {
   season?: number;
   episodes?: { number: number; role: string }[];
   coversWholeSeason?: boolean;
+  episodeSelectionConfirmed?: boolean;
   deferAiJob?: boolean;
   producerSelections?: ProductionCompanySelection[];
 }) {
@@ -212,7 +228,7 @@ export async function saveUploadedContract(params: {
       working_title: params.workTitle || null,
       work_id: params.workId ?? null,
       season_number: params.season ?? null,
-      episode_numbers: params.season
+      episode_numbers: params.season && params.episodeSelectionConfirmed
         ? params.coversWholeSeason
           ? []
           : params.episodes?.map(episode => episode.number).filter(number => Number.isInteger(number) && number > 0) ?? []
@@ -222,6 +238,36 @@ export async function saveUploadedContract(params: {
     .single();
 
   if (dbErr || !saved) return { success: false, error: dbErr?.message ?? "Kunne ikke gemme kontrakten" };
+
+  if (params.workId && params.season) {
+    const target = await resolveSeriesScopeTarget(db, params.workId, params.season);
+    if (target) {
+      const episodes = params.episodes?.map(episode => episode.number) ?? [];
+      const confirmed = Boolean(params.episodeSelectionConfirmed && (params.coversWholeSeason || episodes.length > 0));
+      const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
+        orgId,
+        rightsHolderId: rh.id,
+        seriesWorkId: target.seriesWorkId,
+        seasonNumber: target.seasonNumber,
+        status: confirmed ? "confirmed" : "pending",
+        episodeNumbers: episodes,
+        coversWholeSeason: confirmed && params.coversWholeSeason,
+        source: "contract_upload",
+      });
+      if (!scopeResult.success) {
+        await db.from("contracts").delete().eq("id", saved.id);
+        await db.storage.from(BUCKET).remove([params.filePath]);
+        return { success: false, error: scopeResult.error };
+      }
+      await db.from("contracts").update({
+        episode_scope_id: scopeResult.scope.id,
+        season_number: scopeResult.scope.season_number,
+        episode_numbers: scopeResult.scope.status === "confirmed"
+          ? scopeResult.scope.covers_whole_season ? [] : scopeResult.scope.episode_numbers
+          : null,
+      }).eq("id", saved.id);
+    }
+  }
 
   const { error: validationError } = await db.from("contract_validations").insert({
     contract_id: saved.id,
@@ -353,7 +399,7 @@ export async function fetchMemberContractsList() {
 export async function linkContractToWork(
   contractId: string,
   workId: string | null,
-  scope?: { seasonNumber?: number | null; episodeNumbers?: number[] | null }
+  scope?: { seasonNumber?: number | null; episodeNumbers?: number[] | null; coversWholeSeason?: boolean; episodeSelectionConfirmed?: boolean }
 ) {
   const supabase = await createClient();
   const db = createServiceClient();
@@ -380,14 +426,39 @@ export async function linkContractToWork(
     }
   }
 
+  let episodeScopeId: string | null = null;
+  let resolvedSeasonNumber: number | null = null;
+  let resolvedEpisodeNumbers: number[] | null = null;
+  if (workId) {
+    const target = await resolveSeriesScopeTarget(db, workId, scope?.seasonNumber);
+    if (target) {
+      const episodes = scope?.episodeNumbers ?? [];
+      const confirmed = Boolean(scope?.episodeSelectionConfirmed && (scope.coversWholeSeason || episodes.length > 0));
+      const scopeResult = await upsertMemberSeriesEpisodeScope(db, {
+        orgId: contract.org_id,
+        rightsHolderId: rh.id,
+        seriesWorkId: target.seriesWorkId,
+        seasonNumber: target.seasonNumber,
+        status: confirmed ? "confirmed" : "pending",
+        episodeNumbers: episodes,
+        coversWholeSeason: confirmed && scope?.coversWholeSeason,
+        source: "contract_link",
+      });
+      if (!scopeResult.success) return scopeResult;
+      episodeScopeId = scopeResult.scope.id;
+      resolvedSeasonNumber = scopeResult.scope.season_number;
+      resolvedEpisodeNumbers = scopeResult.scope.status === "confirmed"
+        ? scopeResult.scope.covers_whole_season ? [] : scopeResult.scope.episode_numbers
+        : null;
+    }
+  }
   const { error } = await db
     .from("contracts")
     .update({
       work_id: workId,
-      season_number: workId && scope?.seasonNumber ? scope.seasonNumber : null,
-      episode_numbers: workId && scope?.seasonNumber
-        ? [...new Set((scope.episodeNumbers ?? []).filter(number => Number.isInteger(number) && number > 0))]
-        : null,
+      episode_scope_id: episodeScopeId,
+      season_number: workId ? resolvedSeasonNumber : null,
+      episode_numbers: workId ? resolvedEpisodeNumbers : null,
     })
     .eq("id", contractId)
     .eq("rights_holder_id", rh.id);
