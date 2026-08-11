@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -117,7 +118,7 @@ interface EditWorkModalProps {
   onClose: () => void;
   assignment: Assignment;
   allAssignments: Assignment[];
-  onWorkUpdated: (message: string, success: boolean, updatedRole?: string, targetId?: string) => void;
+  onWorkUpdated: (message: string, success: boolean, updatedRole?: string, targetId?: string) => void | Promise<void>;
   locale: string;
   editScope?: "work" | "season" | "episode";
   seasonWorkIds?: string[];
@@ -249,6 +250,11 @@ export function EditWorkModal({
   const [externalQuery, setExternalQuery] = useState("");
   const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
+  const [episodeRemovalImpact, setEpisodeRemovalImpact] = useState<{
+    removedEpisodes: number[];
+    affectedContractCount: number;
+    contractsLosingValidation: number;
+  } | null>(null);
 
   useEffect(() => {
     if (isOpen && assignment) {
@@ -259,6 +265,7 @@ export function EditWorkModal({
       setExternalResults([]);
       setWorkCorrectionComment("");
       setCommentError(false);
+      setEpisodeRemovalImpact(null);
       const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
       const season = assignment.works?.season_number ?? 1;
       const assignedEpisodes = (allAssignments ?? []).filter(other => {
@@ -399,7 +406,7 @@ export function EditWorkModal({
     }
   };
 
-  const handleSendWorkCorrection = async () => {
+  const handleSendWorkCorrection = async (confirmEpisodeRemoval = false) => {
     if (!assignment.works || !workCorrection) return;
     const myEpisodes = Object.entries(selectedEpisodes)
       .filter(([, checked]) => checked)
@@ -426,7 +433,16 @@ export function EditWorkModal({
           selectedEpisodes: myEpisodes,
           seasonNumber: directEpisodeSeason,
           coversWholeSeason,
+          confirmEpisodeRemoval,
         });
+        if ("requiresConfirmation" in syncResult && syncResult.requiresConfirmation) {
+          setEpisodeRemovalImpact({
+            removedEpisodes: syncResult.removedEpisodes,
+            affectedContractCount: syncResult.affectedContractCount,
+            contractsLosingValidation: syncResult.contractsLosingValidation,
+          });
+          return;
+        }
         if (!syncResult.success) throw new Error(syncResult.error ?? "Afsnitstilknytningerne kunne ikke gemmes.");
       }
       if (hasAdminCorrection) {
@@ -459,9 +475,9 @@ export function EditWorkModal({
         });
         if (!res.success) throw new Error(t("works.createFailed"));
       }
-      onWorkUpdated(hasAdminCorrection ? t("works.correctionSent") : "Sæsonens afsnit er gemt.", true, editScope === "season" ? editRole : undefined, assignment.id);
+      await onWorkUpdated(hasAdminCorrection ? t("works.correctionSent") : "Sæsonens afsnit er gemt.", true, editScope === "season" ? editRole : undefined, assignment.id);
     } catch (err: unknown) {
-      onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
+      await onWorkUpdated(err instanceof Error ? err.message : t("works.createFailed"), false);
     } finally {
       setIsSendingCorrection(false);
     }
@@ -861,11 +877,43 @@ export function EditWorkModal({
         <Button variant="outline" onClick={onClose}>
           {t("common.cancel")}
         </Button>
-        <Button onClick={handleSendWorkCorrection} disabled={isSendingCorrection} className="gap-2">
+        <Button onClick={() => void handleSendWorkCorrection()} disabled={isSendingCorrection} className="gap-2">
           {isSendingCorrection && <Loader2 className="h-4 w-4 animate-spin" />}
-          {locale === "da" ? `Send rettelse til ${organisationShortName}` : `Send correction to ${organisationShortName}`}
+          {isSendingCorrection ? (locale === "da" ? "Gemmer…" : "Saving…") : t("common.save")}
         </Button>
       </div>
+      <Dialog open={Boolean(episodeRemovalImpact)} onOpenChange={open => { if (!open && !isSendingCorrection) setEpisodeRemovalImpact(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{locale === "da" ? "Fjern valgte afsnit?" : "Remove selected episodes?"}</DialogTitle>
+            <DialogDescription className="space-y-2">
+              <span className="block">
+                {locale === "da"
+                  ? `${episodeRemovalImpact?.removedEpisodes.length ? `Du fjerner afsnit ${episodeRemovalImpact.removedEpisodes.join(", ")}.` : "Du fjerner dit nuværende afsnitsvalg."} ${episodeRemovalImpact?.affectedContractCount ?? 0} kontrakt(er) bliver opdateret.`
+                  : `${episodeRemovalImpact?.removedEpisodes.length ? `You are removing episodes ${episodeRemovalImpact.removedEpisodes.join(", ")}.` : "You are removing your current episode selection."} ${episodeRemovalImpact?.affectedContractCount ?? 0} contract(s) will be updated.`}
+              </span>
+              {(episodeRemovalImpact?.contractsLosingValidation ?? 0) > 0 && (
+                <span className="block font-medium text-destructive">
+                  {locale === "da"
+                    ? `${episodeRemovalImpact?.contractsLosingValidation} valideret kontrakt(er) sættes tilbage til Afventer validering, fordi ingen afsnit er valgt.`
+                    : `${episodeRemovalImpact?.contractsLosingValidation} validated contract(s) will return to Pending validation because no episodes are selected.`}
+                </span>
+              )}
+              <span className="block">
+                {locale === "da" ? "Kontrakter og godkendte visninger bliver ikke slettet." : "Contracts and approved screenings will not be deleted."}
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEpisodeRemovalImpact(null)} disabled={isSendingCorrection}>
+              {t("common.cancel")}
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => { setEpisodeRemovalImpact(null); void handleSendWorkCorrection(true); }} disabled={isSendingCorrection}>
+              {locale === "da" ? "Fjern og gem" : "Remove and save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Modal>
   );
 }

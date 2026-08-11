@@ -53,6 +53,7 @@ export async function upsertMemberSeriesEpisodeScope(
     episodeNumbers?: number[];
     coversWholeSeason?: boolean;
     source: EpisodeScopeSource;
+    allowConfirmedToPending?: boolean;
   },
 ) {
   const seasonNumber = Math.max(1, Math.floor(Number(params.seasonNumber) || 1));
@@ -74,7 +75,7 @@ export async function upsertMemberSeriesEpisodeScope(
     .select("id,org_id,rights_holder_id,series_work_id,season_number,status,episode_numbers,covers_whole_season,source,confirmed_at")
     .match(key)
     .maybeSingle();
-  if (existing?.status === "confirmed" && params.status === "pending") {
+  if (existing?.status === "confirmed" && params.status === "pending" && !params.allowConfirmedToPending) {
     return { success: true as const, scope: existing as MemberSeriesEpisodeScope };
   }
 

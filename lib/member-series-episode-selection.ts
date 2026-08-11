@@ -10,3 +10,27 @@ export function classifyEpisodeSelection(values: number[] | null | undefined, co
     coversWholeSeason: Boolean(coversWholeSeason),
   };
 }
+
+export function calculateEpisodeRemovalImpact(params: {
+  currentEpisodes: number[] | null | undefined;
+  nextEpisodes: number[] | null | undefined;
+  coversWholeSeason?: boolean;
+  currentStatus?: "pending" | "confirmed" | null;
+  contractStatuses?: Array<string | null | undefined>;
+}) {
+  const currentEpisodes = normalizeEpisodeNumbers(params.currentEpisodes);
+  const nextEpisodes = normalizeEpisodeNumbers(params.nextEpisodes);
+  const nextSet = new Set(nextEpisodes);
+  const removedEpisodes = params.coversWholeSeason
+    ? []
+    : currentEpisodes.filter(episode => !nextSet.has(episode));
+  const selectionWillBePending = !params.coversWholeSeason && nextEpisodes.length === 0;
+  return {
+    removedEpisodes,
+    requiresConfirmation: removedEpisodes.length > 0 || (params.currentStatus === "confirmed" && selectionWillBePending),
+    selectionWillBePending,
+    contractsLosingValidation: selectionWillBePending
+      ? (params.contractStatuses ?? []).filter(status => status === "valideret").length
+      : 0,
+  };
+}
