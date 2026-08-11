@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { startAdminDriveImport, waitForAdminDriveImport } from "@/lib/client/admin-drive-import";
 
 type Provider = "google_drive" | "onedrive" | "dropbox";
 type Connection = { id: string; provider: Provider; display_name: string; account_label: string | null; status: string; last_tested_at: string | null };
@@ -146,22 +147,10 @@ export function ImportConnectionsSettings() {
   const sync = async (source: Source) => {
     setSyncingId(source.id);
     try {
-      const response = await fetch(`/api/admin/import-sources/${source.id}/sync`, { method: "POST" });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error);
-      toast.success(json.resumed ? "Importen fortsætter i baggrunden" : "Importen er startet i baggrunden");
-      const runId = json.runId as string;
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 2000));
-        const statusResponse = await fetch(`/api/admin/import-sources/${source.id}/sync`, { cache: "no-store" });
-        const statusJson = await statusResponse.json();
-        const run = statusJson.run;
-        if (!statusResponse.ok || !run || run.id !== runId) break;
-        if (["completed", "partially_failed", "failed", "cancelled"].includes(run.status)) {
-          toast.success(`${run.imported_count} fil(er) importeret${run.duplicate_count ? `, ${run.duplicate_count} dublet(ter)` : ""}${run.failed_count ? `, ${run.failed_count} fejl` : ""}.`);
-          break;
-        }
-      }
+      const started = await startAdminDriveImport(source.id);
+      toast.success(started.resumed ? "Importen fortsætter i baggrunden" : "Importen er startet i baggrunden");
+      const run = await waitForAdminDriveImport(source.id, started.runId);
+      if (run) toast.success(`${run.imported_count} fil(er) importeret${run.duplicate_count ? `, ${run.duplicate_count} dublet(ter)` : ""}${run.failed_count ? `, ${run.failed_count} fejl` : ""}.`);
       await load();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Synkroniseringen fejlede");
@@ -170,7 +159,7 @@ export function ImportConnectionsSettings() {
     }
   };
 
-  return <section className="rounded-lg border bg-card p-4 shadow-sm sm:p-5">
+  return <section id="importforbindelser" className="scroll-mt-24 rounded-lg border bg-card p-4 shadow-sm sm:p-5">
     <h2 className="flex items-center gap-2 text-base font-semibold"><Cloud className="h-5 w-5" />Importforbindelser</h2>
     <p className="mt-1 text-sm text-muted-foreground">Forbind organisationsdrev til kontrakter og andre filimporter. Portalen får kun læseadgang, og forbindelsen kan afbrydes igen.</p>
     {loading ? <Loader2 className="mt-4 h-5 w-5 animate-spin" /> : <div className="mt-4 space-y-3">

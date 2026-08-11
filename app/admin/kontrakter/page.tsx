@@ -45,6 +45,7 @@ import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ListResultSummary } from "@/components/list-result-summary"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ManualWorkFormFields } from "@/components/works/manual-work-form"
+import { ContractDriveImportLauncher } from "@/components/admin/contract-drive-import-launcher"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
 import { extractedProductionCompanyNames } from "@/lib/production-companies"
 import { contractReadiness, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
@@ -1917,7 +1918,7 @@ function AdminKontrakterContent() {
             {/* Upload Dialog */}
             <Dialog open={showUpload} onOpenChange={o => { if (!o && !saving) { setShowUpload(false); setUploadItems([]); setUploadPhase("select") } }}>
                 <DialogContent
-                    className="flex flex-col w-full max-w-[95vw] sm:max-w-[560px]"
+                    className="flex max-h-[92vh] w-full max-w-[95vw] flex-col overflow-hidden sm:max-w-[620px]"
                     onCloseAutoFocus={e => e.preventDefault()}
                 >
                     <DialogHeader className="shrink-0">
@@ -1927,27 +1928,27 @@ function AdminKontrakterContent() {
                         </DialogTitle>
                         <DialogDescription>
                             {uploadPhase === "select"
-                                ? "Vælg op til 15 filer. De gemmes som kladde, og indlæsning kører i køen."
-                                : "Uploader og læser første kontrakt..."}
+                                ? t("admin.contracts.uploadDescription")
+                                : t("admin.contracts.uploadProcessing")}
                         </DialogDescription>
                     </DialogHeader>
 
                     {/* Phase: select files */}
                     {uploadPhase === "select" && (
-                        <div className="py-2 space-y-4">
-                            <div>
-                                <Label className="block mb-2">Vælg filer</Label>
+                        <div className="min-h-0 space-y-4 overflow-y-auto py-2 pr-1">
+                            <section className="rounded-lg border p-3 sm:p-4">
+                                <Label className="mb-2 block">{t("admin.contracts.fromComputer")}</Label>
                                 <div
-                                    className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 p-10 cursor-pointer hover:border-primary/50 transition-colors text-center"
+                                    className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-muted-foreground/30 p-6 text-center transition-colors hover:border-primary/50 sm:p-10"
                                     onClick={() => document.getElementById("bulk-file-input")?.click()}
                                 >
                                     <Upload className="h-10 w-10 text-muted-foreground mb-3" />
-                                    <p className="text-sm font-medium">Klik for at vælge filer</p>
-                                    <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — ingen samlet batchgrænse, maks. 25 MB pr. fil</p>
-                                    <p className="mt-1 text-[11px] text-muted-foreground">Filerne uploades i små bidder og analyseres automatisk i baggrunden.</p>
+                                    <p className="text-sm font-medium">{t("admin.contracts.chooseFiles")}</p>
+                                    <p className="mt-1 text-xs text-muted-foreground">{t("admin.contracts.fileRequirements")}</p>
+                                    <p className="mt-1 text-[11px] text-muted-foreground">{t("admin.contracts.backgroundAnalysis")}</p>
                                     <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
-                </div>
-            </div>
+                                </div>
+                            </section>
                             {uploadItems.length > 0 && (
                                 <div className="space-y-2">
                                     <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>
@@ -2006,6 +2007,7 @@ function AdminKontrakterContent() {
                                     )}
                                 </div>
                             )}
+                            <ContractDriveImportLauncher />
                         </div>
                     )}
 
