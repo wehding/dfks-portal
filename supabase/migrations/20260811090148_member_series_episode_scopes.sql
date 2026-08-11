@@ -48,33 +48,43 @@ create policy "Admins read organisation series episode scopes"
   on public.member_series_episode_scopes for select to authenticated
   using (public.current_user_can_admin_org(org_id));
 
--- Bevar den eksisterende kontraktsemantik ved backfill:
--- NULL = endnu ikke besvaret, tom liste = eksplicit hele sæsonen.
+-- Brug kun medlemmets aktive bekræftelser som bevis på et afsluttet valg.
+-- contracts.episode_numbers kan også indeholde AI-/adminudtræk og må derfor
+-- ikke i sig selv løfte en sæson fra pending til confirmed.
 with candidates as (
   select
+    c.id as contract_id,
     c.org_id,
     c.rights_holder_id,
     coalesce(w.parent_work_id, w.id) as series_work_id,
     c.season_number,
-    c.episode_numbers
+    confirmation.id as confirmation_id,
+    confirmation.scope as confirmation_scope,
+    confirmation.episode_numbers as confirmed_episode_numbers,
+    confirmation.confirmed_at
   from public.contracts c
   join public.works w on w.id = c.work_id
+  left join public.contract_episode_confirmations confirmation
+    on confirmation.contract_id = c.id
+   and confirmation.invalidated_at is null
   where c.rights_holder_id is not null
     and c.season_number is not null
     and (w.type in ('tv-serie', 'dokumentar-serie') or w.parent_work_id is not null)
 ), expanded as (
   select candidate.*, episode_number
   from candidates candidate
-  left join lateral unnest(coalesce(candidate.episode_numbers, '{}')) as episode_number on true
+  left join lateral unnest(coalesce(candidate.confirmed_episode_numbers, '{}')) as episode_number on true
 ), grouped as (
   select
     org_id,
     rights_holder_id,
     series_work_id,
     season_number,
-    bool_or(episode_numbers is not null) as has_confirmation,
-    bool_or(episode_numbers is not null and cardinality(episode_numbers) = 0) as whole_season,
-    coalesce(array_remove(array_agg(distinct episode_number order by episode_number), null), '{}') as selected_episodes
+    bool_or(confirmation_id is not null) as has_confirmation,
+    bool_or(confirmation_scope = 'entire_season') as whole_season,
+    coalesce(array_agg(distinct episode_number order by episode_number)
+      filter (where episode_number is not null), '{}') as selected_episodes,
+    max(confirmed_at) as confirmed_at
   from expanded
   group by org_id, rights_holder_id, series_work_id, season_number
 )
@@ -91,7 +101,7 @@ select
   case when whole_season then '{}' else selected_episodes end,
   whole_season,
   'legacy',
-  case when has_confirmation then now() else null end
+  case when has_confirmation then confirmed_at else null end
 from grouped
 on conflict (org_id, rights_holder_id, series_work_id, season_number) do nothing;
 
