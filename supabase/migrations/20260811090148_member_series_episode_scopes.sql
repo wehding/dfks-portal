@@ -81,7 +81,7 @@ with candidates as (
     series_work_id,
     season_number,
     bool_or(confirmation_id is not null) as has_confirmation,
-    bool_or(confirmation_scope = 'entire_season') as whole_season,
+    coalesce(bool_or(confirmation_scope = 'entire_season'), false) as whole_season,
     coalesce(array_agg(distinct episode_number order by episode_number)
       filter (where episode_number is not null), '{}') as selected_episodes,
     max(confirmed_at) as confirmed_at
