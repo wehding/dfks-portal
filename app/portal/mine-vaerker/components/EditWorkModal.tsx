@@ -122,6 +122,7 @@ interface EditWorkModalProps {
   editScope?: "work" | "season" | "episode";
   seasonWorkIds?: string[];
   initialEpisodeOptions?: SeriesEpisodeOption[];
+  initialEpisodeScope?: { status: "pending" | "confirmed"; episode_numbers: number[]; covers_whole_season: boolean } | null;
   organisationShortName: string;
 }
 
@@ -227,6 +228,7 @@ export function EditWorkModal({
   editScope = "work",
   seasonWorkIds = [],
   initialEpisodeOptions = [],
+  initialEpisodeScope = null,
   organisationShortName,
 }: EditWorkModalProps) {
   const { t } = useI18n();
@@ -243,6 +245,7 @@ export function EditWorkModal({
   const [directEpisodeOptions, setDirectEpisodeOptions] = useState<SeriesEpisodeOption[]>([]);
   const [directEpisodeSeason, setDirectEpisodeSeason] = useState(1);
   const [directEpisodesLoading, setDirectEpisodesLoading] = useState(false);
+  const [coversWholeSeason, setCoversWholeSeason] = useState(false);
   const [externalQuery, setExternalQuery] = useState("");
   const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
@@ -258,10 +261,13 @@ export function EditWorkModal({
       setCommentError(false);
       const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
       const season = assignment.works?.season_number ?? 1;
-      setSelectedEpisodes(Object.fromEntries((allAssignments ?? []).filter(other => {
+      const assignedEpisodes = (allAssignments ?? []).filter(other => {
         const work = other.works;
         return other.rights_holder_id === assignment.rights_holder_id && work && (work.parent_work_id ?? work.id) === seriesKey && (work.season_number ?? 1) === season && work.episode_number;
-      }).map(other => [other.works!.episode_number!, true])));
+      }).map(other => other.works!.episode_number!);
+      const initialNumbers = assignedEpisodes.length > 0 ? assignedEpisodes : initialEpisodeScope?.episode_numbers ?? [];
+      setSelectedEpisodes(Object.fromEntries(initialNumbers.map(number => [number, true])));
+      setCoversWholeSeason(Boolean(initialEpisodeScope?.covers_whole_season));
       setCoEditorSuggestions({});
       setDirectEpisodeOptions(initialEpisodeOptions);
       const inferredSeries = inferSeriesWorkFields({
@@ -289,7 +295,7 @@ export function EditWorkModal({
           }))
       );
     }
-  }, [isOpen, assignment, allAssignments, editScope, initialEpisodeOptions, seasonWorkIds]);
+  }, [isOpen, assignment, allAssignments, editScope, initialEpisodeOptions, initialEpisodeScope, seasonWorkIds]);
 
   useEffect(() => {
     const loadSeriesEpisodes = async () => {
@@ -419,6 +425,7 @@ export function EditWorkModal({
           role: editRole,
           selectedEpisodes: myEpisodes,
           seasonNumber: directEpisodeSeason,
+          coversWholeSeason,
         });
         if (!syncResult.success) throw new Error(syncResult.error ?? "Afsnitstilknytningerne kunne ikke gemmes.");
       }
@@ -522,7 +529,7 @@ export function EditWorkModal({
         </select>
       </div>
 
-      {editScope === "season" && directSeriesEpisodeCount > 0 && (
+      {editScope === "season" && (directSeriesEpisodeCount > 0 || directSeriesEpisodeOptions.length > 0 || initialEpisodeScope?.status === "pending") && (
         <div className="mb-6 rounded-lg border p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -542,12 +549,27 @@ export function EditWorkModal({
             )}
           </div>
           <div className="mt-3">
+            <label className="mb-3 flex items-start gap-2 rounded-md border bg-muted/30 p-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={coversWholeSeason}
+                onChange={event => {
+                  setCoversWholeSeason(event.target.checked);
+                  if (event.target.checked) setSelectedEpisodes({});
+                }}
+              />
+              <span>{locale === "da" ? "Jeg arbejdede på hele sæsonen" : "I worked on the entire season"}</span>
+            </label>
             <SeriesEpisodeSelector
               season={directEpisodeSeason}
               onSeasonChange={() => undefined}
               options={directSeriesEpisodeOptions}
-              selected={directSelectedEpisodeNumbers}
-              onSelectedChange={episodes => setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])))}
+              selected={coversWholeSeason ? [] : directSelectedEpisodeNumbers}
+              onSelectedChange={episodes => {
+                setCoversWholeSeason(false);
+                setSelectedEpisodes(Object.fromEntries(episodes.map(number => [number, true])));
+              }}
               loading={directEpisodesLoading}
               seasonReadOnly
               compact

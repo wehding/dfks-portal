@@ -383,6 +383,30 @@ begin
   end if;
 end $$;
 
+do $$
+begin
+  if not exists (
+    select 1 from pg_class relation
+    join pg_namespace namespace on namespace.oid = relation.relnamespace
+    where namespace.nspname = 'public'
+      and relation.relname = 'member_series_episode_scopes'
+      and relation.relrowsecurity
+  ) then
+    raise exception 'RLS failure: public.member_series_episode_scopes is missing or RLS is disabled';
+  end if;
+  if has_table_privilege('anon', 'public.member_series_episode_scopes', 'SELECT') then
+    raise exception 'RLS failure: anon can read member episode selections';
+  end if;
+  if not has_table_privilege('authenticated', 'public.member_series_episode_scopes', 'SELECT') then
+    raise exception 'RLS failure: authenticated lacks policy-gated episode selection access';
+  end if;
+  if has_table_privilege('authenticated', 'public.member_series_episode_scopes', 'INSERT')
+    or has_table_privilege('authenticated', 'public.member_series_episode_scopes', 'UPDATE')
+    or has_table_privilege('authenticated', 'public.member_series_episode_scopes', 'DELETE') then
+    raise exception 'RLS failure: authenticated can mutate member episode selections directly';
+  end if;
+end $$;
+
 -- Ordinary organisation membership is not staff authorization.
 do $$
 declare

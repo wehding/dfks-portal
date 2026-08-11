@@ -53,6 +53,9 @@ type Work = {
   overview_contract_count?: number;
   overview_pending_count?: number;
   overview_unread_count?: number;
+  episode_selection_status?: "pending" | "confirmed";
+  episode_scope_id?: string | null;
+  covers_whole_season?: boolean;
 };
 export type Assignment = { id: string; work_id?: string; rights_holder_id?: string | null; role: string | null; contract_id: string | null; episode_id: string | null; created_at?: string | null; episodes: { episode_number: number; title?: string | null } | null; works: Work | null };
 export type OtherAssignment = { id: string; work_id: string; role: string | null; rights_holder_id?: string | null; rettighedshavere: { id?: string; full_name: string } | null; works?: Work | null };
@@ -106,6 +109,9 @@ type MemberOverviewItem =
       unreadCount: number;
       roleSummary: string | null;
       createdAt: string | null;
+      episodeSelectionStatus?: "pending" | "confirmed";
+      episodeScopeId?: string | null;
+      coversWholeSeason?: boolean;
     };
 
 export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): Assignment[] {
@@ -153,6 +159,9 @@ export function memberOverviewItemsToAssignments(items: MemberOverviewItem[]): A
         overview_contract_count: item.contractCount,
         overview_pending_count: item.pendingCount,
         overview_unread_count: item.unreadCount,
+        episode_selection_status: item.episodeSelectionStatus,
+        episode_scope_id: item.episodeScopeId,
+        covers_whole_season: item.coversWholeSeason,
       },
     };
   });
@@ -302,11 +311,13 @@ export default function MineVaerkerClient({
   const [editScope, setEditScope] = useState<"work" | "season" | "episode">("work");
   const [editSeasonWorkIds, setEditSeasonWorkIds] = useState<string[]>([]);
   const [editEpisodeOptions, setEditEpisodeOptions] = useState<Array<{ number: number; title: string }>>([]);
+  const [editEpisodeScope, setEditEpisodeScope] = useState<{ status: "pending" | "confirmed"; episode_numbers: number[]; covers_whole_season: boolean } | null>(null);
   const [editContextAssignments, setEditContextAssignments] = useState<OtherAssignment[]>([]);
   const [initialAddQuery, setInitialAddQuery] = useState("");
   const [initialManualWork, setInitialManualWork] = useState<ManualWorkFormSeed | null>(null);
   const addParamHandledRef = React.useRef<string | null>(null);
   const requestParamHandledRef = React.useRef<string | null>(null);
+  const episodeScopeParamHandledRef = React.useRef<string | null>(null);
 
   const router   = useRouter();
   const searchParams = useSearchParams();
@@ -347,7 +358,7 @@ export default function MineVaerkerClient({
       const hasRejected = requests.some(request => request.status === "rejected");
       const hasContract = (w.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(w.id);
       const missingData = !w.year || !w.type || !w.title?.trim();
-      const missingEpisodes = isSeriesType(w.type) && !w.episode_count;
+      const missingEpisodes = isSeriesType(w.type) && w.episode_selection_status === "pending";
       if (statusFilter === "messages" && !hasUnread) return false;
       if (statusFilter === "pending" && !hasPending) return false;
       if (statusFilter === "rejected" && !hasRejected) return false;
@@ -504,6 +515,7 @@ export default function MineVaerkerClient({
     setEditScope(a.works?.parent_work_id && a.works.episode_number != null ? "episode" : "work");
     setEditSeasonWorkIds([]);
     setEditEpisodeOptions([]);
+    setEditEpisodeScope(null);
     setEditContextAssignments([]);
     setEditAssignment(a);
     if (!rightsHolderId) return;
@@ -534,6 +546,17 @@ export default function MineVaerkerClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assignments, searchParams]);
 
+  React.useEffect(() => {
+    const scopeId = searchParams?.get("episodeScope");
+    if (!scopeId || episodeScopeParamHandledRef.current === scopeId) return;
+    const assignment = assignments.find(item => item.works?.episode_scope_id === scopeId);
+    if (!assignment?.works) return;
+    episodeScopeParamHandledRef.current = scopeId;
+    void openSeasonEdit(assignment.works);
+    // openSeasonEdit intentionally uses the current assignment state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignments, searchParams]);
+
   const openSeasonEdit = async (work: Work) => {
     if (!rightsHolderId || !work.parent_work_id || work.season_number == null) return;
     const result = await fetchMemberSeasonEditContext({
@@ -552,6 +575,7 @@ export default function MineVaerkerClient({
     setEditScope("season");
     setEditSeasonWorkIds([...new Set(seasonAssignments.map(item => item.work_id).filter((id): id is string => Boolean(id)))]);
     setEditEpisodeOptions((result.options ?? []) as Array<{ number: number; title: string }>);
+    setEditEpisodeScope((result.episodeScope ?? null) as { status: "pending" | "confirmed"; episode_numbers: number[]; covers_whole_season: boolean } | null);
     setEditContextAssignments([
       ...ownAssignments.map(item => ({
         id: item.id,
@@ -608,6 +632,7 @@ export default function MineVaerkerClient({
   const closeEdit = () => {
     setEditAssignment(null);
     setEditContextAssignments([]);
+    setEditEpisodeScope(null);
   };
 
   const handleDeleteSelected = async () => {
@@ -809,6 +834,7 @@ export default function MineVaerkerClient({
           const broadcaster = getWorkBroadcaster(w);
           const broadcasterLogo = broadcaster ? broadcasterLogoMap[broadcaster] : null;
           const isSeriesParent = Boolean(w.is_season_group);
+          const needsEpisodeSelection = w.episode_selection_status === "pending";
           const isExpanded = expandedSeries.has(w.id);
           const children = seriesEpisodes[w.id] ?? [];
           const isLoadingChildren = loadingSeries.has(w.id);
@@ -843,6 +869,7 @@ export default function MineVaerkerClient({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
+                    {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -927,6 +954,7 @@ export default function MineVaerkerClient({
                           <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
                         )}
                         <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
+                        {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1032,6 +1060,7 @@ export default function MineVaerkerClient({
           editScope={editScope}
           seasonWorkIds={editSeasonWorkIds}
           initialEpisodeOptions={editEpisodeOptions}
+          initialEpisodeScope={editEpisodeScope}
           organisationShortName={organisationShortName}
           onWorkUpdated={(message, success, updatedRole, targetId) => {
             setMsg({ type: success ? "success" : "error", text: message });

@@ -105,6 +105,7 @@ export default function PortalLayout({
     const [pendingWorksCount, setPendingWorksCount] = useState<number>(0)
     const [pendingContractMessagesCount, setPendingContractMessagesCount] = useState<number>(0)
     const [workMessageCount, setWorkMessageCount] = useState<number>(0)
+    const [memberEpisodeTodoCount, setMemberEpisodeTodoCount] = useState<number>(0)
     const [contractMessageCount, setContractMessageCount] = useState<number>(0)
     const [inboxMessageCount, setInboxMessageCount] = useState<number>(0)
     const [brand, setBrand] = useState<{ logo_url: string | null; short_name: string; long_name: string }>({ logo_url: null, short_name: "DFKS", long_name: "DFKS" })
@@ -164,6 +165,12 @@ export default function PortalLayout({
                 .eq("user_id", user.id)
                 .maybeSingle()
             if (rh?.id) {
+                const { count: episodeTodoCount } = await supabase
+                    .from("member_series_episode_scopes")
+                    .select("id", { count: "exact", head: true })
+                    .eq("rights_holder_id", rh.id)
+                    .eq("status", "pending")
+                setMemberEpisodeTodoCount(episodeTodoCount ?? 0)
                 const { data: comments } = await supabase
                     .from("contract_comments")
                     .select("id, author_role, member_read_at, contracts!inner(rights_holder_id)")
@@ -299,9 +306,9 @@ export default function PortalLayout({
                                                     <SidebarNavigationLink href={item.href}>
                                                         <item.icon className="h-4 w-4" />
                                                         <span>{item.label}</span>
-                                                        {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
+                                                        {item.href === "/portal/mine-vaerker" && (workMessageCount + memberEpisodeTodoCount) > 0 && (
                                                             <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                                {workMessageCount}
+                                                                {workMessageCount + memberEpisodeTodoCount}
                                                             </span>
                                                         )}
                                                         {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (
@@ -397,9 +404,9 @@ export default function PortalLayout({
                                                 <SidebarNavigationLink href={item.href}>
                                                     <item.icon className="h-4 w-4" />
                                                     <span>{item.label}</span>
-                                                    {item.href === "/portal/mine-vaerker" && workMessageCount > 0 && (
+                                                    {item.href === "/portal/mine-vaerker" && (workMessageCount + memberEpisodeTodoCount) > 0 && (
                                                         <span className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                                                            {workMessageCount}
+                                                            {workMessageCount + memberEpisodeTodoCount}
                                                         </span>
                                                     )}
                                                     {item.href === "/portal/mine-kontrakter" && contractMessageCount > 0 && (

@@ -12,6 +12,7 @@ import { attachmentChanges } from "@/lib/attachment-ai"
 import { requireInternalSecretApi } from "@/lib/api-auth"
 import { matchRightsHolder, matchSharedWork } from "@/lib/server/contract-import-matching"
 import { CONTRACT_MATCH_VERSION } from "@/lib/contract-import"
+import { resolveSeriesScopeTarget, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes"
 
 type ContractJob = {
     id: string
@@ -195,6 +196,29 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         ...(rightsHolderId ? { rights_holder_id: rightsHolderId } : {}),
         ...(workId ? { work_id: workId } : {}),
     }).eq("id", job.contract_id)
+
+    if (rightsHolderId && workId) {
+        const extractedSeason = Math.max(1, Math.floor(Number(ext.seasonNumber ?? ext.season ?? 1) || 1))
+        const target = await resolveSeriesScopeTarget(admin, workId, extractedSeason)
+        if (target) {
+            const scopeResult = await upsertMemberSeriesEpisodeScope(admin, {
+                orgId: job.org_id,
+                rightsHolderId,
+                seriesWorkId: target.seriesWorkId,
+                seasonNumber: target.seasonNumber,
+                status: "pending",
+                source: "contract_upload",
+            })
+            if (!scopeResult.success) throw new Error(scopeResult.error)
+            await admin.from("contracts").update({
+                episode_scope_id: scopeResult.scope.id,
+                season_number: scopeResult.scope.season_number,
+                episode_numbers: scopeResult.scope.status === "confirmed"
+                    ? scopeResult.scope.covers_whole_season ? [] : scopeResult.scope.episode_numbers
+                    : null,
+            }).eq("id", job.contract_id)
+        }
+    }
 
     if (job.id !== "__direct__") {
         let itemStatus = !rightsHolderId ? "missing_owner" : !workId ? "missing_work" : "ready_for_review"
