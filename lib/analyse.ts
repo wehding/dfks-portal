@@ -64,7 +64,7 @@ export type Klassifikation = {
     kontraktsprog: "da" | "en" | "other"
     loen_type: "ugeloeen" | "dagsloen" | "fast_total" | "ukendt"
     loen_valuta: "DKK" | "USD" | "EUR" | "GBP" | "other"
-    produktionstype: "spillefilm" | "tvserie" | "dokumentar" | "kortfilm" | "ukendt"
+    produktionstype: "spillefilm" | "tvserie" | "dokumentar" | "kortfilm" | "ukendt" | "udvikling_dokumentar" | "udvikling_fiktion" | "udvikling_underholdning"
 }
 
 // ── Trin 1: Klassificér kontrakten ────────────────────────────
@@ -93,8 +93,18 @@ Returnér JSON med disse felter:
   "kontraktsprog": "da" ELLER "en" ELLER "other",
   "loen_type": "ugeloeen" ELLER "dagsloen" ELLER "fast_total" (ved 'total fee', 'fixed fee', 'lump sum', 'flat fee', 'fast honorar', 'samlet honorar') ELLER "ukendt",
   "loen_valuta": "DKK" ELLER "USD" (ved $) ELLER "EUR" (ved €) ELLER "GBP" (ved £) ELLER "other",
-  "produktionstype": "spillefilm" ELLER "tvserie" ELLER "dokumentar" ELLER "kortfilm" ELLER "ukendt"
-}`
+  "produktionstype": "spillefilm" ELLER "tvserie" ELLER "dokumentar" ELLER "kortfilm" ELLER "ukendt" ELLER "udvikling_dokumentar" ELLER "udvikling_fiktion" ELLER "udvikling_underholdning"
+}
+
+VIGTIGT — udviklingskontrakter:
+Brug "udvikling_dokumentar", "udvikling_fiktion" eller "udvikling_underholdning" hvis kontrakten er for en produktion der endnu ikke er sat i produktion. Tegn på udviklingskontrakt:
+- Kreditering indeholder "(udvikling)" fx "Klipper (udvikling)" eller "Film Editor (development)"
+- Ord som "udviklingskontrakt", "udviklingsforløb", "optionsaftale", "i udviklingsfasen", "development deal"
+- Ingen angivet distributionsaftale eller premiere
+- Titlen er beskrevet som "arbejdstitel" uden fastlagt produktionsformat
+
+Domænereglen: dokumentar → "udvikling_dokumentar", fiktion/drama → "udvikling_fiktion", underholdning/reality → "udvikling_underholdning".
+Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan bestemmes.`
 
     const defaultKlassifikation: Klassifikation = {
         kontrakttype: "hybrid",
@@ -138,7 +148,9 @@ Returnér JSON med disse felter:
             kontraktsprog: p.kontraktsprog ?? "da",
             loen_type: p.loen_type ?? "ukendt",
             loen_valuta: p.loen_valuta ?? "DKK",
-            produktionstype: p.produktionstype ?? "ukendt",
+            produktionstype: ["spillefilm","tvserie","dokumentar","kortfilm","udvikling_dokumentar","udvikling_fiktion","udvikling_underholdning"].includes(p.produktionstype)
+                ? p.produktionstype
+                : "ukendt",
         }
     } catch {
         logWarn("analyse", "Klassifikation JSON parse fejl")
