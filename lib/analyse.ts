@@ -78,7 +78,15 @@ async function klassificerKontrakt(
     const system = `Du klassificerer danske filmkontrakter.
 Returnér KUN valid JSON — ingen tekst før eller efter.
 Brug null hvis et felt ikke kan bestemmes.`
-    const userMessage = `Klassificér denne kontrakt:\n\n${kontraktTekst.slice(0, 4000)}
+    // Scan hele teksten for udviklingsindikator og injicér som ekstra kontekst
+    const udviklingsMatch = kontraktTekst.match(
+        /klipper\s*\(udvikling\)|film\s+editor\s*\(development\)|udviklingskontrakt|i\s+udviklingsfasen|optionsaftale|development\s+deal/i
+    )
+    const udviklingsKontekst = udviklingsMatch
+        ? `\n\nOBS: Kontrakten indeholder følgende udviklingsindikator: "${udviklingsMatch[0]}" — klassificér som udviklingskontrakt.\n`
+        : ""
+
+    const userMessage = `Klassificér denne kontrakt:${udviklingsKontekst}\n\n${kontraktTekst.slice(0, 4000)}
 
 Returnér JSON med disse felter:
 {
