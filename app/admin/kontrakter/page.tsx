@@ -5,7 +5,7 @@ import { errorMessage } from "@/lib/error-message";
 import { useCallback, useEffect, useState, useMemo, Suspense, useRef } from "react"
 import dynamic from "next/dynamic"
 import {
-    Search, Trash2, Eye, Upload, FileText,
+    Search, Trash2, Eye, Upload, FileText, Download,
     CheckCircle2, AlertCircle, Loader2, X, Pencil, MessageSquare,
     AlertTriangle, Clock, Archive,
 } from "lucide-react"
@@ -1881,7 +1881,20 @@ function AdminKontrakterContent() {
                                     <TableCell>
                                         <ContractStatusBadges contract={c} compact />
                                     </TableCell>
-                                    <TableCell><Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => openPdf(c)}><Eye className="h-3.5 w-3.5" />Se</Button></TableCell>
+                                    <TableCell className="flex gap-1">
+                                        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => openPdf(c)}><Eye className="h-3.5 w-3.5" />Se</Button>
+                                        <Button type="button" variant="ghost" size="sm" className="gap-1" disabled={!c.pdf_url} onClick={async () => {
+                                            if (!c.pdf_url) return
+                                            const { createClient } = await import("@/lib/supabase/client")
+                                            const supabase = createClient()
+                                            const { data } = await supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 60)
+                                            if (!data?.signedUrl) return
+                                            const a = document.createElement("a")
+                                            a.href = data.signedUrl
+                                            a.download = c.pdf_url.split("/").pop() ?? "kontrakt.pdf"
+                                            a.click()
+                                        }}><Download className="h-3.5 w-3.5" /></Button>
+                                    </TableCell>
                                 </TableRow>
                                 )
                             })
