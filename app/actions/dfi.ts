@@ -10,6 +10,7 @@ import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPersonPortraitUrl, extractDfiPersonPortraitUrls, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 import { buildCompleteEpisodeOptions, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
+import { onboardingSeriesParentIds } from "@/lib/onboarding-series-data";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
@@ -978,15 +979,21 @@ export async function searchOnboardingCredits(
   
   let rawDfiCredits: DfiCredit[] = [];
   const rawTmdbCredits: any[] = [];
+  const creditSourceAttempts = {
+    dfi: { successes: 0, failures: 0 },
+    tmdb: { successes: 0, failures: 0 },
+  };
 
   // 1. Hent rådata fra DFI
   try {
     const legacyDfiPersonId = savedIdentity?.dfi_person_id ?? null;
     const dfiPersonRes = savedDfiPersonIds.length || legacyDfiPersonId ? null : await searchDFIPerson(firstName, lastName, fullName);
+    if (dfiPersonRes) creditSourceAttempts.dfi[dfiPersonRes.success ? "successes" : "failures"] += 1;
     const resolvedDfiPersonIds = savedDfiPersonIds.length ? savedDfiPersonIds : legacyDfiPersonId ? [Number(legacyDfiPersonId)] : (dfiPersonRes?.success ? (dfiPersonRes.results ?? []).slice(0, 1).map((item: { Id?: number | string }) => Number(item.Id)) : []);
     dfiPersonId = resolvedDfiPersonIds[0] ?? null;
     for (const resolvedDfiPersonId of resolvedDfiPersonIds) {
       const dfiCreditsRes = await getDFIPersonCredits(resolvedDfiPersonId);
+      creditSourceAttempts.dfi[dfiCreditsRes.success ? "successes" : "failures"] += 1;
       if (dfiCreditsRes.success && dfiCreditsRes.credits) {
         const uniqueDfi = dfiCreditsRes.credits.filter((c: any, i: number, arr: any[]) => arr.findIndex((x) => x.Id === c.Id) === i);
         const filteredDfi = uniqueDfi
@@ -995,6 +1002,7 @@ export async function searchOnboardingCredits(
       }
     }
   } catch (err) {
+    creditSourceAttempts.dfi.failures += 1;
     logWarn("Onboarding search", "DFI-søgning fejlede", { error: errorMessage(err) });
   }
 
@@ -1004,10 +1012,12 @@ export async function searchOnboardingCredits(
   try {
     const legacyTmdbPersonId = savedIdentity?.tmdb_person_id ?? null;
     const tmdbPersonRes = savedTmdbPersonIds.length || legacyTmdbPersonId ? null : await searchTMDBPerson(nameToSearch);
+    if (tmdbPersonRes) creditSourceAttempts.tmdb[tmdbPersonRes.success ? "successes" : "failures"] += 1;
     const resolvedTmdbPersonIds = savedTmdbPersonIds.length ? savedTmdbPersonIds : legacyTmdbPersonId ? [Number(legacyTmdbPersonId)] : (tmdbPersonRes?.success ? (tmdbPersonRes.results ?? []).slice(0, 1).map((item: { id?: number | string }) => Number(item.id)) : []);
     tmdbPersonId = resolvedTmdbPersonIds[0] ?? null;
     for (const resolvedTmdbPersonId of resolvedTmdbPersonIds) {
       const tmdbCreditsRes = await getTMDBPersonCombinedCredits(resolvedTmdbPersonId);
+      creditSourceAttempts.tmdb[tmdbCreditsRes.success ? "successes" : "failures"] += 1;
       if (tmdbCreditsRes.success && tmdbCreditsRes.crew) {
         const tmdbCrew = tmdbCreditsRes.crew as any[];
         const editors = tmdbCrew.filter(c => matchesOnboardingKeywords(c.job, onboardingKeywords));
@@ -1016,6 +1026,7 @@ export async function searchOnboardingCredits(
       }
     }
   } catch (err) {
+    creditSourceAttempts.tmdb.failures += 1;
     logWarn("Onboarding search", "TMDB-søgning fejlede", { error: errorMessage(err) });
   }
 
@@ -1108,11 +1119,7 @@ export async function searchOnboardingCredits(
   const dfiCredits: OnboardingCredit[] = [];
   const tmdbCredits: OnboardingCredit[] = [];
 
-  const localEpisodeParentIds = Array.from(new Set(
-    Array.from(localWorksMap.values())
-      .map(val => val.work?.parent_work_id)
-      .filter((id): id is string => typeof id === "string" && id.length > 0)
-  ));
+  const localEpisodeParentIds = onboardingSeriesParentIds(localWorksMap.values());
 
   if (localEpisodeParentIds.length > 0) {
     try {
@@ -1148,6 +1155,30 @@ export async function searchOnboardingCredits(
             }),
           },
           role: existing?.role ?? val.role,
+        });
+      }
+
+      // En rettighedshaver kan være tilknyttet direkte til seriens hovedværk.
+      // I det tilfælde skal de allerede kendte afsnit stadig indlæses i onboarding.
+      for (const [parentId, parent] of parentMap.entries()) {
+        const existing = localWorksMap.get(parentId);
+        if (!existing) continue;
+        const children = childrenByParent.get(parentId) ?? [];
+        const seasonNumber = parseSeasonNumberFromTitle(parent.title)
+          ?? children.find(child => child.season_number)?.season_number
+          ?? 1;
+        localWorksMap.set(parentId, {
+          ...existing,
+          work: {
+            ...parent,
+            ...existing.work,
+            __local_children: children,
+            __episode_options: buildCompleteEpisodeOptions({
+              episodeCount: parent.episode_count,
+              localChildren: children,
+              seasonNumber,
+            }),
+          },
         });
       }
     } catch (err) {
@@ -1280,7 +1311,11 @@ export async function searchOnboardingCredits(
     success: mergedCredits.length > 0,
     credits: mergedCredits,
     dfiPersonId,
-    tmdbPersonId
+    tmdbPersonId,
+    sourceErrors: {
+      dfi: creditSourceAttempts.dfi.failures > 0 && creditSourceAttempts.dfi.successes === 0,
+      tmdb: creditSourceAttempts.tmdb.failures > 0 && creditSourceAttempts.tmdb.successes === 0,
+    },
   };
 }
 

@@ -9,7 +9,7 @@ import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncContractProducerRelations } from "@/lib/server/production-company-relations";
 import { mergeContractWorkData, type LinkedContractWorkData } from "@/lib/contract-work-data";
 import { isUuid } from "@/lib/uuid";
-import { resolveTerminology } from "@/lib/branding";
+import { resolveDefaultRole } from "@/lib/branding";
 import { parseLocalEpisodeCode } from "@/lib/series-episodes";
 import { sendMemberNotification } from "@/lib/member-notifications";
 import { effectiveCopydanStatus, normalizeTriState, weeklySalaryWithPersonalSupplement } from "@/lib/contract-list-status";
@@ -844,7 +844,7 @@ export async function updateAdminContractEpisodeAssignments(params: {
   const removeIds = (existing ?? []).filter(item => !selectedSet.has(item.work_id)).map(item => item.id);
   // Default-rolle udledes fra organisationens terminologi (fx "Klipper" for DFKS), ikke hardcodet.
   const { data: orgForRole } = await db.from("organisations").select("terminology").eq("id", contract.org_id).maybeSingle();
-  const defaultRole = resolveTerminology(orgForRole ?? null).role_labels[0] ?? "Medskaber";
+  const defaultRole = resolveDefaultRole(orgForRole ?? null);
   const role = (existing ?? []).find(item => item.role)?.role ?? defaultRole;
   const additions = selectedIds.filter(id => !existingWorkIds.has(id)).map(workId => ({
     org_id: contract.org_id,

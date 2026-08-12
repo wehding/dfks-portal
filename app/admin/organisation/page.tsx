@@ -23,6 +23,7 @@ type FormState = {
   welcome_message_text: string;
   coeditor_word: string;
   role_labels: string[];
+  default_role_label: string;
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
   statistics_profile_config: {
@@ -57,6 +58,7 @@ const emptyForm: FormState = {
   welcome_message_text: "",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
+  default_role_label: "Medskaber",
   producer_categories: [],
   statistics_contract_scope: "validated_only",
   statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
@@ -98,6 +100,7 @@ export default function OrganisationSettingsPage() {
           welcome_message_text: settings.welcome_message_text ?? "",
           coeditor_word: settings.coeditor_word,
           role_labels: settings.role_labels,
+          default_role_label: settings.default_role_label,
           producer_categories: settings.producer_categories,
           statistics_contract_scope: settings.statistics_contract_scope,
           statistics_profile_config: settings.statistics_profile_config,
@@ -130,14 +133,20 @@ export default function OrganisationSettingsPage() {
     setForm(current => ({
       ...current,
       role_labels: current.role_labels.map((role, roleIndex) => roleIndex === index ? value : role),
+      default_role_label: current.default_role_label === current.role_labels[index] ? value : current.default_role_label,
     }));
   }
 
   function removeRole(index: number) {
-    setForm(current => ({
-      ...current,
-      role_labels: current.role_labels.filter((_, roleIndex) => roleIndex !== index),
-    }));
+    setForm(current => {
+      const removed = current.role_labels[index];
+      const roleLabels = current.role_labels.filter((_, roleIndex) => roleIndex !== index);
+      return {
+        ...current,
+        role_labels: roleLabels,
+        default_role_label: current.default_role_label === removed ? roleLabels[0] ?? "" : current.default_role_label,
+      };
+    });
   }
 
   function updateKeyword(index: number, value: string) {
@@ -173,6 +182,7 @@ export default function OrganisationSettingsPage() {
           welcome_message_text: form.welcome_message_text || null,
           coeditor_word: form.coeditor_word,
           role_labels: form.role_labels,
+          default_role_label: form.default_role_label,
           producer_categories: form.producer_categories,
           statistics_contract_scope: form.statistics_contract_scope,
           statistics_profile_config: form.statistics_profile_config,
@@ -548,6 +558,18 @@ export default function OrganisationSettingsPage() {
               <Plus className="mr-2 h-4 w-4" />
               Tilføj rolle
             </Button>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="default-role-label">Standardfaggruppe</Label>
+            <p className="text-xs text-muted-foreground">Bruges ved nye automatiske værks- og afsnitstilknytninger samt i onboardingtekster.</p>
+            <select
+              id="default-role-label"
+              value={form.default_role_label}
+              onChange={event => setForm(current => ({ ...current, default_role_label: event.target.value }))}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {form.role_labels.filter(role => role.trim()).map(role => <option key={role} value={role}>{role}</option>)}
+            </select>
           </div>
           <div className="space-y-2">
             <Label>Producenttyper</Label>

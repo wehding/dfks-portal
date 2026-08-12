@@ -6,6 +6,7 @@ import { getDFIPersonCredits, searchDFIPerson } from "@/app/actions/dfi";
 import { getTMDBPersonCombinedCredits, getTMDBPersonExternalIds, searchTMDBPerson } from "@/app/actions/tmdb";
 import { searchWikidataPeople } from "@/app/actions/wikidata";
 import { personSearchVariants, scorePersonName } from "@/lib/person-name-match";
+import { sourceSearchFailed, type SourceAttemptStatus } from "@/lib/source-search-status";
 
 export type PersonCandidate = {
   key: string;
@@ -63,16 +64,42 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
   if (!query) return { success: false, error: "Skriv dit navn.", candidates: [] as PersonCandidate[] };
   const variants = personSearchVariants(query, alternativeNames);
   const candidates = new Map<string, PersonCandidate>();
-  const sourceErrors = { dfi: false, tmdb: false, wikidata: false };
+  const sourceAttempts: Record<"dfi" | "tmdb" | "wikidata", SourceAttemptStatus> = {
+    dfi: { successes: 0, failures: 0 },
+    tmdb: { successes: 0, failures: 0 },
+    wikidata: { successes: 0, failures: 0 },
+  };
 
   await Promise.all(variants.map(async variant => {
     const [dfi, tmdb, wikidata] = await Promise.all([
-      searchDFIPerson(undefined, undefined, variant).catch(() => ({ success: false, results: [] })),
-      searchTMDBPerson(variant).catch(() => ({ success: false, results: [] })),
-      searchWikidataPeople(variant).catch(() => { sourceErrors.wikidata = true; return []; }),
+      searchDFIPerson(undefined, undefined, variant)
+        .then(result => {
+          sourceAttempts.dfi[result.success ? "successes" : "failures"] += 1;
+          return result;
+        })
+        .catch(() => {
+          sourceAttempts.dfi.failures += 1;
+          return { success: false, results: [] };
+        }),
+      searchTMDBPerson(variant)
+        .then(result => {
+          sourceAttempts.tmdb[result.success ? "successes" : "failures"] += 1;
+          return result;
+        })
+        .catch(() => {
+          sourceAttempts.tmdb.failures += 1;
+          return { success: false, results: [] };
+        }),
+      searchWikidataPeople(variant)
+        .then(result => {
+          sourceAttempts.wikidata.successes += 1;
+          return result;
+        })
+        .catch(() => {
+          sourceAttempts.wikidata.failures += 1;
+          return [];
+        }),
     ]);
-    if (!dfi.success) sourceErrors.dfi = true;
-    if (!tmdb.success) sourceErrors.tmdb = true;
 
     for (const row of dfi.success ? dfi.results ?? [] : []) {
       const sourceId = String(row.Id ?? "");
@@ -123,6 +150,11 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
   }));
 
   const result = Array.from(candidates.values()).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "da-DK"));
+  const sourceErrors = {
+    dfi: sourceSearchFailed(sourceAttempts.dfi),
+    tmdb: sourceSearchFailed(sourceAttempts.tmdb),
+    wikidata: sourceSearchFailed(sourceAttempts.wikidata),
+  };
   return { success: true, candidates: result, sourceErrors };
 }
 

@@ -73,7 +73,7 @@ const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 type ContractLinkOption = { id: string; working_title: string | null; type: string | null; status: string | null; contract_date: string | null; rights_holder_name: string };
 
 
-const CREDIT_ROLES = ["B-klipper", "Klipper", "Konceptuerende klipper"];
+const CREDIT_ROLES = ["Klipper", "B-klipper", "Konceptuerende klipper"];
 const BROADCASTERS = [
   "DR1",
   "DR2",

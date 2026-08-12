@@ -34,7 +34,9 @@ export type TMDBSeasonEpisode = {
   air_date?: string | null;
 };
 
-function tmdbFetch(endpointPath: string) {
+const TMDB_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+async function tmdbFetch(endpointPath: string) {
   const apiKey = process.env.TMDB_API_KEY;
   if (!apiKey) throw new Error("TMDB_API_KEY mangler");
 
@@ -46,7 +48,23 @@ function tmdbFetch(endpointPath: string) {
   const headers: Record<string, string> = { accept: "application/json" };
   if (!isV3) headers.Authorization = `Bearer ${apiKey}`;
 
-  return fetch(url, { headers });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await fetch(url, { headers, signal: controller.signal });
+      if ((response.status === 401 || response.status === 403) && attempt === 0) {
+        console.error(`TMDB configuration error: API returned ${response.status}. Check TMDB_API_KEY.`);
+      }
+      if (!TMDB_RETRYABLE_STATUSES.has(response.status) || attempt === 1) return response;
+    } catch (error) {
+      if (attempt === 1) throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  throw new Error("TMDB kunne ikke kontaktes");
 }
 
 export async function searchTMDB(query: string) {
