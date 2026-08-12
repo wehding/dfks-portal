@@ -10,6 +10,9 @@ export type ProductionType =
     | "streaming"
     | "shortform"
     | "ukendt"
+    | "udvikling_dokumentar"
+    | "udvikling_fiktion"
+    | "udvikling_underholdning"
 
 export type DistributionChannel =
     | "biograf"

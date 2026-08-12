@@ -1122,13 +1122,20 @@ export default function AdminValideringPage() {
                                     <Select value={formData.productionType ?? ""} onValueChange={(v) => setField("productionType", v)}>
                                         <SelectTrigger><SelectValue placeholder="Vælg type..." /></SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="feature">Spillefilm</SelectItem>
-                                            <SelectItem value="tvSeries">TV-serie</SelectItem>
+                                            <SelectItem value="documentary" className="font-medium text-muted-foreground text-[10px]" disabled>── Dokumentar ──</SelectItem>
                                             <SelectItem value="documentary">Dokumentarfilm</SelectItem>
                                             <SelectItem value="docSeries">Dokumentarserie</SelectItem>
+                                            <SelectItem value="udvikling_dokumentar">Udvikling (dokumentar)</SelectItem>
+                                            <SelectItem value="feature" className="font-medium text-muted-foreground text-[10px]" disabled>── Fiktion ──</SelectItem>
+                                            <SelectItem value="feature">Spillefilm</SelectItem>
+                                            <SelectItem value="tvSeries">TV-serie</SelectItem>
                                             <SelectItem value="short">Kortfilm</SelectItem>
+                                            <SelectItem value="udvikling_fiktion">Udvikling (fiktion)</SelectItem>
+                                            <SelectItem value="tvEntertainment" className="font-medium text-muted-foreground text-[10px]" disabled>── Underholdning ──</SelectItem>
                                             <SelectItem value="tvEntertainment">TV-underholdning</SelectItem>
                                             <SelectItem value="reality">Reality</SelectItem>
+                                            <SelectItem value="udvikling_underholdning">Udvikling (underholdning)</SelectItem>
+                                            <SelectItem value="other" className="font-medium text-muted-foreground text-[10px]" disabled>── Andet ──</SelectItem>
                                             <SelectItem value="other">Andet</SelectItem>
                                         </SelectContent>
                                     </Select>
