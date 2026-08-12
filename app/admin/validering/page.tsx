@@ -896,7 +896,7 @@ export default function AdminValideringPage() {
                         {/* Lokal DOCX-fil */}
                         {localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
                             <TextViewer text={contractText} loading={textLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -905,7 +905,7 @@ export default function AdminValideringPage() {
                             <TextViewer
                                 text={storedDocxText ?? ""}
                                 loading={storedDocxLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -913,7 +913,7 @@ export default function AdminValideringPage() {
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
