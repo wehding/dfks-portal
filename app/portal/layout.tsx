@@ -165,12 +165,12 @@ export default function PortalLayout({
                 .eq("user_id", user.id)
                 .maybeSingle()
             if (rh?.id) {
-                const { count: episodeTodoCount } = await supabase
-                    .from("member_series_episode_scopes")
-                    .select("id", { count: "exact", head: true })
-                    .eq("rights_holder_id", rh.id)
-                    .eq("status", "pending")
-                setMemberEpisodeTodoCount(episodeTodoCount ?? 0)
+                const [{ count: episodeTodoCount }, { count: shareTodoCount }, { count: collaborationTodoCount }] = await Promise.all([
+                    supabase.from("member_series_episode_scopes").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).eq("status", "pending"),
+                    supabase.from("work_share_participants").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).eq("relationship_status", "pending"),
+                    supabase.from("member_work_collaboration_reviews").select("id", { count: "exact", head: true }).eq("rights_holder_id", rh.id).in("status", ["pending", "disputed"]),
+                ])
+                setMemberEpisodeTodoCount((episodeTodoCount ?? 0) + (shareTodoCount ?? 0) + (collaborationTodoCount ?? 0))
                 const { data: comments } = await supabase
                     .from("contract_comments")
                     .select("id, author_role, member_read_at, contracts!inner(rights_holder_id)")

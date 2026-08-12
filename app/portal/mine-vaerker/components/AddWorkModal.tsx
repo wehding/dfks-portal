@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Modal } from "./Modal";
 import { linkContractToWork } from "@/app/actions/member-contracts";
-import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { addManualWorkAndLinkContract, addWorkForMemberWithApproval, linkExistingWorkForMember, searchRightsHoldersForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { useI18n } from "@/lib/i18n";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
@@ -102,6 +102,11 @@ function numberOrNull(val: string) {
   return isNaN(n) ? null : n;
 }
 
+function sharePercentOrNull(value: string) {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
 export function AddWorkModal({
   isOpen,
   onClose,
@@ -149,8 +154,10 @@ export function AddWorkModal({
   const [selectedEpisodes, setSelectedEpisodes] = useState<number[]>([]);
   const [episodeOptions, setEpisodeOptions] = useState<EpisodeOption[]>([]);
   const [addComment, setAddComment]           = useState("");
+  const [selfSharePercent, setSelfSharePercent] = useState("");
 
   const [addCoEditors, setAddCoEditors]       = useState<CoEditorDraft[]>([]);
+  const [coEditorSuggestions, setCoEditorSuggestions] = useState<Record<string, Array<{ id: string; full_name: string }>>>({});
   const [unifiedResults, setUnifiedResults]   = useState<UnifiedSearchWorkResult[]>([]);
   const [pickedUnifiedResult, setPickedUnifiedResult] = useState<UnifiedSearchWorkResult | null>(null);
   const [isSearching, setIsSearching]         = useState(false);
@@ -218,7 +225,9 @@ export function AddWorkModal({
     setManualWork(nextManualWork);
     setAddQuery(initialManualWork?.title ?? initialQuery);
     setAddComment("");
+    setSelfSharePercent("");
     setAddCoEditors([]);
+    setCoEditorSuggestions({});
     setUnifiedResults([]);
     setPickedUnifiedResult(null);
     setAddSeason("");
@@ -265,6 +274,15 @@ export function AddWorkModal({
     } finally {
       setIsSearching(false);
     }
+  };
+
+  const searchCoEditors = async (editorId: string, query: string) => {
+    const result = await searchRightsHoldersForMember(query.trim());
+    const existingIds = new Set(addCoEditors.map(editor => editor.rightsHolderId).filter(Boolean));
+    setCoEditorSuggestions(current => ({
+      ...current,
+      [editorId]: (result.success ? result.results ?? [] : []).filter(holder => !existingIds.has(holder.id)),
+    }));
   };
 
   useEffect(() => {
@@ -336,6 +354,11 @@ export function AddWorkModal({
       const selectedSeasonNumber = manualMode
         ? numberOrNull(manualWork.season_number) ?? 1
         : showSeriesFields ? numberOrNull(addSeason) ?? 1 : numberOrNull(addSeason);
+      const addedCoEditors = addCoEditors.filter(editor => !editor.locked && editor.name.trim());
+      const ownShare = sharePercentOrNull(selfSharePercent);
+      if (addedCoEditors.length > 0 && ownShare === null) {
+        throw new Error(locale === "da" ? "Angiv dit eget foreløbige procentbud, når du tilføjer medklippere." : "Enter your own preliminary percentage when adding co-editors.");
+      }
       if (!manualMode && showSeriesFields && detectedEpisodeCount !== null && selectedEpisodes.length === 0) {
         throw new Error(locale === "da" ? "Vælg mindst ét afsnit." : "Select at least one episode.");
       }
@@ -360,7 +383,8 @@ export function AddWorkModal({
           role: addRole,
           comment: addComment,
           overrideLocalMatch: false,
-          coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+          coEditors: addedCoEditors,
+          selfSharePercent: ownShare,
           contractId: manualWork.contract_id.trim() || null,
           reuseWorkId: manualLinkRetry?.workId ?? null,
           reusePending: manualLinkRetry?.pending ?? false,
@@ -403,7 +427,8 @@ export function AddWorkModal({
             workId: u.local_id,
             role: addRole,
             comment: manualMode ? addComment : "",
-            coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+            coEditors: addedCoEditors,
+            selfSharePercent: ownShare,
             seasonNumber: selectedSeasonNumber,
             episodeNumber: numberOrNull(addEpisode),
             selectedEpisodes,
@@ -433,7 +458,8 @@ export function AddWorkModal({
             comment: manualMode ? addComment : "",
             source: u.sources.includes("dfi") ? "dfi" : "tmdb",
             overrideLocalMatch: false,
-            coEditors: addCoEditors.filter(editor => !editor.locked && editor.name.trim()),
+            coEditors: addedCoEditors,
+            selfSharePercent: ownShare,
             workData: {
               dfi_id: d.dfi_id ? String(d.dfi_id) : undefined,
               tmdb_id: d.tmdb_id ? Number(d.tmdb_id) : undefined,
@@ -649,19 +675,38 @@ export function AddWorkModal({
         {(pickedUnifiedResult || manualMode) && (
           <div className="rounded-lg border p-4">
             <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
+            <div className="mb-4 rounded-md bg-blue-50 p-3 text-sm text-blue-950 dark:bg-blue-500/10 dark:text-blue-100">
+              <p className="font-medium">Sådan løser du opgaven</p>
+              <p className="mt-1 text-xs leading-relaxed">
+                Tilføj de andre klippere, der har arbejdet på værket. Når du tilføjer en medklipper, skal du også angive dit eget foreløbige procentbud. En kendt medklipper får sin egen opgave, og DFKS afstemmer senere buddene og offentliggør den endelige fordeling.
+              </p>
+            </div>
             <div className="space-y-2">
               {addCoEditors.map(editor => (
                 <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
-                  <Input
-                    value={editor.name}
-                    disabled={editor.locked}
-                    onChange={e =>
-                      setAddCoEditors(prev =>
-                        prev.map(item => (item.id === editor.id ? { ...item, name: e.target.value } : item))
-                      )
-                    }
-                    placeholder={t("works.namePlaceholder")}
-                  />
+                  <div className="relative">
+                    <Input
+                      value={editor.name}
+                      disabled={editor.locked}
+                      onFocus={() => { if (!editor.locked) void searchCoEditors(editor.id, editor.name); }}
+                      onChange={e => {
+                        const name = e.target.value;
+                        setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name, rightsHolderId: null } : item));
+                        void searchCoEditors(editor.id, name);
+                      }}
+                      placeholder={t("works.namePlaceholder")}
+                    />
+                    {!editor.locked && (coEditorSuggestions[editor.id] ?? []).length > 0 && (
+                      <div className="absolute z-20 mt-1 w-full rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                        {(coEditorSuggestions[editor.id] ?? []).map(holder => (
+                          <button key={holder.id} type="button" className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-accent" onClick={() => {
+                            setAddCoEditors(prev => prev.map(item => item.id === editor.id ? { ...item, name: holder.full_name, rightsHolderId: holder.id } : item));
+                            setCoEditorSuggestions(current => ({ ...current, [editor.id]: [] }));
+                          }}>{holder.full_name}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <select
                     value={editor.role}
                     disabled={editor.locked}
@@ -700,6 +745,19 @@ export function AddWorkModal({
             </Button>
             {addCoEditors.some(editor => editor.locked) && (
               <p className="mt-2 text-xs text-muted-foreground">{t("works.lockedCoEditorsHint")}</p>
+            )}
+            {addCoEditors.some(editor => !editor.locked && editor.name.trim()) && (
+              <div className="mt-4 max-w-xs space-y-1.5">
+                <Label htmlFor="add-self-share">Din egen foreløbige arbejdsandel (%)</Label>
+                <Input
+                  id="add-self-share"
+                  inputMode="decimal"
+                  value={selfSharePercent}
+                  onChange={event => setSelfSharePercent(event.target.value)}
+                  placeholder="Fx 60"
+                />
+                <p className="text-xs text-muted-foreground">Det er dit eget bud – ikke den endelige fordeling. De øvrige klippere oplyser deres egne andele separat.</p>
+              </div>
             )}
           </div>
         )}

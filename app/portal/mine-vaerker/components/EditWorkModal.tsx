@@ -15,6 +15,8 @@ import { SeriesEpisodeSelector } from "@/components/works/series-episode-selecto
 import { buildCompleteEpisodeOptions, inferSeriesWorkFields, type SeriesEpisodeOption } from "@/lib/series-episodes";
 import { WORK_TYPES } from "@/lib/work-types";
 import { createClientId } from "@/lib/client-id";
+import { fetchMemberShareTask, respondToWorkShareTask } from "@/app/actions/work-share-cases";
+import { confirmNoCoeditors } from "@/app/actions/work-collaboration-reviews";
 
 const ROLES = ["Klipper", "B-klipper", "Konceptuerende klipper"];
 
@@ -34,6 +36,15 @@ interface CoEditorDraft {
 type CoEditorSuggestion = {
   id: string;
   full_name: string;
+};
+
+type MemberShareTask = {
+  id: string;
+  status: string;
+  reservePercent: number | null;
+  ownParticipant: { proposed_percent: number | null } | null;
+  finalDistribution: Array<{ role: string; final_percent: number; rettighedshavere: { full_name: string } | null }>;
+  reportedDeclines: Array<{ proposed_name: string | null; rettighedshavere: { full_name: string } | null }>;
 };
 
 interface WorkCorrectionForm {
@@ -198,6 +209,11 @@ function numberOrNull(val: string) {
   return isNaN(n) ? null : n;
 }
 
+function sharePercentOrNull(value: string) {
+  const parsed = Number(value.replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : null;
+}
+
 function workTypeLabel(value: string | null | undefined) {
   return WORK_TYPES.find(type => type.value === value)?.label ?? value ?? "—";
 }
@@ -249,6 +265,11 @@ export function EditWorkModal({
   const [externalQuery, setExternalQuery] = useState("");
   const [externalResults, setExternalResults] = useState<UnifiedSearchWorkResult[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
+  const [selfSharePercent, setSelfSharePercent] = useState("");
+  const [shareTask, setShareTask] = useState<MemberShareTask | null>(null);
+  const [shareTaskLoading, setShareTaskLoading] = useState(false);
+  const [shareTaskSaving, setShareTaskSaving] = useState(false);
+  const [soloSaving, setSoloSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen && assignment) {
@@ -258,6 +279,7 @@ export function EditWorkModal({
       setExternalQuery(assignment.works?.title ?? "");
       setExternalResults([]);
       setWorkCorrectionComment("");
+      setSelfSharePercent("");
       setCommentError(false);
       const seriesKey = assignment.works?.parent_work_id ?? assignment.works?.id;
       const season = assignment.works?.season_number ?? 1;
@@ -296,6 +318,25 @@ export function EditWorkModal({
       );
     }
   }, [isOpen, assignment, allAssignments, editScope, initialEpisodeOptions, initialEpisodeScope, seasonWorkIds]);
+
+  useEffect(() => {
+    if (!isOpen || !assignment.rights_holder_id || !assignment.works?.id) return;
+    let cancelled = false;
+    setShareTaskLoading(true);
+    void fetchMemberShareTask({
+      rightsHolderId: assignment.rights_holder_id,
+      workId: assignment.works.id,
+      seasonNumber: editScope === "season" ? directEpisodeSeason : assignment.works.season_number,
+      episodeNumber: editScope === "episode" ? assignment.works.episode_number : null,
+    }).then(result => {
+      if (!cancelled && result.success) {
+        setShareTask(result.task as unknown as MemberShareTask | null);
+        const ownPercent = result.task?.ownParticipant?.proposed_percent;
+        setSelfSharePercent(ownPercent == null ? "" : String(ownPercent));
+      }
+    }).finally(() => { if (!cancelled) setShareTaskLoading(false); });
+    return () => { cancelled = true; };
+  }, [assignment.rights_holder_id, assignment.works, directEpisodeSeason, editScope, isOpen]);
 
   useEffect(() => {
     const loadSeriesEpisodes = async () => {
@@ -408,6 +449,12 @@ export function EditWorkModal({
     const initialCorrection = workToCorrectionForm(assignment.works);
     const hasWorkDataChanges = JSON.stringify(workCorrection) !== JSON.stringify(initialCorrection);
     const hasCoEditorChanges = editCoEditors.some(editor => !editor.locked || editor.action === "remove" || editor.action === "change");
+    const addedCoEditors = editCoEditors.filter(editor => !editor.locked && editor.name.trim());
+    const ownShare = sharePercentOrNull(selfSharePercent);
+    if (addedCoEditors.length > 0 && ownShare === null) {
+      onWorkUpdated("Angiv dit eget foreløbige procentbud, når du tilføjer en medklipper.", false);
+      return;
+    }
     const roleChanged = editRole !== displayRole(assignment.role);
     const hasAdminCorrection = hasWorkDataChanges || hasCoEditorChanges || (editScope !== "season" && roleChanged);
     if (hasAdminCorrection && !workCorrectionComment.trim()) {
@@ -454,6 +501,7 @@ export function EditWorkModal({
           },
           comment: workCorrectionComment,
           coEditors: editCoEditors.filter(editor => !editor.locked || editor.action === "remove" || editor.action === "change"),
+          selfSharePercent: ownShare,
           myEpisodes: editScope === "season" ? myEpisodes : [],
           memberRole: editRole,
         });
@@ -480,6 +528,12 @@ export function EditWorkModal({
     .map(([num]) => parseInt(num, 10))
     .filter(Number.isFinite)
     .sort((a, b) => a - b);
+  const collaborationReviewWorkIds = editScope === "season"
+    ? [...new Set(allAssignments
+        .filter(item => item.rights_holder_id === assignment.rights_holder_id && item.works?.episode_number != null && (coversWholeSeason || directSelectedEpisodeNumbers.includes(item.works.episode_number)))
+        .map(item => item.works?.id ?? item.work_id)
+        .filter((id): id is string => Boolean(id)))]
+    : assignment.works?.id ? [assignment.works.id] : [];
 
   return (
     <Modal onClose={onClose} maxWidth="max-w-2xl">
@@ -581,6 +635,30 @@ export function EditWorkModal({
       {/* MEDKLIPPERE SEKTION (Altid synlig på side 1) */}
       <div className="rounded-lg border p-4 mb-6">
         <p className="mb-3 text-sm font-semibold text-foreground">{t("works.coEditors")}</p>
+        <div className="mb-4 rounded-md bg-blue-50 p-3 text-sm text-blue-950 dark:bg-blue-500/10 dark:text-blue-100">
+          <p className="font-medium">Hvad skal du gøre?</p>
+          <p className="mt-1 text-xs leading-relaxed">
+            Hvis du ikke har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du tilføje de andre klippere, der har arbejdet på {editScope === "episode" ? "afsnittet" : "værket"}. Når du tilføjer en medklipper, skal du også angive dit eget foreløbige procentbud. Hver medklipper bliver bedt om at angive sin egen andel. I kan ikke se hinandens bud, og DFKS fastsætter og offentliggør først den endelige fordeling. Hvis du har klippet {editScope === "episode" ? "afsnittet" : "værket"} alene, skal du vælge “Ingen medklipper” – du skal ikke angive en procent.
+          </p>
+        </div>
+        {assignment.rights_holder_id && collaborationReviewWorkIds.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border p-3">
+            <p className="max-w-xl text-xs text-muted-foreground">Bekræft kun dette, hvis ingen andre klippere arbejdede på det valgte værk eller de valgte afsnit. Hvis andre allerede er registreret, sendes din oplysning til DFKS som en indsigelse.</p>
+            <Button type="button" variant="outline" disabled={soloSaving} onClick={() => {
+              setSoloSaving(true);
+              void confirmNoCoeditors({ rightsHolderId: assignment.rights_holder_id!, workIds: collaborationReviewWorkIds, source: "member_editor" })
+                .then(result => {
+                  if (!result.success) throw new Error(result.error);
+                  const message = result.disputed
+                    ? `Dit svar er gemt. ${result.disputed} værk eller afsnit afventer DFKS, fordi andre klippere allerede er registreret.`
+                    : "Dit svar ‘Ingen medklipper’ er gemt.";
+                  onWorkUpdated(message, true);
+                })
+                .catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                .finally(() => setSoloSaving(false));
+            }}>Ingen medklipper</Button>
+          </div>
+        )}
         <div className="space-y-2">
           {editCoEditors.map(editor => (
             <div key={editor.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
@@ -706,6 +784,59 @@ export function EditWorkModal({
           {t("works.addCoEditor")}
         </Button>
         <p className="mt-2 text-xs text-gray-500">{t("works.editCoEditorsHint")}</p>
+        {(editCoEditors.some(editor => !editor.locked && editor.name.trim()) || shareTask) && (
+          <div className="mt-4 max-w-sm space-y-1.5">
+            <Label htmlFor="edit-self-share">Din egen foreløbige arbejdsandel (%)</Label>
+            <Input id="edit-self-share" inputMode="decimal" value={selfSharePercent} onChange={event => setSelfSharePercent(event.target.value)} placeholder="Fx 40" />
+            <p className="text-xs text-muted-foreground">Skriv kun din egen andel. Procenten bliver først offentlig, når DFKS har afsluttet sagen.</p>
+          </div>
+        )}
+        {shareTask && shareTask.status !== "resolved" && assignment.rights_holder_id && (
+          <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+            <Button
+              type="button"
+              disabled={shareTaskSaving || sharePercentOrNull(selfSharePercent) === null}
+              onClick={() => {
+                setShareTaskSaving(true);
+                void respondToWorkShareTask({
+                  rightsHolderId: assignment.rights_holder_id!, caseId: shareTask.id,
+                  percent: sharePercentOrNull(selfSharePercent), declined: false, responseScope: editScope,
+                }).then(result => {
+                  if (!result.success) throw new Error(result.error);
+                  onWorkUpdated("Dit foreløbige procentbud er gemt og sendt til DFKS.", true);
+                }).catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                  .finally(() => setShareTaskSaving(false));
+              }}
+            >Gem mit procentbud</Button>
+            <Button
+              type="button" variant="outline" disabled={shareTaskSaving}
+              onClick={() => {
+                setShareTaskSaving(true);
+                void respondToWorkShareTask({ rightsHolderId: assignment.rights_holder_id!, caseId: shareTask.id, declined: true, responseScope: editScope })
+                  .then(result => {
+                    if (!result.success) throw new Error(result.error);
+                    onWorkUpdated("Du har oplyst, at du ikke har arbejdet på værket. DFKS gennemgår sagen.", true);
+                  }).catch(error => onWorkUpdated(error instanceof Error ? error.message : "Svaret kunne ikke gemmes.", false))
+                  .finally(() => setShareTaskSaving(false));
+              }}
+            >Jeg har ikke arbejdet på værket</Button>
+          </div>
+        )}
+        {shareTaskLoading && <p className="mt-3 text-xs text-muted-foreground">Henter procentopgaven…</p>}
+        {shareTask?.status === "resolved" && (
+          <div className="mt-4 rounded-md border bg-muted/30 p-3 text-sm">
+            <p className="font-medium">Endelig fordeling</p>
+            {(shareTask.finalDistribution ?? []).map((row, index) => (
+              <p key={index} className="mt-1 text-xs text-muted-foreground">{row.rettighedshavere?.full_name ?? row.role}: {row.final_percent} %</p>
+            ))}
+            {shareTask.reservePercent ? <p className="mt-1 text-xs text-muted-foreground">Reserve: {shareTask.reservePercent} %</p> : null}
+          </div>
+        )}
+        {(shareTask?.reportedDeclines ?? []).map((row, index) => (
+          <p key={`decline-${index}`} className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
+            {row.rettighedshavere?.full_name ?? row.proposed_name ?? "Den angivne medklipper"} har oplyst, at vedkommende ikke arbejdede på værket. DFKS gennemgår sagen.
+          </p>
+        ))}
       </div>
 
       {/* FORESLÅ MANUEL RETTELSE SEKTION */}

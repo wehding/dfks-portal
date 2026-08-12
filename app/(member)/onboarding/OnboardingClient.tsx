@@ -3,21 +3,17 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchOnboardingCredits, resolveOnboardingEpisodeOptions, type OnboardingCredit } from "@/app/actions/dfi";
+import { searchOnboardingCredits, type OnboardingCredit } from "@/app/actions/dfi";
 import { getOnboardingWorkImportStatus, retryOnboardingWorkImport, startOnboardingWorkImport, type OnboardingImportStatus } from "@/app/actions/onboarding-work-import";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
 import { confirmExternalPersonIdentity, discoverPersonCandidates, type PersonCandidate } from "@/app/actions/person-discovery";
 import { PersonIdentityPicker } from "@/components/works/person-identity-picker";
-import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
-import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { useI18n } from "@/lib/i18n";
 import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
-import { seasonLookupMessage } from "@/lib/season-selection";
 import { parseOnboardingAddress } from "@/lib/onboarding-address";
 import { isTransientNetworkError, retryTransientNetwork } from "@/lib/transient-network-retry";
-import { needsOnboardingEpisodeSelection } from "@/lib/onboarding-series-validation";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -97,13 +93,6 @@ export default function OnboardingClient({
   const [tmdbPersonId, setTmdbPersonId] = useState<number | null>(null);
   const [dfiCredits, setDfiCredits] = useState<OnboardingCredit[]>([]);
   const [selectedDfiCredits, setSelectedDfiCredits] = useState<Record<string, boolean>>({});
-  const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
-  const [seriesSeasons, setSeriesSeasons] = useState<Record<string, number>>({});
-  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, number[]>>({});
-  const [episodeOptions, setEpisodeOptions] = useState<Record<string, Array<{ number: number; title?: string | null }>>>({});
-  const [episodeLoading, setEpisodeLoading] = useState<Record<string, boolean>>({});
-  const [episodeErrors, setEpisodeErrors] = useState<Record<string, string | null>>({});
-  const episodeRequestIds = React.useRef<Record<string, number>>({});
   const [dfiSearchQuery, setDfiSearchQuery] = useState(rh?.full_name || "");
   const [isSearchingDfi, setIsSearchingDfi] = useState(false);
   const [isImportingDfi, setIsImportingDfi] = useState(false);
@@ -183,70 +172,6 @@ export default function OnboardingClient({
   const isSeriesCredit = (credit: OnboardingCredit) => {
     const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
     return category.includes("serie") || category.includes("tv");
-  };
-
-  const episodeCountForCredit = (credit: OnboardingCredit) => {
-    const rawCount = credit.raw?.number_of_episodes ?? credit.raw?.episode_count ?? credit.raw?.EpisodeCount;
-    const parsed = Number(rawCount);
-    const optionsCount = Math.max(episodeOptions[credit.id]?.length ?? 0, credit.episode_options?.length ?? 0);
-    const count = Math.max(Number.isFinite(parsed) && parsed > 0 ? parsed : 0, optionsCount);
-    return count > 0 ? Math.min(count, 80) : 0;
-  };
-
-  const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
-    const season = seriesSeasons[credit.id] ?? 1;
-    // Ved sæson > 1 er kun de sæson-specifikt hentede afsnit gyldige — pad aldrig med seriens total.
-    const options = season > 1
-      ? episodeOptions[credit.id] ?? []
-      : buildCompleteEpisodeOptions({
-          episodeCount: episodeCountForCredit(credit),
-          externalOptions: episodeOptions[credit.id] ?? credit.episode_options ?? [],
-          localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
-          seasonNumber: 1,
-        });
-    if (Object.prototype.hasOwnProperty.call(seriesEpisodes, credit.id)) return seriesEpisodes[credit.id];
-    const suggested = season === (credit.season_number ?? 1) ? credit.suggested_episodes ?? [] : [];
-    const available = new Set(options.map(option => option.number));
-    return suggested.filter(number => available.has(number));
-  };
-
-  const loadEpisodes = async (credit: OnboardingCredit, season = seriesSeasons[credit.id] ?? 1) => {
-    const requestId = (episodeRequestIds.current[credit.id] ?? 0) + 1;
-    episodeRequestIds.current[credit.id] = requestId;
-    setEpisodeLoading(prev => ({ ...prev, [credit.id]: true }));
-    setEpisodeErrors(prev => ({ ...prev, [credit.id]: null }));
-    let result: Awaited<ReturnType<typeof resolveOnboardingEpisodeOptions>>;
-    try {
-      result = await retryTransientNetwork(() => resolveOnboardingEpisodeOptions(credit, season));
-    } catch (error) {
-      if (episodeRequestIds.current[credit.id] !== requestId) return;
-      setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
-      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
-      setEpisodeErrors(prev => ({
-        ...prev,
-        [credit.id]: isTransientNetworkError(error)
-          ? t("onboarding.networkError")
-          : seasonLookupMessage(locale, "error", season),
-      }));
-      setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
-      return;
-    }
-    if (episodeRequestIds.current[credit.id] !== requestId) return;
-    if (result.success) {
-      setEpisodeOptions(prev => ({ ...prev, [credit.id]: result.options }));
-      setSeriesEpisodes(prev => {
-        if (Object.prototype.hasOwnProperty.call(prev, credit.id)) return prev;
-        const available = new Set(result.options.map(option => option.number));
-        const suggested = season === (credit.season_number ?? 1) ? credit.suggested_episodes ?? [] : [];
-        return { ...prev, [credit.id]: suggested.filter(number => available.has(number)) };
-      });
-    } else {
-      // Ryd stale afsnit fra en tidligere sæson, så fejlen ikke kan blandes med gamle valg.
-      setEpisodeOptions(prev => ({ ...prev, [credit.id]: [] }));
-      setSeriesEpisodes(prev => ({ ...prev, [credit.id]: [] }));
-      setEpisodeErrors(prev => ({ ...prev, [credit.id]: seasonLookupMessage(locale, result.status === "error" ? "error" : "not_found", season) }));
-    }
-    setEpisodeLoading(prev => ({ ...prev, [credit.id]: false }));
   };
 
   const revealCreditsProgressively = async (credits: OnboardingCredit[]) => {
@@ -377,7 +302,7 @@ export default function OnboardingClient({
       const approved = dfiCredits
         .filter((c) => selectedDfiCredits[c.id])
         .map((c) => isSeriesCredit(c)
-          ? { ...c, season_number: seriesSeasons[c.id] ?? 1, selected_episodes: selectedEpisodesForCredit(c) }
+          ? { ...c, selected_episodes: [] }
           : c
         );
       if (approved.length > 0) {
@@ -778,18 +703,15 @@ export default function OnboardingClient({
                   }}>
                     {dfiCredits.map((c, i) => {
                       const isSeries = isSeriesCredit(c);
-                      const episodeCount = episodeCountForCredit(c);
-                      const selectedEpisodes = selectedEpisodesForCredit(c);
-                      const missingEpisodeSelection = needsOnboardingEpisodeSelection({ selected: Boolean(selectedDfiCredits[c.id]), isSeries, selectedEpisodes });
                       return (
                         <div
                           key={c.id}
                           tabIndex={-1}
-                          className={missingEpisodeSelection ? "scroll-mt-24 border-l-4 border-amber-500 bg-amber-50 outline-none dark:bg-amber-950/35" : "scroll-mt-24 outline-none"}
+                          className="scroll-mt-24 outline-none"
                           style={{
                           padding: "14px 16px",
                           borderBottom: i === dfiCredits.length - 1 ? "none" : "1px solid var(--input)",
-                          backgroundColor: missingEpisodeSelection ? undefined : selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
+                          backgroundColor: selectedDfiCredits[c.id] ? "var(--surface-container-high)" : "transparent",
                           transition: "background-color 0.2s ease",
                         }}>
                           <label style={{ display: "flex", alignItems: "flex-start", gap: "12px", cursor: "pointer", userSelect: "none" }}>
@@ -810,60 +732,10 @@ export default function OnboardingClient({
                                 <span>•</span>
                                 <span>{c.source.toUpperCase()}</span>
                                 {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
-                                {missingEpisodeSelection && <span className="font-semibold text-amber-800 dark:text-amber-200">• {t("onboarding.chooseEpisodesLater")}</span>}
+                                {isSeries && selectedDfiCredits[c.id] && <span className="font-semibold text-amber-800 dark:text-amber-200">• Afsnit og eventuelle medklippere udfyldes senere under Mine værker</span>}
                               </div>
                             </div>
                           </label>
-                          {isSeries && selectedDfiCredits[c.id] && (
-                            <div style={{ marginTop: "12px", marginLeft: "28px", padding: "12px", border: "1px solid var(--input)", borderRadius: "6px", backgroundColor: "var(--card)" }}>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const opening = !expandedSeries[c.id];
-                                  setExpandedSeries(prev => ({ ...prev, [c.id]: opening }));
-                                  if (opening && !Object.prototype.hasOwnProperty.call(episodeOptions, c.id)) void loadEpisodes(c);
-                                }}
-                                style={{ border: "none", background: "transparent", padding: 0, fontSize: "13px", fontWeight: 600, cursor: "pointer", color: "var(--foreground)" }}
-                              >
-                                {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodes.length} valgt
-                              </button>
-                              {missingEpisodeSelection && <p className="mt-2 text-xs text-muted-foreground">{t("onboarding.episodesPendingHint")}</p>}
-                              {expandedSeries[c.id] && (
-                                <div style={{ marginTop: "10px" }}>
-                                  <SeriesEpisodeSelector
-                                    season={seriesSeasons[c.id] ?? 1}
-                                    onSeasonChange={season => {
-                                      setSeriesSeasons(prev => ({ ...prev, [c.id]: season }));
-                                      setSeriesEpisodes(prev => ({ ...prev, [c.id]: [] }));
-                                      setEpisodeOptions(prev => ({ ...prev, [c.id]: [] }));
-                                      void loadEpisodes(c, season);
-                                    }}
-                                    options={(seriesSeasons[c.id] ?? 1) > 1
-                                      ? buildCompleteEpisodeOptions({ externalOptions: episodeOptions[c.id] ?? [], seasonNumber: seriesSeasons[c.id] ?? 1 })
-                                      : buildCompleteEpisodeOptions({
-                                          episodeCount,
-                                          externalOptions: episodeOptions[c.id]?.length ? episodeOptions[c.id] : c.episode_options ?? [],
-                                          localChildren: Array.isArray(c.raw?.__local_children) ? c.raw.__local_children : [],
-                                          seasonNumber: 1,
-                                        })}
-                                    selected={selectedEpisodes}
-                                    onSelectedChange={episodes => {
-                                      setSeriesEpisodes(prev => ({ ...prev, [c.id]: episodes }));
-                                      if (episodes.length > 0) setImportError(null);
-                                    }}
-                                    loading={Boolean(episodeLoading[c.id])}
-                                    error={episodeErrors[c.id]}
-                                    label="Vælg afsnit"
-                                  />
-                                  {c.suggested_episodes?.length ? (
-                                    <p style={{ margin: "8px 0 0", fontSize: "11px", color: "var(--on-surface-variant)" }}>
-                                      DFI-krediterede afsnit er foreslået. Du kan rette valget.
-                                    </p>
-                                  ) : null}
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
                       );
                     })}
