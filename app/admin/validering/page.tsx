@@ -828,6 +828,7 @@ export default function AdminValideringPage() {
         const caMeta = resolveWithMeta(sources.collectiveAgreement)
 
         const salaryHl = salaryMeta.anker ?? (formData.salary ? String(formData.salary) : undefined)
+        const workTitleHl = resolve(sources.workTitle)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
         const supplementsHl = resolve(sources.supplements) ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
@@ -895,7 +896,7 @@ export default function AdminValideringPage() {
                         {/* Lokal DOCX-fil */}
                         {localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
                             <TextViewer text={contractText} loading={textLoading}
-                                highlights={[salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -904,7 +905,7 @@ export default function AdminValideringPage() {
                             <TextViewer
                                 text={storedDocxText ?? ""}
                                 loading={storedDocxLoading}
-                                highlights={[salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -912,7 +913,7 @@ export default function AdminValideringPage() {
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
@@ -974,7 +975,7 @@ export default function AdminValideringPage() {
                                         <span>Tilknyttet: <strong>{reviewingContract.displayTitle}</strong></span>
                                     </div>
                                 ) : (
-                                    <F label="Arbejdstitel">
+                                    <F label={<>Arbejdstitel{workTitleHl && <SourceBtn quote={workTitleHl} active={activeField === "workTitle"} onClick={() => activateSource("workTitle", workTitleHl)} />}</>}>
                                         <Input value={String(formData.workTitle ?? "")} onChange={(e) => setField("workTitle", e.target.value)} placeholder="Produktionens arbejdstitel..." />
                                     </F>
                                 )}
