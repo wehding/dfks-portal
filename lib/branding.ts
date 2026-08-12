@@ -13,8 +13,21 @@ export const DEFAULT_TERMINOLOGY: Required<OrgTerminology> = {
   member_word: "medlem",
   coeditor_word: "medskaber",
   role_labels: ["Medskaber"],
+  default_role_label: "Medskaber",
   onboarding_keywords: ["klip", "edit"],
 };
+
+export function resolveDefaultRoleLabel(roleLabels: string[], configured?: string | null): string {
+  const labels = roleLabels.map(label => label.trim()).filter(Boolean);
+  const configuredMatch = configured?.trim()
+    ? labels.find(label => label.localeCompare(configured.trim(), "da", { sensitivity: "base" }) === 0)
+    : undefined;
+  if (configuredMatch) return configuredMatch;
+
+  // Bagudkompatibilitet for DFKS-konfigurationer fra før en eksplicit standardrolle.
+  const klipper = labels.find(label => label.localeCompare("Klipper", "da", { sensitivity: "base" }) === 0);
+  return klipper ?? labels[0] ?? DEFAULT_TERMINOLOGY.default_role_label;
+}
 
 export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> | null): Required<OrgBranding> {
   const b = org?.branding ?? {};
@@ -27,12 +40,18 @@ export function resolveBranding(org: Pick<DbOrganisation, "name" | "branding"> |
 
 export function resolveTerminology(org: Pick<DbOrganisation, "terminology"> | null): Required<OrgTerminology> {
   const t = org?.terminology ?? {};
+  const roleLabels = t.role_labels && t.role_labels.length ? t.role_labels : DEFAULT_TERMINOLOGY.role_labels;
   return {
     member_word: t.member_word ?? DEFAULT_TERMINOLOGY.member_word,
     coeditor_word: t.coeditor_word ?? DEFAULT_TERMINOLOGY.coeditor_word,
-    role_labels: t.role_labels && t.role_labels.length ? t.role_labels : DEFAULT_TERMINOLOGY.role_labels,
+    role_labels: roleLabels,
+    default_role_label: resolveDefaultRoleLabel(roleLabels, t.default_role_label),
     onboarding_keywords: t.onboarding_keywords && t.onboarding_keywords.length ? t.onboarding_keywords : DEFAULT_TERMINOLOGY.onboarding_keywords,
   };
+}
+
+export function resolveDefaultRole(org: Pick<DbOrganisation, "terminology"> | null): string {
+  return resolveTerminology(org).default_role_label;
 }
 
 export function resolveEmailSenderName(org: Pick<DbOrganisation, "name" | "branding"> | null): string {

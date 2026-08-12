@@ -354,6 +354,11 @@ export default function OnboardingClient({
           return;
         }
         const searchResult = await retryTransientNetwork(() => searchOnboardingCredits(undefined, undefined, dfiSearchQuery));
+        setPersonSourceErrors(current => ({
+          ...current,
+          dfi: Boolean(current.dfi || searchResult.sourceErrors?.dfi),
+          tmdb: Boolean(current.tmdb || searchResult.sourceErrors?.tmdb),
+        }));
         if (searchResult.success && searchResult.credits?.length > 0) {
           setDfiPersonId(searchResult.dfiPersonId);
           setTmdbPersonId(searchResult.tmdbPersonId);
@@ -730,6 +735,11 @@ export default function OnboardingClient({
                 Vi har slået dit navn op i DFI Filmdatabasen og TMDb. Gennemgå og bekræft de titler, du har medvirket til at skabe. Hvis der er titler der mangler kan du tilføje dem senere.
               </p>
               <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--accent)", color: "var(--accent-foreground)", fontSize: "13px", lineHeight: 1.55 }}>{t("onboarding.episodesOptional")}</div>
+              {(personSourceErrors.dfi || personSourceErrors.tmdb || personSourceErrors.wikidata) && (
+                <div className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/35 dark:text-amber-100">
+                  {t("onboarding.partialSourceResults")}
+                </div>
+              )}
               {importError && <div style={{ marginBottom: "20px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--destructive)", background: "var(--muted)", color: "var(--destructive)", fontSize: "13px", lineHeight: 1.55 }}>{importError}</div>}
 
               {isSearchingDfi && dfiCredits.length === 0 ? (

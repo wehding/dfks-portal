@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { decryptRettighedshaver } from "@/lib/encryption";
 import OnboardingClient from "./OnboardingClient";
 import { createServiceClient } from "@/lib/supabase/service";
-import { resolveTerminology } from "@/lib/branding";
+import { resolveDefaultRole } from "@/lib/branding";
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 
@@ -39,10 +39,9 @@ export default async function OnboardingPage() {
     orgId ? service.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
     rh?.id ? service.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", rh.id) : Promise.resolve({ data: [] }),
   ]);
-  const terminology = resolveTerminology(organisation ? { terminology: organisation.terminology } : null);
   const statisticsProfile = {
     config: (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>,
-    professionLabel: terminology.role_labels[0] ?? terminology.coeditor_word,
+    professionLabel: resolveDefaultRole(organisation ? { terminology: organisation.terminology } : null),
     professionTypes: (professionRows ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
     workRegions: (regionRows ?? []).map(row => ({ code: row.code as string, nameDa: row.name_da as string, nameEn: row.name_en as string })),
     secondaryProfessionTypeIds: (secondaryRows ?? []).map(row => row.profession_type_id as string),

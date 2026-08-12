@@ -98,7 +98,8 @@ type EpisodeOptionInput = {
 function cleanOption(option: EpisodeOptionInput | null | undefined): SeriesEpisodeOption | null {
   const number = Number(option?.number);
   if (!Number.isFinite(number) || number <= 0) return null;
-  const title = typeof option?.title === "string" && option.title.trim() ? option.title.trim() : `Afsnit ${number}`;
+  const rawTitle = typeof option?.title === "string" ? option.title.trim() : "";
+  const title = rawTitle && !/^(?:null|undefined)$/i.test(rawTitle) ? rawTitle : `Afsnit ${number}`;
   return { number, title };
 }
 

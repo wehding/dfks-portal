@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
+import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
 
@@ -27,6 +28,7 @@ type OrganisationSettingsPayload = {
   welcome_message_text: string | null;
   coeditor_word: string;
   role_labels: string[];
+  default_role_label: string;
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
   statistics_profile_config: {
@@ -95,6 +97,9 @@ export async function getOrganisationSettings() {
   ]);
   const professionTypes = (professionRows ?? []).map(row => (row.profession_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
   const producerCategories = (producerRows ?? []).map(row => (row.producer_types as unknown as { name?: string } | null)?.name).filter((name): name is string => Boolean(name));
+  const roleLabels = professionTypes.length ? professionTypes : terminology.role_labels?.length
+    ? terminology.role_labels
+    : ["Medskaber"];
 
   return {
     id: data.id as string,
@@ -109,9 +114,8 @@ export async function getOrganisationSettings() {
     primary_color: branding.primary_color ?? "#111827",
     coeditor_word: terminology.coeditor_word ?? "medskaber",
     member_word: terminology.member_word ?? "medlem",
-    role_labels: professionTypes.length ? professionTypes : terminology.role_labels?.length
-      ? terminology.role_labels
-      : ["Medskaber"],
+    role_labels: roleLabels,
+    default_role_label: resolveDefaultRoleLabel(roleLabels, terminology.default_role_label),
     producer_categories: producerCategories,
     onboarding_keywords: terminology.onboarding_keywords?.length
       ? terminology.onboarding_keywords
@@ -141,6 +145,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const longName = cleanString(payload.long_name);
   const coeditorWord = cleanString(payload.coeditor_word);
   const roleLabels = normalizeRoles(payload.role_labels);
+  const requestedDefaultRole = cleanString(payload.default_role_label);
   const producerCategories = normalizeRoles(payload.producer_categories);
   const onboardingKeywords = normalizeRoles(payload.onboarding_keywords).map(keyword => keyword.toLowerCase());
   const replyToEmail = cleanOptionalString(payload.from_email);
@@ -158,6 +163,8 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   if (!shortName || !longName) throw new Error("Kort navn og fuldt navn skal udfyldes.");
   if (!coeditorWord) throw new Error("Fagordet skal udfyldes.");
   if (roleLabels.length === 0) throw new Error("Der skal være mindst én rollebetegnelse.");
+  const defaultRoleLabel = roleLabels.find(role => role.localeCompare(requestedDefaultRole, "da", { sensitivity: "base" }) === 0);
+  if (!defaultRoleLabel) throw new Error("Standardfaggruppen skal være en af organisationens faggrupper.");
   if (onboardingKeywords.length === 0) throw new Error("Der skal være mindst ét onboarding-søgeord.");
   if (!Number.isInteger(retentionMonths) || retentionMonths < 1 || retentionMonths > 120) throw new Error("Opbevaringsperioden skal være mellem 1 og 120 måneder.");
   if (replyToEmail) {
@@ -177,6 +184,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     member_word: "medlem",
     coeditor_word: coeditorWord,
     role_labels: roleLabels,
+    default_role_label: defaultRoleLabel,
     onboarding_keywords: onboardingKeywords,
   };
 
