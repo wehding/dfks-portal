@@ -821,6 +821,16 @@ export default function AdminValideringPage() {
         }
         const resolve = (s: string | null | undefined) => resolveWithMeta(s).anker
 
+        // Bestem datakilde per felt
+        const submittedByMember = !!(reviewingContract?.validation?.extracted_data as any)?.submittedByMember
+        const fieldSrc = (key: string, impliedByOverenskomst = false): DataSource => {
+            if (isLocked(key)) return "manuel"
+            if (impliedByOverenskomst) return "overenskomst"
+            if (submittedByMember && (key === "workTitle" || key === "creditedRoles")) return "klipper"
+            if (formData[key] !== undefined && formData[key] !== "" && formData[key] !== null) return "ai"
+            return undefined
+        }
+
         const salaryMeta = resolveWithMeta(sources.salary)
         const svodMeta = resolveWithMeta(sources.svod)
         const copydanMeta = resolveWithMeta(sources.copydan)
@@ -950,6 +960,15 @@ export default function AdminValideringPage() {
                             </div>
                         </div>
 
+                        {/* Legende */}
+                        <div className="flex items-center gap-3 px-4 py-2 border-b bg-muted/20 text-[10px] text-muted-foreground flex-wrap">
+                            <span className="font-medium text-foreground">Datakilde:</span>
+                            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-blue-100 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 shrink-0" />AI-udtræk</span>
+                            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-100 dark:bg-amber-900 border border-amber-200 dark:border-amber-700 shrink-0" />Overenskomst</span>
+                            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-100 dark:bg-emerald-900 border border-emerald-200 dark:border-emerald-700 shrink-0" />Fra klipper</span>
+                            <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-muted border border-border shrink-0" /><Lock className="h-2.5 w-2.5" />Manuelt sat</span>
+                        </div>
+
                         <Tabs defaultValue="parter" className="flex flex-col flex-1 min-h-0">
                             <TabsList className="flex w-full rounded-none border-b bg-muted/30 px-2 pt-2 gap-1 justify-start h-auto shrink-0">
                                 <TabsTrigger value="parter" className="text-xs rounded-t-md data-[state=active]:bg-background data-[state=active]:shadow-none border-b-2 data-[state=active]:border-foreground border-transparent pb-2">
@@ -975,14 +994,14 @@ export default function AdminValideringPage() {
                                         <span>Tilknyttet: <strong>{reviewingContract.displayTitle}</strong></span>
                                     </div>
                                 ) : (
-                                    <F label={<>Arbejdstitel{workTitleHl && <SourceBtn quote={workTitleHl} active={activeField === "workTitle"} onClick={() => activateSource("workTitle", workTitleHl)} />}</>}>
+                                    <F src={fieldSrc("workTitle")} label={<>Arbejdstitel{workTitleHl && <SourceBtn quote={workTitleHl} active={activeField === "workTitle"} onClick={() => activateSource("workTitle", workTitleHl)} />}</>}>
                                         <Input value={String(formData.workTitle ?? "")} onChange={(e) => setField("workTitle", e.target.value)} placeholder="Produktionens arbejdstitel..." />
                                     </F>
                                 )}
 
                                 {/* Portal-data fra klipper */}
                                 {formData.creditedRoles && (reviewingContract?.validation?.extracted_data as any)?.submittedByMember && (
-                                    <F label="★ Krediteret rolle (fra klipper)">
+                                    <F src="klipper" label="★ Krediteret rolle (fra klipper)">
                                         <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
                                     </F>
                                 )}
@@ -990,6 +1009,7 @@ export default function AdminValideringPage() {
                                 <Separator />
 
                                 <F
+                                    src={fieldSrc("producerName")}
                                     label={t("admin.validation.producer")}
                                     action={
                                         <button type="button" className="text-[11px] text-primary underline underline-offset-2"
@@ -1068,7 +1088,7 @@ export default function AdminValideringPage() {
                                 </F>
 
                                 {formData.rightsHolderName !== undefined && (
-                                    <F label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
+                                    <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
                                         <Input
                                             value={String(formData.rightsHolderName ?? "")}
                                             onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
@@ -1098,7 +1118,7 @@ export default function AdminValideringPage() {
 
                                 <Separator />
 
-                                <F label="Produktionstype" locked={isLocked("productionType")}>
+                                <F src={fieldSrc("productionType")} label="Produktionstype" locked={isLocked("productionType")}>
                                     <Select value={formData.productionType ?? ""} onValueChange={(v) => setField("productionType", v)}>
                                         <SelectTrigger><SelectValue placeholder="Vælg type..." /></SelectTrigger>
                                         <SelectContent>
@@ -1115,7 +1135,7 @@ export default function AdminValideringPage() {
                                 </F>
 
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label="Kontrakttype" locked={isLocked("contractType")}>
+                                    <F src={fieldSrc("contractType")} label="Kontrakttype" locked={isLocked("contractType")}>
                                         <Select value={formData.contractType ?? "a-løn"}
                                             onValueChange={(v) => { setField("contractType", v); setField("collectiveAgreement", v === "a-løn" || v === "leverandør-ref"); setField("collectiveAgreementByReference", v === "leverandør-ref"); setField("isFreelanceContract", v !== "a-løn") }}>
                                             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1126,7 +1146,7 @@ export default function AdminValideringPage() {
                                             </SelectContent>
                                         </Select>
                                     </F>
-                                    <F label={<>{t("admin.validation.agreement")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
+                                    <F src={fieldSrc("overenskomst")} label={<>{t("admin.validation.agreement")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                         <Select value={formData.overenskomst ?? "ingen"} onValueChange={(v) => setField("overenskomst", v)}>
                                             <SelectTrigger><SelectValue /></SelectTrigger>
                                             <SelectContent>
@@ -1137,7 +1157,7 @@ export default function AdminValideringPage() {
                                     </F>
                                 </div>
 
-                                <F label={t("admin.validation.gender")}>
+                                <F src={fieldSrc("gender")} label={t("admin.validation.gender")}>
                                     <Select value={formData.gender ?? ""} onValueChange={(v) => setField("gender", v)}>
                                         <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                                         <SelectContent>
@@ -1152,10 +1172,10 @@ export default function AdminValideringPage() {
                             {/* ── TAB 2: ØKONOMI ── */}
                             <TabsContent value="oekonomi" className="flex-1 overflow-y-auto p-4 space-y-4 mt-0">
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.salary")}{salaryMeta.erBeløb && <span title="Forankret i beløb" className="ml-1 text-amber-500">💰</span>}{salaryMeta.forGenerisk && <span title="Fandt flere steder" className="ml-1 text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
+                                    <F src={fieldSrc("salary")} label={<>{t("admin.validation.salary")}{salaryMeta.erBeløb && <span title="Forankret i beløb" className="ml-1 text-amber-500">💰</span>}{salaryMeta.forGenerisk && <span title="Fandt flere steder" className="ml-1 text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={salaryHl} active={activeField === "salary"} onClick={() => activateSource("salary", salaryHl)} /></>} locked={isLocked("salary")}>
                                         <Input type="number" value={String(formData.salary ?? "")} onChange={(e) => setField("salary", e.target.value)} placeholder="0" />
                                     </F>
-                                    <F label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
+                                    <F src={fieldSrc("salaryUnit")} label={t("admin.validation.salaryUnit")} locked={isLocked("salaryUnit")}>
                                         <Select value={formData.salaryUnit ?? "monthly"} onValueChange={(v) => setField("salaryUnit", v)}>
                                             <SelectTrigger><SelectValue /></SelectTrigger>
                                             <SelectContent>
@@ -1168,53 +1188,53 @@ export default function AdminValideringPage() {
                                     </F>
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.startDate")}<SourceBtn quote={datesHl} active={activeField === "dates"} onClick={() => activateSource("dates", datesHl)} /></>} locked={isLocked("startDate")}>
+                                    <F src={fieldSrc("startDate")} label={<>{t("admin.validation.startDate")}<SourceBtn quote={datesHl} active={activeField === "dates"} onClick={() => activateSource("dates", datesHl)} /></>} locked={isLocked("startDate")}>
                                         <Input type="date" value={String(formData.startDate ?? "")} onChange={(e) => setField("startDate", e.target.value)} />
                                     </F>
-                                    <F label={t("admin.validation.endDate")} locked={isLocked("endDate")}>
+                                    <F src={fieldSrc("endDate")} label={t("admin.validation.endDate")} locked={isLocked("endDate")}>
                                         <Input type="date" value={String(formData.endDate ?? "")} onChange={(e) => setField("endDate", e.target.value)} />
                                     </F>
                                 </div>
-                                <F label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
+                                <F src={fieldSrc("workingWeeks")} label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                     <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 </F>
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.1" value={String(formData.pensionPercent ?? "")} onChange={(e) => setField("pensionPercent", e.target.value)} placeholder="0" />
                                             <span className="text-sm text-muted-foreground">%</span>
                                         </div>
                                     </F>
-                                    <F label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
+                                    <F src={fieldSrc("pensionSupplement")} label={<>{t("admin.validation.pension")} (kr.)<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>
                                         <Input type="number" value={String(formData.pensionSupplement ?? "")} onChange={(e) => setField("pensionSupplement", e.target.value)} placeholder="0" />
                                     </F>
                                 </div>
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
+                                    <F src={fieldSrc("personalSupplement")} label={<>{t("admin.validation.personalSupplement")}<SourceBtn quote={supplementsHl} active={activeField === "supplements"} onClick={() => activateSource("supplements", supplementsHl)} /></>}>
                                         <Input type="number" value={String(formData.personalSupplement ?? "")} onChange={(e) => setField("personalSupplement", e.target.value)} placeholder="0" />
                                     </F>
-                                    <F label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
+                                    <F src={fieldSrc("otherSupplements")} label={<>{t("admin.validation.other")}{sources.otherSupplements && <SourceBtn quote={sources.otherSupplements} active={activeField === "otherSupplements"} onClick={() => activateSource("otherSupplements", sources.otherSupplements)} />}</>}>
                                         <Input value={String(formData.otherSupplements ?? "")} onChange={(e) => setField("otherSupplements", e.target.value)} placeholder="—" />
                                     </F>
                                 </div>
                                 <Separator />
                                 <Label className="text-xs block">Producentbidrag</Label>
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F label={<>{t("admin.validation.holidayPay")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
+                                    <F src={fieldSrc("holidayPayRate", true)} label={<>{t("admin.validation.holidayPay")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.1" value={String(formData.holidayPayRate ?? "")} onChange={(e) => setField("holidayPayRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
                                             {formData.holidayPayRate && <span className="text-sm text-muted-foreground">%</span>}
                                         </div>
                                     </F>
-                                    <F label={<>{t("admin.validation.beta")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
+                                    <F src={fieldSrc("betaRate", true)} label={<>{t("admin.validation.beta")}<SourceBtn quote={ca ?? undefined} active={activeField === "agreement"} onClick={() => activateSource("agreement", ca)} /></>}>
                                         <div className="flex items-center gap-2">
                                             <Input type="number" step="0.01" value={String(formData.betaRate ?? "")} onChange={(e) => setField("betaRate", e.target.value)} placeholder="Ikke nævnt" className="max-w-[120px]" />
                                             {formData.betaRate && <span className="text-sm text-muted-foreground">%</span>}
                                         </div>
                                     </F>
                                 </div>
-                                <F label={t("admin.validation.distribution")}>
+                                <F src={fieldSrc("distribution")} label={t("admin.validation.distribution")}>
                                     <Input value={formData.distribution ?? ""} onChange={(e) => setField("distribution", e.target.value)} placeholder="Netflix, DR, TV2..." />
                                 </F>
                             </TabsContent>
@@ -1224,21 +1244,21 @@ export default function AdminValideringPage() {
                                 <div>
                                     <Label className="text-xs mb-3 block font-semibold uppercase tracking-wide text-muted-foreground">Rettighedsforbehold</Label>
                                     <div className="space-y-3">
-                                        <div className="flex items-center justify-between">
+                                        <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("svod") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.svod ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">SVOD{svodMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={svodSrc ?? undefined} active={activeField === "svod"} onClick={() => activateSource("svod", svodSrc)} /></span>
                                                 <p className="text-[10px] text-muted-foreground">Streaming on-demand</p>
                                             </div>
                                             <Switch checked={formData.svod ?? false} onCheckedChange={(v) => setField("svod", v)} />
                                         </div>
-                                        <div className="flex items-center justify-between">
+                                        <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("copydan") ? "bg-muted/40" : formData.overenskomst === "de4-fiktion" ? "bg-amber-50 dark:bg-amber-950/25" : formData.copydan ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Copydan{copydanMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={copydanSrc ?? undefined} active={activeField === "copydan"} onClick={() => activateSource("copydan", copydanSrc)} /></span>
                                                 <p className="text-[10px] text-muted-foreground">Kollektivt vederlag</p>
                                             </div>
                                             <Switch checked={formData.copydan ?? false} onCheckedChange={(v) => setField("copydan", v)} />
                                         </div>
-                                        <div className="flex items-center justify-between">
+                                        <div className={`flex items-center justify-between rounded-md px-2.5 py-2 -mx-2.5 ${isLocked("royalty") ? "bg-muted/40" : ["feature","documentary","short"].includes(formData.productionType ?? "") ? "bg-amber-50 dark:bg-amber-950/25" : formData.royalty ? "bg-blue-50 dark:bg-blue-950/25" : ""}`}>
                                             <div>
                                                 <span className="text-sm flex items-center gap-1">Royalty{royaltyMeta.forGenerisk && <span title="Fandt flere steder" className="text-orange-500 text-[10px] font-semibold">⚠</span>}<SourceBtn quote={royaltySrc ?? undefined} active={activeField === "royalty"} onClick={() => activateSource("royalty", royaltySrc)} /></span>
                                                 <p className="text-[10px] text-muted-foreground">Løbende royaltybetaling</p>
@@ -1261,7 +1281,7 @@ export default function AdminValideringPage() {
                                     <RightRow label={t("admin.validation.aiClause")} desc={t("admin.validation.aiClauseDesc")} checked={formData.aiDataMiningClause ?? false} onChange={(v) => setField("aiDataMiningClause", v)} />
                                 </div>
                                 <Separator />
-                                <F label="Overenskomst-navn">
+                                <F src={fieldSrc("collectiveAgreementName", true)} label="Overenskomst-navn">
                                     <Input value={String(formData.collectiveAgreementName ?? "")} onChange={(e) => setField("collectiveAgreementName", e.target.value)} placeholder="fx De4 2022-2024" />
                                 </F>
                             </TabsContent>
@@ -1603,9 +1623,25 @@ export default function AdminValideringPage() {
 
 // ── Small helpers ─────────────────────────────────────────────
 
-function F({ label, action, locked, children }: { label: React.ReactNode; action?: React.ReactNode; locked?: boolean; children: React.ReactNode }) {
+type DataSource = "ai" | "overenskomst" | "klipper" | "manuel" | undefined
+
+const SOURCE_STYLES: Record<NonNullable<DataSource>, string> = {
+    ai:           "rounded-md bg-blue-50 dark:bg-blue-950/25 px-2.5 py-2 -mx-2.5",
+    overenskomst: "rounded-md bg-amber-50 dark:bg-amber-950/25 px-2.5 py-2 -mx-2.5",
+    klipper:      "rounded-md bg-emerald-50 dark:bg-emerald-950/25 px-2.5 py-2 -mx-2.5",
+    manuel:       "rounded-md bg-muted/40 px-2.5 py-2 -mx-2.5",
+}
+
+function F({ label, action, locked, src, children }: {
+    label: React.ReactNode
+    action?: React.ReactNode
+    locked?: boolean
+    src?: DataSource
+    children: React.ReactNode
+}) {
+    const wrapperClass = src ? SOURCE_STYLES[src] : "space-y-1.5"
     return (
-        <div className="space-y-1.5">
+        <div className={src ? `${SOURCE_STYLES[src]} space-y-1.5` : "space-y-1.5"}>
             <div className="flex items-center gap-2">
                 <Label className="text-xs">{label}</Label>
                 {locked && (
