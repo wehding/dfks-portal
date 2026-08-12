@@ -16,6 +16,8 @@ type ContractRow = { id: string; working_title: string | null; work_id: string |
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
 type AssignmentRow = { work_id: string | null; works: { id: string; title: string | null; contracts: Array<{ id: string }> | null } | null };
 type EpisodeScopeRow = { id: string; season_number: number; works: { title: string | null } | null };
+type ShareTaskRow = { id: string; case_id: string; works: { title: string | null } | null };
+type CollaborationReviewRow = { id: string; status: string };
 
 export default async function PortalDashboardPage() {
   const supabase = await createClient();
@@ -34,15 +36,18 @@ export default async function PortalDashboardPage() {
     if (staffRole) redirect("/admin");
     redirect("/onboarding");
   }
-  const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }, { data: episodeScopes }] = await Promise.all([
+  const [{ data: contracts }, { data: workRequests }, { data: screeningClaims }, { data: inboxThreads }, { data: assignments }, { data: episodeScopes }, { data: shareTasks }, { data: collaborationReviews }] = await Promise.all([
     db.from("contracts").select("id,working_title,work_id,contract_comments(author_role,member_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),
     db.from("screening_claims").select("id,title,status,created_at").eq("org_id", orgId).eq("profile_id", user.id).eq("status", "pending"),
     db.from("member_message_threads").select("id,subject,member_messages(author_role,created_at),member_message_participants(user_id,last_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("work_assignments").select("work_id,works(id,title,contracts(id))").eq("rights_holder_id", holder.id),
     db.from("member_series_episode_scopes").select("id,season_number,works:series_work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("status", "pending"),
+    db.from("work_share_participants").select("id,case_id,works:work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("relationship_status", "pending"),
+    db.from("member_work_collaboration_reviews").select("id,status").eq("org_id", orgId).eq("rights_holder_id", holder.id).in("status", ["pending", "disputed"]),
   ]);
   const contractRows = (contracts ?? []) as ContractRow[];
+  const collaborationRows = (collaborationReviews ?? []) as CollaborationReviewRow[];
   const unreadThreads = ((inboxThreads ?? []) as InboxThread[]).filter(thread => {
     const lastRead = thread.member_message_participants?.find(participant => participant.user_id === user.id)?.last_read_at ?? "";
     return (thread.member_messages ?? []).some(message => message.author_role === "admin" && message.created_at > lastRead);
@@ -75,12 +80,26 @@ export default async function PortalDashboardPage() {
       title: `${contractsWithoutWork.length} kontrakt${contractsWithoutWork.length === 1 ? "" : "er"} uden værk tilknyttet`,
       text: "Gå til Mine kontrakter og tilknyt de korrekte værker.",
     }] : []),
+    ...(collaborationRows.length ? [{
+      key: "collaboration-review",
+      href: "/portal/mine-vaerker?collaborationReview=1",
+      icon: ListTodo,
+      title: `${collaborationRows.length} værk${collaborationRows.length === 1 ? "" : "er eller afsnit"} mangler medklippergennemgang`,
+      text: "Markér dem, du har klippet alene, eller tilføj medklippere og dit eget foreløbige procentbud.",
+    }] : []),
     ...((episodeScopes ?? []) as unknown as EpisodeScopeRow[]).map(scope => ({
       key: `episode-scope-${scope.id}`,
       href: `/portal/mine-vaerker?episodeScope=${scope.id}`,
       icon: ListTodo,
       title: `${scope.works?.title ?? "Serie"} · sæson ${scope.season_number}`,
       text: "Vælg de afsnit, du arbejdede på, eller bekræft hele sæsonen.",
+    })),
+    ...((shareTasks ?? []) as unknown as ShareTaskRow[]).map(task => ({
+      key: `share-task-${task.id}`,
+      href: `/portal/mine-vaerker?shareTask=${task.case_id}`,
+      icon: ListTodo,
+      title: task.works?.title ?? "Arbejdsandel på et værk",
+      text: "Du er angivet som medklipper. Angiv din egen foreløbige procent, eller oplys at du ikke arbejdede på værket.",
     })),
     ...contractRows.filter(contract => (contract.contract_comments ?? []).some(comment => comment.author_role === "admin" && !comment.member_read_at)).map(contract => ({ key: `message-${contract.id}`, href: `/portal/mine-kontrakter?contract=${contract.id}`, icon: MessageSquare, title: contract.working_title || "Ny kontraktbesked", text: "Læs det nye svar fra DFKS." })),
     ...unreadThreads.map(thread => ({ key: `inbox-${thread.id}`, href: `/portal?thread=${thread.id}`, icon: MessageSquare, title: thread.subject, text: "Læs den nye besked fra DFKS." })),

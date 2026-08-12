@@ -67,6 +67,7 @@ import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
 import { buildCompleteEpisodeOptions } from "@/lib/series-episodes";
 import { ProductionCompanyPicker } from "@/components/production-company-picker";
 import { normalizeCompanyName, type ExternalProductionCompany, type ProductionCompanyOption, type ProductionCompanySelection } from "@/lib/production-companies";
+import { WorkShareCasePanel } from "@/components/admin/work-share-case-panel";
 
 const TMDB_IMG_W185 = "https://image.tmdb.org/t/p/w185";
 
@@ -1931,6 +1932,8 @@ export default function VaerksadministrationPage() {
             </Button>
         }
       />
+
+      <WorkShareCasePanel />
 
       {notice && (
         <div className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">

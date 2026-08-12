@@ -21,6 +21,8 @@ import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
 import { normalizeEpisodeNumbers, resolveSeriesScopeTarget, syncScopeToDraftContracts, upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { registerShareSuggestions } from "@/lib/server/work-share-cases";
+import { normalizeSharePercent } from "@/lib/work-share-distribution";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -803,10 +805,16 @@ export async function linkExistingWorkForMember(params: {
   selectedEpisodes?: number[] | null;
   coversWholeSeason?: boolean;
   allowPendingEpisodeSelection?: boolean;
+  selfSharePercent?: number | null;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
   const orgId = await currentOrgId(db, user.id);
+  const coEditors = normalizeCoEditors(params.coEditors);
+  const ownSharePercent = coEditors.length ? normalizeSharePercent(params.selfSharePercent) : null;
+  if (coEditors.length && ownSharePercent === null) {
+    return { success: false, error: "Når du angiver medklippere, skal du også angive din egen arbejdsandel." };
+  }
 
   const { data: work, error: workError } = await db
     .from("works")
@@ -982,7 +990,6 @@ export async function linkExistingWorkForMember(params: {
     if (!scopeResult.success) return scopeResult;
   }
 
-  const coEditors = normalizeCoEditors(params.coEditors);
   if (coEditors.length) {
     const requestId = await createWorkRequest({
       db,
@@ -993,6 +1000,15 @@ export async function linkExistingWorkForMember(params: {
       oldData: { work },
       proposedData: { kind: "co_editors", coEditors },
       comment: params.comment ?? "",
+    });
+    await registerShareSuggestions(db, {
+      orgId, workId: seriesParentWorkId ?? params.workId,
+      seasonNumber: isSeries ? params.seasonNumber ?? work.season_number ?? 1 : null,
+      episodeNumber: !seriesParentWorkId ? work.episode_number : null,
+      episodeNumbers: selectedEpisodeNumbers,
+      actorUserId: user.id, actorRightsHolderId: params.rightsHolderId,
+      actorRole: params.role, actorPercent: ownSharePercent!,
+      suggestions: coEditors.map(editor => ({ name: editor.name, role: editor.role, rightsHolderId: editor.rightsHolderId })),
     });
     const fresh = await fetchMemberAssignment(db, params.workId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
@@ -1032,6 +1048,7 @@ export async function addWorkForMemberWithApproval(params: {
   overrideLocalMatch?: boolean;
   allowPendingEpisodeSelection?: boolean;
   coversWholeSeason?: boolean;
+  selfSharePercent?: number | null;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
@@ -1046,6 +1063,10 @@ export async function addWorkForMemberWithApproval(params: {
     return sameTitle && sameYear;
   }) ?? null;
   const coEditors = normalizeCoEditors(params.coEditors);
+  const ownSharePercent = coEditors.length ? normalizeSharePercent(params.selfSharePercent) : null;
+  if (coEditors.length && ownSharePercent === null) {
+    return { success: false, error: "Når du angiver medklippere, skal du også angive din egen arbejdsandel." };
+  }
   const forceManualDuplicate = params.source === "manual" && Boolean(params.overrideLocalMatch);
   // Manuelle værker kræver godkendelse hvis der findes et eksisterende match/duplet i databasen/DFI/TMDB
   const requiresApproval = params.source === "manual" ? (forceManualDuplicate || similarWorks.length > 0) : similarWorks.length > 0;
@@ -1310,6 +1331,17 @@ export async function addWorkForMemberWithApproval(params: {
       },
       comment: params.comment,
     });
+    if (coEditors.length > 0 && ownSharePercent !== null) {
+      await registerShareSuggestions(db, {
+        orgId, workId: isSeries && parentWork ? parentWork.id : finalWorkId,
+        seasonNumber: isSeriesType(params.workData.type) ? params.workData.season_number ?? 1 : null,
+        episodeNumber: null,
+        episodeNumbers: params.workData.selected_episodes ?? [],
+        actorUserId: user.id, actorRightsHolderId: params.rightsHolderId,
+        actorRole: params.role, actorPercent: ownSharePercent,
+        suggestions: coEditors.map(editor => ({ name: editor.name, role: editor.role, rightsHolderId: editor.rightsHolderId })),
+      });
+    }
     const fresh = await fetchMemberAssignment(db, finalWorkId, params.rightsHolderId);
     revalidatePath("/portal/mine-vaerker");
     revalidatePath("/admin/vaerker");
@@ -1330,6 +1362,15 @@ export async function addWorkForMemberWithApproval(params: {
         source: params.source,
       },
       comment: params.comment,
+    });
+    await registerShareSuggestions(db, {
+      orgId, workId: isSeries && parentWork ? parentWork.id : finalWorkId,
+      seasonNumber: isSeriesType(params.workData.type) ? params.workData.season_number ?? 1 : null,
+      episodeNumber: null,
+      episodeNumbers: params.workData.selected_episodes ?? [],
+      actorUserId: user.id, actorRightsHolderId: params.rightsHolderId,
+      actorRole: params.role, actorPercent: ownSharePercent!,
+      suggestions: coEditors.map(editor => ({ name: editor.name, role: editor.role, rightsHolderId: editor.rightsHolderId })),
     });
   } else if (params.comment.trim()) {
     // Ingen godkendelse nødvendig, men brugeren skrev en besked →
@@ -1366,6 +1407,7 @@ export async function addManualWorkAndLinkContract(params: {
   contractScope?: { seasonNumber: number; episodeNumbers: number[] } | null;
   allowPendingEpisodeSelection?: boolean;
   coversWholeSeason?: boolean;
+  selfSharePercent?: number | null;
 }) {
   let workId = params.reuseWorkId ?? null;
   let pending = params.reuseWorkId ? Boolean(params.reusePending) : false;
@@ -1397,6 +1439,7 @@ export async function addManualWorkAndLinkContract(params: {
       workData: params.workData,
       comment: params.comment,
       coEditors: params.coEditors,
+      selfSharePercent: params.selfSharePercent,
       source: "manual",
       overrideLocalMatch: duplicateDecision === "create_pending",
       allowPendingEpisodeSelection: params.allowPendingEpisodeSelection,

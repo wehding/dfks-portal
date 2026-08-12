@@ -13,6 +13,8 @@ import type { DfiMetadata } from "@/lib/dfi-metadata";
 import { groupWorksBySeason, type SeasonGroupingRow } from "@/lib/work-season-groups";
 import { contractCoversEpisode } from "@/lib/contract-work-scope";
 import { sendMemberNotification } from "@/lib/member-notifications";
+import { registerShareSuggestions } from "@/lib/server/work-share-cases";
+import { normalizeSharePercent } from "@/lib/work-share-distribution";
 import type { ProductionCompanySelection } from "@/lib/production-companies";
 import { syncWorkProducerRelations } from "@/lib/server/production-company-relations";
 import { recordAuditEvent } from "@/lib/audit-log-server";
@@ -499,6 +501,7 @@ export async function submitWorkDataCorrection(params: {
   memberRole?: string;
   editScope?: "work" | "season" | "episode";
   seasonNumber?: number;
+  selfSharePercent?: number | null;
 }) {
   const comment = params.comment.trim();
   if (!comment) throw new Error("Skriv en bemærkning til admin.");
@@ -539,6 +542,11 @@ export async function submitWorkDataCorrection(params: {
 
   const proposedChanges = changedFields(work, proposed);
   const coEditors = params.coEditors ?? [];
+  const addedCoEditors = coEditors.filter(editor => editor.action !== "remove");
+  const selfSharePercent = normalizeSharePercent(params.selfSharePercent);
+  if (addedCoEditors.length > 0 && selfSharePercent === null) {
+    throw new Error("Når du angiver medklippere, skal du også angive din egen arbejdsandel.");
+  }
   const memberRole = cleanText(params.memberRole);
   const roleChanged = Boolean(memberRole && memberRole !== assignment.role);
   const hasChanges = Object.keys(proposedChanges).length > 0 || coEditors.length > 0 || (params.myEpisodes ?? []).length > 0 || roleChanged;
@@ -578,6 +586,25 @@ export async function submitWorkDataCorrection(params: {
     member_read_at: new Date().toISOString(),
   });
   if (commentError) throw new Error(commentError.message);
+
+  if (addedCoEditors.length > 0 && selfSharePercent !== null) {
+    await registerShareSuggestions(db, {
+      orgId: work.org_id ?? orgId,
+      workId: work.id,
+      seasonNumber: seasonScope ? params.seasonNumber ?? null : work.season_number,
+      episodeNumber: params.editScope === "episode" ? work.episode_number : null,
+      episodeNumbers: seasonScope ? params.myEpisodes ?? [] : work.episode_number ? [work.episode_number] : [],
+      actorUserId: user.id,
+      actorRightsHolderId: rightsHolder.id,
+      actorRole: memberRole ?? assignment.role ?? "Klipper",
+      actorPercent: selfSharePercent,
+      suggestions: addedCoEditors.map(editor => ({
+        name: editor.name,
+        role: editor.role,
+        rightsHolderId: editor.rightsHolderId,
+      })),
+    });
+  }
 
   // Værket forbliver "godkendt" — kun selve ændringsanmodningen er pending.
   // Admin ser stadig "Til godkendelse" via hasPendingRequest(), så en enkelt

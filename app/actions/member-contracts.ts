@@ -1200,9 +1200,20 @@ export async function updateAdminContract(contractId: string, values: AdminContr
     source: "admin",
     correlationId: crypto.randomUUID(),
   } });
-  const { producer_selections: producerSelections, ...contractValues } = values;
+  const { producer_selections: producerSelections, status: requestedStatus, ...remainingContractValues } = values;
+  const contractValues = requestedStatus === undefined || requestedStatus === "valideret"
+    ? remainingContractValues
+    : { ...remainingContractValues, status: requestedStatus };
   const { error } = await writeDb.from("contracts").update(contractValues).eq("id", contractId).eq("org_id", orgId);
   if (error) return { success: false, error: error.message };
+  if (requestedStatus === "valideret" && existing.status !== "valideret") {
+    const { error: validationError } = await writeDb.rpc("validate_contracts_explicitly", {
+      p_actor_user_id: user.id,
+      p_org_id: orgId,
+      p_contract_ids: [contractId],
+    });
+    if (validationError) return { success: false, error: validationError.message };
+  }
   if (requestedEpisodeScopeChange) {
     await writeDb.from("contract_episode_confirmations").update({ invalidated_at: new Date().toISOString() }).eq("contract_id", contractId).is("invalidated_at", null);
   }
@@ -1247,7 +1258,11 @@ export async function validateAdminContracts(contractIds: string[]) {
       source: "admin",
       correlationId: crypto.randomUUID(),
     } });
-    const { error } = await writeDb.from("contracts").update({ status: "valideret" }).eq("org_id", orgId).in("id", toValidate.map(contract => contract.id));
+    const { error } = await writeDb.rpc("validate_contracts_explicitly", {
+      p_actor_user_id: user.id,
+      p_org_id: orgId,
+      p_contract_ids: toValidate.map(contract => contract.id),
+    });
     if (error) return { success: false, error: error.message };
   }
   for (const contract of toValidate) {
