@@ -76,13 +76,6 @@ export async function analyseExistingContractReview(input: ExistingReviewAnalysi
   const responseDraftSubject = typeof analysis.result?.feedbackmail?.emne === "string"
     ? analysis.result.feedbackmail.emne.trim().slice(0, 500)
     : null;
-  const UDVIKLING = ["udvikling_dokumentar", "udvikling_fiktion", "udvikling_underholdning"];
-  const aiProductionType = analysis.klassifikation?.produktionstype;
-  const productionTypeOverride =
-    aiProductionType && (UDVIKLING.includes(aiProductionType) || input.productionType === "ukendt")
-      ? aiProductionType
-      : null;
-
   const { data: updated, error: updateError } = await db
     .from("contract_reviews")
     .update({
@@ -95,7 +88,6 @@ export async function analyseExistingContractReview(input: ExistingReviewAnalysi
       response_draft_subject: responseDraftSubject,
       response_draft: responseDraft,
       response_draft_updated_at: responseDraft ? new Date().toISOString() : null,
-      ...(productionTypeOverride ? { production_type: productionTypeOverride } : {}),
     })
     .eq("id", input.reviewId)
     .eq("org_id", input.orgId)
