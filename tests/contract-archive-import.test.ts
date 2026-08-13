@@ -14,7 +14,10 @@ import {
   matchArchiveRows,
   normalizeArchiveCredit,
   normalizeArchiveDate,
+  normalizeArchiveLookupTitle,
   parseArchiveSpreadsheet,
+  scoreArchiveExternalWork,
+  shouldPostProcessArchiveItem,
   type ArchiveDriveFile,
   type ArchiveSpreadsheetRow,
 } from "@/lib/one-off/contract-archive-import";
@@ -24,6 +27,38 @@ test("accepterer en PDF med korrekt MIME-type selv uden filendelse", () => {
   assert.equal(archiveImportFileName({ name: "Kontrakt uden filendelse", contentType: "application/pdf" }), "Kontrakt uden filendelse.pdf");
   assert.equal(archiveImportFileName({ name: "Kontrakt.pdf", contentType: "application/pdf" }), "Kontrakt.pdf");
   assert.equal(isSupportedArchiveContract({ name: "Ukendt fil", contentType: "application/octet-stream" }), false);
+});
+
+test("dubletter efterbehandles ikke igen", () => {
+  assert.equal(shouldPostProcessArchiveItem({ status: "duplicate", aiJobId: null }), false);
+  assert.equal(shouldPostProcessArchiveItem({ status: "ready_for_review", aiJobId: null }), false);
+  assert.equal(shouldPostProcessArchiveItem({ status: "missing_work", aiJobId: "job-1" }), true);
+  assert.equal(shouldPostProcessArchiveItem({ status: "ready_for_review", aiJobId: "job-1" }), true);
+});
+
+test("seriebetegnelser fjernes kun fra det eksterne opslag", () => {
+  assert.equal(normalizeArchiveLookupTitle("Dag & Nat sæson 2", "tvSeries"), "Dag & Nat");
+  assert.equal(normalizeArchiveLookupTitle("SOMMERDAHL V", "tvSeries"), "SOMMERDAHL");
+  assert.equal(normalizeArchiveLookupTitle("Vogter V", "feature"), "Vogter V");
+});
+
+test("eksterne værker kræver eksakt titel og forenelig type uden premiereår", () => {
+  assert.equal(scoreArchiveExternalWork(
+    { title: "Vogter", year: null, type: "feature" },
+    { title: "Vogter", year: 2024, type: "spillefilm" },
+  ), 95);
+  assert.equal(scoreArchiveExternalWork(
+    { title: "Kald mig far", year: null, type: "feature" },
+    { title: "Kald mig far", year: 2024, type: "tv-serie" },
+  ), 85);
+  assert.equal(scoreArchiveExternalWork(
+    { title: "Sosu", year: null, type: "feature", contractDate: "2024-11-18" },
+    { title: "Sosu", year: 2025, type: "spillefilm" },
+  ), 100);
+  assert.equal(scoreArchiveExternalWork(
+    { title: "SULT", year: null, type: "feature", contractDate: "2024-04-02" },
+    { title: "Sult", year: 1966, type: "spillefilm" },
+  ), 74);
 });
 
 function row(overrides: Partial<ArchiveSpreadsheetRow> = {}): ArchiveSpreadsheetRow {
