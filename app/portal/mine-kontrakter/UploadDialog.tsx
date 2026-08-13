@@ -1043,10 +1043,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setManualMode(false);
                       setManualDuplicateMatches([]);
                       // Et valgt serie-værk skal altid vise sæson/afsnit-vælgeren —
-                      // Synk produktionstypen fra værket (AI-screeningen kan have gættet forkert).
-                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
-                        .find(([, workType]) => workType === result.type)?.[0];
-                      if (matchedProductionType) setProductionType(matchedProductionType);
+                      // Synk produktionstypen fra værket, men respektér brugerens
+                      // eksplicitte valg af udviklingstype.
+                      if (developmentConfirmed !== true) {
+                        const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                          .find(([, workType]) => workType === result.type)?.[0];
+                        if (matchedProductionType) setProductionType(matchedProductionType);
+                      }
                       if ((result.type === "tv-serie" || result.type === "dokumentar-serie") && !seriesSeason.trim()) {
                         setSeriesSeason(String(result.season_hint ?? result.season_number ?? 1));
                       }
@@ -1065,9 +1068,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     manualWork={manualWork}
                     onManualWorkChange={value => {
                       setManualWork(value);
-                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
-                        .find(([, workType]) => workType === value.type)?.[0];
-                      if (matchedProductionType) setProductionType(matchedProductionType);
+                      if (developmentConfirmed !== true) {
+                        const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                          .find(([, workType]) => workType === value.type)?.[0];
+                        if (matchedProductionType) setProductionType(matchedProductionType);
+                      }
                       setManualDuplicateMatches([]);
                     }}
                     locale="da"
