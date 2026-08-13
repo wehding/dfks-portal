@@ -476,6 +476,7 @@ export function buildSystemPrompt(): string {
 
 export interface PortalScreeningResult {
     title: string | null
+    isDevelopmentContract: boolean | null
     productionType: string | null
     creditedRole: string | null
     duration: number

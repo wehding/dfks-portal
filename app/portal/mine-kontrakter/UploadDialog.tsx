@@ -71,6 +71,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
   const [screening, setScreening] = useState(false);
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
+  const [isDevelopmentContract, setIsDevelopmentContract] = useState(false);
 
   const [title, setTitle] = useState(workTitle ?? "");
   const [selectedWorkId, setSelectedWorkId] = useState(workId ?? "");
@@ -164,6 +165,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
 
     setFiles(limited);
+    setIsDevelopmentContract(false);
     batchAutoSubmittedRef.current = false;
     setEpisodesTouched(false);
     setWorkPickerOpen(false);
@@ -285,6 +287,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           setEpisodeCredits(result.episodes.map(episode => ({ number: episode.number, role: screenedRole })));
           filled.add("episodes");
         }
+        if (result.isDevelopmentContract) setIsDevelopmentContract(true);
         setAiFields(filled);
         if (filled.size > 0) toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`);
       } catch (e: unknown) {
@@ -886,6 +889,14 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Udviklingskontrakt-advarsel */}
+          {isDevelopmentContract && !screening && !isBatchUpload && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3.5 py-3 text-sm text-amber-900 dark:text-amber-200">
+              <p className="font-medium">Vi har registreret en udviklingskontrakt</p>
+              <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">Kontrakten ser ud til at være en optionsaftale eller udviklingskontrakt. Den kan stadig uploades — den vil blot ikke have en færdig produktionstype endnu.</p>
             </div>
           )}
 
