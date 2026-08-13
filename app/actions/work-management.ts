@@ -676,10 +676,13 @@ export async function fetchAdminWorksForReview() {
       { ...contract, work_id: parent?.id ?? null },
       work,
     ));
+    const parentPendingCount = parent
+      ? (parent as typeof work).work_change_requests?.filter(r => r.status === "pending").length ?? 0
+      : 0;
     return ({
     ...work,
     contract_count: (work.contracts?.length ?? 0) > 0 || hasScopedParentContract ? 1 : 0,
-    pending_count: work.work_change_requests?.filter(request => request.status === "pending").length ?? 0,
+    pending_count: (work.work_change_requests?.filter(request => request.status === "pending").length ?? 0) + parentPendingCount,
     unread_count: unreadByWork.get(work.id) ?? 0,
     assigned_user_count: work.work_assignments?.length ?? 0,
     parent,
