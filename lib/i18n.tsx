@@ -18,7 +18,7 @@ const translations = {
         "nav.messages": "Beskeder",
         "nav.myContracts": "Mine Kontrakter",
         "nav.economy": "Økonomi",
-        "nav.contracts": "Kontraktadmin",
+        "nav.contracts": "Kontraktarkiv",
         "nav.rightsHolders": "Rettighedshavere",
         "nav.validation": "Validering",
         "nav.payouts": "Udbetalinger",
@@ -407,7 +407,7 @@ const translations = {
         "econ.noData": "Ingen udbetalingsdata endnu",
 
         // Admin - Contracts
-        "admin.contracts.title": "Kontraktadministration",
+        "admin.contracts.title": "Kontraktarkiv",
         "admin.contracts.subtitle": "Oversigt, upload og validering af kontrakter",
         "admin.contracts.member": "Medlem",
         "admin.contracts.uploaded": "Uploadet",

@@ -14,8 +14,10 @@ import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
+import { useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
+import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
@@ -1614,18 +1616,12 @@ function AdminKontrakterContent() {
 
     return (
         <div className="space-y-6">
-            <PageHeader
-                title={t("admin.contracts.title")}
-                subtitle={t("admin.contracts.subtitle")}
-                actions={
-                    <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                        <Button size="sm" className="w-full gap-1.5 sm:w-auto" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
-                            <Upload className="h-4 w-4" />
-                            Upload kontrakter
-                        </Button>
-                    </div>
-                }
-            />
+            <div className="flex justify-end">
+                <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
+                    <Upload className="h-4 w-4" />
+                    Upload kontrakter
+                </Button>
+            </div>
 
             {/* Filters */}
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
@@ -2708,6 +2704,51 @@ function AdminKontrakterContent() {
     )
 }
 
+function AdminKontrakterPageInner() {
+    const searchParams = useSearchParams()
+    const initialTab = searchParams.get("tab") === "valideringskoe" ? "valideringskoe" : "arkiv"
+    const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe">(initialTab)
+
+    return (
+        <div className="space-y-6">
+            <PageHeader
+                title="Kontraktarkiv"
+                subtitle="Oversigt, upload og validering af kontrakter"
+            />
+            <div className="flex gap-0 border-b">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("arkiv")}
+                    className={[
+                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        activeTab === "arkiv"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                >
+                    Arkiv
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("valideringskoe")}
+                    className={[
+                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        activeTab === "valideringskoe"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                >
+                    Valideringskø
+                </button>
+            </div>
+            {activeTab === "arkiv"
+                ? <Suspense><AdminKontrakterContent /></Suspense>
+                : <ValideringskøTab />
+            }
+        </div>
+    )
+}
+
 export default function AdminKontrakterPage() {
-    return <Suspense><AdminKontrakterContent /></Suspense>
+    return <Suspense><AdminKontrakterPageInner /></Suspense>
 }
