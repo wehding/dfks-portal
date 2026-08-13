@@ -90,13 +90,16 @@ const TYPE_CONFIG = {
 }
 
 const PRODUCTION_TYPE_LABELS: Record<string, string> = {
-    dokumentar: "Dokumentarfilm",
-    fiktion:    "Fiktion / drama",
-    tv_program: "TV-program",
-    reklame:    "Reklame",
-    streaming:  "Streaming",
-    shortform:  "Short-form",
-    ukendt:     "Ukendt",
+    dokumentar:              "Dokumentarfilm",
+    fiktion:                 "Fiktion / drama",
+    tv_program:              "TV-program",
+    reklame:                 "Reklame",
+    streaming:               "Streaming",
+    shortform:               "Short-form",
+    ukendt:                  "Ukendt",
+    udvikling_dokumentar:    "Udvikling (Dokumentar)",
+    udvikling_fiktion:       "Udvikling (Fiktion)",
+    udvikling_underholdning: "Udvikling (Underholdning)",
 }
 
 const DISTRIBUTION_LABELS: Record<string, string> = {

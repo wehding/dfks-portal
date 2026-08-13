@@ -560,7 +560,7 @@ function AdminKontrakterContent() {
                             employers (name),
                             rettighedshavere (full_name),
                             works (id, title, type, poster_url),
-                            contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+                            contract_validations (has_credit_clause, has_overenskomst_incorporation)
                         `)
                         .eq("org_id", resolvedOrgId)
                         .order("created_at", { ascending: false }),
@@ -579,7 +579,7 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
+                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
                     const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
@@ -642,7 +642,7 @@ function AdminKontrakterContent() {
                         episode_numbers: r.episode_numbers ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
                         contract_attachments: attachmentsByContract[r.id] ?? [],
-                        validation_data: validation?.extracted_data ?? null,
+                        validation_data: null, // udskudt til loadContractDetail() ved åbning
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                         ai_job_status: latestJobByContract[r.id]?.status ?? null,
@@ -700,10 +700,10 @@ function AdminKontrakterContent() {
                         id, type, overenskomst, status, employer_id, rights_holder_id, working_title,
                         season_number, episode_numbers,
                         employers (name), rettighedshavere (full_name), works (id, title, poster_url),
-                        contract_validations (extracted_data, has_credit_clause, has_overenskomst_incorporation)
+                        contract_validations (has_credit_clause, has_overenskomst_incorporation)
                     `)
                     .in("id", doneIds)
-                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
+                for (const r of (rows ?? []) as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>) {
                     const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
                     refreshed[r.id] = {
                         type: r.type,
@@ -719,7 +719,7 @@ function AdminKontrakterContent() {
                         work_poster_url: r.works?.poster_url ?? null,
                         season_number: r.season_number ?? null,
                         episode_numbers: r.episode_numbers ?? null,
-                        validation_data: validation?.extracted_data ?? null,
+                        validation_data: null, // udskudt til loadContractDetail() ved åbning
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
                     }
@@ -1766,7 +1766,7 @@ function AdminKontrakterContent() {
                                 <button type="button" onClick={() => openEdit(c)} className="flex min-w-0 flex-1 gap-3 text-left">
                                     {posterUrl(c.work_poster_url) && (
                                         // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={posterUrl(c.work_poster_url) ?? ""} alt="" className="h-16 w-11 shrink-0 rounded object-cover" />
+                                        <img src={posterUrl(c.work_poster_url) ?? ""} alt="" loading="lazy" className="h-16 w-11 shrink-0 rounded object-cover" />
                                     )}
                                     <div className="min-w-0 flex-1">
                                         <div className="flex flex-wrap items-center gap-2">
@@ -1852,7 +1852,7 @@ function AdminKontrakterContent() {
                                         <div className="flex items-center gap-2">
                                             {posterUrl(c.work_poster_url) && (
                                                 // eslint-disable-next-line @next/next/no-img-element
-                                                <img src={posterUrl(c.work_poster_url) ?? ""} alt="" className="h-12 w-8 rounded object-cover" />
+                                                <img src={posterUrl(c.work_poster_url) ?? ""} alt="" loading="lazy" className="h-12 w-8 rounded object-cover" />
                                             )}
                                             <button type="button" onClick={() => openEdit(c)} className="text-left underline-offset-4 hover:underline">
                                                 {c.work_title ?? c.working_title ?? <span className="text-muted-foreground">—</span>}

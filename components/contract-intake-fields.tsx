@@ -243,15 +243,25 @@ export const CONTRACT_TYPE_OPTIONS: { value: ContractType; label: string }[] = [
     { value: "ukendt",      label: "Ved ikke" },
 ]
 
-export const PRODUCTION_TYPES: { value: ProductionType; label: string }[] = [
-    { value: "dokumentar",  label: "Dokumentarfilm" },
-    { value: "fiktion",     label: "Fiktion / drama" },
-    { value: "tv_program",  label: "TV-program" },
-    { value: "reklame",     label: "Reklame / branded content" },
-    { value: "streaming",   label: "Streaming-original" },
-    { value: "shortform",   label: "Short-form / online" },
-    { value: "ukendt",      label: "Ved ikke" },
+export const PRODUCTION_TYPES: { value: ProductionType; label: string; group?: string }[] = [
+    { value: "dokumentar",              label: "Dokumentarfilm",            group: "Dokumentar" },
+    { value: "udvikling_dokumentar",    label: "Udvikling (Dokumentar)",    group: "Dokumentar" },
+    { value: "fiktion",                 label: "Fiktion / drama",           group: "Fiktion" },
+    { value: "tv_program",              label: "TV-program",                group: "Fiktion" },
+    { value: "udvikling_fiktion",       label: "Udvikling (Fiktion)",       group: "Fiktion" },
+    { value: "reklame",                 label: "Reklame / branded content", group: "Andet" },
+    { value: "streaming",               label: "Streaming-original",        group: "Andet" },
+    { value: "shortform",               label: "Short-form / online",       group: "Andet" },
+    { value: "udvikling_underholdning", label: "Udvikling (Underholdning)", group: "Underholdning" },
+    { value: "ukendt",                  label: "Ved ikke" },
 ]
+
+// Reklassificering: hvilke typer en udviklingskontrakt kan blive til
+export const DEVELOPMENT_RECLASSIFICATION: Record<string, ProductionType[]> = {
+    "udvikling_dokumentar":    ["dokumentar", "tv_program"],
+    "udvikling_fiktion":       ["fiktion", "tv_program", "shortform"],
+    "udvikling_underholdning": ["streaming", "shortform"],
+}
 
 export const DISTRIBUTION_CHANNELS: { value: DistributionChannel; label: string }[] = [
     { value: "biograf",              label: "Biograf" },
