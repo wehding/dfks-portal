@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import { PDFDocument } from "pdf-lib";
 import {
   applySpreadsheetFallback,
+  archiveImportFileName,
   buildSearchableJpegPdf,
   detectDevelopmentContract,
   extractLocalContactData,
@@ -20,6 +21,8 @@ import {
 
 test("accepterer en PDF med korrekt MIME-type selv uden filendelse", () => {
   assert.equal(isSupportedArchiveContract({ name: "Kontrakt uden filendelse", contentType: "application/pdf" }), true);
+  assert.equal(archiveImportFileName({ name: "Kontrakt uden filendelse", contentType: "application/pdf" }), "Kontrakt uden filendelse.pdf");
+  assert.equal(archiveImportFileName({ name: "Kontrakt.pdf", contentType: "application/pdf" }), "Kontrakt.pdf");
   assert.equal(isSupportedArchiveContract({ name: "Ukendt fil", contentType: "application/octet-stream" }), false);
 });
 

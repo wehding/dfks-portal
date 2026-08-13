@@ -16,6 +16,7 @@ import {
 import { intakeContractFile } from "@/lib/server/contract-import-intake";
 import {
   applySpreadsheetFallback,
+  archiveImportFileName,
   buildSearchableJpegPdf,
   detectDevelopmentContract,
   extractLocalContactData,
@@ -360,7 +361,8 @@ async function runExecute(db: ReturnType<typeof createServiceClient>, options: O
         batchId, actor: { userId: options.actorUserId, orgId: options.orgId, role },
         rightsHolderId: owner.id, workId: work.id,
         file: {
-          name: unit.name, contentType: unit.contentType, buffer: downloaded.buffer,
+          name: archiveImportFileName({ name: unit.name, contentType: unit.contentType }),
+          contentType: unit.contentType, buffer: downloaded.buffer,
           clientToken: randomUUID(), providerFileId: unit.id, providerRevision: unit.revision,
         },
       });

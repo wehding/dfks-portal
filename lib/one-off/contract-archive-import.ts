@@ -218,6 +218,15 @@ export function isSupportedArchiveContract(file: Pick<ArchiveDriveFile, "name" |
   ].includes(file.contentType ?? "");
 }
 
+export function archiveImportFileName(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
+  if (/\.(pdf|doc|docx|txt)$/i.test(file.name)) return file.name;
+  const extension = file.contentType === "application/pdf" ? ".pdf"
+    : file.contentType === "application/msword" ? ".doc"
+      : file.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? ".docx"
+        : file.contentType === "text/plain" ? ".txt" : "";
+  return `${file.name}${extension}`;
+}
+
 export function isJpegArchivePage(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
   return /\.jpe?g$/i.test(file.name) || file.contentType === "image/jpeg";
 }
