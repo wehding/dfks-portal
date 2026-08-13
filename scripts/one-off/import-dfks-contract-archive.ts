@@ -16,6 +16,7 @@ import {
 import { intakeContractFile } from "@/lib/server/contract-import-intake";
 import {
   applySpreadsheetFallback,
+  archiveImportFileName,
   buildSearchableJpegPdf,
   detectDevelopmentContract,
   extractLocalContactData,
@@ -175,9 +176,14 @@ async function downloadUnit(token: string, unit: ImportUnit) {
   const file = unit.files[0];
   const buffer = await downloadProviderFile("google_drive", token, file);
   const extension = file.name.split(".").pop()?.toLowerCase();
-  const localText = extension === "pdf" ? await extractPdfText(buffer)
-    : extension === "doc" || extension === "docx" ? await extractWordText(buffer, file.name)
-      : extension === "txt" ? buffer.toString("utf8") : "";
+  const isPdf = extension === "pdf" || file.contentType === "application/pdf";
+  const isWord = ["doc", "docx"].includes(extension ?? "")
+    || file.contentType === "application/msword"
+    || file.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const isText = extension === "txt" || file.contentType === "text/plain";
+  const localText = isPdf ? await extractPdfText(buffer)
+    : isWord ? await extractWordText(buffer, file.name)
+      : isText ? buffer.toString("utf8") : "";
   return { buffer, localText };
 }
 
@@ -355,7 +361,8 @@ async function runExecute(db: ReturnType<typeof createServiceClient>, options: O
         batchId, actor: { userId: options.actorUserId, orgId: options.orgId, role },
         rightsHolderId: owner.id, workId: work.id,
         file: {
-          name: unit.name, contentType: unit.contentType, buffer: downloaded.buffer,
+          name: archiveImportFileName({ name: unit.name, contentType: unit.contentType }),
+          contentType: unit.contentType, buffer: downloaded.buffer,
           clientToken: randomUUID(), providerFileId: unit.id, providerRevision: unit.revision,
         },
       });

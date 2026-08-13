@@ -21,6 +21,15 @@ DRIVE_IMPORT_JOB_SECRET=<unik intern nøgle til Drive-import>
 NEXT_PUBLIC_SITE_URL=https://dfks-portal-hazel.vercel.app
 ```
 
+Ved lokal udvikling bruger OAuth-flowet automatisk
+`http://localhost:3000/api/admin/import-connections/google_drive/callback`, også
+hvis den lokale app åbnes via en Tailscale-adresse. Google-godkendelsen skal
+derfor afsluttes i en browser på den Mac, hvor udviklingsserveren kører.
+
+Hvis den lokale server bruger en anden fast callback-adresse, kan den
+serverbeskyttede variabel `IMPORT_OAUTH_CALLBACK_ORIGIN` sættes til den
+registrerede origin. Variablen må ikke have `NEXT_PUBLIC_`-prefix.
+
 Client secrets og krypteringsnøglen må aldrig have `NEXT_PUBLIC_`-prefix. De må ikke committes, logges eller sendes til browseren. Skiftes `INTEGRATION_ENCRYPTION_KEY`, skal alle drevkonti forbindes igen.
 
 ## Fælles Google-indstillinger

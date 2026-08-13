@@ -208,8 +208,23 @@ export function matchArchiveRows(files: ArchiveDriveFile[], rows: ArchiveSpreads
   });
 }
 
-export function isSupportedArchiveContract(file: Pick<ArchiveDriveFile, "name">) {
-  return /\.(pdf|doc|docx|txt)$/i.test(file.name);
+export function isSupportedArchiveContract(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
+  if (/\.(pdf|doc|docx|txt)$/i.test(file.name)) return true;
+  return [
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+  ].includes(file.contentType ?? "");
+}
+
+export function archiveImportFileName(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
+  if (/\.(pdf|doc|docx|txt)$/i.test(file.name)) return file.name;
+  const extension = file.contentType === "application/pdf" ? ".pdf"
+    : file.contentType === "application/msword" ? ".doc"
+      : file.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? ".docx"
+        : file.contentType === "text/plain" ? ".txt" : "";
+  return `${file.name}${extension}`;
 }
 
 export function isJpegArchivePage(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
