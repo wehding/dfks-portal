@@ -29,6 +29,7 @@ export type AdminRightsHolderProfile = {
   secondary_profession_type_ids: string[];
   usual_work_mode: string | null;
   primary_work_region_code: string | null;
+  opt_out_statistics: boolean;
   external_identities: Record<ExternalIdSource, string[]>;
   profession_types: Array<{ id: string; name: string }>;
   work_regions: Array<{ code: string; name_da: string; name_en: string }>;
@@ -110,14 +111,15 @@ export async function getAdminRightsHolderProfile(id: string, orgId: string): Pr
   const db = createServiceClient();
   await assertRightsHolderInOrg(db, id, orgId);
 
-  const [{ data: holder, error: holderError }, { data: secondary, error: secondaryError }, { data: identities, error: identitiesError }, { data: professionRows, error: professionsError }, { data: regionRows, error: regionsError }] = await Promise.all([
+  const [{ data: holder, error: holderError }, { data: affiliation, error: affiliationError }, { data: secondary, error: secondaryError }, { data: identities, error: identitiesError }, { data: professionRows, error: professionsError }, { data: regionRows, error: regionsError }] = await Promise.all([
     db.from("rettighedshavere").select("cpr_no,bank_account,alternative_names,portrait_url,professional_start_year,primary_profession_type_id,usual_work_mode,primary_work_region_code").eq("id", id).single(),
+    db.from("org_affiliations").select("statistics_participation").eq("rights_holder_id", id).eq("org_id", orgId).single(),
     db.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", id),
     db.from("rights_holder_external_identities").select("source,external_id").eq("rights_holder_id", id).order("source").order("external_id"),
     db.from("organisation_profession_types").select("profession_type_id,profession_types(name)").eq("org_id", orgId).order("display_order"),
     db.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order"),
   ]);
-  const error = holderError ?? secondaryError ?? identitiesError ?? professionsError ?? regionsError;
+  const error = holderError ?? affiliationError ?? secondaryError ?? identitiesError ?? professionsError ?? regionsError;
   if (error || !holder) throw new Error(error?.message ?? "Onboardingoplysningerne kunne ikke hentes");
   const decrypted = decryptRettighedshaver(holder);
   const externalIdentities: Record<ExternalIdSource, string[]> = { dfi: [], tmdb: [], wikidata: [], imdb: [] };
@@ -136,6 +138,7 @@ export async function getAdminRightsHolderProfile(id: string, orgId: string): Pr
     secondary_profession_type_ids: (secondary ?? []).map(row => row.profession_type_id as string),
     usual_work_mode: holder.usual_work_mode as string | null,
     primary_work_region_code: holder.primary_work_region_code as string | null,
+    opt_out_statistics: affiliation?.statistics_participation === false,
     external_identities: externalIdentities,
     profession_types: (professionRows ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
     work_regions: (regionRows ?? []).map(row => ({ code: row.code as string, name_da: row.name_da as string, name_en: row.name_en as string })),
@@ -402,6 +405,16 @@ export async function updateRettighedshaverSecure(
   }
 
   if (updateResult.error) return { success: false, error: updateResult.error.message };
+
+  if (input.opt_out_statistics !== undefined) {
+    const { error: participationError } = await db.from("org_affiliations").update({
+      statistics_participation: !Boolean(input.opt_out_statistics),
+      statistics_participation_source: "admin_choice",
+      statistics_participation_updated_at: new Date().toISOString(),
+      statistics_participation_updated_by: caller.userId,
+    }).eq("org_id", orgId).eq("rights_holder_id", id);
+    if (participationError) return { success: false, error: participationError.message };
+  }
 
   if (input.secondary_profession_type_ids !== undefined) {
     const secondaryIds = [...new Set(input.secondary_profession_type_ids.filter(professionId => professionId !== input.primary_profession_type_id))].slice(0, 12);

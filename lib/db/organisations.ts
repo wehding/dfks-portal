@@ -17,18 +17,15 @@ export async function getMyOrganisation(): Promise<DbOrganisation | null> {
 }
 
 export async function getMyOrgRole(): Promise<DbUserOrgRole | null> {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-
-    const { data } = await supabase
-        .from("user_org_roles")
-        .select("*")
-        .eq("user_id", user.id)
-        .limit(1)
-        .single()
-
-    return data ?? null
+    const response = await fetch("/api/admin/context", { cache: "no-store" })
+    if (!response.ok) return null
+    const context = await response.json() as { userId?: string; orgId?: string; role?: string }
+    if (!context.userId || !context.orgId || !context.role) return null
+    return {
+        user_id: context.userId,
+        org_id: context.orgId,
+        role: context.role,
+    } as DbUserOrgRole
 }
 
 export async function getAllOrganisations(): Promise<DbOrganisation[]> {

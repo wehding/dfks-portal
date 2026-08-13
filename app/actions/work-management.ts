@@ -22,6 +22,9 @@ import type { AuditContext } from "@/lib/audit-log";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
+import { resolveStaffAccess } from "@/lib/staff-access";
+import { assertRightsHolderInOrg } from "@/lib/authz";
+import { canLinkContractWork } from "@/lib/contract-link-access";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -1995,22 +1998,37 @@ export async function createAndLinkWorkForContract(params: {
   rightsHolderId?: string | null;
   role?: string | null;
 }) {
-  const { user } = await currentUser();
+  const { supabase, user } = await currentUser();
   const lookupDb = createServiceClient();
   const { contractId, result, seasonNumber, selectedEpisodes, rightsHolderId, role } = params;
   const { data: contract } = await lookupDb
     .from("contracts")
-    .select("org_id,working_title,work_id")
+    .select("org_id,working_title,work_id,rights_holder_id")
     .eq("id", contractId)
-    .single();
+    .maybeSingle();
   if (!contract?.org_id) return { success: false, error: "Kontrakten mangler organisation." };
   const orgId = contract.org_id as string;
-  const { data: staffRoles } = await lookupDb.from("user_org_roles")
-    .select("role")
+  const staffAccess = await resolveStaffAccess(supabase, orgId);
+  const canManageContract = Boolean(
+    staffAccess
+    && staffAccess.activeOrgId === orgId
+    && staffAccess.modules.contracts.write
+  );
+  const { data: ownHolder } = await lookupDb
+    .from("rettighedshavere")
+    .select("id,org_affiliations!inner(org_id)")
     .eq("user_id", user.id)
-    .eq("org_id", orgId);
-  const staffRole = ["superadmin", "admin", "org-admin", "jurist", "viewer"]
-    .find(candidate => staffRoles?.some(row => row.role === candidate)) ?? null;
+    .eq("org_affiliations.org_id", orgId)
+    .maybeSingle();
+  if (!canLinkContractWork({
+    canManageContract,
+    ownRightsHolderId: ownHolder?.id ?? null,
+    contractRightsHolderId: contract.rights_holder_id,
+    requestedRightsHolderId: rightsHolderId,
+  })) {
+    return { success: false, error: "Du har ikke adgang til at forbinde denne kontrakt og rettighedshaver." };
+  }
+  const staffRole = canManageContract ? staffAccess?.activeRole ?? null : null;
   const auditContext: AuditContext = {
     actorUserId: user.id,
     actorOrgId: orgId,
@@ -2021,20 +2039,12 @@ export async function createAndLinkWorkForContract(params: {
   };
   const db = createServiceClient({ audit: auditContext });
 
-  let activeRightsHolderId = rightsHolderId;
-  if (!activeRightsHolderId) {
+  const activeRightsHolderId = rightsHolderId ?? contract.rights_holder_id ?? ownHolder?.id ?? null;
+  if (activeRightsHolderId) {
     try {
-      const userRes = { user };
-      if (userRes.user) {
-        const { data: rh } = await db
-          .from("rettighedshavere")
-          .select("id")
-          .eq("user_id", userRes.user.id)
-          .maybeSingle();
-        if (rh) activeRightsHolderId = rh.id;
-      }
-    } catch (e) {
-      console.error("Could not resolve current user rights holder:", e);
+      await assertRightsHolderInOrg(db, activeRightsHolderId, orgId);
+    } catch {
+      return { success: false, error: "Rettighedshaveren tilhører ikke kontraktens organisation." };
     }
   }
 
@@ -2165,17 +2175,22 @@ export async function createAndLinkWorkForContract(params: {
   }
 
   // 3. Link the contract to the work and update status to 'afventer' (Afventer validering)
-  const { error: updateErr } = await db
+  let contractUpdate = db
     .from("contracts")
     .update({
       work_id: targetWorkId,
       status: "afventer",
       ...(isSeries ? { season_number: activeSeason, episode_numbers: activeEpisodes } : {}),
     })
-    .eq("id", contractId);
+    .eq("id", contractId)
+    .eq("org_id", orgId);
+  if (!canManageContract && ownHolder?.id) {
+    contractUpdate = contractUpdate.eq("rights_holder_id", ownHolder.id);
+  }
+  const { data: updatedContract, error: updateErr } = await contractUpdate.select("id").maybeSingle();
 
-  if (updateErr) {
-    return { success: false, error: `Fejl ved tilknytning til kontrakt: ${updateErr.message}` };
+  if (updateErr || !updatedContract) {
+    return { success: false, error: `Fejl ved tilknytning til kontrakt: ${updateErr?.message ?? "Kontrakten blev ændret eller er ikke længere tilgængelig."}` };
   }
 
   try {

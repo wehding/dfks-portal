@@ -1,280 +1,183 @@
 /**
- * app/api/gennemgang/route.ts
+ * Synkron adminanalyse af en ny kontraktgennemgang.
  *
- * To-trins kontraktgennemgang — kernelogik i lib/analyse.ts.
- * Denne route: FormData-parsing, storage-upload og DB-persistering.
+ * Selve oprettelsen går gennem den fælles intake-service, så portal, admin og
+ * Gmail får samme deduplikering, storage-oprydning og jobstatus. Admin venter
+ * fortsat på analysen, fordi resultatet vises direkte i editoren.
  */
 
-import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { analyserKontrakt } from "@/lib/analyse"
-import { analyseExistingContractReview } from "@/lib/contract-review-analysis"
-import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
-import { requireInternalSecretApi } from "@/lib/api-auth"
-import { recordAuditEvent } from "@/lib/audit-log-server"
+import { NextRequest, NextResponse } from "next/server";
+import { requireAdminApi } from "@/lib/api-auth";
+import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
+import { createContractReviewIntake } from "@/lib/contract-review-intake";
+import { createServiceClient } from "@/lib/supabase/service";
+import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
 
-const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024
+const MAX_CONTRACT_UPLOAD_BYTES = 25 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
 
-export async function POST(req: NextRequest) {
-    try {
-        logInfo("gennemgang", "Modtager request")
-        const isInternal = requireInternalSecretApi(req)
-        const formData = await req.formData()
-        const file       = formData.get("file")       as File | null
-        logInfo("gennemgang", "FormData parset", { hasFile: Boolean(file) })
+function parseList(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== "string" || !value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).slice(0, 20) : [];
+  } catch {
+    return value.split(",").map((item) => item.trim()).filter(Boolean).slice(0, 20);
+  }
+}
 
-        // Hent brugerens navn fra Auth — fallback til formData-navn → "Ukendt"
-        // Brug try/catch: kaldet kan mangle cookie-kontekst ved interne server-kald
-        let sessionUser: { id?: string; user_metadata?: Record<string, string>; email?: string } | null = null
-        try {
-            const supabaseSession = await createClient()
-            const { data: { user } } = await supabaseSession.auth.getUser()
-            sessionUser = user
-        } catch (authErr) {
-            logWarn("gennemgang", "Auth-opslag fejlede", { error: errorMessage(authErr) })
-        }
-        if (!sessionUser && !isInternal) {
-            return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
-        }
+function optionalString(value: FormDataEntryValue | null, maxLength: number): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : null;
+}
 
-        const memberName: string =
-            (formData.get("memberName") as string | null) ||
-            sessionUser?.user_metadata?.full_name ||
-            sessionUser?.email?.split("@")[0] ||
-            "Ukendt"
+export async function POST(request: NextRequest) {
+  const auth = await requireAdminApi();
+  if (!auth.ok) return auth.response;
 
-        const existingReviewId     = formData.get("existingReviewId")    as string | null
-        const contractType         = formData.get("contractType")         as string | null
-        const productionType       = formData.get("productionType")       as string | null
-        const distributionRaw      = formData.get("distributionChannels") as string | null
-        const producerName         = formData.get("producerName")         as string | null
-        const producerOverenskomst = formData.get("producerOverenskomst") as string | null
-        const focusAreasRaw        = formData.get("focusAreas")           as string | null
-        const uploadNotes          = formData.get("notes")                as string | null
-        const portalOrgId          = formData.get("orgId")                as string | null
-        const portalEmail          = formData.get("memberEmail")          as string | null
-        const portalUserId         = formData.get("memberId")             as string | null
-
-        let distributionChannels: string[] = []
-        try { distributionChannels = distributionRaw ? JSON.parse(distributionRaw) : [] } catch { /* ignorér */ }
-        let focusAreas: string[] = []
-        try { focusAreas = focusAreasRaw ? JSON.parse(focusAreasRaw) : [] } catch { /* ignorér */ }
-
-        if (!file) {
-            return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 })
-        }
-        if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
-            return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 })
-        }
-
-        logInfo("gennemgang", "Læser filbuffer", { fileType: file.type || "ukendt" })
-        const fileBuffer = Buffer.from(await file.arrayBuffer())
-        let resolvedOrgId = isInternal ? portalOrgId : null
-        if (!resolvedOrgId && sessionUser?.id) {
-            const admin = createAdminClient(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                process.env.SUPABASE_SERVICE_ROLE_KEY!,
-                { auth: { autoRefreshToken: false, persistSession: false } }
-            )
-            const { data: orgRole } = await admin
-                .from("user_org_roles")
-                .select("org_id")
-                .eq("user_id", sessionUser.id)
-                .limit(1)
-                .maybeSingle()
-            resolvedOrgId = orgRole?.org_id ?? null
-        }
-        if (!resolvedOrgId) {
-            return NextResponse.json({ error: "Organisationen kunne ikke bestemmes" }, { status: 400 })
-        }
-
-        const admin = createAdminClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY!,
-            { auth: { autoRefreshToken: false, persistSession: false } }
-        )
-        // En eksisterende sag ejer selv organisations- og medlemskonteksten.
-        // Det interne kald må ikke overskrive en vilkårlig sag via formData-id'er,
-        // og filen er allerede gemt, så den skal ikke uploades igen.
-        if (existingReviewId) {
-            if (!isInternal) {
-                return NextResponse.json({ error: "Eksisterende sager kan kun analyseres via det interne flow" }, { status: 403 })
-            }
-            const { data: existingReview, error: existingError } = await admin
-                .from("contract_reviews")
-                .select("id,org_id,member_id,member_name,member_email")
-                .eq("id", existingReviewId)
-                .maybeSingle()
-            if (existingError || !existingReview) {
-                return NextResponse.json({ error: "Kontraktgennemgangen blev ikke fundet" }, { status: 404 })
-            }
-            if (existingReview.org_id !== resolvedOrgId) {
-                await recordAuditEvent({
-                    context: { source: "api", actorUserId: sessionUser?.id ?? null, actorOrgId: resolvedOrgId },
-                    action: "security_failure",
-                    entityType: "contract_reviews",
-                    entityId: existingReviewId,
-                    entityLabel: "Afvist opdatering på tværs af organisationer",
-                    orgIds: [resolvedOrgId, existingReview.org_id],
-                }).catch(() => undefined)
-                return NextResponse.json({ error: "Kontraktgennemgangen tilhører en anden organisation" }, { status: 403 })
-            }
-            try {
-                const existingResult = await analyseExistingContractReview({
-                    reviewId: existingReviewId,
-                    orgId: existingReview.org_id,
-                    fileBuffer,
-                    fileName: file.name,
-                    memberName: existingReview.member_name ?? memberName,
-                    memberEmail: existingReview.member_email ?? portalEmail,
-                    memberId: existingReview.member_id ?? portalUserId,
-                    contractType,
-                    productionType,
-                    distributionChannels,
-                    producerName,
-                    producerOverenskomst,
-                    focusAreas,
-                    notes: uploadNotes,
-                    actorUserId: sessionUser?.id ?? existingReview.member_id ?? null,
-                    source: isInternal ? "portal" : "admin",
-                })
-                const analysis = existingResult.analysis
-                return NextResponse.json({
-                    result: analysis.result,
-                    contractText: analysis.contractText,
-                    klassifikation: analysis.klassifikation,
-                    risk_level: analysis.risk_level,
-                    should_escalate: analysis.should_escalate,
-                })
-            } catch (err: unknown) {
-                const msg = errorMessage(err, "Analyse fejlede")
-                const status = msg.includes("Ikke-understøttet") ? 400 : msg.includes("Ingen tekst") ? 422 : 500
-                return NextResponse.json({ error: msg }, { status })
-            }
-        }
-
-        logInfo("gennemgang", "Starter kontraktanalyse")
-        let analysisResult
-        try {
-            analysisResult = await analyserKontrakt({
-                fileBuffer,
-                fileName: file.name,
-                memberName,
-                contractType,
-                productionType,
-                distributionChannels,
-                producerName,
-                producerOverenskomst,
-                focusAreas,
-                notes: uploadNotes,
-                orgId: resolvedOrgId,
-                memberId: portalUserId,
-                memberEmail: portalEmail,
-                entityId: null,
-                actorUserId: sessionUser?.id ?? portalUserId,
-                source: isInternal ? "portal" : "admin",
-            })
-        } catch (err: unknown) {
-            const msg = errorMessage(err, "Analyse fejlede")
-            const status =
-                msg.includes("Ikke-understøttet") ? 400 :
-                msg.includes("PDF-analyse kræver") ? 400 :
-                msg.includes("Ingen tekst") ? 422 : 500
-            return NextResponse.json({ error: msg }, { status })
-        }
-
-        logInfo("gennemgang", "Analyse fuldført, gemmer resultat")
-        const { result: parsed, contractText: returnText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
-
-        // ── Gem fil i Supabase Storage ────────────────────────
-        let storagePath: string | null = null
-        if (!existingReviewId) {
-            try {
-                const ts = Date.now()
-                const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_")
-                storagePath = `${resolvedOrgId}/${ts}_${safeName}`
-                const { error: storageErr } = await admin.storage
-                    .from("contract-reviews")
-                    .upload(storagePath, fileBuffer, {
-                        contentType: file.type || "application/octet-stream",
-                        upsert: false,
-                    })
-                if (storageErr) {
-                    logWarn("gennemgang", "Storage upload fejlede", { error: storageErr.message })
-                    storagePath = null
-                }
-            } catch (storageEx) {
-                logWarn("gennemgang", "Storage upload exception", { error: errorMessage(storageEx) })
-                storagePath = null
-            }
-        }
-
-        // ── Gem i contract_reviews ────────────────────────────
-        let savedReviewId: string | null = null
-        try {
-            const responseDraft = typeof parsed?.feedbackmail?.tekst === "string" ? parsed.feedbackmail.tekst.trim().slice(0, 50_000) : null
-            const responseDraftSubject = typeof parsed?.feedbackmail?.emne === "string" ? parsed.feedbackmail.emne.trim().slice(0, 500) : null
-            const insertPayload: Record<string, unknown> = {
-                    org_id:          resolvedOrgId,
-                    member_name:     memberName ?? null,
-                    member_email:    portalEmail ?? null,
-                    member_id:       portalUserId ?? null,
-                    ai_result:       parsed,
-                    reviewed_by:     portalUserId ?? null,
-                    status:          "afventer",
-                    ai_status:       "klar",
-                    file_name:       file.name,
-                    file_size_bytes: file.size,
-                    storage_path:    storagePath,
-                    contract_type:   contractType ?? null,
-                    production_type: productionType ?? null,
-                    distribution_channels: distributionChannels.length ? distributionChannels : null,
-                    producer_name:         producerName ?? null,
-                    producer_dfks_id:      formData.get("producerDfksId") ?? null,
-                    producer_dfi_id:       formData.get("producerDfiId")  ?? null,
-                    producer_overenskomst_bound:
-                        producerOverenskomst === "true"  ? true :
-                        producerOverenskomst === "false" ? false : null,
-                    focus_areas:  focusAreas.length ? focusAreas : null,
-                    notes:        uploadNotes ?? null,
-                    ai_language:  klassifikation?.kontraktsprog ?? null,
-                    risk_level:      riskLevel,
-                    should_escalate: shouldEscalate,
-                    response_draft: responseDraft,
-                    response_draft_subject: responseDraftSubject,
-                    response_draft_updated_at: responseDraft ? new Date().toISOString() : null,
-            }
-            const { data: savedReview, error: insertError } = await admin
-                .from("contract_reviews")
-                .insert(insertPayload)
-                .select()
-                .single()
-            if (insertError) {
-                if (storagePath) await admin.storage.from("contract-reviews").remove([storagePath])
-                logWarn("gennemgang", "Insert i contract_reviews fejlede", { error: insertError.message })
-            } else {
-                savedReviewId = savedReview?.id ?? null
-                logInfo("gennemgang", "Gemt i contract_reviews", { reviewId: savedReview?.id ?? null, hasStorage: Boolean(storagePath) })
-            }
-        } catch (saveErr) {
-            logWarn("gennemgang", "Gem fejlede", { error: errorMessage(saveErr) })
-        }
-
-        return NextResponse.json({
-            result: parsed,
-            contractText: returnText,
-            klassifikation,
-            risk_level: riskLevel,
-            should_escalate: shouldEscalate,
-            reviewId: savedReviewId,
-        })
-
-    } catch (err: unknown) {
-        logWarn("gennemgang", "Request fejlede", { error: errorMessage(err) })
-        return NextResponse.json(
-            { error: errorMessage(err, "Ukendt serverfejl") },
-            { status: 500 }
-        )
+  try {
+    const formData = await request.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      return NextResponse.json({ error: "Ingen fil modtaget" }, { status: 400 });
     }
+    if (file.size > MAX_CONTRACT_UPLOAD_BYTES) {
+      return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 });
+    }
+    if (!ALLOWED_EXTENSIONS.some((extension) => file.name.toLowerCase().endsWith(extension))) {
+      return NextResponse.json({ error: "Brug PDF, DOC eller DOCX." }, { status: 400 });
+    }
+
+    const memberName = optionalString(formData.get("memberName"), 500);
+    const memberEmail = optionalString(formData.get("memberEmail"), 500);
+    const memberId = optionalString(formData.get("memberId"), 100);
+    const contractType = optionalString(formData.get("contractType"), 100);
+    const productionType = optionalString(formData.get("productionType"), 100);
+    const producerName = optionalString(formData.get("producerName"), 500);
+    const producerDfksId = optionalString(formData.get("producerDfksId"), 100);
+    const producerDfiId = optionalString(formData.get("producerDfiId"), 100);
+    const producerOverenskomstRaw = optionalString(formData.get("producerOverenskomst"), 10);
+    const producerOverenskomst = producerOverenskomstRaw === "true"
+      ? true
+      : producerOverenskomstRaw === "false"
+        ? false
+        : null;
+    const distributionChannels = parseList(formData.get("distributionChannels"));
+    const focusAreas = parseList(formData.get("focusAreas"));
+    const notes = optionalString(formData.get("notes"), 50_000);
+    const submissionId = optionalString(formData.get("submissionId"), 100);
+    const externalSourceId = submissionId
+      ? `${auth.userId}:${submissionId}`
+      : `${auth.userId}:${crypto.randomUUID()}`;
+    const fileBuffer = Buffer.from(await file.arrayBuffer());
+
+    logInfo("gennemgang", "Opretter adminindsendelse gennem fælles intake", {
+      orgId: auth.orgId,
+      fileType: file.type || "ukendt",
+    });
+
+    const intake = await createContractReviewIntake({
+      orgId: auth.orgId,
+      source: "admin",
+      externalSourceId,
+      fileName: file.name,
+      contentType: file.type,
+      fileBuffer,
+      memberId,
+      memberName,
+      memberEmail,
+      metadata: {
+        contract_type: contractType,
+        production_type: productionType,
+        distribution_channels: distributionChannels,
+        producer_name: producerName,
+        producer_dfks_id: producerDfksId,
+        producer_dfi_id: producerDfiId,
+        producer_overenskomst_bound: producerOverenskomst,
+        focus_areas: focusAreas,
+        notes,
+      },
+    });
+
+    const db = createServiceClient({
+      audit: { source: "admin", actorUserId: auth.userId, actorOrgId: auth.orgId },
+    });
+
+    try {
+      const analysed = await analyseExistingContractReview({
+        reviewId: intake.reviewId,
+        orgId: auth.orgId,
+        fileBuffer,
+        fileName: file.name,
+        memberName,
+        memberEmail,
+        memberId,
+        contractType,
+        productionType,
+        distributionChannels,
+        producerName,
+        producerOverenskomst: producerOverenskomst == null ? null : String(producerOverenskomst),
+        focusAreas,
+        notes,
+        actorUserId: auth.userId,
+        source: "admin",
+      });
+
+      await Promise.all([
+        db.from("contract_reviews")
+          .update({ intake_status: "complete" })
+          .eq("id", intake.reviewId)
+          .eq("org_id", auth.orgId),
+        db.from("contract_review_jobs")
+          .update({
+            status: "done",
+            error_message: null,
+            locked_at: null,
+            locked_by: null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("review_id", intake.reviewId)
+          .eq("org_id", auth.orgId)
+          .in("status", ["queued", "processing", "error"]),
+      ]);
+
+      return NextResponse.json({
+        result: analysed.analysis.result,
+        contractText: analysed.analysis.contractText,
+        klassifikation: analysed.analysis.klassifikation,
+        risk_level: analysed.analysis.risk_level,
+        should_escalate: analysed.analysis.should_escalate,
+        reviewId: intake.reviewId,
+        duplicate: intake.duplicate,
+      });
+    } catch (error) {
+      const message = errorMessage(error, "Analyse fejlede");
+      await Promise.all([
+        db.from("contract_reviews")
+          .update({ ai_status: "fejl", intake_status: "retryable" })
+          .eq("id", intake.reviewId)
+          .eq("org_id", auth.orgId),
+        db.from("contract_review_jobs")
+          .update({
+            status: "error",
+            error_message: message.slice(0, 500),
+            locked_at: null,
+            locked_by: null,
+            next_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("review_id", intake.reviewId)
+          .eq("org_id", auth.orgId)
+          .neq("status", "done"),
+      ]);
+      const status = message.includes("Ikke-understøttet") || message.includes("PDF-analyse kræver")
+        ? 400
+        : message.includes("Ingen tekst")
+          ? 422
+          : 500;
+      return NextResponse.json({ error: message, reviewId: intake.reviewId }, { status });
+    }
+  } catch (error) {
+    logWarn("gennemgang", "Adminindsendelse fejlede", { error: errorMessage(error) });
+    return NextResponse.json({ error: errorMessage(error, "Ukendt serverfejl") }, { status: 500 });
+  }
 }

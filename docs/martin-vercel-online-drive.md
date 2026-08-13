@@ -25,7 +25,7 @@ De gamle `GOOGLE_DRIVE_CLIENT_ID` og `GOOGLE_DRIVE_CLIENT_SECRET` bruges ikke l�
 
 Kontrollér, at disse allerede findes for både Preview og Production:
 
-- `INTERNAL_API_SECRET`
+- `DRIVE_IMPORT_JOB_SECRET` (unik nøgle, som ikke genbruges til andre jobs)
 - `NEXT_PUBLIC_SITE_URL` med værdien `https://dfks-portal-hazel.vercel.app`
 - projektets eksisterende Supabase URL, anon key og service-role key
 

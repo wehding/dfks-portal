@@ -7,6 +7,7 @@ import { normalizeBankAccount, normalizeCpr, validateOnboardingField } from "@/l
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolvePostLoginDestination } from "@/lib/auth/post-login";
 import { recordAuditEvent } from "@/lib/audit-log-server";
+import { resolveOrgId } from "@/lib/org";
 
 export async function completeOnboarding(formData: FormData) {
   const supabase = await createClient();
@@ -45,9 +46,20 @@ export async function completeOnboarding(formData: FormData) {
 
   const service = createServiceClient();
   const { data: holderContext } = await service.from("rettighedshavere")
-    .select("id,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
-  const affiliation = Array.isArray(holderContext?.org_affiliations) ? holderContext.org_affiliations[0] : holderContext?.org_affiliations;
-  const orgId = affiliation?.org_id as string | undefined;
+    .select("id,org_affiliations(org_id,is_member,statistics_participation)").eq("user_id", user.id).maybeSingle();
+  const orgId = await resolveOrgId(service, user.id) ?? undefined;
+  const affiliations = Array.isArray(holderContext?.org_affiliations) ? holderContext.org_affiliations : [holderContext?.org_affiliations];
+  const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
+  const isOrganisationMember = Boolean(affiliation?.is_member);
+  const requestedStatisticsParticipation = formData.get("opt_out_statistics") !== "true";
+  // Medlemmer bliver automatisk tilmeldt af databasetriggeren. Ved en gentaget
+  // onboarding bevares et senere profilvalg, så onboarding ikke genindmelder en
+  // person, der efterfølgende har fravalgt statistik på Min profil.
+  const statisticsParticipation = isOrganisationMember
+    ? typeof affiliation?.statistics_participation === "boolean"
+      ? affiliation.statistics_participation
+      : true
+    : requestedStatisticsParticipation;
   const { data: organisation } = orgId ? await service.from("organisations").select("statistics_profile_config").eq("id", orgId).maybeSingle() : { data: null };
   const config = (organisation?.statistics_profile_config ?? {}) as Record<string, unknown>;
   const startYear = Number(formData.get("professional_start_year"));
@@ -87,11 +99,6 @@ export async function completeOnboarding(formData: FormData) {
       cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
       bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
       gender: (formData.get("gender") as string) || null,
-      opt_out_statistics: formData.get("opt_out_statistics") === "true",
-      professional_start_year: config.professional_start_year && Number.isInteger(startYear) ? startYear : null,
-      primary_profession_type_id: primaryProfessionTypeId,
-      usual_work_mode: workMode,
-      primary_work_region_code: workRegionCode,
     })
     .eq("user_id", user.id);
 
@@ -105,7 +112,6 @@ export async function completeOnboarding(formData: FormData) {
         address,
         cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
         bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
-        opt_out_statistics: formData.get("opt_out_statistics") === "true",
       })
       .eq("user_id", user.id);
     
@@ -117,13 +123,26 @@ export async function completeOnboarding(formData: FormData) {
     return { success: false, error: `Kunne ikke gemme onboarding-data: ${error.message} (${error.code})` };
   }
 
-  if (holderContext?.id) {
-    const { error: deleteProfessionError } = await service.from("rights_holder_profession_types").delete().eq("rights_holder_id", holderContext.id);
-    if (deleteProfessionError) return { success: false, error: "Yderligere faggrupper kunne ikke gemmes." };
-    if (secondaryProfessionTypeIds.length) {
-      const { error: professionError } = await service.from("rights_holder_profession_types").insert(secondaryProfessionTypeIds.map(id => ({ rights_holder_id: holderContext.id, profession_type_id: id })));
-      if (professionError) return { success: false, error: "Yderligere faggrupper kunne ikke gemmes." };
-    }
+  if (!holderContext?.id || !orgId) {
+    return { success: false, error: "Din organisationstilknytning blev ikke fundet." };
+  }
+  const { data: statisticsSaved, error: statisticsError } = await service.rpc(
+    "update_member_statistics_profile",
+    {
+      target_rights_holder_id: holderContext.id,
+      target_org_id: orgId,
+      actor_user_id: user.id,
+      participates: statisticsParticipation,
+      start_year: config.professional_start_year && Number.isInteger(startYear) ? startYear : null,
+      primary_profession_id: primaryProfessionTypeId,
+      secondary_profession_ids: secondaryProfessionTypeIds,
+      work_mode: workMode,
+      work_region_code: workRegionCode,
+    },
+  );
+  if (statisticsError || !statisticsSaved) {
+    console.error("Onboarding: statistikprofilen kunne ikke gemmes", statisticsError);
+    return { success: false, error: "Statistikprofilen kunne ikke gemmes. Prøv igen." };
   }
 
   const completedAt = new Date().toISOString();
@@ -193,12 +212,13 @@ export async function getMemberStatisticsProfile() {
   const { data: { user } } = await session.auth.getUser();
   if (!user) return { success: false as const, error: "Ikke logget ind" };
   const db = createServiceClient();
-  const { data: holder } = await db.from("rettighedshavere").select("id,opt_out_statistics,professional_start_year,primary_profession_type_id,usual_work_mode,primary_work_region_code,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+  const { data: holder } = await db.from("rettighedshavere").select("id,opt_out_statistics,professional_start_year,primary_profession_type_id,usual_work_mode,primary_work_region_code,org_affiliations(org_id,is_member,statistics_participation)").eq("user_id", user.id).maybeSingle();
   if (!holder) return { success: false as const, error: "Profilen blev ikke fundet" };
-  const affiliation = Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations;
-  const orgId = affiliation?.org_id as string | undefined;
+  const orgId = await resolveOrgId(db, user.id);
+  const affiliations = Array.isArray(holder.org_affiliations) ? holder.org_affiliations : [holder.org_affiliations];
+  const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
   const [{ data: organisation }, { data: professions }, { data: regions }, { data: secondaryProfessions }] = await Promise.all([
-    orgId ? db.from("organisations").select("statistics_profile_config,terminology").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
+    orgId ? db.from("organisations").select("statistics_profile_config,statistics_minimum_group_size,terminology").eq("id", orgId).maybeSingle() : Promise.resolve({ data: null }),
     orgId ? db.from("organisation_profession_types").select("profession_type_id,display_order,profession_types(name)").eq("org_id", orgId).order("display_order") : Promise.resolve({ data: [] }),
     orgId ? db.from("organisation_work_regions").select("code,name_da,name_en").eq("org_id", orgId).eq("active", true).order("display_order") : Promise.resolve({ data: [] }),
     db.from("rights_holder_profession_types").select("profession_type_id").eq("rights_holder_id", holder.id),
@@ -206,7 +226,10 @@ export async function getMemberStatisticsProfile() {
   return {
     success: true as const,
     profile: {
-      optOutStatistics: Boolean(holder.opt_out_statistics),
+      optOutStatistics: typeof affiliation?.statistics_participation === "boolean"
+        ? !affiliation.statistics_participation
+        : Boolean(holder.opt_out_statistics),
+      isOrganisationMember: Boolean(affiliation?.is_member),
       professionalStartYear: holder.professional_start_year as number | null,
       primaryProfessionTypeId: holder.primary_profession_type_id as string | null,
       usualWorkMode: holder.usual_work_mode as string | null,
@@ -214,6 +237,7 @@ export async function getMemberStatisticsProfile() {
       secondaryProfessionTypeIds: (secondaryProfessions ?? []).map(row => row.profession_type_id as string),
     },
     config: (organisation?.statistics_profile_config ?? {}) as Record<string, boolean>,
+    minimumGroupSize: Number(organisation?.statistics_minimum_group_size ?? 5),
     professionLabel: ((organisation?.terminology as { role_labels?: string[] } | null)?.role_labels?.[0] ?? "faget"),
     professionTypes: (professions ?? []).map(row => ({ id: row.profession_type_id as string, name: (row.profession_types as unknown as { name?: string } | null)?.name ?? "" })).filter(row => row.name),
     workRegions: (regions ?? []).map(row => ({ code: row.code as string, nameDa: row.name_da as string, nameEn: row.name_en as string })),
@@ -241,23 +265,21 @@ export async function updateMemberStatisticsProfile(input: {
   const secondaryIds = current.config.secondary_profession_types ? [...new Set((input.secondaryProfessionTypeIds ?? []).filter(id => id !== input.primaryProfessionTypeId))].slice(0, 12) : [];
   const allowedSecondary = secondaryIds.every(id => current.professionTypes.some(option => option.id === id));
   if (!allowedProfession || !allowedRegion || !allowedSecondary) return { success: false, error: "Et statistikvalg er ikke tilgængeligt i organisationen." };
-  const { error } = await db.from("rettighedshavere").update({
-    opt_out_statistics: Boolean(input.optOutStatistics),
-    professional_start_year: current.config.professional_start_year ? year : null,
-    primary_profession_type_id: current.config.primary_profession_type ? input.primaryProfessionTypeId || null : null,
-    usual_work_mode: current.config.usual_work_mode ? input.usualWorkMode || null : null,
-    primary_work_region_code: current.config.primary_work_region ? input.primaryWorkRegionCode || null : null,
-  }).eq("user_id", user.id);
-  if (error) return { success: false, error: "Statistikindstillingerne kunne ikke gemmes." };
   const { data: holder } = await db.from("rettighedshavere").select("id").eq("user_id", user.id).maybeSingle();
-  if (holder) {
-    const { error: deleteError } = await db.from("rights_holder_profession_types").delete().eq("rights_holder_id", holder.id);
-    if (deleteError) return { success: false, error: "Yderligere faggrupper kunne ikke gemmes." };
-    if (secondaryIds.length) {
-      const { error: insertError } = await db.from("rights_holder_profession_types").insert(secondaryIds.map(id => ({ rights_holder_id: holder.id, profession_type_id: id })));
-      if (insertError) return { success: false, error: "Yderligere faggrupper kunne ikke gemmes." };
-    }
-  }
+  const orgId = await resolveOrgId(db, user.id);
+  if (!holder || !orgId) return { success: false, error: "Profilen er ikke knyttet til en organisation." };
+  const { data: updated, error } = await db.rpc("update_member_statistics_profile", {
+    target_rights_holder_id: holder.id,
+    target_org_id: orgId,
+    actor_user_id: user.id,
+    participates: !Boolean(input.optOutStatistics),
+    start_year: current.config.professional_start_year ? year : null,
+    primary_profession_id: current.config.primary_profession_type ? input.primaryProfessionTypeId || null : null,
+    secondary_profession_ids: secondaryIds,
+    work_mode: current.config.usual_work_mode ? input.usualWorkMode || null : null,
+    work_region_code: current.config.primary_work_region ? input.primaryWorkRegionCode || null : null,
+  });
+  if (error || !updated) return { success: false, error: "Statistikindstillingerne kunne ikke gemmes samlet." };
   revalidatePath("/portal");
   revalidatePath("/portal/min-profil");
   return { success: true };

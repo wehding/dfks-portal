@@ -8,6 +8,12 @@ import type { OrgBranding, OrgTerminology } from "@/lib/db/types";
 import { resolveDefaultRoleLabel } from "@/lib/branding";
 import { normalizeSingleEmail } from "@/lib/email/mime";
 import { getForeningLetIntegration, testForeningLetCredentials, upsertForeningLetIntegration } from "@/lib/org-integrations";
+import { recordAuditEvent } from "@/lib/audit-log-server";
+import {
+  MAX_STATISTICS_MINIMUM_GROUP_SIZE,
+  MIN_STATISTICS_MINIMUM_GROUP_SIZE,
+  normalizeStatisticsMinimumGroupSize,
+} from "@/lib/statistics-privacy";
 
 const LOGO_BUCKET = "organisation-logos";
 const LOGO_TYPES: Record<string, string> = {
@@ -31,6 +37,8 @@ type OrganisationSettingsPayload = {
   default_role_label: string;
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
+  statistics_minimum_group_size: number;
+  confirm_low_statistics_threshold?: boolean;
   statistics_profile_config: {
     professional_start_year: boolean;
     primary_profession_type: boolean;
@@ -80,7 +88,7 @@ export async function getOrganisationSettings() {
   const db = createServiceClient();
   const { data, error } = await db
     .from("organisations")
-    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_profile_config")
+    .select("id, name, logo_url, from_email, invite_email_text, invite_reminder_text, welcome_message_text, branding, terminology, contract_review_retention_months, contract_review_retention_updated_at, statistics_contract_scope, statistics_minimum_group_size, statistics_profile_config")
     .eq("id", orgId)
     .single();
 
@@ -123,6 +131,7 @@ export async function getOrganisationSettings() {
     contract_review_retention_months: data.contract_review_retention_months ?? 24,
     contract_review_retention_updated_at: data.contract_review_retention_updated_at ?? null,
     statistics_contract_scope: data.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" as const : "validated_only" as const,
+    statistics_minimum_group_size: normalizeStatisticsMinimumGroupSize(data.statistics_minimum_group_size),
     statistics_profile_config: {
       professional_start_year: (data.statistics_profile_config as Record<string, unknown> | null)?.professional_start_year !== false,
       primary_profession_type: Boolean((data.statistics_profile_config as Record<string, unknown> | null)?.primary_profession_type),
@@ -151,6 +160,13 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   const replyToEmail = cleanOptionalString(payload.from_email);
   const retentionMonths = Number(payload.contract_review_retention_months);
   const statisticsContractScope = payload.statistics_contract_scope === "validated_and_drafts" ? "validated_and_drafts" : "validated_only";
+  const rawStatisticsMinimumGroupSize = Number(payload.statistics_minimum_group_size);
+  if (!Number.isInteger(rawStatisticsMinimumGroupSize)
+    || rawStatisticsMinimumGroupSize < MIN_STATISTICS_MINIMUM_GROUP_SIZE
+    || rawStatisticsMinimumGroupSize > MAX_STATISTICS_MINIMUM_GROUP_SIZE) {
+    throw new Error("Statistikgrænsen skal være et helt tal mellem 1 og 100.");
+  }
+  const statisticsMinimumGroupSize = normalizeStatisticsMinimumGroupSize(rawStatisticsMinimumGroupSize);
   const statisticsProfileConfig = {
     professional_start_year: Boolean(payload.statistics_profile_config?.professional_start_year),
     primary_profession_type: Boolean(payload.statistics_profile_config?.primary_profession_type),
@@ -173,6 +189,18 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
     } catch {
       throw new Error("Svaradressen skal være én gyldig e-mailadresse uden afsendernavn.");
     }
+  }
+
+  const { data: previousOrganisation, error: previousOrganisationError } = await db.from("organisations")
+    .select("statistics_minimum_group_size")
+    .eq("id", orgId)
+    .single();
+  if (previousOrganisationError) throw new Error(previousOrganisationError.message);
+  const previousStatisticsMinimum = normalizeStatisticsMinimumGroupSize(previousOrganisation.statistics_minimum_group_size);
+  if (statisticsMinimumGroupSize < 5
+    && statisticsMinimumGroupSize !== previousStatisticsMinimum
+    && payload.confirm_low_statistics_threshold !== true) {
+    throw new Error("Bekræft, at en statistikgrænse under 5 kan gøre enkeltpersoner genkendelige.");
   }
 
   const branding: OrgBranding = {
@@ -203,12 +231,34 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
       contract_review_retention_updated_at: new Date().toISOString(),
       contract_review_retention_updated_by: user?.id ?? null,
       statistics_contract_scope: statisticsContractScope,
+      statistics_minimum_group_size: statisticsMinimumGroupSize,
       statistics_profile_config: statisticsProfileConfig,
       updated_at: new Date().toISOString(),
     })
     .eq("id", orgId);
 
   if (error) throw new Error(error.message);
+
+  if (statisticsMinimumGroupSize !== previousStatisticsMinimum) {
+    await recordAuditEvent({
+      context: {
+        actorUserId: user?.id ?? null,
+        actorOrgId: orgId,
+        actorRole: "admin",
+        source: "admin",
+      },
+      action: "update",
+      entityType: "organisation_statistics_settings",
+      entityId: orgId,
+      entityLabel: longName,
+      orgIds: [orgId],
+      changes: [{
+        field: "statistics_minimum_group_size",
+        old: previousStatisticsMinimum,
+        new: statisticsMinimumGroupSize,
+      }],
+    });
+  }
 
   async function replaceOrganisationTypes(table: "profession_types", relationTable: "organisation_profession_types", foreignKey: "profession_type_id", names: string[]) {
     const ids: string[] = [];

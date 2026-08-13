@@ -297,25 +297,31 @@ export async function POST(req: NextRequest) {
     const admin = createServiceClient()
 
     try {
-        const hasValidSecret = requireInternalSecretApi(req)
+        const hasValidSecret = requireInternalSecretApi(req, "contract-ai")
+        let callerOrgId: string | null = null
         if (!hasValidSecret) {
             const sessionClient = await createSessionClient()
             const caller = await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"])
             if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
+            callerOrgId = caller.orgId
         }
 
         const body = await req.json().catch(() => ({}))
         const jobId = typeof body.jobId === "string" ? body.jobId : null
         const contractId = typeof body.contractId === "string" ? body.contractId : null
-        const orgId = typeof body.orgId === "string" ? body.orgId : null
+        const requestedOrgId = typeof body.orgId === "string" ? body.orgId : null
+        // Et browserkald må aldrig vælge en anden organisation end den aktive.
+        // Kun den dedikerede worker-secret kan behandle et eksplicit scope.
+        const orgId = hasValidSecret ? requestedOrgId : callerOrgId
 
         // Direkte kontrakt-udtræk (bypasser køen — fx manuel re-læsning)
         if (contractId) {
-            const { data: contract, error: contractErr } = await admin
+            let contractQuery = admin
                 .from("contracts")
                 .select("id, org_id, pdf_url")
                 .eq("id", contractId)
-                .maybeSingle()
+            if (orgId) contractQuery = contractQuery.eq("org_id", orgId)
+            const { data: contract, error: contractErr } = await contractQuery.maybeSingle()
             if (contractErr) throw new Error(contractErr.message)
             if (!contract) throw new Error("Kontrakt ikke fundet")
             const result = await runContractJob(admin, {
