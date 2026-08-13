@@ -576,11 +576,25 @@ function Indbakke() {
                                                 {(() => {
                                                     const analysering = !r.ai_status || r.ai_status === "analyserer"
                                                     if (analysering && r.ai_status !== "fejl") {
+                                                        const isReanalysing = reanalysingIds.has(r.id)
                                                         return (
-                                                            <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800">
+                                                            <button
+                                                                title="Analyserer — klik for at forcere analyse nu"
+                                                                disabled={isReanalysing}
+                                                                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900 disabled:cursor-wait"
+                                                                onClick={async e => {
+                                                                    e.stopPropagation()
+                                                                    setReanalysingIds(prev => new Set([...prev, r.id]))
+                                                                    const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
+                                                                    setReanalysingIds(prev => { const n = new Set(prev); n.delete(r.id); return n })
+                                                                    if (res.ok) { toast.success("Analyse fuldført"); fetchReviews(); return }
+                                                                    const json = await res.json().catch(() => ({}))
+                                                                    toast.error(json.error ?? "Kunne ikke starte analyse")
+                                                                }}
+                                                            >
                                                                 <RotateCcw className="h-3 w-3 animate-spin" />
                                                                 Analyserer…
-                                                            </span>
+                                                            </button>
                                                         )
                                                     }
                                                     if (r.ai_status === "fejl" || (r.ai_status !== "klar" && reanalysingIds.has(r.id))) {
