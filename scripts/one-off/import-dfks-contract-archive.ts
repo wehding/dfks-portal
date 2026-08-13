@@ -29,6 +29,7 @@ import {
   normalizeArchiveCredit,
   normalizeArchiveDate,
   parseArchiveSpreadsheet,
+  shouldPostProcessArchiveItem,
   type ArchiveDriveFile,
   type ArchiveFileSignals,
   type ArchiveSpreadsheetRow,
@@ -235,7 +236,11 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
   initialRow: ArchiveSpreadsheetRow | null;
   localText: string;
 }) {
-  const { data: validation } = await db.from("contract_validations").select("extracted_data").eq("contract_id", input.contractId).maybeSingle();
+  const [{ data: validation }, { data: existingContract, error: contractError }] = await Promise.all([
+    db.from("contract_validations").select("extracted_data").eq("contract_id", input.contractId).maybeSingle(),
+    db.from("contracts").select("rights_holder_id,work_id").eq("id", input.contractId).eq("org_id", input.options.orgId).maybeSingle(),
+  ]);
+  if (contractError) throw new Error(contractError.message);
   if (!validation) return { pending: true as const };
   const extracted = (validation.extracted_data ?? {}) as Record<string, unknown>;
   const candidateFile = toArchiveFile({ ...input.unit.files[0], id: input.unit.id, name: input.unit.name });
@@ -247,21 +252,25 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
     aiName: extracted.rightsHolderName, sheetName: row?.name,
     localEmail: contacts.email, sheetEmail: row?.email,
   });
-  const owner = await resolveArchiveRightsHolder(db, {
-    orgId: input.options.orgId, name: identity.name, email: identity.email,
-    phone: contacts.phone, address: contacts.address, allowCreateNonMember: true,
-  });
-  const work = await resolveArchiveWork(db, {
-    orgId: input.options.orgId,
-    // The safely matched archive title is the preferred search title. The
-    // contract title remains an alias/working title; DFI/TMDb remains final.
-    title: row?.title ?? valueString(merged.workTitle ?? merged.title),
-    alternativeTitle: valueString(extracted.workTitle ?? extracted.title),
-    year: valueYear(merged.premiereYear ?? merged.productionYear ?? merged.year) ?? row?.premiereYear ?? null,
-    type: valueString(merged.productionType ?? merged.workType) ?? row?.productionType ?? null,
-    contractDate: valueString(merged.contractDate), rightsHolderId: owner.id,
-    allowExternalCreate: true,
-  });
+  const owner = existingContract?.rights_holder_id
+    ? { id: String(existingContract.rights_holder_id), score: 100, margin: null, created: false, affiliated: false, reason: "existing_contract_link" }
+    : await resolveArchiveRightsHolder(db, {
+      orgId: input.options.orgId, name: identity.name, email: identity.email,
+      phone: contacts.phone, address: contacts.address, allowCreateNonMember: true,
+    });
+  const work = existingContract?.work_id
+    ? { id: String(existingContract.work_id), score: 100, created: false, source: "local" as const, title: null }
+    : await resolveArchiveWork(db, {
+      orgId: input.options.orgId,
+      // The safely matched archive title is the preferred search title. The
+      // contract title remains an alias/working title; DFI/TMDb remains final.
+      title: row?.title ?? valueString(merged.workTitle ?? merged.title),
+      alternativeTitle: valueString(extracted.workTitle ?? extracted.title),
+      year: valueYear(merged.premiereYear ?? merged.productionYear ?? merged.year) ?? row?.premiereYear ?? null,
+      type: valueString(merged.productionType ?? merged.workType) ?? row?.productionType ?? null,
+      contractDate: valueString(merged.contractDate), rightsHolderId: owner.id,
+      allowExternalCreate: true,
+    });
   const development = detectDevelopmentContract(input.localText);
   if (development.isDevelopmentContract) merged.isDevelopmentContract = true;
   const contractTitle = valueString(extracted.workTitle ?? extracted.title);
@@ -398,7 +407,7 @@ async function runExecute(db: ReturnType<typeof createServiceClient>, options: O
 async function runResume(db: ReturnType<typeof createServiceClient>, options: Options, archive: Awaited<ReturnType<typeof loadArchive>>) {
   const batchId = options.batchId!;
   const { data: items, error } = await db.from("contract_import_items")
-    .select("id,contract_id,status,provider_file_id,provider_revision,original_file_name")
+    .select("id,contract_id,ai_job_id,status,provider_file_id,provider_revision,original_file_name")
     .eq("batch_id", batchId).eq("org_id", options.orgId).order("created_at");
   if (error) throw new Error(error.message);
   const initialMatches = matchArchiveRows(archive.units.map(unit => toArchiveFile({ ...unit.files[0], id: unit.id, name: unit.name })), archive.rows);
@@ -408,6 +417,10 @@ async function runResume(db: ReturnType<typeof createServiceClient>, options: Op
     const entry = unitById.get(item.provider_file_id ?? "");
     if (!entry || !item.contract_id) {
       report.push({ reference: safeReference(item.id), fileName: item.original_file_name, status: item.status });
+      continue;
+    }
+    if (!shouldPostProcessArchiveItem({ status: item.status, aiJobId: item.ai_job_id })) {
+      report.push({ reference: safeReference(entry.unit.id), fileName: entry.unit.name, status: "duplicate", contractId: item.contract_id });
       continue;
     }
     if (["queued", "analysing", "matching", "uploaded"].includes(item.status)) {

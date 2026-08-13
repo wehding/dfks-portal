@@ -6,6 +6,47 @@ export const ARCHIVE_SHEET_NAME = "Kontraktarkiv";
 export const ARCHIVE_MATCH_MINIMUM = 95;
 export const ARCHIVE_MATCH_MARGIN = 15;
 
+export type ArchiveWorkType = "kortfilm" | "spillefilm" | "tv-serie" | "dokumentar-serie" | "dokumentarfilm";
+
+export function normalizeArchiveWorkType(value: string | null | undefined): ArchiveWorkType | null {
+  const normalized = value?.toLocaleLowerCase("da-DK") ?? "";
+  if ((normalized.includes("dokumentar") || normalized.includes("documentary")) && normalized.includes("serie")) return "dokumentar-serie";
+  if (normalized.includes("dokumentar") || normalized.includes("documentary")) return "dokumentarfilm";
+  if (normalized.includes("serie") || normalized === "tv") return "tv-serie";
+  if (normalized.includes("kort")) return "kortfilm";
+  if (normalized.includes("spille") || normalized.includes("feature") || normalized === "movie" || normalized === "film") return "spillefilm";
+  return null;
+}
+
+export function normalizeArchiveLookupTitle(title: string, type: string | null | undefined) {
+  if (!normalizeArchiveWorkType(type)?.includes("serie")) return title.trim();
+  return title
+    .replace(/\s*[-–—,:]?\s*(?:sæson|season)\s*\d+\s*$/iu, "")
+    .replace(/\s+[IVXLCDM]+\s*$/u, "")
+    .trim() || title.trim();
+}
+
+export function scoreArchiveExternalWork(
+  input: { title: string; year: number | null; type: string | null; contractDate?: string | null },
+  candidate: { title: string; year: number | null; type: string | null },
+) {
+  const similarity = titleSimilarity(input.title, candidate.title);
+  let score = similarity === 1 ? 85 : Math.round(similarity * 45);
+  const inputType = normalizeArchiveWorkType(input.type);
+  const candidateType = normalizeArchiveWorkType(candidate.type);
+  if (input.year && candidate.year === input.year) score += 20;
+  else if (input.year && candidate.year && Math.abs(input.year - candidate.year) <= 1) score += 10;
+  else if (!input.year && candidate.year && input.contractDate) {
+    const contractYear = Number.parseInt(input.contractDate.slice(0, 4), 10);
+    if (Number.isFinite(contractYear)) {
+      if (candidate.year < contractYear || candidate.year > contractYear + 3) return Math.min(score, 74);
+      score += 20;
+    }
+  }
+  if (inputType && candidateType === inputType) score += 10;
+  return Math.min(100, score);
+}
+
 export type ArchiveSpreadsheetRow = {
   rowNumber: number;
   name: string | null;
@@ -225,6 +266,10 @@ export function archiveImportFileName(file: Pick<ArchiveDriveFile, "name" | "con
       : file.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? ".docx"
         : file.contentType === "text/plain" ? ".txt" : "";
   return `${file.name}${extension}`;
+}
+
+export function shouldPostProcessArchiveItem(item: { status: string; aiJobId: string | null }) {
+  return Boolean(item.aiJobId) && item.status !== "duplicate";
 }
 
 export function isJpegArchivePage(file: Pick<ArchiveDriveFile, "name" | "contentType">) {
