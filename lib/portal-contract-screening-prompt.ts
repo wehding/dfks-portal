@@ -14,7 +14,7 @@ Returner KUN gyldig JSON uden markdown-backticks — præcis denne struktur:
 
 {
   "title": "produktionens titel (string eller null)",
-  "isDevelopmentContract": "true hvis kontrakten er en udviklingskontrakt — dvs. indeholder udtryk som 'Klipper (udvikling)', 'Film Editor (development)', 'udviklingskontrakt', 'optionsaftale', 'i udviklingsfasen', 'development deal', 'development agreement' eller lignende. Ellers false.",
+  "isDevelopmentContract": "true hvis kontrakten er en udviklingskontrakt — dvs. indeholder udtryk som 'Klipper (udvikling)', 'Film Editor (development)', 'udviklingskontrakt', 'optionsaftale', 'i udviklingsfasen', 'i udvikling', 'udviklingsfase', 'development deal', 'development agreement' eller lignende. Ellers false.",
   "productionType": "feature|short|tvSeries|documentary|docSeries|tvEntertainment|reality|sport eller null",
   "creditedRole": "VÆLG præcis én af disse roller baseret på kontraktens funktionsbetegnelse: ${roleList} — eller null hvis rollen ikke fremgår",
   "duration": "samlet varighed i hele minutter som tal — 0 for serier eller hvis ukendt",
