@@ -643,20 +643,28 @@ export async function fetchAdminWorksForReview() {
 
   if (error) throw new Error(error.message);
   const rows = data ?? [];
-  const { data: unreadComments, error: unreadError } = await db
-    .from("work_change_request_comments")
-    .select("id, request_id, author_role, message, created_at, member_read_at, admin_read_at, work_change_requests!inner(id, work_id, org_id)")
-    .eq("author_role", "member")
-    .is("admin_read_at", null)
-    .eq("work_change_requests.org_id", orgId);
-  if (unreadError) throw new Error(unreadError.message);
-
+  // Byg et map fra request_id → work_id ud fra allerede-fetchede works
+  const requestToWorkId = new Map<string, string>();
+  for (const work of rows) {
+    for (const req of (work.work_change_requests ?? []) as Array<{ id: string }>) {
+      requestToWorkId.set(req.id, work.id);
+    }
+  }
+  const allRequestIds = [...requestToWorkId.keys()];
   const unreadByWork = new Map<string, number>();
-  for (const comment of unreadComments ?? []) {
-    const relation = comment.work_change_requests as unknown as { work_id?: string | null } | Array<{ work_id?: string | null }> | null;
-    const workId = Array.isArray(relation) ? relation[0]?.work_id : relation?.work_id;
-    if (!workId) continue;
-    unreadByWork.set(workId, (unreadByWork.get(workId) ?? 0) + 1);
+  if (allRequestIds.length > 0) {
+    const { data: unreadComments, error: unreadError } = await db
+      .from("work_change_request_comments")
+      .select("id, request_id, author_role, admin_read_at")
+      .eq("author_role", "member")
+      .is("admin_read_at", null)
+      .in("request_id", allRequestIds);
+    if (unreadError) throw new Error(unreadError.message);
+    for (const comment of unreadComments ?? []) {
+      const workId = requestToWorkId.get(comment.request_id);
+      if (!workId) continue;
+      unreadByWork.set(workId, (unreadByWork.get(workId) ?? 0) + 1);
+    }
   }
   const parentIdsWithChildren = new Set(
     rows.map(w => (w as { parent_work_id?: string | null }).parent_work_id).filter(Boolean)
