@@ -80,6 +80,8 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
     const ext = extractResult.data ?? {}
     const extractedTitle = String(ext.workTitle ?? ext.title ?? "").trim() || null
     const extractedYear = yearFromValue(ext.premiereYear ?? ext.productionYear ?? ext.year ?? ext.premiereDate ?? ext.contractDate)
+    const workTimingDate = [ext.contractDate, ext.startDate, ext.endDate]
+        .find(value => typeof value === "string" && value.trim()) as string | undefined
 
     const { data: existingContract } = await admin
         .from("contracts")
@@ -116,7 +118,7 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         : await matchSharedWork(admin, {
             title: extractedTitle,
             premiereYear: extractedYear,
-            contractDate: typeof ext.contractDate === "string" ? ext.contractDate : null,
+            contractDate: workTimingDate ?? null,
             type: workType,
         })
     workId = workId ?? workMatch.id
@@ -135,7 +137,7 @@ async function runContractJob(admin: ReturnType<typeof createServiceClient>, job
         workMatch = await matchSharedWork(admin, {
             title: extractedTitle,
             premiereYear: extractedYear,
-            contractDate: typeof ext.contractDate === "string" ? ext.contractDate : null,
+            contractDate: workTimingDate ?? null,
             type: workType,
             rightsHolderId,
         })

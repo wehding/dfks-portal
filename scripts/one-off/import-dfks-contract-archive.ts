@@ -39,6 +39,7 @@ import { chooseArchiveIdentity, resolveArchiveRightsHolder, safeIdentitySummary 
 import { resolveArchiveWork } from "@/lib/one-off/contract-archive-works";
 import { attachArchiveEmployers, matchArchiveEmployers } from "@/lib/one-off/contract-archive-employers";
 import { extractedProductionCompanyNames } from "@/lib/production-companies";
+import { hasImplausibleFilmTiming } from "@/lib/contract-import";
 
 type Mode = "dry-run" | "execute" | "resume" | "report";
 type Options = {
@@ -247,6 +248,9 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
   const match = input.initialRow ? null : matchArchiveRows([candidateFile], input.rows, { [input.unit.id]: signalsFromExtracted(extracted) })[0];
   const row = input.initialRow ?? rowByNumber(input.rows, match?.automatic ? match.rowNumber : null);
   const merged = applySpreadsheetFallback(extracted, row);
+  const workTimingDate = valueString(merged.contractDate)
+    ?? valueString(merged.startDate)
+    ?? valueString(merged.endDate);
   const contacts = extractLocalContactData(input.localText);
   const identity = chooseArchiveIdentity({
     aiName: extracted.rightsHolderName, sheetName: row?.name,
@@ -258,9 +262,25 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
       orgId: input.options.orgId, name: identity.name, email: identity.email,
       phone: contacts.phone, address: contacts.address, allowCreateNonMember: true,
     });
-  const work = existingContract?.work_id
-    ? { id: String(existingContract.work_id), score: 100, created: false, source: "local" as const, title: null }
-    : await resolveArchiveWork(db, {
+  let rejectedWorkId: string | null = null;
+  let existingWorkResolution: { id: string; score: number; created: false; source: "local"; title: string | null } | null = null;
+  if (existingContract?.work_id) {
+    const { data: linkedWork, error: linkedWorkError } = await db
+      .from("works")
+      .select("id,title,type,year")
+      .eq("id", existingContract.work_id)
+      .maybeSingle();
+    if (linkedWorkError) throw new Error(linkedWorkError.message);
+    if (linkedWork && hasImplausibleFilmTiming(workTimingDate, linkedWork.year, linkedWork.type)) {
+      rejectedWorkId = String(existingContract.work_id);
+    } else {
+      existingWorkResolution = {
+        id: String(existingContract.work_id), score: 100, created: false,
+        source: "local", title: linkedWork?.title ?? null,
+      };
+    }
+  }
+  const work = existingWorkResolution ?? await resolveArchiveWork(db, {
       orgId: input.options.orgId,
       // The safely matched archive title is the preferred search title. The
       // contract title remains an alias/working title; DFI/TMDb remains final.
@@ -268,7 +288,7 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
       alternativeTitle: valueString(extracted.workTitle ?? extracted.title),
       year: valueYear(merged.premiereYear ?? merged.productionYear ?? merged.year) ?? row?.premiereYear ?? null,
       type: valueString(merged.productionType ?? merged.workType) ?? row?.productionType ?? null,
-      contractDate: valueString(merged.contractDate), rightsHolderId: owner.id,
+      contractDate: workTimingDate, rightsHolderId: owner.id,
       allowExternalCreate: true,
     });
   const development = detectDevelopmentContract(input.localText);
@@ -283,11 +303,17 @@ async function updatePostAnalysis(db: ReturnType<typeof createServiceClient>, in
   const contractUpdate: Record<string, unknown> = {
     status: "kladde", archive_received_at: normalizeArchiveDate(row?.archiveDate ?? null),
     ...(owner.id ? { rights_holder_id: owner.id } : {}),
-    ...(work.id ? { work_id: work.id } : {}),
+    ...(work.id ? { work_id: work.id } : rejectedWorkId ? { work_id: null } : {}),
   };
   if (row?.title && contractTitle && row.title !== contractTitle) contractUpdate.working_title = contractTitle;
   const updatedContract = await db.from("contracts").update(contractUpdate).eq("id", input.contractId).eq("org_id", input.options.orgId);
   if (updatedContract.error) throw new Error(updatedContract.error.message);
+  if (rejectedWorkId) {
+    const removedAssignment = await db.from("work_assignments").delete()
+      .eq("contract_id", input.contractId)
+      .eq("work_id", rejectedWorkId);
+    if (removedAssignment.error) throw new Error(removedAssignment.error.message);
+  }
   const employerNames = extractedProductionCompanyNames(merged);
   if (row?.productionCompany) employerNames.push(row.productionCompany);
   const employers = await matchArchiveEmployers(db, employerNames);
