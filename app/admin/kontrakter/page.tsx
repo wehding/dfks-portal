@@ -276,6 +276,33 @@ function adminContractSummary(contract: ContractRow) {
     ].join("\n")
 }
 
+function YearCountCard({ contracts, availableYears, currentYear }: {
+    contracts: ContractRow[]
+    availableYears: number[]
+    currentYear: number
+}) {
+    const [selectedYear, setSelectedYear] = useState(currentYear)
+    const count = contracts.filter(c => {
+        const year = c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()
+        return year === selectedYear
+    }).length
+    return (
+        <div className="min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:px-6 sm:py-5">
+            <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium leading-4 text-muted-foreground sm:text-sm">Kontrakter i</p>
+                <select
+                    value={selectedYear}
+                    onChange={e => setSelectedYear(Number(e.target.value))}
+                    className="rounded border bg-background px-1.5 py-0.5 text-[11px] font-medium text-foreground sm:text-sm focus:outline-none"
+                >
+                    {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+            </div>
+            <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:text-3xl">{count}</p>
+        </div>
+    )
+}
+
 function AdminKontrakterContent() {
     const { t } = useI18n()
     const [contracts, setContracts] = useState<ContractRow[]>([])
@@ -1614,9 +1641,14 @@ function AdminKontrakterContent() {
 
     if (loading) return <TableSkeleton columns={7} rows={7} />
 
+    const currentYear = new Date().getFullYear()
+    const availableYears = Array.from(
+        new Set(contracts.map(c => c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()))
+    ).sort((a, b) => b - a)
+    if (!availableYears.includes(currentYear)) availableYears.unshift(currentYear)
+
     const stats = {
         total: contracts.length,
-        afventer: contracts.filter(c => c.status === "kladde").length,
         validerede: contracts.filter(c => c.status === "valideret").length,
     }
 
@@ -1624,7 +1656,7 @@ function AdminKontrakterContent() {
         <div className="space-y-6">
             <SummaryGrid>
                 <SummaryCard label="Kontrakter i alt" value={stats.total} />
-                <SummaryCard label="Afventer validering" value={stats.afventer} />
+                <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
                 <SummaryCard label="Validerede" value={stats.validerede} />
             </SummaryGrid>
 
