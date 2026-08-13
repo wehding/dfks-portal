@@ -11,6 +11,8 @@ export type ProviderFile = {
   size: number;
   contentType: string | null;
   downloadPath?: string;
+  /** Parent scope used by one-off grouping; never persisted as a Drive link. */
+  parentId?: string;
 };
 
 export type ProviderBrowseEntry = ProviderFile & {
@@ -93,6 +95,8 @@ async function listGoogleFolder(token: string, folderId: string, recursive: bool
       url.searchParams.set("q", `'${googleDriveQueryValue(parent)}' in parents and trashed=false`);
       url.searchParams.set("fields", "nextPageToken,files(id,name,mimeType,size,modifiedTime,md5Checksum,version)");
       url.searchParams.set("pageSize", "1000");
+      url.searchParams.set("supportsAllDrives", "true");
+      url.searchParams.set("includeItemsFromAllDrives", "true");
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
       if (!response.ok) throw new Error("Google Drive-mappen kunne ikke læses");
@@ -103,7 +107,7 @@ async function listGoogleFolder(token: string, folderId: string, recursive: bool
           continue;
         }
         const size = Number(file.size) || 0;
-        output.push({ id: file.id, name: file.name, size, contentType: file.mimeType ?? null, revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown" });
+        output.push({ id: file.id, name: file.name, size, contentType: file.mimeType ?? null, revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown", parentId: parent });
       }
       pageToken = json.nextPageToken ?? "";
     } while (pageToken);
@@ -180,7 +184,10 @@ export async function listProviderFiles(input: {
 export async function getProviderFile(provider: ImportProvider, token: string, id: string): Promise<ProviderFile> {
   if (!id || id.length > 1024) throw new Error("Ugyldig filreference");
   if (provider === "google_drive") {
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?fields=id,name,mimeType,size,modifiedTime,md5Checksum,version`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
+    const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}`);
+    url.searchParams.set("fields", "id,name,mimeType,size,modifiedTime,md5Checksum,version");
+    url.searchParams.set("supportsAllDrives", "true");
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" });
     if (!response.ok) throw new Error("Google Drive-filen kunne ikke læses");
     const file = await response.json() as { id: string; name: string; mimeType?: string; size?: string; modifiedTime?: string; md5Checksum?: string; version?: string };
     return { id: file.id, name: file.name, contentType: file.mimeType ?? null, size: Number(file.size) || 0, revision: file.md5Checksum ?? file.version ?? file.modifiedTime ?? "unknown" };
@@ -199,8 +206,11 @@ export async function getProviderFile(provider: ImportProvider, token: string, i
 
 export async function downloadProviderFile(provider: ImportProvider, token: string, file: ProviderFile) {
   if (file.size > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
+  const googleDownloadUrl = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}`);
+  googleDownloadUrl.searchParams.set("alt", "media");
+  googleDownloadUrl.searchParams.set("supportsAllDrives", "true");
   const response = provider === "google_drive"
-    ? await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
+    ? await fetch(googleDownloadUrl, { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" })
     : provider === "onedrive"
       ? await fetch(`https://graph.microsoft.com/v1.0/me/drive/items/${encodeURIComponent(file.id)}/content`, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow", cache: "no-store" })
       : await fetch("https://content.dropboxapi.com/2/files/download", { headers: { Authorization: `Bearer ${token}`, "Dropbox-API-Arg": JSON.stringify({ path: file.downloadPath ?? file.id }) }, cache: "no-store" });
@@ -209,6 +219,22 @@ export async function downloadProviderFile(provider: ImportProvider, token: stri
   if (contentLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.byteLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Filen er større end 25 MB");
+  return buffer;
+}
+
+export async function exportGoogleSpreadsheet(token: string, fileId: string) {
+  if (!fileId || fileId.length > 1024) throw new Error("Ugyldig regnearksreference");
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export`);
+  url.searchParams.set("mimeType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Kontraktarkivets regneark kunne ikke eksporteres");
+  const contentLength = Number(response.headers.get("content-length")) || 0;
+  if (contentLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Regnearket er større end 25 MB");
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.byteLength > MAX_CONTRACT_IMPORT_BYTES) throw new Error("Regnearket er større end 25 MB");
   return buffer;
 }
 
