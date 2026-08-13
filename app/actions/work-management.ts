@@ -676,13 +676,10 @@ export async function fetchAdminWorksForReview() {
       { ...contract, work_id: parent?.id ?? null },
       work,
     ));
-    const parentPendingCount = parent
-      ? (parent as typeof work).work_change_requests?.filter(r => r.status === "pending").length ?? 0
-      : 0;
     return ({
     ...work,
     contract_count: (work.contracts?.length ?? 0) > 0 || hasScopedParentContract ? 1 : 0,
-    pending_count: (work.work_change_requests?.filter(request => request.status === "pending").length ?? 0) + parentPendingCount,
+    pending_count: work.work_change_requests?.filter(request => request.status === "pending").length ?? 0,
     unread_count: unreadByWork.get(work.id) ?? 0,
     assigned_user_count: work.work_assignments?.length ?? 0,
     parent,
@@ -729,7 +726,7 @@ export async function fetchAdminWorksForReview() {
       episode_number: null,
       genre: null,
       director: null,
-      status: group.pendingCount > 0 ? "til_godkendelse" : "aktiv",
+      status: (group.pendingCount + ((parent as typeof rows[0] | undefined)?.work_change_requests?.filter(r => r.status === "pending").length ?? 0)) > 0 ? "til_godkendelse" : "aktiv",
       dfi_id: parent?.dfi_id ?? group.episodes.find(episode => episode.dfi_id)?.dfi_id ?? null,
       tmdb_id: parent?.tmdb_id ?? group.episodes.find(episode => episode.tmdb_id)?.tmdb_id ?? null,
       imdb_id: parent?.imdb_id ?? group.episodes.find(episode => episode.imdb_id)?.imdb_id ?? null,
@@ -744,7 +741,7 @@ export async function fetchAdminWorksForReview() {
       is_season_group: true,
       group_key: group.key,
       child_work_ids: group.workIds,
-      overview_pending_count: group.pendingCount,
+      overview_pending_count: group.pendingCount + ((parent as typeof rows[0] | undefined)?.work_change_requests?.filter(r => r.status === "pending").length ?? 0),
       overview_unread_count: group.unreadCount,
       overview_contract_count: group.contractCount,
       overview_assigned_user_count: group.assignedUserCount,
