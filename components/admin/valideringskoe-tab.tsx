@@ -30,7 +30,7 @@ const statusClass: Record<string, string> = {
     arkiveret: "border-red-400 text-red-700 bg-red-50 dark:bg-red-950 dark:text-red-300",
 }
 
-export function ValideringskøTab() {
+export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: number) => void } = {}) {
     const router = useRouter()
     const [rows, setRows] = useState<KøRow[]>([])
     const [loading, setLoading] = useState(true)
@@ -65,12 +65,14 @@ export function ValideringskøTab() {
         }))
         setRows(mapped)
         setLoading(false)
-    }, [])
+    }, [onAfventerCount])
 
     useEffect(() => { void load() }, [load])
 
     const afventer = rows.filter(r => r.status === "kladde")
     const gennemgaede = rows.filter(r => r.status !== "kladde")
+
+    useEffect(() => { onAfventerCount?.(afventer.length) }, [afventer.length, onAfventerCount])
     const visible = activeTab === "afventer" ? afventer : gennemgaede
 
     if (loading) return (

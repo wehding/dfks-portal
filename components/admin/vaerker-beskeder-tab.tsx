@@ -18,7 +18,7 @@ type BeskedRad = {
     latestAt: string | null
 }
 
-export function VaerkerBeskederTab() {
+export function VaerkerBeskederTab({ onCountLoaded }: { onCountLoaded?: (n: number) => void } = {}) {
     const router = useRouter()
     const [rows, setRows] = useState<BeskedRad[]>([])
     const [loading, setLoading] = useState(true)
@@ -81,8 +81,9 @@ export function VaerkerBeskederTab() {
         )
 
         setRows(mapped)
+        onCountLoaded?.(mapped.length)
         setLoading(false)
-    }, [])
+    }, [onCountLoaded])
 
     useEffect(() => { void load() }, [load])
 

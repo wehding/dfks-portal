@@ -2708,6 +2708,24 @@ function AdminKontrakterPageInner() {
     const searchParams = useSearchParams()
     const initialTab = searchParams.get("tab") === "valideringskoe" ? "valideringskoe" : "arkiv"
     const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe">(initialTab)
+    const [køCount, setKøCount] = useState<number>(0)
+
+    useEffect(() => {
+        async function fetchKøCount() {
+            const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
+            const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
+            if (!context?.orgId) return
+            const { createClient } = await import("@/lib/supabase/client")
+            const supabase = createClient()
+            const { count } = await supabase
+                .from("contracts")
+                .select("id", { count: "exact", head: true })
+                .eq("org_id", context.orgId)
+                .eq("status", "kladde")
+            setKøCount(count ?? 0)
+        }
+        void fetchKøCount()
+    }, [])
 
     return (
         <div className="space-y-6">
@@ -2739,11 +2757,16 @@ function AdminKontrakterPageInner() {
                     ].join(" ")}
                 >
                     Valideringskø
+                    {køCount > 0 && (
+                        <span className="ml-2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 px-2 py-0.5 text-xs font-semibold">
+                            {køCount}
+                        </span>
+                    )}
                 </button>
             </div>
             {activeTab === "arkiv"
                 ? <Suspense><AdminKontrakterContent /></Suspense>
-                : <ValideringskøTab />
+                : <ValideringskøTab onAfventerCount={setKøCount} />
             }
         </div>
     )
