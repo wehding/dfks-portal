@@ -59,6 +59,10 @@ test("eksterne værker kræver eksakt titel og forenelig type uden premiereår",
     { title: "SULT", year: null, type: "feature", contractDate: "2024-04-02" },
     { title: "Sult", year: 1966, type: "spillefilm" },
   ), 74);
+  assert.equal(scoreArchiveExternalWork(
+    { title: "Lucky", year: null, type: "feature", contractDate: "2024-08-13" },
+    { title: "Lucky", year: 2017, type: "spillefilm" },
+  ), 74);
 });
 
 function row(overrides: Partial<ArchiveSpreadsheetRow> = {}): ArchiveSpreadsheetRow {

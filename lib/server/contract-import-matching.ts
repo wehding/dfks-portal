@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CONTRACT_MATCH_VERSION,
+  hasImplausibleFilmTiming,
   premiereWindowScore,
   selectAutomaticMatch,
   titleSimilarity,
@@ -99,6 +100,10 @@ export async function matchSharedWork(
     }
     if (input.type && work.type === input.type) { score += 10; evidence.push({ signal: "work_type", points: 10 }); }
     if (credited.has(work.id)) { score += 25; evidence.push({ signal: "rights_holder_credit", points: 25 }); }
+    if (hasImplausibleFilmTiming(input.contractDate, work.year, work.type)) {
+      score = Math.min(score, 74);
+      evidence.push({ signal: "implausible_film_timing", points: -100 });
+    }
     return { value: work, label: work.title, score: Math.min(100, score), evidence };
   }).filter(candidate => candidate.score >= 55).sort((a, b) => b.score - a.score);
   const selected = selectAutomaticMatch(scored, 90, 10);

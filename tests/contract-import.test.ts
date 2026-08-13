@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   MAX_CONTRACT_IMPORT_BYTES,
   contractFileHash,
+  hasImplausibleFilmTiming,
   normalizeMatchText,
   premiereWindowScore,
   safeContractFileName,
@@ -34,6 +35,13 @@ test("premiere-window evidence favors contracts made one to three years before r
   assert.equal(premiereWindowScore(2025, 2025), 5);
   assert.equal(premiereWindowScore(2018, 2025), 0);
   assert.equal(premiereWindowScore(null, 2025), 0);
+});
+
+test("gamle film med samme titel afvises, mens senere seriesæsoner kan genbruge serieposten", () => {
+  assert.equal(hasImplausibleFilmTiming("2025-10-01", 2016, "spillefilm"), true);
+  assert.equal(hasImplausibleFilmTiming("2024-08-13", 2017, "spillefilm"), true);
+  assert.equal(hasImplausibleFilmTiming("2024-08-13", 2026, "spillefilm"), false);
+  assert.equal(hasImplausibleFilmTiming("2024-08-13", 2018, "tv-serie"), false);
 });
 
 test("automatic matching requires both a high score and a clear margin", () => {
