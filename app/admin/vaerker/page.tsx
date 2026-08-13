@@ -811,6 +811,25 @@ export default function VaerksadministrationPage() {
   const [seasonCreditDrafts, setSeasonCreditDrafts] = useState<Record<string, SeasonCreditDraft>>({});
   const { activeRh, setActiveRh } = useActiveRightsHolder();
   const [activeTab, setActiveTab] = useState<"oversigt" | "beskeder">("oversigt");
+  const [beskedCount, setBeskedCount] = useState<number>(0);
+
+  useEffect(() => {
+    async function fetchBeskedCount() {
+      const contextRes = await fetch("/api/admin/context", { cache: "no-store" });
+      const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null;
+      if (!context?.orgId) return;
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { count } = await supabase
+        .from("work_change_request_comments")
+        .select("id, work_change_requests!inner(org_id)", { count: "exact", head: true })
+        .eq("author_role", "member")
+        .is("admin_read_at", null)
+        .eq("work_change_requests.org_id", context.orgId);
+      setBeskedCount(count ?? 0);
+    }
+    void fetchBeskedCount();
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -1963,11 +1982,16 @@ export default function VaerksadministrationPage() {
               : "border-transparent text-muted-foreground hover:text-foreground",
           ].join(" ")}
         >
-          Beskeder fra medlemmer
+          Beskeder
+          {beskedCount > 0 && (
+            <span className="ml-2 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200 px-2 py-0.5 text-xs font-semibold">
+              {beskedCount}
+            </span>
+          )}
         </button>
       </div>
 
-      {activeTab === "beskeder" && <VaerkerBeskederTab />}
+      {activeTab === "beskeder" && <VaerkerBeskederTab onCountLoaded={setBeskedCount} />}
 
       {activeTab === "oversigt" && notice && (
         <div className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
