@@ -892,11 +892,33 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             </div>
           )}
 
-          {/* Udviklingskontrakt-advarsel */}
+          {/* Udviklingskontrakt — brugeren skal vælge type */}
           {isDevelopmentContract && !screening && !isBatchUpload && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3.5 py-3 text-sm text-amber-900 dark:text-amber-200">
-              <p className="font-medium">Vi har registreret en udviklingskontrakt</p>
-              <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">Kontrakten ser ud til at være en optionsaftale eller udviklingskontrakt. Den kan stadig uploades — den vil blot ikke have en færdig produktionstype endnu.</p>
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3.5 py-3 space-y-2.5">
+              <p className="text-sm font-medium text-amber-900 dark:text-amber-200">Vi har registreret en udviklingskontrakt — vælg type</p>
+              <div className="grid grid-cols-1 gap-1.5">
+                {(["udvikling_dokumentar", "udvikling_fiktion", "udvikling_underholdning"] as const).map(type => {
+                  const labels: Record<string, string> = {
+                    udvikling_dokumentar: "Dokumentar (udvikling)",
+                    udvikling_fiktion: "Fiktion / drama (udvikling)",
+                    udvikling_underholdning: "Underholdning / reality (udvikling)",
+                  };
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setProductionType(productionType === type ? "" : type)}
+                      className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                        productionType === type
+                          ? "border-amber-600 bg-amber-100 dark:bg-amber-900/50 font-medium text-amber-900 dark:text-amber-100"
+                          : "border-amber-200 bg-white dark:bg-transparent text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                      }`}
+                    >
+                      {labels[type]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
