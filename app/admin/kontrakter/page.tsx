@@ -282,7 +282,15 @@ function AdminKontrakterContent() {
     const [works, setWorks] = useState<WorkOption[]>([])
     const [orgId, setOrgId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
+    // `searchInput` opdateres på hvert tastetryk (til at vise i feltet), mens
+    // `search` (som trigger forespørgslen) debounces 300ms efter sidste tastetryk —
+    // ellers skyder hver tast en ny fuld indlæsning af sted (se needsFullLoad).
+    const [searchInput, setSearchInput] = useState("")
     const [search, setSearch] = useState("")
+    useEffect(() => {
+        const timeout = setTimeout(() => setSearch(searchInput), 300)
+        return () => clearTimeout(timeout)
+    }, [searchInput])
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
     // Pagination
@@ -532,7 +540,12 @@ function AdminKontrakterContent() {
 
     // ── Filtre der kræver fuld indlæsning (ikke paginerbare server-side) ──────
     const COMPLEX_FILTER_VALUES = ["beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended"]
-    const needsFullLoad = COMPLEX_FILTER_VALUES.includes(filterStatus) || duplicatesOpen
+    // Søgning matcher flere joinede felter (værktitel, rettighedshaver, producent), som
+    // PostgREST ikke kan OR-filtrere på tværs af i samme forespørgsel på en robust måde.
+    // Derfor hentes hele datasættet ved aktiv søgning, og filtreringen sker client-side
+    // (se `filtered`-useMemo nedenfor) — ellers ville søgning kun ramme `working_title`
+    // og stille filtrere resultater på rettighedshaver/producent/værk fra uden varsel.
+    const needsFullLoad = COMPLEX_FILTER_VALUES.includes(filterStatus) || duplicatesOpen || Boolean(search)
 
     // ── Load ──────────────────────────────────────────────────
 
@@ -563,7 +576,7 @@ function AdminKontrakterContent() {
                 rettighedshavere (full_name),
                 works (id, title, type, poster_url),
                 contract_validations (has_credit_clause, has_overenskomst_incorporation)
-            `, { count: "exact" })
+            `, { count: opts.needsFullLoad ? undefined : "exact" })
             .eq("org_id", resolvedOrgId)
             .order("created_at", { ascending: false })
             .order("id", { ascending: false }) // stabil tie-breaker til cursor
@@ -574,7 +587,9 @@ function AdminKontrakterContent() {
             query = query.eq("status", opts.filterStatus) as typeof query
         }
         if (opts.activeRhId) query = query.eq("rights_holder_id", opts.activeRhId) as typeof query
-        if (opts.search) query = query.ilike("working_title", `%${opts.search}%`) as typeof query
+        // Bemærk: søgning filtreres IKKE server-side her — den matcher flere joinede
+        // felter (se needsFullLoad-kommentaren ovenfor) og håndteres client-side på det
+        // fuldt hentede datasæt, ligesom før pagination blev indført.
 
         // Pagination: kun når filteret ikke kræver hele datasættet
         if (!opts.needsFullLoad) {
@@ -1698,11 +1713,11 @@ function AdminKontrakterContent() {
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
                 <div className="relative w-full lg:w-auto">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(0) }} />
-                    {search && (
+                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={searchInput} onChange={e => { setSearchInput(e.target.value); setCurrentPage(0) }} />
+                    {searchInput && (
                         <button
                             type="button"
-                            onClick={() => setSearch("")}
+                            onClick={() => setSearchInput("")}
                             className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                             aria-label="Tøm søgefelt"
                         >
@@ -1734,8 +1749,8 @@ function AdminKontrakterContent() {
                 </Select>
                 <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={rh => { setActiveRh(rh); setCurrentPage(0) }} />
                 <ResetFiltersButton
-                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
-                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setCurrentPage(0) }}
+                    active={Boolean(searchInput || filterStatus !== "all" || filterType !== "all" || activeRh)}
+                    onReset={() => { setSearchInput(""); setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setCurrentPage(0) }}
                 />
                 <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
