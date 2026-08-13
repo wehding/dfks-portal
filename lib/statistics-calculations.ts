@@ -1,3 +1,5 @@
+import { statisticsBoolean, statisticsNumber } from "@/lib/statistics-values";
+
 export type StatisticsContract = {
   id: string;
   type: string;
@@ -13,15 +15,19 @@ export function salaryToMonthly(salary: number, unit: string) {
 }
 
 export function salarySupplements(data: Record<string, unknown> | null | undefined) {
-  const personalSupplement = Number(data?.personalSupplement ?? data?.loentillaeg ?? 0) || 0;
-  const postProductionSupplement = Number(data?.postProductionSupplement ?? 0) || 0;
+  const personalSupplement = statisticsNumber(data?.personalSupplement ?? data?.loentillaeg) ?? 0;
+  const postProductionSupplement = statisticsNumber(data?.postProductionSupplement) ?? 0;
   return personalSupplement + postProductionSupplement;
 }
 
 export function salaryDataToWeekly(data: Record<string, unknown> | null | undefined) {
-  const salary = Number(data?.salary);
-  if (!Number.isFinite(salary) || salary <= 0) return Number.NaN;
-  const unit = String(data?.salaryUnit ?? "weekly");
+  const salary = statisticsNumber(data?.salary);
+  if (salary == null || salary <= 0) return Number.NaN;
+  const unitValue = String(data?.salaryUnit ?? "weekly").trim().toLocaleLowerCase("da");
+  const unit = ["uge", "ugeløn", "week"].includes(unitValue) ? "weekly"
+    : ["dag", "dagsløn", "day"].includes(unitValue) ? "daily"
+      : ["måned", "månedsløn", "month"].includes(unitValue) ? "monthly"
+        : unitValue;
   const baseWeekly = unit === "daily" ? salary * 5
     : unit === "monthly" ? salary * 12 / 52
     : unit === "weekly" ? salary
@@ -36,14 +42,14 @@ export function salaryDataToMonthly(data: Record<string, unknown> | null | undef
 
 export function contributionForContract(contract: StatisticsContract) {
   const data = contract.extractedData;
-  if (!data?.salary) return null;
+  if (!data || (statisticsNumber(data.salary) ?? 0) <= 0) return null;
   const baseWeekly = salaryDataToWeekly(data);
   if (!Number.isFinite(baseWeekly)) return null;
-  const weeks = Number(data.workingWeeks ?? 0);
+  const weeks = statisticsNumber(data.workingWeeks) ?? 0;
   const totalSalary = Math.round(baseWeekly * weeks);
-  const holidayRate = Number(data.holidayPayRate);
-  const betaRate = Number(data.betaRate);
-  const isFreelance = contract.type === "leverandør" || Boolean(data.isFreelanceContract);
+  const holidayRate = statisticsNumber(data.holidayPayRate) ?? Number.NaN;
+  const betaRate = statisticsNumber(data.betaRate) ?? Number.NaN;
+  const isFreelance = contract.type === "leverandør" || statisticsBoolean(data.isFreelanceContract) === true;
   return {
     year: contract.premiereYear,
     weeks,

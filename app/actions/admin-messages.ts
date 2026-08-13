@@ -10,11 +10,10 @@ export type AdminMessageThreadKind = "work" | "contract" | "screening";
 async function adminContext() {
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
-  if (!data.user || !(await assertAdminRole(supabase))) throw new Error("Mangler adminrettigheder.");
+  const caller = data.user ? await assertAdminRole(supabase) : null;
+  if (!data.user || !caller) throw new Error("Mangler adminrettigheder.");
   const db = createServiceClient();
-  const { data: role } = await db.from("user_org_roles").select("org_id").eq("user_id", data.user.id).limit(1).maybeSingle();
-  if (!role?.org_id) throw new Error("Organisationen kunne ikke bestemmes.");
-  return { db, orgId: role.org_id, userId: data.user.id };
+  return { db, orgId: caller.orgId, userId: data.user.id };
 }
 
 async function threadTarget(kind: AdminMessageThreadKind, threadId: string) {

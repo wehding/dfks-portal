@@ -16,6 +16,7 @@ import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
 import { identityLevel } from "@/lib/work-identity";
 import { isRightBearingOnboardingRole } from "@/lib/onboarding-credit-role";
 import { upsertMemberSeriesEpisodeScope } from "@/lib/server/member-series-episode-scopes";
+import { isInternalWorkerSecret } from "@/lib/api-auth";
 
 // DFI org_id bruges ved import — DFKS default
 import { requireOrgId } from "@/lib/org";
@@ -1804,8 +1805,9 @@ async function importApprovedOnboardingWorksForContext(
 }
 
 export async function processQueuedOnboardingWorkImportItem(secret: string, itemId: string) {
-  const allowedSecrets = [process.env.INTERNAL_API_SECRET, process.env.CONTRACT_AI_JOB_SECRET, process.env.CRON_SECRET].filter(Boolean);
-  if (!secret || !allowedSecrets.includes(secret)) return { success: false as const, error: "Ikke autoriseret" };
+  if (!isInternalWorkerSecret(secret, "onboarding-import")) {
+    return { success: false as const, error: "Ikke autoriseret" };
+  }
 
   const db = createServiceClient();
   const { data: item, error: itemError } = await db

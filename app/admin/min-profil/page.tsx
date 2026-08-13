@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { KeyRound, Loader2, Save, Shield, User } from "lucide-react";
 import { toast } from "sonner";
+import { sendOwnPasswordResetEmail } from "@/app/actions/account-access";
 
 export default function AdminMinProfilPage() {
   const [loading, setLoading] = useState(true);
@@ -48,8 +49,12 @@ export default function AdminMinProfilPage() {
 
       if (roleRows && roleRows.length > 0) {
         setRoles(roleRows.map(r => r.role));
-        const org = Array.isArray(roleRows[0].organisations) ? roleRows[0].organisations[0] : roleRows[0].organisations;
-        if (org?.name) setOrgName(org.name);
+      }
+      const contextResponse = await fetch("/api/admin/context", { cache: "no-store" });
+      if (contextResponse.ok) {
+        const context = await contextResponse.json() as { orgId?: string; organisations?: Array<{ id: string; name: string }> };
+        const activeOrganisation = context.organisations?.find(organisation => organisation.id === context.orgId);
+        if (activeOrganisation?.name) setOrgName(activeOrganisation.name);
       }
 
       setLoading(false);
@@ -88,12 +93,9 @@ export default function AdminMinProfilPage() {
     if (!email) return;
     setSendingReset(true);
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/confirm?type=recovery`,
-      });
-      if (error) throw error;
-      toast.success(`Nulstillingslink sendt til ${email}`);
+      const result = await sendOwnPasswordResetEmail();
+      if (!result.success) throw new Error(result.error);
+      toast.success(`Nulstillingslink sendt til ${result.email}`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Kunne ikke sende nulstillingslink");
     } finally {

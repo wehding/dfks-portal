@@ -11,6 +11,8 @@ import { MemberInboxPanel } from "@/components/portal/member-inbox-panel";
 import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salary-stats-card";
 import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
+import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
+import { resolveOrgId } from "@/lib/org";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
 type InboxThread = { id: string; subject: string; member_messages: Array<{ author_role: string; created_at: string }> | null; member_message_participants: Array<{ user_id: string; last_read_at: string | null }> | null };
@@ -24,13 +26,15 @@ export default async function PortalDashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/");
   const db = createServiceClient();
-  const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id)").eq("user_id", user.id).maybeSingle();
+  const { data: holder } = await db.from("rettighedshavere").select("id,full_name,opt_out_statistics,org_affiliations(org_id,statistics_participation)").eq("user_id", user.id).maybeSingle();
   if (!holder) {
     const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (staffRole) redirect("/admin");
     redirect("/onboarding");
   }
-  const orgId = (Array.isArray(holder.org_affiliations) ? holder.org_affiliations[0] : holder.org_affiliations)?.org_id;
+  const orgId = await resolveOrgId(db, user.id);
+  const affiliations = Array.isArray(holder.org_affiliations) ? holder.org_affiliations : [holder.org_affiliations];
+  const affiliation = affiliations.find(row => row?.org_id === orgId) ?? null;
   if (!orgId) {
     const { data: staffRole } = await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
     if (staffRole) redirect("/admin");
@@ -41,7 +45,7 @@ export default async function PortalDashboardPage() {
     db.from("work_change_requests").select("id,status,created_at").eq("org_id", orgId).eq("requested_by_rights_holder_id", holder.id).eq("status", "pending"),
     db.from("screening_claims").select("id,title,status,created_at").eq("org_id", orgId).eq("profile_id", user.id).eq("status", "pending"),
     db.from("member_message_threads").select("id,subject,member_messages(author_role,created_at),member_message_participants(user_id,last_read_at)").eq("org_id", orgId).eq("rights_holder_id", holder.id),
-    db.from("work_assignments").select("work_id,works(id,title,contracts(id))").eq("rights_holder_id", holder.id),
+    db.from("work_assignments").select("work_id,works(id,title,contracts(id))").eq("org_id", orgId).eq("rights_holder_id", holder.id),
     db.from("member_series_episode_scopes").select("id,season_number,works:series_work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("status", "pending"),
     db.from("work_share_participants").select("id,case_id,works:work_id(title)").eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("relationship_status", "pending"),
     db.from("member_work_collaboration_reviews").select("id,status").eq("org_id", orgId).eq("rights_holder_id", holder.id).in("status", ["pending", "disputed"]),
@@ -105,15 +109,29 @@ export default async function PortalDashboardPage() {
     ...unreadThreads.map(thread => ({ key: `inbox-${thread.id}`, href: `/portal?thread=${thread.id}`, icon: MessageSquare, title: thread.subject, text: "Læs den nye besked fra DFKS." })),
   ];
   // Lønstatistik: egen grundløn pr. uge pr. år vs. gennemsnittet for bidragende medlemmer.
-  const optedOut = Boolean((holder as { opt_out_statistics?: boolean | null }).opt_out_statistics);
+  const optedOut = typeof affiliation?.statistics_participation === "boolean"
+    ? !affiliation.statistics_participation
+    : Boolean((holder as { opt_out_statistics?: boolean | null }).opt_out_statistics);
   let salaryPoints: SalaryStatPoint[] = [];
   let benchmarkAvailable = false;
   let benchmarkPointsByExperience: Partial<Record<ExperienceGroup, SalaryStatPoint[]>> = {};
   let ownStatisticsContracts: Array<{ id: string; title: string; year: number; weekly: number }> = [];
   {
-    const { data: orgContracts } = await db.from("contracts")
-      .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(opt_out_statistics,professional_start_year)")
-      .eq("org_id", orgId);
+    const [{ data: orgContracts }, { data: participantRows }, { data: organisation }] = await Promise.all([
+      db.from("contracts")
+        .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)")
+        .eq("org_id", orgId),
+      db.from("org_affiliations")
+        .select("rights_holder_id,statistics_participation")
+        .eq("org_id", orgId)
+        .eq("statistics_participation", true),
+      db.from("organisations")
+        .select("statistics_minimum_group_size")
+        .eq("id", orgId)
+        .maybeSingle(),
+    ]);
+    const participatingHolderIds = new Set((participantRows ?? []).map(row => row.rights_holder_id as string));
+    const minimumGroupSize = normalizeStatisticsMinimumGroupSize(organisation?.statistics_minimum_group_size);
     const contractIds = (orgContracts ?? []).map(contract => contract.id);
     const { data: validations } = contractIds.length
       ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds)
@@ -124,8 +142,8 @@ export default async function PortalDashboardPage() {
       const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
       if (!extracted?.salary || contract.type === "leverandør") continue;
       const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
-      const holderDetails = holderRow as { opt_out_statistics?: boolean | null; professional_start_year?: number | null } | null;
-      const contributes = !holderDetails?.opt_out_statistics;
+      const holderDetails = holderRow as { professional_start_year?: number | null } | null;
+      const contributes = Boolean(contract.rights_holder_id && participatingHolderIds.has(contract.rights_holder_id));
       const isMine = contract.rights_holder_id === holder.id;
       if (!contributes && !isMine) continue;
       const dateStr = (typeof extracted.startDate === "string" ? extracted.startDate : null) ?? contract.start_date ?? (typeof extracted.contractDate === "string" ? extracted.contractDate : null) ?? contract.contract_date ?? null;
@@ -135,7 +153,6 @@ export default async function PortalDashboardPage() {
       salaryRows.push({ year, weekly, mine: isMine, contributes, holderId: contract.rights_holder_id ?? null, professionalStartYear: holderDetails?.professional_start_year ?? null });
       if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
     }
-    const MIN_BENCHMARK_CONTRACTS = 10;
     const avg = (list: number[]) => (list.length ? Math.round(list.reduce((sum, value) => sum + value, 0) / list.length) : null);
     // Gennemsnit pr. MEDLEM (ikke pr. kontrakt) og kun for år med nok distinkte bidragydere.
     // Det sikrer at et enkelt medlems ugeløn aldrig kan aflæses som "gennemsnit" et år med få bidragydere.
@@ -147,9 +164,7 @@ export default async function PortalDashboardPage() {
         list.push(row.weekly);
         byHolder.set(row.holderId, list);
       }
-      const contributingRows = rows.filter(row => row.contributes && row.holderId);
-      const largestContribution = Math.max(0, ...Array.from(byHolder.values()).map(values => values.length));
-      if (contributingRows.length < MIN_BENCHMARK_CONTRACTS || byHolder.size < 3 || largestContribution / contributingRows.length > 0.4) return null;
+      if (byHolder.size < minimumGroupSize) return null;
       const perHolderMeans = Array.from(byHolder.values()).map(list => list.reduce((sum, value) => sum + value, 0) / list.length);
       return Math.round(perHolderMeans.reduce((sum, value) => sum + value, 0) / perHolderMeans.length);
     };

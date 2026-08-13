@@ -421,6 +421,7 @@ function AdminKontrakterContent() {
     const [navneTjekLoading, setNavneTjekLoading] = useState(false)
     const editDialogRef = useRef<HTMLDivElement>(null)
     const editDialogScrollRef = useRef<HTMLDivElement>(null)
+    const flushAiEditorRef = useRef<(() => Promise<boolean>) | null>(null)
 
     useEffect(() => {
         if (!editContract?.id) return
@@ -535,19 +536,18 @@ function AdminKontrakterContent() {
                 const { data: { user } } = await supabase.auth.getUser()
                 if (!user) { setLoading(false); return }
 
-                let resolvedOrgId: string | null = null
-                const { data: roleRows } = await supabase
-                    .from("user_org_roles")
-                    .select("org_id, role")
-                    .eq("user_id", user.id)
-                if (roleRows?.[0]?.org_id) resolvedOrgId = roleRows[0].org_id
+                const contextResponse = await fetch("/api/admin/context", { cache: "no-store" })
+                const context = contextResponse.ok
+                    ? await contextResponse.json() as { orgId?: string; role?: string }
+                    : null
+                const resolvedOrgId = context?.orgId ?? null
                 if (!resolvedOrgId) {
                     toast.error("Din bruger er ikke knyttet til en organisation.")
                     setLoading(false)
                     return
                 }
                 setOrgId(resolvedOrgId)
-                setIsSuperadmin((roleRows ?? []).some(r => r.role === "superadmin"))
+                setIsSuperadmin(context?.role === "superadmin")
 
                 const [contractsRes, employersRes, rhRes, worksRes] = await Promise.all([
                     supabase
@@ -1219,11 +1219,15 @@ function AdminKontrakterContent() {
         await runAiDataminingForContract(editContract)
     }
 
-	    const handleSaveEdit = async (
-	        statusOverride?: "kladde" | "valideret" | "arkiveret",
-	        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean; saveOnly?: boolean }
-	    ) => {
+    const handleSaveEdit = async (
+        statusOverride?: "kladde" | "valideret" | "arkiveret",
+        options?: { skipMissingWorkConfirm?: boolean; openNextAfterSave?: boolean; saveOnly?: boolean }
+    ) => {
         if (!editContract || !editForm) return false
+        if (flushAiEditorRef.current && !(await flushAiEditorRef.current())) {
+            toast.error("De aflæste kontraktdata kunne ikke gemmes. Prøv igen, før kontrakten lukkes.")
+            return false
+        }
         const newStatus: "kladde" | "valideret" | "arkiveret" = statusOverride
             ?? (editForm.status === "valideret" || editForm.status === "arkiveret" ? editForm.status : "kladde")
         let resolvedWorkId = editForm.work_id
@@ -2451,6 +2455,7 @@ function AdminKontrakterContent() {
                                     onValidationChange={patch => setEditContract(contract => contract ? ({ ...contract, validation_data: { ...(contract.validation_data ?? {}), ...patch } }) : contract)}
                                     workingTitle={editForm.working_title}
                                     onWorkingTitleChange={value => setEditForm(form => form && ({ ...form, working_title: value }))}
+                                    registerFlush={handler => { flushAiEditorRef.current = handler }}
                                 />
                             )}
                             {(editContract?.contract_attachments?.length ?? 0) > 0 && <div className="rounded-md border p-3"><h3 className="mb-2 text-sm font-semibold">Allonger</h3><div className="space-y-2">{editContract?.contract_attachments?.map(attachment => <div key={attachment.id} className="rounded-md bg-muted p-2 text-sm"><div className="flex items-center justify-between gap-2"><span className="font-medium">{attachment.title ?? "Allonge"}</span><Badge variant={attachment.ai_status === "fejl" ? "destructive" : attachment.ai_status === "klar" ? "default" : "secondary"}>{attachment.ai_status === "klar" ? "Indlæst" : attachment.ai_status === "fejl" ? "Fejl" : "Analyserer"}</Badge></div><p className="mt-1 text-xs text-muted-foreground">Indlæst, men ikke medregnet i rettighedsbetaling eller statistik.</p></div>)}</div></div>}

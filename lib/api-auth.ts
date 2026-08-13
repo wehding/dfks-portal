@@ -40,9 +40,34 @@ export async function requireCronOrAdminApi(
   return requireAdminApi(roles);
 }
 
-export function requireInternalSecretApi(req: NextRequest): boolean {
+export type InternalApiScope = "contract-ai" | "contract-review" | "drive-import" | "onboarding-import";
+
+function internalSecretForScope(scope: InternalApiScope): string | null {
+  const scoped = {
+    "contract-ai": process.env.CONTRACT_AI_JOB_SECRET,
+    "contract-review": process.env.CONTRACT_REVIEW_JOB_SECRET,
+    "drive-import": process.env.DRIVE_IMPORT_JOB_SECRET,
+    "onboarding-import": process.env.ONBOARDING_IMPORT_JOB_SECRET,
+  }[scope];
+  if (scoped) return scoped;
+
+  // Det fælles legacy-secret accepteres kun lokalt, så eksisterende lokale
+  // miljøer kan migreres uden at give ét produktionssecret adgang til alle jobs.
+  return process.env.NODE_ENV === "production" ? null : process.env.INTERNAL_API_SECRET ?? null;
+}
+
+export function requireInternalSecretApi(req: NextRequest, scope: InternalApiScope): boolean {
   const authHeader = req.headers.get("authorization") ?? "";
   const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null;
-  const allowed = [process.env.INTERNAL_API_SECRET, process.env.CONTRACT_AI_JOB_SECRET, process.env.CRON_SECRET].filter(Boolean);
-  return Boolean(bearer && allowed.includes(bearer));
+  const expected = internalSecretForScope(scope);
+  return Boolean(bearer && expected && bearer === expected);
+}
+
+export function getInternalWorkerSecret(scope: InternalApiScope): string | null {
+  return internalSecretForScope(scope);
+}
+
+export function isInternalWorkerSecret(secret: string | null | undefined, scope: InternalApiScope): boolean {
+  const expected = internalSecretForScope(scope);
+  return Boolean(secret && expected && secret === expected);
 }

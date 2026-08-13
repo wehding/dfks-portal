@@ -1,9 +1,10 @@
 import "server-only";
 
+import { getInternalWorkerSecret } from "@/lib/api-auth";
 import { resolveOnboardingWorkerOrigin } from "@/lib/onboarding-worker-origin";
 
 export function driveImportWorkerSecret() {
-  return process.env.INTERNAL_API_SECRET ?? process.env.CONTRACT_AI_JOB_SECRET ?? process.env.CRON_SECRET ?? null;
+  return getInternalWorkerSecret("drive-import");
 }
 
 export async function triggerDriveImportWorker(runId: string) {

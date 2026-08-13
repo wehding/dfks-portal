@@ -4,7 +4,7 @@ import { requireInternalSecretApi } from "@/lib/api-auth";
 import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
 
 export async function POST(request: NextRequest) {
-  if (!requireInternalSecretApi(request)) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
+  if (!requireInternalSecretApi(request, "contract-review")) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const db = createServiceClient();
   const workerId = crypto.randomUUID();
   const results: Array<{ reviewId: string; ok: boolean; dead?: boolean }> = [];

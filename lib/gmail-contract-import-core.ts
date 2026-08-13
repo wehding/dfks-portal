@@ -1,5 +1,5 @@
 export const GMAIL_CONTRACT_MAILBOX = "bestyrelsen@danskfilmklipperselskab.dk";
-export const GMAIL_CONTRACT_INPUT_LABEL = "kontrakt";
+export const GMAIL_CONTRACT_INPUT_LABEL = "kontrakter";
 export const GMAIL_CONTRACT_OUTPUT_LABEL = "kontrakt gennemgang";
 export const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 export const MAX_GMAIL_CONTRACT_BYTES = 25 * 1024 * 1024;

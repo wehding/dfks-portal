@@ -26,6 +26,7 @@ type FormState = {
   default_role_label: string;
   producer_categories: string[];
   statistics_contract_scope: "validated_only" | "validated_and_drafts";
+  statistics_minimum_group_size: number;
   statistics_profile_config: {
     professional_start_year: boolean;
     primary_profession_type: boolean;
@@ -61,6 +62,7 @@ const emptyForm: FormState = {
   default_role_label: "Medskaber",
   producer_categories: [],
   statistics_contract_scope: "validated_only",
+  statistics_minimum_group_size: 5,
   statistics_profile_config: { professional_start_year: true, primary_profession_type: false, secondary_profession_types: false, usual_work_mode: false, primary_work_region: false },
   statistics_work_regions: [],
   onboarding_keywords: ["klip", "edit"],
@@ -82,6 +84,7 @@ export default function OrganisationSettingsPage() {
   const [logoPending, setLogoPending] = useState(false);
   const [connectionPending, setConnectionPending] = useState(false);
   const [loginUrl, setLoginUrl] = useState("");
+  const [savedStatisticsMinimum, setSavedStatisticsMinimum] = useState(5);
 
   useEffect(() => {
     let active = true;
@@ -103,6 +106,7 @@ export default function OrganisationSettingsPage() {
           default_role_label: settings.default_role_label,
           producer_categories: settings.producer_categories,
           statistics_contract_scope: settings.statistics_contract_scope,
+          statistics_minimum_group_size: settings.statistics_minimum_group_size,
           statistics_profile_config: settings.statistics_profile_config,
           statistics_work_regions: settings.statistics_work_regions,
           onboarding_keywords: settings.onboarding_keywords,
@@ -116,6 +120,7 @@ export default function OrganisationSettingsPage() {
           foreninglet_has_password: settings.foreninglet.has_password,
           foreninglet_credential_source: settings.foreninglet.credential_source,
         });
+        setSavedStatisticsMinimum(settings.statistics_minimum_group_size);
         setLoginUrl(`${window.location.origin}/?org=${settings.id}`);
       })
       .catch(error => toast.error(error instanceof Error ? error.message : "Kunne ikke hente organisationen."))
@@ -169,6 +174,13 @@ export default function OrganisationSettingsPage() {
       return;
     }
 
+    const lowersStatisticsThreshold = form.statistics_minimum_group_size < 5
+      && form.statistics_minimum_group_size !== savedStatisticsMinimum;
+    const confirmLowStatisticsThreshold = lowersStatisticsThreshold
+      ? window.confirm("En statistikgrænse under 5 kan gøre enkeltpersoner genkendelige i små grupper. Vil du gemme denne grænse?")
+      : false;
+    if (lowersStatisticsThreshold && !confirmLowStatisticsThreshold) return;
+
     startTransition(async () => {
       try {
         await updateOrganisationSettings({
@@ -185,6 +197,8 @@ export default function OrganisationSettingsPage() {
           default_role_label: form.default_role_label,
           producer_categories: form.producer_categories,
           statistics_contract_scope: form.statistics_contract_scope,
+          statistics_minimum_group_size: form.statistics_minimum_group_size,
+          confirm_low_statistics_threshold: confirmLowStatisticsThreshold,
           statistics_profile_config: form.statistics_profile_config,
           statistics_work_regions: form.statistics_work_regions,
           onboarding_keywords: form.onboarding_keywords,
@@ -195,6 +209,7 @@ export default function OrganisationSettingsPage() {
           foreninglet_enabled: form.foreninglet_enabled,
         });
         const settings = await getOrganisationSettings();
+        setSavedStatisticsMinimum(settings.statistics_minimum_group_size);
         setForm(current => ({
           ...current,
           foreninglet_username: "",
@@ -386,6 +401,23 @@ export default function OrganisationSettingsPage() {
             <option value="validated_only">Kun validerede kontrakter</option>
             <option value="validated_and_drafts">Validerede kontrakter og kladder</option>
           </select>
+        </div>
+        <div className="mt-4 max-w-md space-y-2">
+          <Label htmlFor="statistics-minimum-group-size">Mindste antal personer pr. statistikgruppe</Label>
+          <Input
+            id="statistics-minimum-group-size"
+            type="number"
+            min={1}
+            max={100}
+            value={form.statistics_minimum_group_size}
+            onChange={event => setForm(current => ({ ...current, statistics_minimum_group_size: Number(event.target.value) }))}
+          />
+          <p className="text-xs text-muted-foreground">Standard er 5. Grænsen tæller forskellige rettighedshavere — ikke kontrakter — og bruges også i filtre, grafer, AI-svar og eksport.</p>
+          {form.statistics_minimum_group_size < 5 && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+              Grupper med færre end 5 personer giver svag eller ingen anonymitet. Ved grænsen 1 kan et resultat beskrive én person.
+            </div>
+          )}
         </div>
         <div className="mt-6 space-y-3 border-t pt-5">
           <div>

@@ -194,6 +194,7 @@ export type ContractAiDataEditorProps = {
   onValidationChange?: (patch: Record<string, unknown>) => void;
   workingTitle?: string;
   onWorkingTitleChange?: (value: string) => void;
+  registerFlush?: (handler: (() => Promise<boolean>) | null) => void;
 };
 
 export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
@@ -210,6 +211,8 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
   const [saving, setSaving] = useState<Set<ContractValidationSectionKey>>(new Set());
   const [findingIds, setFindingIds] = useState(false);
   const timers = useRef<Partial<Record<ContractValidationSectionKey, number>>>({});
+  const pendingSaves = useRef<Partial<Record<ContractValidationSectionKey, { values: FormValues; locks: Set<string> }>>>({});
+  const inFlightSaves = useRef<Partial<Record<ContractValidationSectionKey, Promise<boolean>>>>({});
 
   const loadSummary = async () => {
     setSummaryLoading(true);
@@ -252,21 +255,75 @@ export function ContractAiDataEditor(props: ContractAiDataEditorProps) {
     }
   };
 
-  const scheduleSave = (section: ContractValidationSectionKey, nextValues: FormValues, nextLocks: Set<string>) => {
+  const persistSection = async (section: ContractValidationSectionKey): Promise<boolean> => {
     const fields = FIELDS[section];
-    if (!fields) return;
-    if (timers.current[section]) window.clearTimeout(timers.current[section]);
-    timers.current[section] = window.setTimeout(async () => {
+    if (!fields) return true;
+    if (timers.current[section]) {
+      window.clearTimeout(timers.current[section]);
+      delete timers.current[section];
+    }
+
+    const currentSave = inFlightSaves.current[section];
+    if (currentSave && !(await currentSave)) return false;
+    const pending = pendingSaves.current[section];
+    if (!pending) return true;
+    delete pendingSaves.current[section];
+
+    const operation = (async () => {
       setSaving(current => new Set(current).add(section));
       const result = await saveContractValidationSection({
         contractId: props.contractId,
         section,
-        data: toPatch(nextValues, fields),
-        lockedFields: [...nextLocks],
+        data: toPatch(pending.values, fields),
+        lockedFields: [...pending.locks],
       });
       setSaving(current => { const next = new Set(current); next.delete(section); return next; });
-      if (!result.success) toast.error(result.error ?? "Data kunne ikke gemmes");
-      else void loadSummary();
+      if (!result.success) {
+        // Bevar det seneste udkast, så brugeren kan rette eller prøve igen uden
+        // at miste ændringerne ved en midlertidig serverfejl.
+        if (!pendingSaves.current[section]) pendingSaves.current[section] = pending;
+        toast.error(result.error ?? "Data kunne ikke gemmes");
+        return false;
+      }
+      void loadSummary();
+      return true;
+    })();
+    inFlightSaves.current[section] = operation;
+    const success = await operation;
+    if (inFlightSaves.current[section] === operation) delete inFlightSaves.current[section];
+    return success;
+  };
+
+  const flushPendingSaves = async () => {
+    Object.values(timers.current).forEach(timer => timer && window.clearTimeout(timer));
+    timers.current = {};
+    const sections = new Set<ContractValidationSectionKey>([
+      ...Object.keys(pendingSaves.current) as ContractValidationSectionKey[],
+      ...Object.keys(inFlightSaves.current) as ContractValidationSectionKey[],
+    ]);
+    let success = true;
+    for (const section of sections) {
+      const currentSave = inFlightSaves.current[section];
+      if (currentSave && !(await currentSave)) success = false;
+      if (pendingSaves.current[section] && !(await persistSection(section))) success = false;
+    }
+    return success;
+  };
+
+  useEffect(() => {
+    props.registerFlush?.(flushPendingSaves);
+    return () => props.registerFlush?.(null);
+    // Handleren skal altid afspejle den aktuelle kontrakt og de aktuelle refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.contractId, props.registerFlush]);
+
+  const scheduleSave = (section: ContractValidationSectionKey, nextValues: FormValues, nextLocks: Set<string>) => {
+    const fields = FIELDS[section];
+    if (!fields) return;
+    pendingSaves.current[section] = { values: nextValues, locks: new Set(nextLocks) };
+    if (timers.current[section]) window.clearTimeout(timers.current[section]);
+    timers.current[section] = window.setTimeout(() => {
+      void persistSection(section);
     }, 700);
   };
 

@@ -3,10 +3,15 @@ import test from "node:test";
 import {
   buildAddLabelRequest,
   encodeBase64Url,
+  GMAIL_CONTRACT_INPUT_LABEL,
   GMAIL_CONTRACT_MAILBOX,
   parseGmailContractMessage,
   parsePubSubNotificationBody,
 } from "../lib/gmail-contract-import-core";
+
+test("Gmail-importen overvåger Workspace-labelen kontrakter", () => {
+  assert.equal(GMAIL_CONTRACT_INPUT_LABEL, "kontrakter");
+});
 
 test("Pub/Sub accepterer kun bestyrelsens faste postkasse", () => {
   const valid = Buffer.from(JSON.stringify({ emailAddress: GMAIL_CONTRACT_MAILBOX, historyId: "123" })).toString("base64");

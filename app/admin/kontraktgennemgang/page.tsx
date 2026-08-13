@@ -726,6 +726,7 @@ function ManuelGennemgang() {
         try {
             const payload = new FormData()
             payload.append("file", file)
+            payload.append("submissionId", analyseId)
             if (memberName) payload.append("memberName", memberName)
             if (contractType) payload.append("contractType", contractType)
             if (productionType) payload.append("productionType", productionType)

@@ -19,20 +19,21 @@ import { extractPdfText } from "@/lib/pdf-parse"
 import { extractWordText } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
+import { isInternalWorkerSecret } from "@/lib/api-auth"
 
-async function isAuthorized(req: NextRequest): Promise<boolean> {
-    const secret = process.env.CONTRACT_AI_JOB_SECRET
-    const cronSecret = process.env.CRON_SECRET
+async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null } | { internal: false; orgId: string } | null> {
     const authHeader = req.headers.get("authorization") ?? ""
     const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null
-    if (bearer && ((secret && bearer === secret) || (cronSecret && bearer === cronSecret))) return true
+    if (isInternalWorkerSecret(bearer, "contract-ai")) return { internal: true, orgId: null }
     const sessionClient = await createSessionClient()
-    return Boolean(await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"]))
+    const caller = await assertAdminRole(sessionClient)
+    return caller ? { internal: false, orgId: caller.orgId } : null
 }
 
 export async function POST(req: NextRequest) {
     try {
-        if (!(await isAuthorized(req))) {
+        const auth = await authorization(req)
+        if (!auth) {
             return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 })
         }
 
@@ -43,10 +44,19 @@ export async function POST(req: NextRequest) {
 
         const admin = createServiceClient()
 
-        let storagePath = pdfPath
+        // En browserbruger må ikke vælge en vilkårlig service-role storage-sti.
+        // Stien afledes altid af en kontrakt i den aktive organisation.
+        if (!auth.internal && !contractId) {
+            return NextResponse.json({ error: "contractId er påkrævet" }, { status: 400 })
+        }
+
+        let storagePath = auth.internal ? pdfPath : null
         let orgId: string | null = null
-        if (!storagePath && contractId) {
-            const { data: contract } = await admin.from("contracts").select("pdf_url,org_id").eq("id", contractId).single()
+        if (contractId) {
+            let contractQuery = admin.from("contracts").select("pdf_url,org_id").eq("id", contractId)
+            if (!auth.internal) contractQuery = contractQuery.eq("org_id", auth.orgId)
+            const { data: contract } = await contractQuery.maybeSingle()
+            if (!contract) return NextResponse.json({ error: "Kontrakten blev ikke fundet i den aktive organisation" }, { status: 404 })
             storagePath = contract?.pdf_url
             orgId = contract?.org_id ?? null
         }

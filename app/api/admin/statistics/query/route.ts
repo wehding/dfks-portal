@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
       ? plan.filters.categories.map(category => ({ category, label: categoryLabel(category) }))
       : [{ category: plan.filters.categories[0] ?? null, label: "" }];
     const allSeries: ReturnType<typeof extractStatisticsSeries> = [];
-    let minimum = 1;
+    let minimum = 5;
     let includeDrafts = false;
     for (const producer of producerDimensions) {
       for (const category of categoryDimensions) {
@@ -195,7 +195,7 @@ export async function POST(request: NextRequest) {
     });
     await finishAiUsageRun(runId, "succeeded");
     const caveats = [
-      ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem kontrakter og skal tolkes med forsigtighed."] : []),
+      ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem forskellige personer og skal tolkes med forsigtighed."] : []),
       ...(includeDrafts ? ["Kladdekontrakter indgår efter organisationens indstilling og kan indeholde endnu ikke kontrollerede data."] : []),
       ...(new Set(comparison.map(row => row.year)).size < 2 ? ["Resultatet dækker kun ét år og kan derfor ikke vise en udvikling over tid."] : []),
     ];
@@ -208,7 +208,7 @@ export async function POST(request: NextRequest) {
       lowSample: comparison.some(row => row.lowSample),
       series: comparison,
       caveats,
-      explanation: `${comparison.length} aggregerede datapunkter blev fundet. Adminresultater med 1–4 kontrakter er markeret som statistisk usikre.${includeDrafts ? " Kladder indgår efter organisationens indstilling." : ""}`,
+      explanation: `${comparison.length} aggregerede datapunkter blev fundet. Resultater med 1–4 forskellige personer er markeret som statistisk usikre.${includeDrafts ? " Kladder indgår efter organisationens indstilling." : ""}`,
     });
   } catch (error) {
     await finishAiUsageRun(runId, "failed", "invalid_query_plan");

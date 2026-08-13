@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { revalidatePath } from "next/cache";
 import { sendMemberNotification } from "@/lib/member-notifications";
+import { resolveOrgId } from "@/lib/org";
 
 const ADMIN_ROLES = ["superadmin", "admin", "org-admin", "jurist"];
 
@@ -49,10 +50,7 @@ async function isUserAdmin(userId: string) {
 
 async function userOrgId(userId: string) {
   const db = createServiceClient();
-  const { data } = await db.from("user_org_roles").select("org_id").eq("user_id", userId).limit(1).maybeSingle();
-  if (data?.org_id) return data.org_id;
-  const { data: holder } = await db.from("rettighedshavere").select("org_id").eq("user_id", userId).maybeSingle();
-  return holder?.org_id ?? null;
+  return resolveOrgId(db, userId);
 }
 
 export async function fetchMemberScreeningOptions() {

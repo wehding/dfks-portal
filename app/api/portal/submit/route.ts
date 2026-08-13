@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createContractReviewIntake, triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { resolveOrgId } from "@/lib/org";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const ALLOWED = [".pdf", ".doc", ".docx"];
@@ -16,10 +17,13 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await session.auth.getUser();
   if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const db = createServiceClient();
-  const { data: affiliation } = await db.from("org_affiliations").select("org_id,rettighedshavere!inner(user_id,full_name,email)").eq("rettighedshavere.user_id", user.id).limit(1).maybeSingle();
-  const { data: role } = affiliation ? { data: null } : await db.from("user_org_roles").select("org_id").eq("user_id", user.id).limit(1).maybeSingle();
-  const orgId = affiliation?.org_id ?? role?.org_id;
+  const orgId = await resolveOrgId(db, user.id);
   if (!orgId) return NextResponse.json({ error: "Din bruger er ikke knyttet til en organisation" }, { status: 403 });
+  const { data: affiliation } = await db.from("org_affiliations")
+    .select("org_id,rettighedshavere!inner(user_id,full_name,email)")
+    .eq("org_id", orgId)
+    .eq("rettighedshavere.user_id", user.id)
+    .maybeSingle();
   const form = await request.formData().catch(() => null);
   const file = form?.get("file");
   if (!(file instanceof File)) return NextResponse.json({ error: "Ingen fil" }, { status: 400 });

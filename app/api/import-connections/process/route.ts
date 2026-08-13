@@ -57,7 +57,7 @@ async function refreshRun(runId: string) {
 }
 
 export async function POST(request: NextRequest) {
-  if (!requireInternalSecretApi(request)) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
+  if (!requireInternalSecretApi(request, "drive-import")) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const body = await request.json().catch(() => null) as { runId?: unknown } | null;
   const runId = uuid(body?.runId);
   if (!runId) return NextResponse.json({ error: "Ugyldigt importjob" }, { status: 400 });
