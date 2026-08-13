@@ -228,7 +228,13 @@ export async function POST(req: NextRequest) {
                     file_size_bytes: file.size,
                     storage_path:    storagePath,
                     contract_type:   contractType ?? null,
-                    production_type: productionType ?? null,
+                    production_type: (() => {
+                        const aiType = klassifikation?.produktionstype
+                        const UDVIKLING = ["udvikling_dokumentar","udvikling_fiktion","udvikling_underholdning"]
+                        // Brug AI-type hvis den er en udviklingstype, eller hvis member valgte "ukendt"
+                        if (aiType && (UDVIKLING.includes(aiType) || productionType === "ukendt")) return aiType
+                        return productionType ?? null
+                    })(),
                     distribution_channels: distributionChannels.length ? distributionChannels : null,
                     producer_name:         producerName ?? null,
                     producer_dfks_id:      formData.get("producerDfksId") ?? null,

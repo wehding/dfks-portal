@@ -27,7 +27,8 @@ type ReviewDetail = {
 
 const PRODUCTION_LABELS: Record<string, string> = {
     dokumentar: "Dokumentarfilm", fiktion: "Fiktion / drama", reklame: "Reklame",
-    streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
+    tv_program: "TV-program", streaming: "Streaming-original", shortform: "Short-form", ukendt: "Ukendt",
+    udvikling_dokumentar: "Udvikling (dokumentar)", udvikling_fiktion: "Udvikling (fiktion)", udvikling_underholdning: "Udvikling (underholdning)",
 }
 
 const DISTRIBUTION_LABELS: Record<string, string> = {
