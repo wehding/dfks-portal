@@ -282,10 +282,21 @@ function AdminKontrakterContent() {
     const [works, setWorks] = useState<WorkOption[]>([])
     const [orgId, setOrgId] = useState<string | null>(null)
     const [loading, setLoading] = useState(true)
+    // `searchInput` opdateres på hvert tastetryk (til at vise i feltet), mens
+    // `search` (som trigger forespørgslen) debounces 300ms efter sidste tastetryk —
+    // ellers skyder hver tast en ny fuld indlæsning af sted (se needsFullLoad).
+    const [searchInput, setSearchInput] = useState("")
     const [search, setSearch] = useState("")
+    useEffect(() => {
+        const timeout = setTimeout(() => setSearch(searchInput), 300)
+        return () => clearTimeout(timeout)
+    }, [searchInput])
     const [filterStatus, setFilterStatus] = useState("all")
     const [filterType, setFilterType] = useState("all")
-    const [pageSize, setPageSize] = useState(20)
+    // Pagination
+    const PAGE_SIZE = 50
+    const [currentPage, setCurrentPage] = useState(0)
+    const [totalCount, setTotalCount] = useState<number | null>(null)
     const [sortKey, setSortKey] = useState<SortKey>("status")
     const [sortDir, setSortDir] = useState<SortDir>("asc")
     const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -527,8 +538,146 @@ function AdminKontrakterContent() {
         window.history.replaceState(null, "", next ? `/admin/kontrakter?${next}` : "/admin/kontrakter")
     }, [rightsHolders, setActiveRh])
 
+    // ── Filtre der kræver fuld indlæsning (ikke paginerbare server-side) ──────
+    const COMPLEX_FILTER_VALUES = ["beskeder", "missingOwner", "missingWork", "validationPending", "validationRecommended"]
+    // Søgning matcher flere joinede felter (værktitel, rettighedshaver, producent), som
+    // PostgREST ikke kan OR-filtrere på tværs af i samme forespørgsel på en robust måde.
+    // Derfor hentes hele datasættet ved aktiv søgning, og filtreringen sker client-side
+    // (se `filtered`-useMemo nedenfor) — ellers ville søgning kun ramme `working_title`
+    // og stille filtrere resultater på rettighedshaver/producent/værk fra uden varsel.
+    const needsFullLoad = COMPLEX_FILTER_VALUES.includes(filterStatus) || duplicatesOpen || Boolean(search)
+
     // ── Load ──────────────────────────────────────────────────
 
+    // Indlæser én side kontrakter med server-side filtre. Kaldes på mount,
+    // ved filterændring og ved sidenavigation.
+    const loadContracts = useCallback(async (
+        resolvedOrgId: string,
+        page: number,
+        opts: {
+            filterStatus: string
+            filterType: string
+            search: string
+            activeRhId: string | null
+            needsFullLoad: boolean
+        }
+    ) => {
+        const supabase = createClient()
+        type RawContract = { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+
+        let query = supabase
+            .from("contracts")
+            .select(`
+                id, type, overenskomst, status, pdf_url,
+                contract_date, start_date, end_date, created_at,
+                employer_id, rights_holder_id, working_title,
+                season_number, episode_numbers,
+                employers (name),
+                rettighedshavere (full_name),
+                works (id, title, type, poster_url),
+                contract_validations (has_credit_clause, has_overenskomst_incorporation)
+            `, { count: opts.needsFullLoad ? undefined : "exact" })
+            .eq("org_id", resolvedOrgId)
+            .order("created_at", { ascending: false })
+            .order("id", { ascending: false }) // stabil tie-breaker til cursor
+
+        // Server-side simple filtre
+        if (opts.filterType !== "all") query = query.eq("type", opts.filterType) as typeof query
+        if (opts.filterStatus !== "all" && !COMPLEX_FILTER_VALUES.includes(opts.filterStatus)) {
+            query = query.eq("status", opts.filterStatus) as typeof query
+        }
+        if (opts.activeRhId) query = query.eq("rights_holder_id", opts.activeRhId) as typeof query
+        // Bemærk: søgning filtreres IKKE server-side her — den matcher flere joinede
+        // felter (se needsFullLoad-kommentaren ovenfor) og håndteres client-side på det
+        // fuldt hentede datasæt, ligesom før pagination blev indført.
+
+        // Pagination: kun når filteret ikke kræver hele datasættet
+        if (!opts.needsFullLoad) {
+            const from = page * PAGE_SIZE
+            query = query.range(from, from + PAGE_SIZE - 1) as typeof query
+        }
+
+        const contractsRes = await query
+        if (contractsRes.error) { console.error("Kontrakter query fejl:", contractsRes.error.message); return }
+
+        setTotalCount(contractsRes.count ?? null)
+        const rawContracts = (contractsRes.data ?? []) as unknown as RawContract[]
+        const commentsByContract: Record<string, ContractComment[]> = {}
+        const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
+        const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
+        if (rawContracts.length > 0) {
+            const ids = rawContracts.map(r => r.id)
+            const [commentsRes, jobsRes, attachmentsRes] = await Promise.all([
+                supabase
+                    .from("contract_comments")
+                    .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
+                    .in("contract_id", ids)
+                    .eq("author_role", "member")
+                    .is("admin_read_at", null)
+                    .order("created_at", { ascending: true }),
+                supabase
+                    .from("contract_ai_jobs")
+                    .select("contract_id, status, error_message, created_at")
+                    .in("contract_id", ids)
+                    .is("attachment_id", null)
+                    .neq("status", "done")
+                    .order("created_at", { ascending: false }),
+                supabase.from("contract_attachments").select("id,contract_id,title,ai_status,ai_result").in("contract_id", ids).order("created_at", { ascending: false }),
+            ])
+            if (commentsRes.data) {
+                for (const comment of commentsRes.data as unknown as Array<ContractComment & { contract_id: string }>) {
+                    if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = []
+                    commentsByContract[comment.contract_id].push(comment)
+                }
+            }
+            if (jobsRes.data) {
+                for (const job of jobsRes.data as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
+                    if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job
+                }
+            }
+            if (attachmentsRes.data) for (const attachment of attachmentsRes.data as Array<NonNullable<ContractRow["contract_attachments"]>[number] & { contract_id: string }>) {
+                if (!attachmentsByContract[attachment.contract_id]) attachmentsByContract[attachment.contract_id] = []
+                attachmentsByContract[attachment.contract_id].push(attachment)
+            }
+        }
+        const importStates = await getContractImportStates(rawContracts.map(c => c.id))
+        setContracts(rawContracts.map((r) => {
+            const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
+            return {
+                id: r.id,
+                type: r.type,
+                overenskomst: r.overenskomst,
+                status: r.status,
+                pdf_url: r.pdf_url,
+                contract_date: r.contract_date,
+                start_date: r.start_date,
+                end_date: r.end_date,
+                created_at: r.created_at,
+                employer_id: r.employer_id ?? null,
+                employer_name: r.employers?.name ?? null,
+                rights_holder_id: r.rights_holder_id ?? null,
+                rights_holder_name: r.rettighedshavere?.full_name ?? null,
+                work_id: r.works?.id ?? null,
+                working_title: r.working_title ?? null,
+                work_title: r.works?.title ?? null,
+                work_poster_url: r.works?.poster_url ?? null,
+                season_number: r.season_number ?? null,
+                episode_numbers: r.episode_numbers ?? null,
+                contract_comments: commentsByContract[r.id] ?? [],
+                contract_attachments: attachmentsByContract[r.id] ?? [],
+                validation_data: null, // udskudt til loadContractDetail() ved åbning
+                validation_has_credit_clause: validation?.has_credit_clause ?? null,
+                validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
+                ai_job_status: latestJobByContract[r.id]?.status ?? null,
+                ai_job_error: latestJobByContract[r.id]?.error_message ?? null,
+                import_status: importStates.states[r.id] ?? null,
+            }
+        }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [PAGE_SIZE])
+
+    // ── Initialt load (auth + kontekst + dropdowns) ───────────
+    const orgIdRef = useRef<string | null>(null)
     useEffect(() => {
         const load = async () => {
             try {
@@ -548,22 +697,12 @@ function AdminKontrakterContent() {
                 }
                 setOrgId(resolvedOrgId)
                 setIsSuperadmin(context?.role === "superadmin")
+                orgIdRef.current = resolvedOrgId
 
-                const [contractsRes, employersRes, rhRes, worksRes] = await Promise.all([
-                    supabase
-                        .from("contracts")
-                        .select(`
-                            id, type, overenskomst, status, pdf_url,
-                            contract_date, start_date, end_date, created_at,
-                            employer_id, rights_holder_id, working_title,
-                            season_number, episode_numbers,
-                            employers (name),
-                            rettighedshavere (full_name),
-                            works (id, title, type, poster_url),
-                            contract_validations (has_credit_clause, has_overenskomst_incorporation)
-                        `)
-                        .eq("org_id", resolvedOrgId)
-                        .order("created_at", { ascending: false }),
+                const [, employersRes, rhRes, worksRes] = await Promise.all([
+                    loadContracts(resolvedOrgId, 0, {
+                        filterStatus: "all", filterType: "all", search: "", activeRhId: null, needsFullLoad: false,
+                    }),
                     supabase.from("employers").select("id, name, parent_id, dfi_company_id").order("name"),
                     supabase
                         .from("rettighedshavere")
@@ -576,81 +715,6 @@ function AdminKontrakterContent() {
                         .eq("org_id", resolvedOrgId)
                         .order("title"),
                 ])
-
-                if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
-                if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
-                    const commentsByContract: Record<string, ContractComment[]> = {}
-                    const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
-                    const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
-                    if (rawContracts.length > 0) {
-                        const [commentsRes, jobsRes, attachmentsRes] = await Promise.all([
-                            supabase
-                                .from("contract_comments")
-                                .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-                                .in("contract_id", rawContracts.map(r => r.id))
-                                .eq("author_role", "member")
-                                .is("admin_read_at", null)
-                                .order("created_at", { ascending: true }),
-                            supabase
-                                .from("contract_ai_jobs")
-                                .select("contract_id, status, error_message, created_at")
-                                .in("contract_id", rawContracts.map(r => r.id))
-                                .is("attachment_id", null)
-                                .neq("status", "done")
-                                .order("created_at", { ascending: false }),
-                            supabase.from("contract_attachments").select("id,contract_id,title,ai_status,ai_result").in("contract_id", rawContracts.map(r => r.id)).order("created_at", { ascending: false }),
-                        ])
-                        if (commentsRes.data) {
-                            for (const comment of commentsRes.data as unknown as Array<ContractComment & { contract_id: string }>) {
-                                if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = []
-                                commentsByContract[comment.contract_id].push(comment)
-                            }
-                        }
-                        if (jobsRes.data) {
-                            for (const job of jobsRes.data as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
-                                if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job
-                            }
-                        }
-                        if (attachmentsRes.data) for (const attachment of attachmentsRes.data as Array<NonNullable<ContractRow["contract_attachments"]>[number] & { contract_id: string }>) {
-                            if (!attachmentsByContract[attachment.contract_id]) attachmentsByContract[attachment.contract_id] = []
-                            attachmentsByContract[attachment.contract_id].push(attachment)
-                        }
-                    }
-                    const importStates = await getContractImportStates(rawContracts.map(contract => contract.id))
-                    setContracts(rawContracts.map((r) => {
-                        const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
-                        return ({
-                        id: r.id,
-                        type: r.type,
-                        overenskomst: r.overenskomst,
-                        status: r.status,
-                        pdf_url: r.pdf_url,
-                        contract_date: r.contract_date,
-                        start_date: r.start_date,
-                        end_date: r.end_date,
-                        created_at: r.created_at,
-                        employer_id: r.employer_id ?? null,
-                        employer_name: r.employers?.name ?? null,
-                        rights_holder_id: r.rights_holder_id ?? null,
-                        rights_holder_name: r.rettighedshavere?.full_name ?? null,
-                        work_id: r.works?.id ?? null,
-                        working_title: r.working_title ?? null,
-                        work_title: r.works?.title ?? null,
-                        work_poster_url: r.works?.poster_url ?? null,
-                        season_number: r.season_number ?? null,
-                        episode_numbers: r.episode_numbers ?? null,
-                        contract_comments: commentsByContract[r.id] ?? [],
-                        contract_attachments: attachmentsByContract[r.id] ?? [],
-                        validation_data: null, // udskudt til loadContractDetail() ved åbning
-                        validation_has_credit_clause: validation?.has_credit_clause ?? null,
-                        validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
-                        ai_job_status: latestJobByContract[r.id]?.status ?? null,
-                        ai_job_error: latestJobByContract[r.id]?.error_message ?? null,
-                        import_status: importStates.states[r.id] ?? null,
-                        })
-                    }))
-                }
                 if (employersRes.data) setEmployers(employersRes.data)
                 if (rhRes.data) setRightsHolders(rhRes.data.map((r: { id: string; full_name: string }) => ({ id: r.id, full_name: r.full_name })))
                 if (worksRes.data) setWorks(worksRes.data as WorkOption[])
@@ -661,7 +725,21 @@ function AdminKontrakterContent() {
             }
         }
         load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
+
+    // ── Genindlæs kontrakter ved filter- eller sideændring ────
+    const isFirstRenderRef = useRef(true)
+    useEffect(() => {
+        if (isFirstRenderRef.current) { isFirstRenderRef.current = false; return }
+        const orgId = orgIdRef.current
+        if (!orgId) return
+        setLoading(true)
+        loadContracts(orgId, currentPage, {
+            filterStatus, filterType, search, activeRhId: activeRh?.id ?? null, needsFullLoad,
+        }).finally(() => setLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filterStatus, filterType, search, activeRh, currentPage, needsFullLoad])
 
     // ── Live AI-jobstatus ─────────────────────────────────────
     // Så længe kontrakter er i kø/behandling, poll deres jobstatus og opdatér
@@ -1501,24 +1579,28 @@ function AdminKontrakterContent() {
     // ── Filter ────────────────────────────────────────────────
 
     const filtered = useMemo(() => {
+        // Server-side filtre (type, simple status, rights_holder_id, working_title søgning)
+        // er allerede anvendt i databaseforespørgslen — her håndteres kun de resterende.
         let list = [...contracts]
-        if (activeRh) list = list.filter(c => c.rights_holder_id === activeRh.id)
+
+        // Komplekse client-side filtre (kræver beregnede/joined felter)
         if (filterStatus === "beskeder") list = list.filter(c => c.contract_comments.some(comment => comment.author_role === "member" && !comment.admin_read_at))
         else if (filterStatus === "missingOwner") list = list.filter(isMissingOwner)
         else if (filterStatus === "missingWork") list = list.filter(c => !hasContractWorkLink(c))
         else if (filterStatus === "validationPending") list = list.filter(isPendingContractValidation)
         else if (filterStatus === "validationRecommended") list = list.filter(isValidationRecommended)
-        else if (filterStatus !== "all") list = list.filter(c => c.status === filterStatus)
-        if (filterType !== "all") list = list.filter(c => c.type === filterType)
+
+        // Søgning på joined felter der ikke er tilgængelige server-side
         if (search) {
             const q = search.toLowerCase()
             list = list.filter(c =>
-                c.working_title?.toLowerCase().includes(q) ||
                 c.work_title?.toLowerCase().includes(q) ||
                 c.rights_holder_name?.toLowerCase().includes(q) ||
-                c.employer_name?.toLowerCase().includes(q)
+                c.employer_name?.toLowerCase().includes(q) ||
+                c.working_title?.toLowerCase().includes(q)
             )
         }
+
         list.sort((a, b) => {
             const direction = sortDir === "asc" ? 1 : -1
             if (sortKey === "status") {
@@ -1541,8 +1623,8 @@ function AdminKontrakterContent() {
             return left.localeCompare(right, "da-DK", { numeric: true, sensitivity: "base" }) * direction
         })
         return list
-    }, [contracts, activeRh, filterStatus, filterType, search, sortDir, sortKey])
-    const visibleContracts = filtered.slice(0, pageSize)
+    }, [contracts, filterStatus, search, sortDir, sortKey])
+    const visibleContracts = filtered
     const selectedContracts = useMemo(
         () => contracts.filter(contract => selectedIds.includes(contract.id)),
         [contracts, selectedIds]
@@ -1631,11 +1713,11 @@ function AdminKontrakterContent() {
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
                 <div className="relative w-full lg:w-auto">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={search} onChange={e => setSearch(e.target.value)} />
-                    {search && (
+                    <Input placeholder="Søg titel, klipper, producent..." className="w-full pl-8 pr-8 lg:w-[280px]" value={searchInput} onChange={e => { setSearchInput(e.target.value); setCurrentPage(0) }} />
+                    {searchInput && (
                         <button
                             type="button"
-                            onClick={() => setSearch("")}
+                            onClick={() => setSearchInput("")}
                             className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                             aria-label="Tøm søgefelt"
                         >
@@ -1643,7 +1725,7 @@ function AdminKontrakterContent() {
                         </button>
                     )}
                 </div>
-                <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <Select value={filterStatus} onValueChange={v => { setFilterStatus(v); setCurrentPage(0) }}>
                     <SelectTrigger className="w-full lg:w-[150px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">Status</SelectItem>
@@ -1657,7 +1739,7 @@ function AdminKontrakterContent() {
                         <SelectItem value="beskeder">Beskeder</SelectItem>
                     </SelectContent>
                 </Select>
-                <Select value={filterType} onValueChange={setFilterType}>
+                <Select value={filterType} onValueChange={v => { setFilterType(v); setCurrentPage(0) }}>
                     <SelectTrigger className="w-full lg:w-[160px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="all">Type</SelectItem>
@@ -1665,10 +1747,10 @@ function AdminKontrakterContent() {
                         <SelectItem value="leverandør">Leverandør</SelectItem>
                     </SelectContent>
                 </Select>
-                <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={setActiveRh} />
+                <ActiveUserFilter rightsHolders={rightsHolders} activeRh={activeRh} onChange={rh => { setActiveRh(rh); setCurrentPage(0) }} />
                 <ResetFiltersButton
-                    active={Boolean(search || filterStatus !== "all" || filterType !== "all" || activeRh)}
-                    onReset={() => { setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setPageSize(20) }}
+                    active={Boolean(searchInput || filterStatus !== "all" || filterType !== "all" || activeRh)}
+                    onReset={() => { setSearchInput(""); setSearch(""); setFilterStatus("all"); setFilterType("all"); setActiveRh(null); setSelectedIds([]); setCurrentPage(0) }}
                 />
                 <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setDuplicatesOpen(true)}>
                     <Search className="h-4 w-4" />
@@ -1691,12 +1773,27 @@ function AdminKontrakterContent() {
                         {sortDir === "asc" ? "A-Z" : "Z-A"}
                     </Button>
                 </div>
-                <label className="flex items-center gap-2 text-sm text-muted-foreground lg:ml-auto">
-                    Vis
-                    <select value={pageSize} onChange={e => setPageSize(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground">
-                        {[10, 20, 50, 100, 200].map(size => <option key={size} value={size}>{size}</option>)}
-                    </select>
-                </label>
+                {!needsFullLoad && totalCount !== null && totalCount > PAGE_SIZE && (
+                    <div className="flex items-center gap-1 lg:ml-auto">
+                        <Button
+                            type="button" variant="outline" size="sm"
+                            disabled={currentPage === 0}
+                            onClick={() => { setCurrentPage(p => p - 1); setSelectedIds([]) }}
+                        >
+                            ←
+                        </Button>
+                        <span className="px-2 text-sm text-muted-foreground">
+                            Side {currentPage + 1} af {Math.ceil(totalCount / PAGE_SIZE)}
+                        </span>
+                        <Button
+                            type="button" variant="outline" size="sm"
+                            disabled={(currentPage + 1) * PAGE_SIZE >= totalCount}
+                            onClick={() => { setCurrentPage(p => p + 1); setSelectedIds([]) }}
+                        >
+                            →
+                        </Button>
+                    </div>
+                )}
                 {filtered.length > 0 && (
                     <Button type="button" variant="outline" className="w-full sm:w-auto lg:hidden" onClick={toggleAllFiltered}>
                         {allFilteredSelected ? "Fravælg alle" : "Vælg alle"}
@@ -1705,7 +1802,7 @@ function AdminKontrakterContent() {
                 )}
             </div>
 
-            <ListResultSummary filteredCount={filtered.length} totalCount={contracts.length} selectedCount={selectedIds.length} />
+            <ListResultSummary filteredCount={filtered.length} totalCount={totalCount ?? contracts.length} selectedCount={selectedIds.length} />
 
             {selectedIds.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border px-4 py-3">
