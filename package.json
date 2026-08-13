@@ -9,6 +9,7 @@
     "check": "npm run lint && npx tsc --noEmit",
     "i18n:audit": "node scripts/check-i18n-coverage.mjs",
     "test:manual-work": "tsx --test tests/manual-work-flow.test.ts",
+    "one-off:import-contract-archive": "NODE_OPTIONS=--conditions=react-server tsx scripts/one-off/import-dfks-contract-archive.ts",
     "seed:broadcaster-logos": "tsx scripts/seed-broadcaster-logos.ts",
     "lint": "eslint",
     "db:link": "set -a && . ./.env.local && set +a && supabase link --project-ref icxywdymyaxluaxxcpye",
@@ -33,6 +34,7 @@
     "next": "16.2.11",
     "next-themes": "^0.4.6",
     "openai": "^6.42.0",
+    "pdf-lib": "1.17.1",
     "pdf-parse": "^1.1.4",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
@@ -40,6 +42,7 @@
     "react-dom": "19.2.3",
     "react-pdf": "^10.3.0",
     "recharts": "^3.7.0",
+    "server-only": "0.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "word-extractor": "1.0.4"
