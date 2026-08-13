@@ -175,9 +175,14 @@ async function downloadUnit(token: string, unit: ImportUnit) {
   const file = unit.files[0];
   const buffer = await downloadProviderFile("google_drive", token, file);
   const extension = file.name.split(".").pop()?.toLowerCase();
-  const localText = extension === "pdf" ? await extractPdfText(buffer)
-    : extension === "doc" || extension === "docx" ? await extractWordText(buffer, file.name)
-      : extension === "txt" ? buffer.toString("utf8") : "";
+  const isPdf = extension === "pdf" || file.contentType === "application/pdf";
+  const isWord = ["doc", "docx"].includes(extension ?? "")
+    || file.contentType === "application/msword"
+    || file.contentType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const isText = extension === "txt" || file.contentType === "text/plain";
+  const localText = isPdf ? await extractPdfText(buffer)
+    : isWord ? await extractWordText(buffer, file.name)
+      : isText ? buffer.toString("utf8") : "";
   return { buffer, localText };
 }
 
