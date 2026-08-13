@@ -71,6 +71,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
 
   const [screening, setScreening] = useState(false);
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
+  const [isDevelopmentContract, setIsDevelopmentContract] = useState(false);
+  const [developmentConfirmed, setDevelopmentConfirmed] = useState<boolean | null>(null);
 
   const [title, setTitle] = useState(workTitle ?? "");
   const [selectedWorkId, setSelectedWorkId] = useState(workId ?? "");
@@ -164,6 +166,8 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
     if (valid.length > MAX_FILES) toast.error(`Du kan højst vælge ${MAX_FILES} kontrakter ad gangen`);
 
     setFiles(limited);
+    setIsDevelopmentContract(false);
+    setDevelopmentConfirmed(null);
     batchAutoSubmittedRef.current = false;
     setEpisodesTouched(false);
     setWorkPickerOpen(false);
@@ -285,6 +289,7 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
           setEpisodeCredits(result.episodes.map(episode => ({ number: episode.number, role: screenedRole })));
           filled.add("episodes");
         }
+        if (result.isDevelopmentContract) setIsDevelopmentContract(true);
         setAiFields(filled);
         if (filled.size > 0) toast.success(`${filled.size} felt${filled.size > 1 ? "er" : ""} udfyldt automatisk — kontrollér og ret`);
       } catch (e: unknown) {
@@ -889,6 +894,88 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
             </div>
           )}
 
+          {/* Produktionstype-valg — altid synlig efter screening */}
+          {isDevelopmentContract && !screening && !isBatchUpload && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3.5 py-3 space-y-3">
+              <p className="text-sm text-amber-900 dark:text-amber-200">
+                Det ser ud til, at dette er en <strong>udviklingskontrakt</strong>. Er det korrekt?
+              </p>
+
+              {/* Ja / Nej */}
+              {developmentConfirmed === null && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { setDevelopmentConfirmed(true); setProductionType(""); }}
+                    className="rounded-md border border-amber-400 bg-white dark:bg-transparent px-4 py-1.5 text-sm font-medium text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30">
+                    Ja
+                  </button>
+                  <button type="button" onClick={() => { setDevelopmentConfirmed(false); setProductionType(""); }}
+                    className="rounded-md border border-amber-400 bg-white dark:bg-transparent px-4 py-1.5 text-sm font-medium text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/30">
+                    Nej
+                  </button>
+                </div>
+              )}
+
+              {/* Udviklingstyper */}
+              {developmentConfirmed === true && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-amber-800 dark:text-amber-300">Vælg hvilken type udviklingsproduktion:</p>
+                  {([
+                    ["udvikling_dokumentar", "Dokumentar (udvikling)"],
+                    ["udvikling_fiktion", "Fiktion / drama (udvikling)"],
+                    ["udvikling_underholdning", "Underholdning / reality (udvikling)"],
+                  ] as const).map(([type, label]) => (
+                    <button key={type} type="button"
+                      onClick={() => setProductionType(productionType === type ? "" : type)}
+                      className={`w-full rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                        productionType === type
+                          ? "border-amber-600 bg-amber-100 dark:bg-amber-900/50 font-medium text-amber-900 dark:text-amber-100"
+                          : "border-amber-200 bg-white dark:bg-transparent text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => setDevelopmentConfirmed(null)}
+                    className="text-xs text-amber-700 dark:text-amber-400 underline underline-offset-2">
+                    Fortryd
+                  </button>
+                </div>
+              )}
+
+              {/* Almindelige produktionstyper */}
+              {developmentConfirmed === false && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-amber-800 dark:text-amber-300">Vælg produktionstype:</p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {([
+                      ["feature",         "Spillefilm"],
+                      ["documentary",     "Dokumentarfilm"],
+                      ["docSeries",       "Dokumentarserie"],
+                      ["tvSeries",        "TV-serie / drama"],
+                      ["short",           "Kortfilm"],
+                      ["tvEntertainment", "TV-underholdning"],
+                      ["reality",         "Reality"],
+                      ["sport",           "Sport"],
+                    ] as const).map(([type, label]) => (
+                      <button key={type} type="button"
+                        onClick={() => setProductionType(productionType === type ? "" : type)}
+                        className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                          productionType === type
+                            ? "border-foreground bg-background font-medium"
+                            : "border-amber-200 bg-white dark:bg-transparent text-amber-800 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+                        }`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" onClick={() => setDevelopmentConfirmed(null)}
+                    className="text-xs text-amber-700 dark:text-amber-400 underline underline-offset-2">
+                    Fortryd
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Formularfelter */}
           {file && !screening && !isBatchUpload && (
             <div className="flex flex-col gap-4">
@@ -956,10 +1043,13 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                       setManualMode(false);
                       setManualDuplicateMatches([]);
                       // Et valgt serie-værk skal altid vise sæson/afsnit-vælgeren —
-                      // Synk produktionstypen fra værket (AI-screeningen kan have gættet forkert).
-                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
-                        .find(([, workType]) => workType === result.type)?.[0];
-                      if (matchedProductionType) setProductionType(matchedProductionType);
+                      // Synk produktionstypen fra værket, men respektér brugerens
+                      // eksplicitte valg af udviklingstype.
+                      if (developmentConfirmed !== true) {
+                        const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                          .find(([, workType]) => workType === result.type)?.[0];
+                        if (matchedProductionType) setProductionType(matchedProductionType);
+                      }
                       if ((result.type === "tv-serie" || result.type === "dokumentar-serie") && !seriesSeason.trim()) {
                         setSeriesSeason(String(result.season_hint ?? result.season_number ?? 1));
                       }
@@ -978,9 +1068,11 @@ export default function UploadDialog({ onClose, onUploaded, workId, workTitle, m
                     manualWork={manualWork}
                     onManualWorkChange={value => {
                       setManualWork(value);
-                      const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
-                        .find(([, workType]) => workType === value.type)?.[0];
-                      if (matchedProductionType) setProductionType(matchedProductionType);
+                      if (developmentConfirmed !== true) {
+                        const matchedProductionType = Object.entries(CONTRACT_CATEGORY_TO_WORK_TYPE)
+                          .find(([, workType]) => workType === value.type)?.[0];
+                        if (matchedProductionType) setProductionType(matchedProductionType);
+                      }
                       setManualDuplicateMatches([]);
                     }}
                     locale="da"

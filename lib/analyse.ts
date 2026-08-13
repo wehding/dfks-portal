@@ -80,7 +80,7 @@ Returnér KUN valid JSON — ingen tekst før eller efter.
 Brug null hvis et felt ikke kan bestemmes.`
     // Scan hele teksten for udviklingsindikator og injicér som ekstra kontekst
     const udviklingsMatch = kontraktTekst.match(
-        /klipper\s*\(udvikling\)|film\s+editor\s*\(development\)|udviklingskontrakt|i\s+udviklingsfasen|optionsaftale|development\s+deal/i
+        /klipper\s*\(udvikling\)|film\s+editor\s*\(development\)|udviklingskontrakt|\budviklingsfase\b|\budvikling\b|optionsaftale|\bdevelopment\b|option\s+agreement/i
     )
     const udviklingsKontekst = udviklingsMatch
         ? `\n\nOBS: Kontrakten indeholder følgende udviklingsindikator: "${udviklingsMatch[0]}" — klassificér som udviklingskontrakt.\n`
