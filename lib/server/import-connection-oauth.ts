@@ -3,6 +3,7 @@ import "server-only";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/service";
 import { googleDriveOAuthCredentials } from "@/lib/import-oauth-environment";
+import { importOAuthCallbackOrigin } from "@/lib/import-oauth-callback";
 
 export type ImportProvider = "google_drive" | "onedrive" | "dropbox";
 
@@ -111,8 +112,6 @@ export function providerOAuthConfig(provider: ImportProvider, callbackUrl: strin
 }
 
 export function canonicalImportCallback(requestOrigin: string, provider: ImportProvider) {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
-  const useRequestOrigin = requestOrigin.startsWith("http://localhost:") || process.env.VERCEL_ENV === "preview";
-  const origin = useRequestOrigin ? requestOrigin : configured ?? requestOrigin;
+  const origin = importOAuthCallbackOrigin(requestOrigin, process.env);
   return `${origin}/api/admin/import-connections/${provider}/callback`;
 }

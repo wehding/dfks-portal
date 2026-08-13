@@ -2,24 +2,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
 import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
-
-// Stier der altid er tilgængelige uden session
-const PUBLIC_PATHS = [
-    "/invite",
-    "/api/auth/invite",
-    "/api/auth/callback",
-    "/api/integrations/gmail/contracts/push",
-    "/auth/confirm",
-    "/auth/opret-adgang",
-    "/_next",
-    "/favicon",
-]
+import { isPublicPath } from "@/lib/auth/public-paths"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
 
     // Altid tilgængelige stier
-    if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+    if (isPublicPath(pathname)) {
         return NextResponse.next()
     }
 
