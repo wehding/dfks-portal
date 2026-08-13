@@ -17,7 +17,7 @@ GOOGLE_DRIVE_ADMIN_CLIENT_ID=<client-id fra dfks-portal-drive-admin>
 GOOGLE_DRIVE_ADMIN_CLIENT_SECRET=<client-secret fra dfks-portal-drive-admin>
 GOOGLE_DRIVE_MEMBER_CLIENT_ID=<client-id fra dfks-portal-drive-medlemmer>
 GOOGLE_DRIVE_MEMBER_CLIENT_SECRET=<client-secret fra dfks-portal-drive-medlemmer>
-INTERNAL_API_SECRET=<eksisterende intern arbejdskø-secret>
+DRIVE_IMPORT_JOB_SECRET=<unik intern nøgle til Drive-import>
 NEXT_PUBLIC_SITE_URL=https://dfks-portal-hazel.vercel.app
 ```
 

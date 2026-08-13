@@ -659,6 +659,7 @@ export default function RettighedshavereAdminPage() {
         void getAdminRightsHolderProfile(rh.id, orgId).then(profile => {
             setEditForm(form => ({
                 ...form,
+                opt_out_statistics: profile.opt_out_statistics,
                 cpr_no: profile.cpr_no,
                 bank_account: profile.bank_account,
                 alternative_names: profile.alternative_names.join("\n"),

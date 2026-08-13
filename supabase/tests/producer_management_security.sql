@@ -1,3 +1,6 @@
+begin;
+select plan(1);
+
 do $$
 declare
   test_org uuid;
@@ -37,3 +40,7 @@ begin
   delete from auth.users where id in (super_user, admin_user);
 end;
 $$;
+
+select pass('Kun superadmin kan slette producenter permanent');
+select * from finish();
+rollback;

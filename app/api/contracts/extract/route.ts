@@ -18,15 +18,14 @@ import { maskPersonalData } from "@/lib/mask-text"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { runContractExtraction } from "@/lib/contract-extract-core"
+import { isInternalWorkerSecret } from "@/lib/api-auth"
 
 async function isAuthorized(req: NextRequest): Promise<boolean> {
-    const secret = process.env.CONTRACT_AI_JOB_SECRET
-    const cronSecret = process.env.CRON_SECRET
     const authHeader = req.headers.get("authorization") ?? ""
     const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : null
-    if (bearer && ((secret && bearer === secret) || (cronSecret && bearer === cronSecret))) return true
+    if (isInternalWorkerSecret(bearer, "contract-ai")) return true
     const sessionClient = await createSessionClient()
-    return Boolean(await assertAdminRole(sessionClient, ["superadmin", "admin", "org-admin"]))
+    return Boolean(await assertAdminRole(sessionClient))
 }
 
 export async function POST(req: NextRequest) {

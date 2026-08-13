@@ -88,13 +88,40 @@ select set_config('request.jwt.claims', json_build_object('sub',(select admin_us
 select set_config('request.jwt.claim.sub', (select admin_user::text from audit_test_fixture), true);
 select set_config('request.headers', json_build_object('x-dfks-actor-id',(select spoof_user from audit_test_fixture),'x-dfks-audit-source','portal','x-dfks-audit-mode','summary')::text, true);
 set local role authenticated;
-update public.contracts set status = 'valideret' where id = (select contract_id from audit_test_fixture);
+do $$
+declare blocked boolean := false;
+begin
+  begin
+    update public.contracts set status = 'valideret'
+    where id = (select contract_id from audit_test_fixture);
+  exception when others then
+    blocked := true;
+  end;
+  if not blocked then
+    raise exception 'Direkte kontraktvalidering blev ikke blokeret';
+  end if;
+end $$;
+reset role;
+
+-- Den serverbeskyttede valideringsfunktion udfører den samme tilsigtede
+-- handling og auditloggen skal bruge den kontrollerede administratoridentitet.
+select set_config('request.jwt.claims', json_build_object('role','service_role')::text, true);
+select set_config('request.jwt.claim.sub', '', true);
+select set_config('request.headers', json_build_object(
+  'x-dfks-actor-id',(select admin_user from audit_test_fixture),
+  'x-dfks-actor-org-id',(select org_a from audit_test_fixture),
+  'x-dfks-audit-source','admin'
+)::text, true);
+select public.validate_contracts_explicitly(
+  (select admin_user from audit_test_fixture),
+  (select org_a from audit_test_fixture),
+  array[(select contract_id from audit_test_fixture)]
+);
 select is(
   (select actor_user_id from public.audit_events where entity_type = 'contracts' and entity_id = (select contract_id::text from audit_test_fixture) and action = 'validate' order by occurred_at desc limit 1),
   (select admin_user from audit_test_fixture),
   'autentificeret klient kan ikke spoofe service-role aktøren'
 );
-reset role;
 
 select set_config('request.jwt.claims', json_build_object('role','service_role')::text, true);
 select set_config('request.jwt.claim.sub', '', true);

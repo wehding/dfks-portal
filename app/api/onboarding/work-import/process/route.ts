@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
   const jobId = safeJobId(body?.jobId);
   if (!jobId) return NextResponse.json({ error: "Ugyldigt importjob" }, { status: 400 });
   const db = createServiceClient();
-  const internalRequest = requireInternalSecretApi(request);
+  const internalRequest = requireInternalSecretApi(request, "onboarding-import");
 
   if (!internalRequest) {
     const auth = await requireSessionApi();

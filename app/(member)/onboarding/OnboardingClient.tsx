@@ -25,6 +25,7 @@ type OnboardingProfile = {
   gender?: string | null;
   alternative_names?: string[] | null;
   is_member?: boolean | null;
+  statistics_participation?: boolean | null;
   professional_start_year?: number | null;
   primary_profession_type_id?: string | null;
   usual_work_mode?: string | null;
@@ -84,7 +85,7 @@ export default function OnboardingClient({
   ];
   const [step, setStep] = useState(1);
   const [isSaving, setIsSaving] = useState(false);
-  const [shareStatistics, setShareStatistics] = useState(true);
+  const [shareStatistics, setShareStatistics] = useState(rh?.statistics_participation !== false);
   const [secondaryProfessionTypeIds, setSecondaryProfessionTypeIds] = useState<string[]>(statisticsProfile.secondaryProfessionTypeIds);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<OnboardingField, string>>>({});
 
@@ -198,6 +199,8 @@ export default function OnboardingClient({
     setIsSaving(true);
     const payload = new FormData();
     Object.entries(formData).forEach(([k, v]) => payload.set(k, v));
+    // Serveren afgør medlemsstatus. Værdien bruges kun som onboardingvalg for
+    // ikke-medlemmer; aktive medlemmer får ikke spørgsmålet i onboarding.
     payload.set("opt_out_statistics", String(!shareStatistics));
     payload.set("secondary_profession_type_ids", JSON.stringify(secondaryProfessionTypeIds));
 
@@ -790,7 +793,7 @@ export default function OnboardingClient({
               )}
               
               <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                {/* Lønstatistik Checkbox */}
+                {/* Lønstatistik */}
                 <div style={{ backgroundColor: "var(--surface-container)", borderRadius: "var(--radius-md)", border: "1px solid var(--outline-variant)", overflow: "hidden" }}>
                   <div style={{ padding: "20px 24px", display: "flex", gap: "14px" }}>
                     <div style={{ fontSize: "28px", flexShrink: 0 }}>📊</div>
@@ -807,7 +810,18 @@ export default function OnboardingClient({
                       </div>
                     </div>
                   </div>
-                  <label style={{
+                  {isOrganisationMember ? <div style={{
+                    padding: "16px 24px",
+                    backgroundColor: "var(--surface-container-low)",
+                    borderTop: "1px solid var(--outline-variant)",
+                  }}>
+                    <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--on-surface)" }}>
+                      Du deltager som medlem af organisationen
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--on-surface-variant)", marginTop: "4px", lineHeight: 1.5 }}>
+                      Alle aktive medlemmer er som udgangspunkt tilmeldt den anonymiserede statistik. Du kan altid ændre valget under Min profil.
+                    </div>
+                  </div> : <label style={{
                     display: "flex", alignItems: "center", gap: "12px",
                     padding: "16px 24px", cursor: "pointer",
                     backgroundColor: "var(--surface-container-low)",
@@ -827,7 +841,7 @@ export default function OnboardingClient({
                         Mine løndata indgår anonymiseret og aggregeret i branchestatistikken.
                       </div>
                     </div>
-                  </label>
+                  </label>}
                 </div>
 
                 {/* Kønsoplysninger Dropdown */}
@@ -906,7 +920,7 @@ export default function OnboardingClient({
                   { label: "Køn (statistik)", value: formData.gender === "female" ? "Kvinde" : formData.gender === "male" ? "Mand" : formData.gender === "non_binary" ? "Andet / Non-binær" : "Ikke oplyst" },
                   { label: "CPR registreret", value: formData.cpr ? "✅ Ja" : "❌ Mangler" },
                   { label: "NemKonto", value: formData.bank_account ? "✅ Registreret" : "❌ Mangler" },
-                  { label: "Lønstatistik", value: shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },
+                  { label: "Lønstatistik", value: isOrganisationMember ? "✅ Deltager som medlem" : shareStatistics ? "✅ Deltager" : "❌ Deltager ikke" },
                 ].map((row) => (
                   <div key={row.label} style={{
                     display: "flex", justifyContent: "space-between",

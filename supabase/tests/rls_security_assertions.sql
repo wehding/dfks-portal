@@ -106,8 +106,15 @@ begin
         from pg_policy policy_row
         where policy_row.polrelid = table_row.oid
       )
+      -- En tabel uden policies er en gyldig server-only barriere, når
+      -- browserrollerne heller ikke har nogen DML-rettigheder. Fang kun den
+      -- farlige kombination: eksponeret tabel + ingen RLS-policy.
+      and (
+        has_table_privilege('anon', table_row.oid, 'SELECT,INSERT,UPDATE,DELETE')
+        or has_table_privilege('authenticated', table_row.oid, 'SELECT,INSERT,UPDATE,DELETE')
+      )
   ) then
-    raise exception 'RLS regression: enabled table has no policy';
+    raise exception 'RLS regression: browser-exposed table has no policy';
   end if;
 
   if exists (

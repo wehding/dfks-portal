@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
+import { getInternalWorkerSecret } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export type ReviewIntakeInput = {
@@ -17,7 +18,7 @@ export type ReviewIntakeInput = {
 };
 
 export async function triggerContractReviewWorker(origin: string) {
-  const secret = process.env.CONTRACT_AI_JOB_SECRET ?? process.env.INTERNAL_API_SECRET ?? process.env.CRON_SECRET;
+  const secret = getInternalWorkerSecret("contract-review");
   if (!secret) {
     console.warn("[review-intake] Køen er oprettet, men intern worker-secret mangler");
     return false;
@@ -78,6 +79,8 @@ export async function createContractReviewIntake(input: ReviewIntakeInput) {
     production_type: typeof metadata.production_type === "string" ? metadata.production_type.slice(0, 100) : null,
     distribution_channels: Array.isArray(metadata.distribution_channels) ? metadata.distribution_channels.map(String).slice(0, 20) : null,
     producer_name: typeof metadata.producer_name === "string" ? metadata.producer_name.slice(0, 500) : null,
+    producer_dfks_id: typeof metadata.producer_dfks_id === "string" ? metadata.producer_dfks_id.slice(0, 100) : null,
+    producer_dfi_id: typeof metadata.producer_dfi_id === "string" ? metadata.producer_dfi_id.slice(0, 100) : null,
     producer_overenskomst_bound: typeof metadata.producer_overenskomst_bound === "boolean" ? metadata.producer_overenskomst_bound : null,
     focus_areas: Array.isArray(metadata.focus_areas) ? metadata.focus_areas.map(String).slice(0, 20) : null,
     notes: typeof metadata.notes === "string" ? metadata.notes.slice(0, 50_000) : null,
@@ -89,7 +92,15 @@ export async function createContractReviewIntake(input: ReviewIntakeInput) {
     const { data: raced } = await db.from("contract_reviews").select("id,storage_path")
       .eq("org_id", input.orgId).eq("intake_source", input.source).eq("external_source_id", externalSourceId)
       .eq("file_hash", fileHash).is("soft_deleted_at", null).maybeSingle();
-    if (raced) return { reviewId: raced.id, duplicate: true, storagePath: raced.storage_path };
+    if (raced) {
+      // En anden request kan have vundet insert-racet efter vores indledende
+      // dubletkontrol. Den fil, som denne request netop uploadede, tilhører da
+      // ingen sag og skal fjernes, før den eksisterende sag returneres.
+      if (!upload.error && storagePath !== raced.storage_path) {
+        await db.storage.from("contract-reviews").remove([storagePath]);
+      }
+      return { reviewId: raced.id, duplicate: true, storagePath: raced.storage_path };
+    }
     if (!upload.error) await db.storage.from("contract-reviews").remove([storagePath]);
     throw new Error(reviewError?.message ?? "Kontraktgennemgangen kunne ikke oprettes");
   }

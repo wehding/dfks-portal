@@ -25,6 +25,7 @@ import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 import { assertRightsHolderInOrg, assertUserInOrg, getRightsHolderInOrg } from "@/lib/authz"
 import { buildAccountAccessUrl } from "@/lib/auth/account-access"
 import { invitationAccessType, inviteSentAtAfterMail, isNewUserLimitReached } from "@/lib/auth/invitation-policy"
+import { requireConfiguredSiteUrl } from "@/lib/site-url"
 
 function getAdmin(audit?: AuditContext) {
     return createServiceClient({ audit })
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
             }
 
             const userRole = isStaff ? (inviteRole ?? "admin") : "member"
-            const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"
+            const siteUrl = requireConfiguredSiteUrl()
 
             // Tjek max_users-grænse for den aktuelle org
             const [{ count: userCount }, { data: org }] = await Promise.all([
@@ -298,7 +299,7 @@ export async function POST(req: NextRequest) {
             if (!linkData.properties?.hashed_token) throw new Error("Nulstillingslink kunne ikke genereres")
 
             const resetUrl = buildAccountAccessUrl(
-                process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000",
+                requireConfiguredSiteUrl(),
                 linkData.properties.hashed_token,
                 "recovery"
             )

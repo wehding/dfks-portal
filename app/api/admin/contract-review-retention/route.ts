@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { requireCronOrAdminApi } from "@/lib/api-auth";
+import { drainContractReviewStorageDeletionQueue } from "@/lib/contract-review-retention";
 
 async function candidates(orgId?: string) {
   const db = createServiceClient();
@@ -31,13 +32,25 @@ export async function POST(request: NextRequest) {
   const rows = await candidates("isCron" in auth ? undefined : auth.orgId);
   let deleted = 0;
   for (const row of rows) {
-    if (row.storage_path) {
-      const removal = await db.storage.from("contract-reviews").remove([row.storage_path]);
-      if (removal.error) continue;
-    }
     const actorId = "isCron" in auth ? null : auth.userId;
     const { data } = await db.rpc("finalize_contract_review_deletion", { target_review_id: row.id, actor_id: actorId, deletion_origin: "isCron" in auth ? "cron" : "admin" });
     if (data) deleted += 1;
   }
-  return NextResponse.json({ deleted, examined: rows.length });
+
+  // Storage slettes først efter den atomiske databasekontrol. Hvis Storage er
+  // midlertidigt utilgængeligt, forbliver stien i den private sletteattest og
+  // forsøges igen ved næste kørsel.
+  let storageResult: { deleted: number; failed: number };
+  try {
+    storageResult = await drainContractReviewStorageDeletionQueue(500);
+  } catch {
+    return NextResponse.json({ error: "Sagerne blev slettet, men storage-køen kunne ikke læses", deleted, examined: rows.length }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    deleted,
+    examined: rows.length,
+    storageDeleted: storageResult.deleted,
+    storageFailed: storageResult.failed,
+  });
 }

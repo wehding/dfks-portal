@@ -1,16 +1,16 @@
 # Guide til Martin: Google Workspace-mail og Vercel
 
-Denne guide samler opsætningen af DFKS-portalens Gmail-afsendelse, `INTERNAL_API_SECRET` og genstart af Vercel-deployments.
+Denne guide samler opsætningen af DFKS-portalens Gmail-afsendelse, separate jobnøgler og genstart af Vercel-deployments.
 
 ## Før du starter
 
 - Åbn Vercel-teamet `martin-wehdings-projects` og projektet `dfks-portal`.
 - Hemmeligheder må ikke sendes i almindelig chat, lægges i GitHub eller skrives ind i kildekoden.
 - Markér alle hemmelige værdier som **Sensitive**, hvis Vercel viser valget.
-- Den tidligere værdi til `INTERNAL_API_SECRET` har været delt i en chat og skal derfor erstattes af en ny tilfældig værdi.
+- Genbrug ikke den gamle fælles `INTERNAL_API_SECRET` i produktion. Hver baggrundsfunktion har sin egen nøgle, så en lækket nøgle ikke åbner alle jobflows.
 - Servicekontoens komplette JSON-fil må aldrig uploades til GitHub eller Vercel som en fil. Kun de to nødvendige felter indsættes som separate miljøvariabler.
 
-## 1. Opret en ny `INTERNAL_API_SECRET`
+## 1. Opret separate jobnøgler
 
 1. Generér en ny tilfældig værdi på din computer eller i en password manager. Fra Terminal kan du bruge:
 
@@ -23,13 +23,16 @@ Denne guide samler opsætningen af DFKS-portalens Gmail-afsendelse, `INTERNAL_AP
 4. Åbn projektet `dfks-portal`.
 5. Gå til **Settings → Environment Variables**.
 6. Klik **Add Environment Variable**.
-7. Skriv `INTERNAL_API_SECRET` som navn/key.
-8. Indsæt den nygenererede værdi.
-9. Aktivér variablen for både **Preview** og **Production**.
-10. Aktivér **Sensitive**, hvis muligheden vises.
-11. Klik **Save**.
+7. Opret hver af disse variabler med sin egen nygenererede værdi:
+   - `CONTRACT_AI_JOB_SECRET` — almindelig kontraktaflæsning;
+   - `CONTRACT_REVIEW_JOB_SECRET` — kontraktgennemgang og Gmail-bilag;
+   - `DRIVE_IMPORT_JOB_SECRET` — import fra Google Drive;
+   - `ONBOARDING_IMPORT_JOB_SECRET` — værksimport under onboarding.
+8. Aktivér variablerne for både **Preview** og **Production**.
+9. Aktivér **Sensitive**, hvis muligheden vises.
+10. Klik **Save** efter hver variabel.
 
-Værdien må ikke genbruges fra den gamle guide. Preview og Production må gerne bruge samme værdi, fordi appens interne afsender og modtager læser den samme miljøvariabel inden for hvert miljø.
+Værdierne må ikke genbruges på tværs af de fire variabler. Preview og Production kan have hver deres sæt nøgler.
 
 ## 2. Opret Google Workspace-variablerne
 
@@ -57,9 +60,12 @@ Opret følgende tre variabler under **Settings → Environment Variables**:
 - Miljøer: **Preview** og **Production**.
 - Markér gerne som **Sensitive**, selv om adressen ikke i sig selv er en hemmelighed.
 
-Kontrollér derefter, at alle fire variabler findes for begge miljøer:
+Kontrollér derefter, at Google-variablerne og de relevante jobnøgler findes for begge miljøer:
 
-- `INTERNAL_API_SECRET`
+- `CONTRACT_AI_JOB_SECRET`
+- `CONTRACT_REVIEW_JOB_SECRET`
+- `DRIVE_IMPORT_JOB_SECRET`
+- `ONBOARDING_IMPORT_JOB_SECRET`
 - `GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL`
 - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
 - `GOOGLE_GMAIL_SENDER`
@@ -95,7 +101,7 @@ Når deploymentet er **Ready**:
 
 Når Preview-testen er bestået:
 
-1. Kontrollér igen, at de tre Google-variabler og `INTERNAL_API_SECRET` er aktiveret for **Production**.
+1. Kontrollér igen, at Google-variablerne og de fire separate jobnøgler er aktiveret for **Production**.
 2. Start eller afvent den nye Production-deployment.
 3. Udfør én kontrolleret invitationstest i Production.
 4. Kontrollér igen `SPF=PASS` og `DKIM=PASS`.
@@ -109,6 +115,7 @@ De samme Google-værdier kan sættes i den lokale `.env.local`:
 GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL=servicekonto@projekt-id.iam.gserviceaccount.com
 GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 GOOGLE_GMAIL_SENDER=bestyrelsen@danskfilmklipperselskab.dk
+CONTRACT_REVIEW_JOB_SECRET=<en unik tilfældig værdi>
 ```
 
 `.env.local` og servicekontoens JSON-nøgle er ignoreret lokalt og må aldrig committes. Genstart `npm run dev`, når variablerne ændres.
@@ -117,7 +124,7 @@ GOOGLE_GMAIL_SENDER=bestyrelsen@danskfilmklipperselskab.dk
 
 Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklipperselskab.dk`. Adressen `kontrakt@danskfilmklipperselskab.dk` er et alias; systemet forsøger derfor ikke at identificere aliaset i mailens headers.
 
-1. Opret et Gmail-filter i Google Workspace, som sætter labelen `kontrakt` på de mails, der skal importeres.
+1. Opret et Gmail-filter i Google Workspace, som sætter labelen `kontrakter` på de mails, der skal importeres.
 2. Giv servicekontoens domænedækkende delegation Gmail-scope `https://www.googleapis.com/auth/gmail.modify`. Dette scope bruges til at læse de labelmærkede mails og tilføje outputlabelen. Systemet fjerner aldrig labels, arkiverer ikke og markerer ikke mails som læst.
 3. Opret et Google Cloud Pub/Sub-topic og giv Gmail mulighed for at publicere på det efter Googles officielle Gmail watch-vejledning.
 4. Opret en verificeret Pub/Sub push-servicekonto, der kalder:
@@ -133,6 +140,6 @@ Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklippersels
    GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL=<pubsub-push-servicekontoens-email>
    ```
 
-6. Kør watch-ruten én gang som superadmin eller via Vercels beskyttede cron. Den fornyes derefter dagligt. Inputlabelen `kontrakt` skal allerede findes; outputlabelen `kontrakt gennemgang` oprettes automatisk, hvis den mangler.
+6. Kør watch-ruten én gang som superadmin eller via Vercels beskyttede cron. Den fornyes derefter dagligt. Inputlabelen `kontrakter` skal allerede findes; outputlabelen `kontrakt gennemgang` oprettes automatisk, hvis den mangler.
 
 En mail får først outputlabelen `kontrakt gennemgang`, når alle understøttede bilag (`.pdf`, `.doc`, `.docx`) er oprettet som sager. Mailtekst og spørgsmål gemmes som reference. AI laver kun et lokalt svarudkast, som en jurist skal kontrollere. Portalen opretter ikke Gmail-kladder og sender aldrig svaret automatisk.

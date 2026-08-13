@@ -1,4 +1,4 @@
-"use server";
+import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { getTMDBEpisodeExternalIds, getTMDBSeasonEpisodes } from "@/app/actions/tmdb";

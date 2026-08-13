@@ -17,7 +17,7 @@ export default async function OnboardingPage() {
 
   const { data: rh } = await supabase
     .from("rettighedshavere")
-    .select("id, full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed, onboarding_completed_at, onboarding_required_at, alternative_names, professional_start_year, primary_profession_type_id, usual_work_mode, primary_work_region_code, org_affiliations(org_id,is_member)")
+    .select("id, full_name, email, phone, address, cpr_no, bank_account, gender, onboarding_completed, onboarding_completed_at, onboarding_required_at, alternative_names, professional_start_year, primary_profession_type_id, usual_work_mode, primary_work_region_code, org_affiliations(org_id,is_member,statistics_participation)")
     .eq("user_id", user.id)
     .single();
 
@@ -30,7 +30,11 @@ export default async function OnboardingPage() {
   if (rh && !mustCompleteOnboarding(onboardingStatus)) redirect(await resolvePostLoginDestination(supabase, user.id, user.last_sign_in_at));
 
   const affiliation = Array.isArray(rh?.org_affiliations) ? rh?.org_affiliations[0] : rh?.org_affiliations;
-  const profile = rh ? { ...rh, is_member: Boolean(affiliation?.is_member) } : null;
+  const profile = rh ? {
+    ...rh,
+    is_member: Boolean(affiliation?.is_member),
+    statistics_participation: affiliation?.statistics_participation ?? null,
+  } : null;
   const service = createServiceClient();
   const orgId = affiliation?.org_id as string | undefined;
   const [{ data: organisation }, { data: professionRows }, { data: regionRows }, { data: secondaryRows }] = await Promise.all([
