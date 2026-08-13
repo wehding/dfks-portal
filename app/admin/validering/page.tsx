@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useRef, useMemo, useEffect, useCallback } from "react"
+import { useState, useRef, useMemo, useEffect, useCallback, Suspense } from "react"
+import { useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import {
     Check, X, FileText, Upload, ArrowLeft, Building2, AlertTriangle,
@@ -89,11 +90,12 @@ const statusLabel: Record<string, string> = {
 }
 
 
-export default function AdminValideringPage() {
+function AdminValideringPageInner() {
     const { t } = useI18n()
+    const searchParams = useSearchParams()
     const [contracts, setContracts] = useState<ValidatingContract[]>([])
     const [pageLoading, setPageLoading] = useState(true)
-    const [reviewingId, setReviewingId] = useState<string | null>(null)
+    const [reviewingId, setReviewingId] = useState<string | null>(searchParams.get("id"))
     const [deleteId, setDeleteId] = useState<string | null>(null)
     const [localPdfUrl, setLocalPdfUrl] = useState<string | null>(null)
     const [localPdfFile, setLocalPdfFile] = useState<File | null>(null)
@@ -1953,4 +1955,8 @@ function escapeHtml(s: string): string {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
+}
+
+export default function AdminValideringPage() {
+    return <Suspense><AdminValideringPageInner /></Suspense>
 }

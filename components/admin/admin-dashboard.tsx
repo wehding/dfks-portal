@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 export function AdminDashboard({ metrics }: { metrics: AdminDashboardMetrics }) {
   const { t, locale } = useI18n();
   const shortcuts = [
-    { id: "contracts", href: "/admin/kontrakter?status=validationPending", icon: CheckCircle, label: t("admin.dashboard.validateContracts"), description: t("admin.dashboard.validateContractsDescription"), tasks: metrics.tasks.contractValidationsPending, messages: metrics.messages.contracts, secondary: t("admin.dashboard.validatedContracts"), secondaryValue: metrics.validatedContracts },
+    { id: "contracts", href: "/admin/kontrakter?tab=valideringskoe", icon: CheckCircle, label: t("admin.dashboard.validateContracts"), description: t("admin.dashboard.validateContractsDescription"), tasks: metrics.tasks.contractValidationsPending, messages: metrics.messages.contracts, secondary: t("admin.dashboard.validatedContracts"), secondaryValue: metrics.validatedContracts },
     { id: "reviews", href: "/admin/kontraktgennemgang?status=afventer,behandling", icon: Scale, label: t("nav.contractReview"), description: t("admin.dashboard.contractReviewDescription"), tasks: metrics.tasks.contractReviews, messages: 0 },
     { id: "works", href: "/admin/vaerker?status=pending", icon: FileText, label: t("nav.works"), description: t("admin.dashboard.worksDescription"), tasks: metrics.tasks.workRequests, messages: metrics.messages.works },
     { id: "screenings", href: "/admin/aftalelicens?status=pending", icon: FileText, label: t("nav.visningsadmin"), description: t("admin.dashboard.screeningsDescription"), tasks: metrics.tasks.screeningClaims, messages: metrics.messages.screenings },
