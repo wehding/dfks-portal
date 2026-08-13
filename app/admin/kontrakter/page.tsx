@@ -14,14 +14,16 @@ import { createClient } from "@/lib/supabase/client"
 import { addAdminContractComment, deleteAdminContractsPermanently, markContractCommentsRead, checkRightsHolderName, updateAdminContract, validateAdminContracts } from "@/app/actions/member-contracts"
 import { createAdminWork, createAndLinkWorkForContract } from "@/app/actions/work-management"
 import { searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works"
+import { useSearchParams } from "next/navigation"
 import { useI18n } from "@/lib/i18n"
 import { PageHeader } from "@/components/page-header"
+import { ValideringskøTab } from "@/components/admin/valideringskoe-tab"
 import { AdminListTools } from "@/components/admin/admin-list-tools"
 import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
 import { findOwnersForContracts, getContractImportStates } from "@/app/actions/contract-imports"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -272,6 +274,33 @@ function adminContractSummary(contract: ContractRow) {
         `Værk: ${contract.work_title ?? "ikke tilknyttet"}`,
         `Producent: ${contract.employer_name ?? "ikke tilknyttet"}`,
     ].join("\n")
+}
+
+function YearCountCard({ contracts, availableYears, currentYear }: {
+    contracts: ContractRow[]
+    availableYears: number[]
+    currentYear: number
+}) {
+    const [selectedYear, setSelectedYear] = useState(currentYear)
+    const count = contracts.filter(c => {
+        const year = c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()
+        return year === selectedYear
+    }).length
+    return (
+        <div className="min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:px-6 sm:py-5">
+            <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-medium leading-4 text-muted-foreground sm:text-sm">Kontrakter i</p>
+                <select
+                    value={selectedYear}
+                    onChange={e => setSelectedYear(Number(e.target.value))}
+                    className="rounded border bg-background px-1.5 py-0.5 text-[11px] font-medium text-foreground sm:text-sm focus:outline-none"
+                >
+                    {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+            </div>
+            <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:text-3xl">{count}</p>
+        </div>
+    )
 }
 
 function AdminKontrakterContent() {
@@ -1612,20 +1641,31 @@ function AdminKontrakterContent() {
 
     if (loading) return <TableSkeleton columns={7} rows={7} />
 
+    const currentYear = new Date().getFullYear()
+    const availableYears = Array.from(
+        new Set(contracts.map(c => c.contract_date ? new Date(c.contract_date).getFullYear() : new Date(c.created_at).getFullYear()))
+    ).sort((a, b) => b - a)
+    if (!availableYears.includes(currentYear)) availableYears.unshift(currentYear)
+
+    const stats = {
+        total: contracts.length,
+        validerede: contracts.filter(c => c.status === "valideret").length,
+    }
+
     return (
         <div className="space-y-6">
-            <PageHeader
-                title={t("admin.contracts.title")}
-                subtitle={t("admin.contracts.subtitle")}
-                actions={
-                    <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-                        <Button size="sm" className="w-full gap-1.5 sm:w-auto" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
-                            <Upload className="h-4 w-4" />
-                            Upload kontrakter
-                        </Button>
-                    </div>
-                }
-            />
+            <SummaryGrid>
+                <SummaryCard label="Kontrakter i alt" value={stats.total} />
+                <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
+                <SummaryCard label="Validerede" value={stats.validerede} />
+            </SummaryGrid>
+
+            <div className="flex justify-end">
+                <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
+                    <Upload className="h-4 w-4" />
+                    Upload kontrakter
+                </Button>
+            </div>
 
             {/* Filters */}
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
@@ -2708,6 +2748,74 @@ function AdminKontrakterContent() {
     )
 }
 
+function AdminKontrakterPageInner() {
+    const searchParams = useSearchParams()
+    const initialTab = searchParams.get("tab") === "valideringskoe" ? "valideringskoe" : "arkiv"
+    const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe">(initialTab)
+    const [køCount, setKøCount] = useState<number>(0)
+
+    useEffect(() => {
+        async function fetchKøCount() {
+            const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
+            const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
+            if (!context?.orgId) return
+            const { createClient } = await import("@/lib/supabase/client")
+            const supabase = createClient()
+            const { count } = await supabase
+                .from("contracts")
+                .select("id", { count: "exact", head: true })
+                .eq("org_id", context.orgId)
+                .eq("status", "kladde")
+            setKøCount(count ?? 0)
+        }
+        void fetchKøCount()
+    }, [])
+
+    return (
+        <div className="space-y-6">
+            <PageHeader
+                title="Kontraktarkiv"
+                subtitle="Oversigt, upload og validering af kontrakter"
+            />
+            <div className="flex gap-0 border-b">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("arkiv")}
+                    className={[
+                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        activeTab === "arkiv"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                >
+                    Arkiv
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("valideringskoe")}
+                    className={[
+                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        activeTab === "valideringskoe"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                >
+                    Valideringskø
+                    {køCount > 0 && (
+                        <span className="ml-2 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 px-2 py-0.5 text-xs font-semibold">
+                            {køCount}
+                        </span>
+                    )}
+                </button>
+            </div>
+            {activeTab === "arkiv"
+                ? <Suspense><AdminKontrakterContent /></Suspense>
+                : <ValideringskøTab onAfventerCount={setKøCount} />
+            }
+        </div>
+    )
+}
+
 export default function AdminKontrakterPage() {
-    return <Suspense><AdminKontrakterContent /></Suspense>
+    return <Suspense><AdminKontrakterPageInner /></Suspense>
 }

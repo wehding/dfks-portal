@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -17,6 +18,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { VaerkerBeskederTab } from "@/components/admin/vaerker-beskeder-tab";
 import { AdminListTools } from "@/components/admin/admin-list-tools";
 import { ActiveUserFilter } from "@/components/admin/active-user-filter";
 import { ExpandableListTrigger, MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view";
@@ -808,6 +810,26 @@ export default function VaerksadministrationPage() {
   const [editingSeasonEpisodes, setEditingSeasonEpisodes] = useState<WorkRow[]>([]);
   const [seasonCreditDrafts, setSeasonCreditDrafts] = useState<Record<string, SeasonCreditDraft>>({});
   const { activeRh, setActiveRh } = useActiveRightsHolder();
+  const [activeTab, setActiveTab] = useState<"oversigt" | "beskeder">("oversigt");
+  const [beskedCount, setBeskedCount] = useState<number>(0);
+
+  useEffect(() => {
+    async function fetchBeskedCount() {
+      const contextRes = await fetch("/api/admin/context", { cache: "no-store" });
+      const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null;
+      if (!context?.orgId) return;
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { count } = await supabase
+        .from("work_change_request_comments")
+        .select("id, work_change_requests!inner(org_id)", { count: "exact", head: true })
+        .eq("author_role", "member")
+        .is("admin_read_at", null)
+        .eq("work_change_requests.org_id", context.orgId);
+      setBeskedCount(count ?? 0);
+    }
+    void fetchBeskedCount();
+  }, []);
 
   const load = async () => {
     setLoading(true);
@@ -898,10 +920,11 @@ export default function VaerksadministrationPage() {
 
   const editParamHandled = useRef(false);
   const rhParamHandled = useRef(false);
-  // Deep-link: ?edit=<id> åbner Rediger værk automatisk (fx fra rettighedshaver-siden)
+  // Deep-link: ?edit=<id> eller ?id=<id> åbner Rediger værk automatisk (fx fra rettighedshaver-siden eller beskeder-tab)
   useEffect(() => {
     if (editParamHandled.current || works.length === 0) return;
-    const editId = new URLSearchParams(window.location.search).get("edit");
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get("edit") ?? params.get("id");
     if (!editId) return;
     const work = works.find(w => w.id === editId);
     editParamHandled.current = true;
@@ -1935,14 +1958,49 @@ export default function VaerksadministrationPage() {
 
       <WorkShareCasePanel />
 
-      {notice && (
+      {/* Tab-navigation */}
+      <div className="flex gap-0 border-b">
+        <button
+          type="button"
+          onClick={() => setActiveTab("oversigt")}
+          className={[
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "oversigt"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          Oversigt
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("beskeder")}
+          className={[
+            "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "beskeder"
+              ? "border-foreground text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground",
+          ].join(" ")}
+        >
+          Beskeder
+          {beskedCount > 0 && (
+            <span className="ml-2 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200 px-2 py-0.5 text-xs font-semibold">
+              {beskedCount}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === "beskeder" && <VaerkerBeskederTab onCountLoaded={setBeskedCount} />}
+
+      {activeTab === "oversigt" && notice && (
         <div className="flex items-center justify-between rounded-md border px-4 py-3 text-sm">
           <span>{notice}</span>
           <button onClick={() => setNotice(null)} className="text-muted-foreground">Luk</button>
         </div>
       )}
 
-      <SummaryGrid>
+      {activeTab === "oversigt" && <><SummaryGrid>
         <SummaryCard label="Total værker" value={stats.total} />
         <SummaryCard label="Med kontrakt" value={stats.withContract} />
         <SummaryCard label="Mangler kontrakt" value={stats.missingContract} />
@@ -2301,6 +2359,8 @@ export default function VaerksadministrationPage() {
           </TableBody>
         </Table>
       </ResponsiveTableFrame>
+
+      </>}
 
       <Dialog open={!!editing} onOpenChange={open => { if (!open) { setEditing(null); setEditForm(null); setActiveRequestId(null); setImportPreview(null); setAdminComment(""); setEditingDeleteOpen(false); setEditingArchiveOpen(false); setEditingSeasonGroup(null); setEditingSeasonEpisodes([]); setSeasonCreditDrafts({}); } }}>
         <DialogContent className="max-h-[92vh] w-[min(1360px,calc(100vw-2rem))] !max-w-none sm:!max-w-none overflow-y-auto overflow-x-hidden">
