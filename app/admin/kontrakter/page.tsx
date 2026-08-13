@@ -23,7 +23,7 @@ import { ADMIN_CONTRACT_UPLOAD_ACCEPT } from "@/lib/contract-upload-format"
 import { CONTRACT_IMPORT_CONCURRENCY, validateContractImportFile } from "@/lib/contract-import"
 import { findOwnersForContracts, getContractImportStates } from "@/app/actions/contract-imports"
 import { ActiveUserFilter } from "@/components/admin/active-user-filter"
-import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame } from "@/components/responsive-data-view"
+import { MobileCardList, MobileDataCard, MobileMetaRow, ResponsiveTableFrame, SummaryCard, SummaryGrid } from "@/components/responsive-data-view"
 import { MessageThread, type MessageThreadMessage } from "@/components/messages/message-thread"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -1614,8 +1614,20 @@ function AdminKontrakterContent() {
 
     if (loading) return <TableSkeleton columns={7} rows={7} />
 
+    const stats = {
+        total: contracts.length,
+        afventer: contracts.filter(c => c.status === "kladde").length,
+        validerede: contracts.filter(c => c.status === "valideret").length,
+    }
+
     return (
         <div className="space-y-6">
+            <SummaryGrid>
+                <SummaryCard label="Kontrakter i alt" value={stats.total} />
+                <SummaryCard label="Afventer validering" value={stats.afventer} />
+                <SummaryCard label="Validerede" value={stats.validerede} />
+            </SummaryGrid>
+
             <div className="flex justify-end">
                 <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
                     <Upload className="h-4 w-4" />
