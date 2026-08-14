@@ -9,3 +9,9 @@ test("lader kun de kendte drev-callbacks passere testadgangsfilteret", () => {
   assert.equal(isPublicPath("/api/admin/import-connections/google_drive/authorize"), false);
   assert.equal(isPublicPath("/api/admin/import-connections/unknown/callback"), false);
 });
+
+test("lader kun kontraktworkerens præcise route passere invite-gaten", () => {
+  assert.equal(isPublicPath("/api/contracts/jobs/process"), true);
+  assert.equal(isPublicPath("/api/contracts/jobs/process/ekstra"), false);
+  assert.equal(isPublicPath("/api/contracts/jobs/process-ukendt"), false);
+});

@@ -9,7 +9,15 @@ const PUBLIC_PATH_PREFIXES = [
   "/favicon",
 ];
 
+// Baggrundsworkers skal kunne nå deres egen route gennem invite-gaten. Ruten
+// håndhæver selv et scoped bearer-secret (eller en autentificeret admin), så
+// den må være et eksakt match og ikke et bredt public prefix.
+const PUBLIC_EXACT_PATHS = new Set([
+  "/api/contracts/jobs/process",
+]);
+
 export function isPublicPath(pathname: string) {
+  if (PUBLIC_EXACT_PATHS.has(pathname)) return true;
   if (PUBLIC_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return true;
 
   // Callbacken validerer selv Supabase-session, engangs-state og rolle. Den skal
