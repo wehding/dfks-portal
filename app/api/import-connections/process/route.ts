@@ -5,10 +5,10 @@ import { validateContractImportFile } from "@/lib/contract-import";
 import { browseGoogleDrive, downloadProviderFile, getProviderFile, providerAccessToken } from "@/lib/server/import-provider-files";
 import { intakeContractFile } from "@/lib/server/contract-import-intake";
 import { triggerDriveImportWorker } from "@/lib/drive-import-worker";
-import { processPendingContractJobs } from "@/app/api/contracts/jobs/process/route";
+import { processPendingContractJobs } from "@/lib/server/contract-import-processor";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function uuid(value: unknown) {
   const text = typeof value === "string" ? value : "";

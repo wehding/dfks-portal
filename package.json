@@ -15,7 +15,8 @@
     "db:link": "set -a && . ./.env.local && set +a && supabase link --project-ref icxywdymyaxluaxxcpye",
     "db:push": "set -a && . ./.env.local && set +a && supabase db push",
     "db:pull": "set -a && . ./.env.local && set +a && supabase db pull",
-    "db:diff": "set -a && . ./.env.local && set +a && supabase db diff"
+    "db:diff": "set -a && . ./.env.local && set +a && supabase db diff",
+    "db:configure-contract-import-cron": "tsx scripts/configure-contract-import-cron.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

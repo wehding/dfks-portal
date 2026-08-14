@@ -1,12 +1,7 @@
 /**
- * lib/contract-extract-core.ts
- *
- * Kerne-logik for AI-kontraktudtræk. Kaldes både af API-ruterne
- * (contracts/extract, validate/extract) OG direkte server-side af
- * jobs/process — sidstnævnte uden HTTP-runde, så batch-udtrækket ikke
- * afhænger af en åben, uautentificeret /api-rute.
- *
- * Forudsætter at teksten allerede er maskeret (personoplysninger fjernet).
+ * Shared server-side contract extraction. Input must already be masked.
+ * Every character is processed: large documents are split at page boundaries
+ * and merged deterministically instead of being cut after 40,000 characters.
  */
 
 import { createClient } from "@supabase/supabase-js"
@@ -14,21 +9,40 @@ import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources } from "@/lib/ai-sources"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
 import { callAiDetailed } from "@/lib/ai-client"
-import { getAiRuntimeConfig } from "@/lib/ai-runtime"
-import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage"
+import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
+import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
+import {
+    CONTRACT_EXTRACTION_JSON_SCHEMA,
+    CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
+    CONTRACT_EXTRACTION_SCHEMA_VERSION,
+    mergeContractExtractionChunks,
+    normalizeContractExtraction,
+    splitContractTextForExtraction,
+} from "@/lib/contract-extraction-schema"
+import { CONTRACT_IMPORT_PROMPT_VERSION, ContractImportPipelineError } from "@/lib/contract-import-job"
+
+export type ContractExtractionMetadata = {
+    provider: string
+    model: string
+    promptVersion: string
+    schemaVersion: string
+    providerRequestId: string | null
+    inputTokens: number
+    outputTokens: number
+    chunkCount: number
+    usageRunId: string | null
+}
 
 export type ContractExtractionResult = {
     ok: boolean
     data?: Record<string, unknown>
     navneTjek?: unknown
+    meta?: ContractExtractionMetadata
     error?: string
+    errorCause?: unknown
 }
-
-// AI'en får kun de første CONTRACT_TEXT_LIMIT tegn. Længere kontrakter
-// afkortes (rettighedsklausuler står ofte til sidst — se advarsel nedenfor).
-const CONTRACT_TEXT_LIMIT = 40000
 
 export type ContractExtractionContext = {
     orgId?: string | null
@@ -36,20 +50,36 @@ export type ContractExtractionContext = {
     actorUserId?: string | null
     source?: "portal" | "admin" | "api" | "cron" | "import"
     pdfBuffer?: Buffer | null
+    runtimeConfig?: AiRuntimeConfig | null
+    promptVersion?: string
+    schemaVersion?: string
+    onProgress?: (() => Promise<void>) | null
 }
 
-export async function runContractExtraction(maskedText: string, context: ContractExtractionContext = {}): Promise<ContractExtractionResult> {
-    const config = await getAiRuntimeConfig("contract_extraction")
-    const runId = await createAiUsageRun({
-        orgId: context.orgId,
-        operationType: "contract_extraction",
-        entityType: "contract",
-        entityId: context.entityId,
-        actorUserId: context.actorUserId,
-        source: context.source,
-    })
+function addUsage(total: AiTokenUsage, current: AiTokenUsage) {
+    total.inputTokens += Number(current.inputTokens ?? 0)
+    total.outputTokens += Number(current.outputTokens ?? 0)
+    total.cacheWriteTokens = Number(total.cacheWriteTokens ?? 0) + Number(current.cacheWriteTokens ?? 0)
+    total.cacheReadTokens = Number(total.cacheReadTokens ?? 0) + Number(current.cacheReadTokens ?? 0)
+}
 
-    // Hent overenskomsttekster som baggrundsviden til prompten
+function parseStructuredExtraction(raw: string) {
+    try {
+        return normalizeContractExtraction(JSON.parse(raw))
+    } catch {
+        const fallback = raw.match(/\{[\s\S]*\}/)?.[0]
+        if (fallback) {
+            try { return normalizeContractExtraction(JSON.parse(fallback)) } catch { /* handled below */ }
+        }
+        throw new ContractImportPipelineError({
+            message: "AI-svaret var ikke gyldig JSON",
+            code: "invalid_json",
+            failureClass: "invalid_output",
+        })
+    }
+}
+
+async function loadContractPrompt() {
     let systemPrompt = buildContractExtractionPrompt()
     try {
         const supabase = createClient(
@@ -63,53 +93,84 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             .eq("archived", false)
             .not("content_text", "is", null)
         systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
-    } catch (e) {
-        console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
-    }
-
-    let raw: string
-    try {
-        const response = await callAiDetailed({
-            provider: config.provider,
-            model: config.model,
-            maxTokens: 4096,
-            system: systemPrompt,
-            userMessage: `---KONTRAKT---\n${maskedText.slice(0, CONTRACT_TEXT_LIMIT)}`,
-            responseJson: true,
-            promptCaching: config.promptCachingEnabled,
-            usageContext: { runId, orgId: context.orgId, useCase: "contract_extraction", stage: "extraction" },
-        })
-        raw = response.text
     } catch (error) {
-        await finishAiUsageRun(runId, "failed", error instanceof Error ? error.message : "provider_error")
-        return { ok: false, error: error instanceof Error ? error.message : "AI-aflæsning fejlede" }
+        console.warn("[contract-extract] Referencedokumenter kunne ikke hentes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+    return systemPrompt
+}
+
+export async function runContractExtraction(maskedText: string, context: ContractExtractionContext = {}): Promise<ContractExtractionResult> {
+    const chunks = splitContractTextForExtraction(maskedText)
+    if (!chunks.length || maskedText.replace(/\s/g, "").length < CONTRACT_EXTRACTION_MIN_TEXT_CHARS) {
+        const cause = new ContractImportPipelineError({
+            message: "Kontrakten indeholder ikke nok læsbar tekst",
+            code: "insufficient_text",
+            failureClass: "input",
+        })
+        return { ok: false, error: cause.message, errorCause: cause }
     }
 
-    // Udtræk JSON mellem første { og sidste } (håndterer prose-wrapping)
-    const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) {
-        await finishAiUsageRun(runId, "failed", "invalid_json")
-        return { ok: false, error: "Kunne ikke parse AI-svar" }
-    }
+    const config = context.runtimeConfig ?? await getAiRuntimeConfig("contract_extraction")
+    const promptVersion = context.promptVersion ?? CONTRACT_IMPORT_PROMPT_VERSION
+    const schemaVersion = context.schemaVersion ?? CONTRACT_EXTRACTION_SCHEMA_VERSION
+    const runId = await createAiUsageRun({
+        orgId: context.orgId,
+        operationType: "contract_extraction",
+        entityType: "contract",
+        entityId: context.entityId,
+        actorUserId: context.actorUserId,
+        source: context.source,
+    })
 
-    let extracted: Record<string, unknown>
+    const systemPrompt = await loadContractPrompt()
+    const extractedChunks: Record<string, unknown>[] = []
+    const usage: AiTokenUsage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
+    let providerRequestId: string | null = null
+
     try {
-        extracted = JSON.parse(jsonMatch[0]) as Record<string, unknown>
-    } catch {
-        await finishAiUsageRun(runId, "failed", "invalid_json")
-        return { ok: false, error: "Kunne ikke parse AI-svar" }
+        for (let index = 0; index < chunks.length; index += 1) {
+            await context.onProgress?.()
+            const response = await callAiDetailed({
+                provider: config.provider,
+                model: config.model,
+                maxTokens: 4096,
+                system: systemPrompt,
+                userMessage: chunks.length === 1
+                    ? `---KONTRAKT---\n${chunks[index]}`
+                    : `---KONTRAKT, DEL ${index + 1} AF ${chunks.length}---\nUdtræk kun oplysninger, der fremgår af denne del.\n${chunks[index]}`,
+                responseJson: true,
+                responseSchema: CONTRACT_EXTRACTION_JSON_SCHEMA,
+                promptCaching: config.promptCachingEnabled,
+                usageContext: { runId, orgId: context.orgId, useCase: "contract_extraction", stage: "extraction" },
+            })
+            providerRequestId = response.providerRequestId ?? providerRequestId
+            addUsage(usage, response.usage)
+            extractedChunks.push(parseStructuredExtraction(response.text))
+            await context.onProgress?.()
+        }
+    } catch (error) {
+        await finishAiUsageRun(runId, "failed", error instanceof ContractImportPipelineError ? error.code : "provider_error")
+        return { ok: false, error: error instanceof Error ? error.message : "AI-aflæsning fejlede", errorCause: error }
+    }
+
+    let extracted = mergeContractExtractionChunks(extractedChunks)
+    const aiSignature = {
+        status: extracted.signatureStatus ?? "unknown",
+        method: extracted.signatureMethod ?? "unknown",
+        page: extracted.signaturePage ?? null,
     }
     if (context.pdfBuffer) {
         try {
             const signature = await detectPdfSignature(context.pdfBuffer)
+            extracted._signatureDetection = { ai: aiSignature, local: signature }
             if (signature.status === "yes") {
                 extracted.signatureStatus = "yes"
                 extracted.signatureMethod = signature.method
                 extracted.signaturePage = signature.page
                 extracted.signatureEvidence = signature.evidence
-                extracted._signatureDetection = { method: signature.method, detectedLocally: true }
             }
         } catch (error) {
+            extracted._signatureDetection = { ai: aiSignature, local: { status: "error" } }
             console.warn("[contract-extract] Lokal underskriftskontrol fejlede:", error instanceof Error ? error.message : "ukendt fejl")
         }
     }
@@ -117,9 +178,6 @@ export async function runContractExtraction(maskedText: string, context: Contrac
         extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
     }
 
-    // AI'en udtrækker kun det, der står i kontrakten. En godkendt og
-    // datofastsat regel anvendes deterministisk bagefter. Leverandør/B2B
-    // er altid udelukket, også hvis kontrakten omtaler en overenskomst.
     try {
         const pension = await applyApprovedAgreementPension(extracted)
         extracted = pension.data
@@ -127,25 +185,25 @@ export async function runContractExtraction(maskedText: string, context: Contrac
         console.warn("[contract-extract] Pensionsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
 
-    // Advar hvis kontrakten blev afkortet — rettighedsklausuler (Copydan/SVOD/
-    // Create Denmark) står typisk til sidst og kan være klippet væk.
-    if (maskedText.length > CONTRACT_TEXT_LIMIT) {
-        extracted._truncated = true
-        const advarsel = `⚠ ADVARSEL: Kontrakten er meget lang (${maskedText.length.toLocaleString("da-DK")} tegn) og blev afkortet til de første ${CONTRACT_TEXT_LIMIT.toLocaleString("da-DK")} tegn ved AI-læsning. Kontrollér især rettighedsklausuler til sidst i dokumentet.`
-        extracted.specialNotes = extracted.specialNotes ? `${advarsel}\n${String(extracted.specialNotes)}` : advarsel
-        console.warn(`[contract-extract] Kontrakt afkortet: ${maskedText.length} > ${CONTRACT_TEXT_LIMIT} tegn`)
+    const meta: ContractExtractionMetadata = {
+        provider: config.provider,
+        model: config.model,
+        promptVersion,
+        schemaVersion,
+        providerRequestId,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        chunkCount: chunks.length,
+        usageRunId: runId,
     }
+    extracted._extractionMeta = meta
 
-    // Navnetjek mod DFKS-register (kun full_name)
     let navneTjek: unknown = null
     if (extracted.rightsHolderName) {
-        try {
-            navneTjek = await tjekNavn(String(extracted.rightsHolderName))
-        } catch (e) {
-            console.warn("[contract-extract] Navnetjek fejlede:", e)
-        }
+        try { navneTjek = await tjekNavn(String(extracted.rightsHolderName)) }
+        catch (error) { console.warn("[contract-extract] Navnetjek fejlede:", error instanceof Error ? error.message : "ukendt fejl") }
     }
 
     await finishAiUsageRun(runId, "succeeded")
-    return { ok: true, data: extracted, navneTjek }
+    return { ok: true, data: extracted, navneTjek, meta }
 }

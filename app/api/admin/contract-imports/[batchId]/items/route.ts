@@ -3,9 +3,10 @@ import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
 import { validateContractImportFile } from "@/lib/contract-import";
 import { intakeContractFile } from "@/lib/server/contract-import-intake";
-import { processPendingContractJobs } from "@/app/api/contracts/jobs/process/route";
+import { processPendingContractJobs } from "@/lib/server/contract-import-processor";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest, context: { params: Promise<{ batchId: string }> }) {
   const session = await createClient();

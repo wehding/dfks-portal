@@ -2,6 +2,8 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { contractFileHash, safeContractFileName, validateContractImportFile } from "@/lib/contract-import";
+import { getAiRuntimeConfig } from "@/lib/ai-runtime";
+import { CONTRACT_IMPORT_PROMPT_VERSION, CONTRACT_IMPORT_SCHEMA_VERSION } from "@/lib/contract-import-job";
 
 export type ContractImportActor = {
   userId: string;
@@ -46,6 +48,28 @@ export async function intakeContractFile(input: {
     .maybeSingle();
   if (!batch || batch.status === "cancelled") return { ok: false as const, status: 404, error: "Importbatch blev ikke fundet eller er annulleret" };
 
+  // Browseren eller en drive-worker kan gentage et request efter et netværks-
+  // timeout. Samme client-token skal derfor returnere den eksisterende række i
+  // stedet for at oprette endnu en kontrakt.
+  const existingItem = await db.from("contract_import_items")
+    .select("id,status,contract_id")
+    .eq("batch_id", input.batchId)
+    .eq("client_token", input.file.clientToken)
+    .maybeSingle();
+  if (existingItem.error) return { ok: false as const, status: 500, error: "Importstatus kunne ikke kontrolleres" };
+  if (existingItem.data) {
+    if (!existingItem.data.contract_id && ["retryable_error", "dead"].includes(existingItem.data.status)) {
+      const removed = await db.from("contract_import_items").delete().eq("id", existingItem.data.id);
+      if (removed.error) return { ok: false as const, status: 500, error: "Den fejlede import kunne ikke klargøres til et nyt forsøg" };
+    } else {
+      return {
+        ok: true as const,
+        item: existingItem.data,
+        duplicate: existingItem.data.status === "duplicate",
+      };
+    }
+  }
+
   const preferredWorkId = input.workId
     ? (await db.from("works").select("id").eq("id", input.workId).maybeSingle()).data?.id ?? null
     : null;
@@ -71,9 +95,10 @@ export async function intakeContractFile(input: {
     provider_revision: input.file.providerRevision ?? null,
   };
   if (duplicate) {
-    const { data: item } = await db.from("contract_import_items").insert({
+    const { data: item, error: duplicateItemError } = await db.from("contract_import_items").insert({
       ...commonItem, contract_id: duplicate.contract_id, status: "duplicate",
     }).select("id,status,contract_id").single();
+    if (duplicateItemError || !item) return { ok: false as const, status: 500, error: "Dubletkontrollen kunne ikke registreres" };
     return { ok: true as const, item, duplicate: true };
   }
 
@@ -100,6 +125,7 @@ export async function intakeContractFile(input: {
     working_title: input.file.name.replace(/\.[^.]+$/, ""),
     rights_holder_id: safeRightsHolderId,
     work_id: preferredWorkId,
+    created_by: actor.userId,
   }).select("id").single();
   if (contractError || !contract) {
     await db.storage.from("kontrakter").remove([storagePath]);
@@ -107,12 +133,19 @@ export async function intakeContractFile(input: {
     return { ok: false as const, status: 500, error: "Kontrakten kunne ikke oprettes" };
   }
 
+  const runtimeConfig = await getAiRuntimeConfig("contract_extraction");
   const { data: job, error: jobError } = await db.from("contract_ai_jobs").insert({
     contract_id: contract.id,
     org_id: actor.orgId,
     created_by: actor.userId,
     status: "queued",
+    stage: "extraction",
     priority: 100,
+    provider: runtimeConfig.provider,
+    model: runtimeConfig.model,
+    prompt_version: CONTRACT_IMPORT_PROMPT_VERSION,
+    schema_version: CONTRACT_IMPORT_SCHEMA_VERSION,
+    next_attempt_at: new Date().toISOString(),
   }).select("id").single();
   if (jobError || !job) {
     await db.from("contracts").delete().eq("id", contract.id);
@@ -128,24 +161,46 @@ export async function intakeContractFile(input: {
     import_item_id: item.id,
   });
   if (fingerprint.error) {
-    const { data: raced } = await db.from("contract_file_fingerprints").select("contract_id")
+    const raced = await db.from("contract_file_fingerprints").select("contract_id")
       .eq("org_id", actor.orgId).eq("file_hash", fileHash).maybeSingle();
     await db.from("contracts").delete().eq("id", contract.id);
     await db.storage.from("kontrakter").remove([storagePath]);
+    if (fingerprint.error.code === "23505" && !raced.error && raced.data?.contract_id) {
+      await db.from("contract_import_items").update({
+        status: "duplicate",
+        contract_id: raced.data.contract_id,
+        error_code: null,
+        error_message: null,
+      }).eq("id", item.id);
+      return { ok: true as const, item: { id: item.id, status: "duplicate", contract_id: raced.data.contract_id }, duplicate: true };
+    }
     await db.from("contract_import_items").update({
-      status: "duplicate",
-      contract_id: raced?.contract_id ?? null,
-      error_code: null,
-      error_message: null,
+      status: "dead",
+      contract_id: null,
+      error_code: "fingerprint_create",
+      error_message: "Filens dubletfingeraftryk kunne ikke gemmes",
     }).eq("id", item.id);
-    return { ok: true as const, item: { id: item.id, status: "duplicate", contract_id: raced?.contract_id ?? null }, duplicate: true };
+    return { ok: false as const, status: 500, error: "Filens dubletkontrol kunne ikke gemmes" };
   }
 
-  await db.from("contract_import_items").update({
+  const itemUpdate = await db.from("contract_import_items").update({
     storage_path: storagePath,
     contract_id: contract.id,
     ai_job_id: job.id,
     status: "queued",
   }).eq("id", item.id);
+  if (itemUpdate.error) {
+    await db.from("contracts").delete().eq("id", contract.id);
+    await db.storage.from("kontrakter").remove([storagePath]);
+    await db.from("contract_import_items").update({
+      status: "dead",
+      error_code: "queue_update",
+      error_message: "Importkøen kunne ikke opdateres",
+      storage_path: null,
+      contract_id: null,
+      ai_job_id: null,
+    }).eq("id", item.id);
+    return { ok: false as const, status: 500, error: "Importkøen kunne ikke opdateres" };
+  }
   return { ok: true as const, item: { id: item.id, status: "queued", contract_id: contract.id }, duplicate: false };
 }

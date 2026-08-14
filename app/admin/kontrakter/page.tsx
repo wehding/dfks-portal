@@ -154,8 +154,22 @@ type UploadItem = {
     status: "pending" | "uploading" | "queued" | "duplicate" | "extracting" | "done" | "error"
     error?: string
     contractId?: string | null
+    importItemId?: string | null
     employerId?: string
     rightsHolderId?: string
+}
+
+type ImportBatchSummary = {
+    id: string
+    source: string
+    status: string
+    discovered_count: number
+    uploaded_count: number
+    duplicate_count: number
+    completed_count: number
+    failed_count: number
+    created_at: string
+    updated_at: string
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -175,6 +189,9 @@ const AI_JOB_LABELS: Record<string, string> = {
     processing: "Analyserer",
     done: "Indlæst",
     error: "Fejl",
+    retry_wait: "Prøver igen",
+    blocked: "Afventer opsætning",
+    dead: "Kræver handling",
 }
 
 const AI_JOB_CLASS: Record<string, string> = {
@@ -182,6 +199,9 @@ const AI_JOB_CLASS: Record<string, string> = {
     processing: "border-blue-300 bg-blue-50 text-blue-700",
     done: "border-emerald-300 bg-emerald-50 text-emerald-700",
     error: "border-red-300 bg-red-50 text-red-700",
+    retry_wait: "border-amber-300 bg-amber-50 text-amber-700",
+    blocked: "border-red-300 bg-red-50 text-red-700",
+    dead: "border-red-300 bg-red-50 text-red-700",
 }
 
 const WORK_LINK_CLASS = {
@@ -304,7 +324,7 @@ function YearCountCard({ contracts, availableYears, currentYear }: {
 }
 
 function AdminKontrakterContent() {
-    const { t } = useI18n()
+    const { locale, t } = useI18n()
     const [contracts, setContracts] = useState<ContractRow[]>([])
     const [employers, setEmployers] = useState<Employer[]>([])
     const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([])
@@ -483,10 +503,47 @@ function AdminKontrakterContent() {
     const [uploadPhase, setUploadPhase] = useState<"select" | "processing">("select")
     const [uploadRightsHolderId, setUploadRightsHolderId] = useState("")
     const [uploadRightsHolderSearch, setUploadRightsHolderSearch] = useState("")
+    const [activeUploadBatchId, setActiveUploadBatchId] = useState<string | null>(null)
+    const [recentImportBatches, setRecentImportBatches] = useState<ImportBatchSummary[]>([])
     const removeUploadItem = (index: number) => setUploadItems(prev => prev.filter((_, i) => i !== index))
     const [saving, setSaving] = useState(false)
     const prefillWorkIdRef = useRef<string | null>(null)
     const { activeRh, setActiveRh } = useActiveRightsHolder()
+
+    const loadImportBatches = useCallback(async () => {
+        try {
+            const response = await fetch("/api/admin/contract-imports?limit=5", { cache: "no-store" })
+            if (!response.ok) return
+            const json = await response.json() as { batches?: ImportBatchSummary[] }
+            setRecentImportBatches(json.batches ?? [])
+        } catch { /* Kontraktlisten må fortsat fungere ved en statusfejl. */ }
+    }, [])
+
+    useEffect(() => {
+        void loadImportBatches()
+    }, [loadImportBatches])
+
+    const activeImportPollKey = recentImportBatches
+        .filter(batch => batch.status === "processing")
+        .map(batch => batch.id)
+        .join(",")
+    useEffect(() => {
+        if (!activeImportPollKey) return
+        const interval = window.setInterval(() => void loadImportBatches(), 4000)
+        return () => window.clearInterval(interval)
+    }, [activeImportPollKey, loadImportBatches])
+
+    const retryImportBatch = useCallback(async (batchId: string) => {
+        const response = await fetch(`/api/admin/contract-imports/${batchId}/retry`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: "resume" }),
+        })
+        const json = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(json.error ?? t("admin.contracts.import.retryError"))
+        toast.success(t("admin.contracts.import.retryQueued", { count: Number(json.queued ?? 0) }))
+        await loadImportBatches()
+    }, [loadImportBatches, t])
 
     // Åbn upload-flowet automatisk når man kommer fra "Tilføj kontrakt" (?new=1&work=<id>)
     useEffect(() => {
@@ -499,6 +556,7 @@ function AdminKontrakterContent() {
             setShowUpload(true)
             setUploadPhase("select")
             setUploadItems([])
+            setActiveUploadBatchId(null)
         }
     }, [])
 
@@ -697,7 +755,7 @@ function AdminKontrakterContent() {
     // rækkerne uden manuel genindlæsning. Når et job bliver "done", hentes de
     // opdaterede visningsfelter (titel, arbejdsgiver, valideringsflag) med.
     const pendingJobKey = contracts
-        .filter(c => c.ai_job_status === "queued" || c.ai_job_status === "processing")
+        .filter(c => ["queued", "processing", "retry_wait", "error"].includes(c.ai_job_status ?? ""))
         .map(c => c.id)
         .join(",")
     useEffect(() => {
@@ -805,6 +863,7 @@ function AdminKontrakterContent() {
             })
             const batchJson = await batchResponse.json()
             if (!batchResponse.ok || !batchJson.batch?.id) throw new Error(batchJson.error ?? "Importbatch kunne ikke oprettes")
+            setActiveUploadBatchId(batchJson.batch.id)
             let nextIndex = 0
             const uploadNext = async (): Promise<void> => {
                 const index = nextIndex++
@@ -820,7 +879,12 @@ function AdminKontrakterContent() {
                     const response = await fetch(`/api/admin/contract-imports/${batchJson.batch.id}/items`, { method: "POST", body: formData })
                     const json = await response.json()
                     if (!response.ok) throw new Error(json.error ?? "Upload fejlede")
-                    updated[index] = { ...updated[index], status: json.duplicate ? "duplicate" : "queued", contractId: json.item?.contract_id ?? null }
+                    updated[index] = {
+                        ...updated[index],
+                        status: json.duplicate ? "duplicate" : "queued",
+                        contractId: json.item?.contract_id ?? null,
+                        importItemId: json.item?.id ?? null,
+                    }
                 } catch (error) {
                     updated[index] = { ...updated[index], status: "error", error: error instanceof Error ? error.message : "Upload fejlede" }
                 }
@@ -835,6 +899,7 @@ function AdminKontrakterContent() {
             if (duplicateCount) toast.info(`${duplicateCount} dublet${duplicateCount === 1 ? "" : "ter"} blev afvist`)
             if (failedCount) toast.error(`${failedCount} fil${failedCount === 1 ? "" : "er"} fejlede`)
             window.dispatchEvent(new CustomEvent("contracts-updated"))
+            await loadImportBatches()
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Importen kunne ikke startes")
         } finally {
@@ -1625,6 +1690,7 @@ function AdminKontrakterContent() {
         ? editValidationData.rightsOverview as Record<string, unknown>
         : {}
     const editStreamingStatus = normalizeTriState(editValidationData.svod ?? editValidationData.streamingReservation ?? editRightsOverview.streamingforbehold)
+    const activeUploadBatch = activeUploadBatchId ? recentImportBatches.find(batch => batch.id === activeUploadBatchId) ?? null : null
     const toggleSelected = (id: string) => {
         setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
     }
@@ -1661,11 +1727,48 @@ function AdminKontrakterContent() {
             </SummaryGrid>
 
             <div className="flex justify-end">
-                <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
+                <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setActiveUploadBatchId(null); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
                     <Upload className="h-4 w-4" />
                     Upload kontrakter
                 </Button>
             </div>
+
+            {recentImportBatches.length > 0 && (
+                <section className="rounded-lg border bg-card p-3 sm:p-4" aria-labelledby="recent-imports-title">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                            <h2 id="recent-imports-title" className="text-sm font-semibold">{t("admin.contracts.import.latest")}</h2>
+                            <p className="text-xs text-muted-foreground">{t("admin.contracts.import.latestDescription")}</p>
+                        </div>
+                    </div>
+                    <div className="grid gap-2 lg:grid-cols-3">
+                        {recentImportBatches.slice(0, 3).map(batch => (
+                            <div key={batch.id} className="rounded-md border p-3 text-sm">
+                                <div className="flex items-start justify-between gap-2">
+                                    <div>
+                                        <p className="font-medium">{batch.source === "computer" ? t("admin.contracts.import.sourceComputer") : batch.source.replaceAll("_", " ")}</p>
+                                        <p className="text-xs text-muted-foreground">{new Date(batch.created_at).toLocaleString(locale === "da" ? "da-DK" : "en-GB")}</p>
+                                    </div>
+                                    <Badge variant="outline">{batch.status === "processing" ? t("admin.contracts.import.statusProcessing") : batch.status === "completed" ? t("admin.contracts.import.statusCompleted") : batch.status === "partially_failed" ? t("admin.contracts.import.statusActionRequired") : batch.status}</Badge>
+                                </div>
+                                <p className="mt-2 text-xs text-muted-foreground">
+                                    {t("admin.contracts.import.summary", {
+                                        completed: batch.completed_count,
+                                        duplicates: batch.duplicate_count,
+                                        failed: batch.failed_count,
+                                        queued: Math.max(0, batch.uploaded_count - batch.completed_count - batch.duplicate_count - batch.failed_count),
+                                    })}
+                                </p>
+                                {batch.failed_count > 0 && (
+                                    <Button type="button" variant="outline" size="sm" className="mt-2 h-8" onClick={() => void retryImportBatch(batch.id).catch(error => toast.error(error instanceof Error ? error.message : t("admin.contracts.import.retryError")))}>
+                                        {t("admin.contracts.import.retryFailed")}
+                                    </Button>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
 
             {/* Filters */}
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
@@ -1984,8 +2087,8 @@ function AdminKontrakterContent() {
                         </DialogTitle>
                         <DialogDescription>
                             {uploadPhase === "select"
-                                ? "Vælg op til 15 filer. De gemmes som kladde, og indlæsning kører i køen."
-                                : "Uploader og læser første kontrakt..."}
+                                ? t("admin.contracts.import.selectDescription")
+                                : t("admin.contracts.import.processingDescription")}
                         </DialogDescription>
                     </DialogHeader>
 
@@ -2069,7 +2172,22 @@ function AdminKontrakterContent() {
                     {/* Phase: processing */}
                     {uploadPhase === "processing" && (() => {
                         return (
-                            <div className="max-h-[55vh] space-y-2 overflow-y-auto py-2 pr-1">
+                            <div className="max-h-[55vh] space-y-3 overflow-y-auto py-2 pr-1">
+                                {activeUploadBatch && (
+                                    <div className="rounded-md border bg-muted/40 p-3">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <p className="text-sm font-medium">{t("admin.contracts.import.background")}</p>
+                                            <Badge variant="outline">{activeUploadBatch.status === "processing" ? t("admin.contracts.import.statusProcessing") : activeUploadBatch.status === "completed" ? t("admin.contracts.import.statusCompleted") : t("admin.contracts.import.statusActionRequired")}</Badge>
+                                        </div>
+                                        <p className="mt-1 text-xs text-muted-foreground">
+                                            {t("admin.contracts.import.summaryShort", {
+                                                completed: activeUploadBatch.completed_count,
+                                                duplicates: activeUploadBatch.duplicate_count,
+                                                failed: activeUploadBatch.failed_count,
+                                            })}
+                                        </p>
+                                    </div>
+                                )}
                                 {uploadItems.map(item => (
                                     <div key={item.clientToken} className="flex items-center gap-2.5 rounded-md border p-3">
                                         {item.status === "pending"    && <FileText className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -2106,7 +2224,7 @@ function AdminKontrakterContent() {
                         </Button>
                         {uploadPhase === "select" && (
                             <Button onClick={handleExtractAndSave} disabled={uploadItems.length === 0}>
-                                {uploadItems.length > 0 ? `Upload og læs (${uploadItems.length})` : "Upload og læs"}
+                                {uploadItems.length > 0 ? `${t("admin.contracts.import.upload")} (${uploadItems.length})` : t("admin.contracts.import.upload")}
                             </Button>
                         )}
                     </DialogFooter>

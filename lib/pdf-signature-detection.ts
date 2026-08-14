@@ -56,6 +56,8 @@ function likelyHandwrittenPath(args: unknown, pageWidth: number, pageHeight: num
 }
 
 export async function detectPdfSignature(buffer: Buffer): Promise<PdfSignatureDetection> {
+  const worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  (globalThis as typeof globalThis & { pdfjsWorker?: typeof worker }).pdfjsWorker = worker;
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
   const indicators: PdfSignatureIndicators = {
