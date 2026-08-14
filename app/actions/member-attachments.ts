@@ -102,9 +102,9 @@ export async function retryMemberAttachmentAnalysis(attachmentId: string) {
     .select("id,contract_id,org_id,created_by")
     .eq("id", attachmentId).maybeSingle();
   if (!attachment || attachment.created_by !== user.id) return { success: false, error: "Ikke tilladt" };
-  const { data: failedJob } = await db.from("contract_ai_jobs").select("id").eq("attachment_id", attachmentId).eq("status", "error").order("created_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: failedJob } = await db.from("contract_ai_jobs").select("id").eq("attachment_id", attachmentId).in("status", ["error", "retry_wait", "blocked", "dead"]).order("created_at", { ascending: false }).limit(1).maybeSingle();
   const { error } = failedJob
-    ? await db.from("contract_ai_jobs").update({ status: "queued", attempts: 0, error_message: null, priority: 25 }).eq("id", failedJob.id)
+    ? await db.from("contract_ai_jobs").update({ status: "queued", stage: "extraction", result_data: null, attempts: 0, error_message: null, error_code: null, failure_class: null, next_attempt_at: new Date().toISOString(), priority: 25 }).eq("id", failedJob.id)
     : await db.from("contract_ai_jobs").insert({ contract_id: attachment.contract_id, attachment_id: attachment.id, org_id: attachment.org_id, created_by: user.id, status: "queued", priority: 25 });
   if (error) return { success: false, error: "Kunne ikke starte analysen igen" };
   await db.from("contract_attachments").update({ ai_status: "analyserer" }).eq("id", attachmentId);

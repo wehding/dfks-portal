@@ -39,9 +39,12 @@ export async function matchRightsHolder(
   input: { orgId: string; name: string | null; workId?: string | null },
 ): Promise<ContractMatchResult> {
   if (!input.name?.trim()) return { id: null, score: null, evidence: [], version: CONTRACT_MATCH_VERSION, candidates: [] };
-  const { data } = await db.from("rettighedshavere")
-    .select("id,full_name,alternative_names,org_affiliations!inner(org_id)")
-    .eq("org_affiliations.org_id", input.orgId);
+  const { data, error } = await db.rpc("search_contract_holder_candidates", {
+    p_org_id: input.orgId,
+    p_query: input.name,
+    p_limit: 100,
+  });
+  if (error) throw new Error(error.message);
   let credited = new Set<string>();
   if (input.workId) {
     const assignmentResult = await db.from("work_assignments").select("rights_holder_id").eq("work_id", input.workId);
@@ -64,7 +67,7 @@ export async function matchRightsHolder(
     if (credited.has(holder.id)) { score += 18; evidence.push({ signal: "credited_on_work", points: 18 }); }
     return { value: holder, label: holder.full_name, score: Math.min(100, score), evidence };
   }).filter(candidate => candidate.score >= 55).sort((a, b) => b.score - a.score);
-  const selected = selectAutomaticMatch(scored, 92, 12);
+  const selected = selectAutomaticMatch(scored, 90, 10);
   return {
     id: selected?.value.id ?? null,
     score: selected?.score ?? scored[0]?.score ?? null,
@@ -79,7 +82,11 @@ export async function matchSharedWork(
   input: { title: string | null; premiereYear: number | null; contractDate?: string | null; type?: string | null; rightsHolderId?: string | null },
 ): Promise<ContractMatchResult> {
   if (!input.title?.trim()) return { id: null, score: null, evidence: [], version: CONTRACT_MATCH_VERSION, candidates: [] };
-  const { data } = await db.from("works").select("id,title,alternative_titles,year,type").is("parent_work_id", null).limit(2500);
+  const { data, error } = await db.rpc("search_contract_work_candidates", {
+    p_query: input.title,
+    p_limit: 150,
+  });
+  if (error) throw new Error(error.message);
   let credited = new Set<string>();
   if (input.rightsHolderId) {
     const assignments = await db.from("work_assignments").select("work_id").eq("rights_holder_id", input.rightsHolderId);

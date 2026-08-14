@@ -198,6 +198,25 @@ begin
     or has_function_privilege('authenticated', 'public.claim_drive_import_item(uuid)', 'EXECUTE') then
     raise exception 'RLS failure: browser role can claim server-only drive import work';
   end if;
+
+  if exists (
+    select 1
+    from (values
+      ('claim_next_contract_ai_job(uuid,uuid)'),
+      ('save_contract_ai_extraction(uuid,jsonb,text)'),
+      ('renew_contract_ai_job_lease(uuid)'),
+      ('advance_contract_ai_job(uuid,text)'),
+      ('finalize_contract_ai_job(uuid)'),
+      ('fail_contract_ai_job(uuid,text,text,text,text,timestamptz,boolean)'),
+      ('search_contract_duplicate_candidates(uuid,uuid,text,integer)'),
+      ('configure_contract_import_cron(text,text)')
+    ) as protected_function(signature)
+    where has_function_privilege('anon', 'public.' || protected_function.signature, 'EXECUTE')
+       or has_function_privilege('authenticated', 'public.' || protected_function.signature, 'EXECUTE')
+       or not has_function_privilege('service_role', 'public.' || protected_function.signature, 'EXECUTE')
+  ) then
+    raise exception 'RLS failure: a contract-import worker function has unsafe execute privileges';
+  end if;
 end $$;
 
 do $$

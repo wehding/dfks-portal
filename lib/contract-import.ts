@@ -45,6 +45,18 @@ export function normalizeMatchText(value: unknown) {
     .trim();
 }
 
+export function contractProductionTypeToWorkType(value: unknown) {
+  const normalized = normalizeMatchText(value).replaceAll(" ", "");
+  if (!normalized) return null;
+  if (["docseries", "documentaryseries", "dokumentarserie"].includes(normalized)) return "dokumentar-serie";
+  if (normalized.includes("dokumentar") && normalized.includes("serie")) return "dokumentar-serie";
+  if (["documentary", "documentaryfilm", "dokumentar", "dokumentarfilm", "dokudrama"].includes(normalized)) return "dokumentarfilm";
+  if (["tvseries", "series", "serie", "tvserie", "tventertainment", "reality", "sport"].includes(normalized)) return "tv-serie";
+  if (["short", "shortfilm", "kort", "kortfilm"].includes(normalized)) return "kortfilm";
+  if (["feature", "featurefilm", "movie", "film", "spillefilm"].includes(normalized)) return "spillefilm";
+  return null;
+}
+
 export function levenshteinSimilarity(leftValue: unknown, rightValue: unknown) {
   const left = normalizeMatchText(leftValue);
   const right = normalizeMatchText(rightValue);

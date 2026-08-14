@@ -316,7 +316,7 @@ export async function saveUploadedContract(params: {
     if (jobError) {
       console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
     } else {
-      triggerContractAiJobProcessing();
+      triggerContractAiJobProcessing(orgId);
     }
   }
 
@@ -345,7 +345,7 @@ export async function queueUploadedContractAiJob(contractId: string) {
     .from("contract_ai_jobs")
     .select("id")
     .eq("contract_id", contractId)
-    .in("status", ["queued", "processing"])
+    .in("status", ["queued", "processing", "retry_wait", "blocked", "error"])
     .limit(1)
     .maybeSingle();
   if (existing) return { success: true, alreadyQueued: true };
@@ -357,17 +357,17 @@ export async function queueUploadedContractAiJob(contractId: string) {
     priority: 0,
   });
   if (error) return { success: false, error: error.message };
-  triggerContractAiJobProcessing();
+  triggerContractAiJobProcessing(orgId);
   return { success: true, alreadyQueued: false };
 }
 
 // Udløs jobkøen med det samme, så auto-kobling af kontrakt→værk ikke venter på
 // det daglige cron-job. Kører direkte i baggrunden via after().
-function triggerContractAiJobProcessing() {
+function triggerContractAiJobProcessing(orgId: string) {
   after(async () => {
     try {
-      const { processPendingContractJobs } = await import("@/app/api/contracts/jobs/process/route");
-      await processPendingContractJobs();
+      const { processPendingContractJobs } = await import("@/lib/server/contract-import-processor");
+      await processPendingContractJobs(orgId);
     } catch (e) {
       console.error("[contract-job] Baggrundsaflæsning fejlede:", e);
     }
