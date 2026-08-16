@@ -126,20 +126,22 @@ Importen overvåger kun den primære postkasse `bestyrelsen@danskfilmklippersels
 
 1. Opret et Gmail-filter i Google Workspace, som sætter labelen `kontrakter` på de mails, der skal importeres.
 2. Giv servicekontoens domænedækkende delegation Gmail-scope `https://www.googleapis.com/auth/gmail.modify`. Dette scope bruges til at læse de labelmærkede mails og tilføje outputlabelen. Systemet fjerner aldrig labels, arkiverer ikke og markerer ikke mails som læst.
-3. Opret et Google Cloud Pub/Sub-topic og giv Gmail mulighed for at publicere på det efter Googles officielle Gmail watch-vejledning.
-4. Opret en verificeret Pub/Sub push-servicekonto, der kalder:
+3. Genbrug Google Cloud Pub/Sub-topic'et `projects/dfks-portal/topics/dfks-gmail-contracts`. Principal `gmail-api-push@system.gserviceaccount.com` har rollen **Pub/Sub Publisher** på topic'et.
+4. Genbrug den autentificerede subscription `dfks-gmail-contracts-vercel`. Den anvender servicekontoen `dfks-gmail-push@dfks-portal.iam.gserviceaccount.com` og kalder:
 
-   `https://<portalens-domæne>/api/integrations/gmail/contracts/push`
+   `https://dfks-portal-hazel.vercel.app/api/integrations/gmail/contracts/push`
 
 5. Tilføj disse miljøvariabler i Vercel og lokalt:
 
    ```dotenv
-   GOOGLE_GMAIL_CONTRACT_ORG_ID=<DFKS-organisationens UUID>
-   GOOGLE_GMAIL_CONTRACT_TOPIC=projects/<google-cloud-project>/topics/<topic-navn>
-   GOOGLE_PUBSUB_PUSH_AUDIENCE=https://<portalens-domæne>/api/integrations/gmail/contracts/push
-   GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL=<pubsub-push-servicekontoens-email>
+   GOOGLE_GMAIL_CONTRACT_ORG_ID=3dfcad23-03ce-4de0-82f2-6566dfcd88a5
+   GOOGLE_GMAIL_CONTRACT_TOPIC=projects/dfks-portal/topics/dfks-gmail-contracts
+   GOOGLE_PUBSUB_PUSH_AUDIENCE=https://dfks-portal-hazel.vercel.app/api/integrations/gmail/contracts/push
+   GOOGLE_PUBSUB_PUSH_SERVICE_ACCOUNT_EMAIL=dfks-gmail-push@dfks-portal.iam.gserviceaccount.com
    ```
 
 6. Kør watch-ruten én gang som superadmin eller via Vercels beskyttede cron. Den fornyes derefter dagligt. Inputlabelen `kontrakter` skal allerede findes; outputlabelen `kontrakt gennemgang` oprettes automatisk, hvis den mangler.
+
+Watch-ruten genkontrollerer også de seneste syv dage. Det fanger mails, der lå i postkassen før førstegangsopsætningen, eller hvor en Pub/Sub-meddelelse blev forsinket. Et udløbet Gmail history-id må aldrig starte en ubegrænset import af hele mailarkivet. Dubletkontrollen bruger Gmail-message-id og PDF-filens SHA-256-hash, fordi Gmail kan returnere et nyt attachment-id for det samme uændrede bilag.
 
 En mail får først outputlabelen `kontrakt gennemgang`, når alle understøttede bilag (`.pdf`, `.doc`, `.docx`) er oprettet som sager. Mailtekst og spørgsmål gemmes som reference. AI laver kun et lokalt svarudkast, som en jurist skal kontrollere. Portalen opretter ikke Gmail-kladder og sender aldrig svaret automatisk.
