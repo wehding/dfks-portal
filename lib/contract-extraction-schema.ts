@@ -96,6 +96,14 @@ export const CONTRACT_EXTRACTION_JSON_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
+/** Claude Structured Outputs currently rejects this extraction schema because
+ * it exceeds the provider's limits for optional/union fields. The system prompt
+ * already contains the complete schema and requires JSON-only output, so Claude
+ * uses that prompt path while compatible providers retain constrained output. */
+export function contractExtractionResponseSchema(provider: string) {
+  return provider === "anthropic" ? undefined : CONTRACT_EXTRACTION_JSON_SCHEMA;
+}
+
 export const CONTRACT_EXTRACTION_SCHEMA_VERSION = CONTRACT_IMPORT_SCHEMA_VERSION;
 export const CONTRACT_EXTRACTION_CHUNK_CHARS = 90_000;
 export const CONTRACT_EXTRACTION_MIN_TEXT_CHARS = 120;
