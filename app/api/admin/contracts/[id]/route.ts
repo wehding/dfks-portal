@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
 import { requireAdminApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
+import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
 
 // GET /api/admin/contracts/[id]
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -64,7 +65,30 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         emailSource = source ?? null
     }
 
-    return NextResponse.json({ data, assignees, canAssign, emailSource })
+    const { data: latestJob } = await admin.from("contract_review_jobs")
+        .select("status,attempts,next_attempt_at,error_message")
+        .eq("review_id", id)
+        .eq("org_id", auth.orgId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    const job = latestJob as ContractReviewJobSnapshot | null
+    const assignedToName = data.assigned_to
+        ? assignees.find(assignee => assignee.id === data.assigned_to)?.label ?? "Tildelt medarbejder"
+        : null
+    const normalizedData = {
+        ...data,
+        assigned_to_name: assignedToName,
+        analysis_job: job ? {
+            status: job.status,
+            attempts: job.attempts,
+            next_attempt_at: job.next_attempt_at,
+            error: job.error_message ? "Kontraktanalysen kunne ikke gennemføres." : null,
+        } : null,
+        analysis_status: normalizeContractReviewAnalysisStatus({ aiStatus: data.ai_status, intakeStatus: data.intake_status, job }),
+    }
+
+    return NextResponse.json({ data: normalizedData, assignees, canAssign, emailSource })
 }
 
 // PATCH /api/admin/contracts/[id]

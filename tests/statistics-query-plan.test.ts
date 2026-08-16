@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan } from "../lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA } from "../lib/statistics-query-plan";
+
+function collectSchemaKeys(value: unknown, result = new Set<string>()) {
+  if (!value || typeof value !== "object") return result;
+  if (Array.isArray(value)) {
+    for (const item of value) collectSchemaKeys(item, result);
+    return result;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    result.add(key);
+    collectSchemaKeys(child, result);
+  }
+  return result;
+}
+
+test("queryplanschemaet kan sendes direkte til Anthropic Structured Outputs", () => {
+  const keys = collectSchemaKeys(STATISTICS_QUERY_PLAN_SCHEMA);
+  for (const unsupported of ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
+    assert.equal(keys.has(unsupported), false, `${unsupported} må ikke sendes til Anthropic`);
+  }
+});
 
 test("queryplan accepterer kun kendte mål og renser fritekstfiltre", () => {
   const plan = parseStatisticsQueryPlan({
@@ -42,6 +62,19 @@ test("queryplan understøtter flere år, kategorier og producenter med faste gr�
   assert.deepEqual(plan.filters.categories, ["feature", "documentary"]);
   assert.deepEqual(plan.filters.producerNames, ["A", "B", "C", "D", "E"]);
   assert.deepEqual(plan.filters.membershipTypes, ["member", "none"]);
+});
+
+test("siden et år udvides til alle år frem til indeværende år", () => {
+  const currentYear = new Date().getFullYear();
+  const plan = parseStatisticsQueryPlan({
+    metric: "average_monthly_salary",
+    groupBy: "year",
+    chart: "line",
+    filters: { years: [], yearFrom: 2022, yearTo: null },
+  });
+  assert.equal(plan.filters.yearFrom, 2022);
+  assert.equal(plan.filters.yearTo, currentYear);
+  assert.deepEqual(plan.filters.years, Array.from({ length: currentYear - 2022 + 1 }, (_, index) => 2022 + index));
 });
 
 test("faste statistikforslag bruger deterministiske sikre planer", () => {

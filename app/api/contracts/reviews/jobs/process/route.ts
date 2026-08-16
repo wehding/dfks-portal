@@ -1,85 +1,41 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { createServiceClient } from "@/lib/supabase/service";
-import { requireInternalSecretApi } from "@/lib/api-auth";
-import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
+import { getInternalWorkerSecret } from "@/lib/api-auth";
 import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { isContractReviewWorkerAuthorized } from "@/lib/contract-review-worker-auth";
+import { processPendingContractReviewJobs } from "@/lib/server/contract-review-job-processor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-function isAuthorizedWorker(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  return requireInternalSecretApi(request, "contract-review")
-    || Boolean(cronSecret && request.headers.get("authorization") === `Bearer ${cronSecret}`);
-}
+async function run(request: NextRequest, method: "GET" | "POST") {
+  const authorized = isContractReviewWorkerAuthorized({
+    method,
+    authorization: request.headers.get("authorization"),
+    cronSecret: process.env.CRON_SECRET,
+    workerSecret: getInternalWorkerSecret("contract-review"),
+  });
+  if (!authorized) {
+    return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
+  }
 
-async function processJobs(request: NextRequest) {
-  if (!isAuthorizedWorker(request)) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
-  const db = createServiceClient();
-  const workerId = crypto.randomUUID();
-  const startedAt = Date.now();
-  const results: Array<{ reviewId: string; ok: boolean; dead?: boolean }> = [];
-  for (let index = 0; index < 10 && Date.now() - startedAt < 210_000; index += 1) {
-    const { data: jobs, error: claimError } = await db.rpc("claim_contract_review_job", { worker_id: workerId });
-    if (claimError) return NextResponse.json({ error: "Køen kunne ikke læses", processed: results }, { status: 500 });
-    const job = jobs?.[0];
-    if (!job) break;
-    try {
-      const { data: review, error: reviewError } = await db.from("contract_reviews").select("*").eq("id", job.review_id).eq("org_id", job.org_id).single();
-      if (reviewError || !review?.storage_path) throw new Error(reviewError?.message ?? "Originalfil mangler");
-      const { data: file, error: fileError } = await db.storage.from("contract-reviews").download(review.storage_path);
-      if (fileError || !file) throw new Error(fileError?.message ?? "Originalfil kunne ikke hentes");
-      let emailReference: string | null = null;
-      if (review.gmail_contract_message_id) {
-        const { data: mail } = await db.from("gmail_contract_messages")
-          .select("subject,body_text")
-          .eq("id", review.gmail_contract_message_id)
-          .eq("org_id", review.org_id)
-          .maybeSingle();
-        emailReference = mail
-          ? [mail.subject ? `Emne: ${mail.subject}` : null, mail.body_text].filter(Boolean).join("\n\n")
-          : null;
-      }
-      await analyseExistingContractReview({
-        reviewId: review.id,
-        orgId: review.org_id,
-        fileBuffer: Buffer.from(await file.arrayBuffer()), fileName: review.file_name,
-        memberName: review.member_name, memberId: review.member_id, memberEmail: review.member_email,
-        contractType: review.contract_type, productionType: review.production_type,
-        distributionChannels: review.distribution_channels ?? [], producerName: review.producer_name,
-        producerOverenskomst: review.producer_overenskomst_bound == null ? null : String(review.producer_overenskomst_bound),
-        focusAreas: review.focus_areas ?? [], notes: review.notes,
-        emailReference,
-        source: review.intake_source === "gmail" ? "import" : "portal",
-      });
-      await db.from("contract_reviews").update({ intake_status: "complete" }).eq("id", review.id).eq("org_id", review.org_id);
-      await db.from("contract_review_jobs").update({ status: "done", error_message: null, locked_at: null, locked_by: null, updated_at: new Date().toISOString() }).eq("id", job.id);
-      results.push({ reviewId: review.id, ok: true });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Ukendt fejl";
-      const dead = Number(job.attempts) >= 5;
-      await db.from("contract_review_jobs").update({
-        status: dead ? "dead" : "error",
-        error_message: message.slice(0, 500),
-        locked_at: null,
-        locked_by: null,
-        next_attempt_at: new Date(Date.now() + Math.min(60, 5 * (2 ** Math.max(0, Number(job.attempts) - 1))) * 60_000).toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq("id", job.id);
-      await db.from("contract_reviews").update({ ai_status: "fejl", intake_status: dead ? "dead" : "retryable" }).eq("id", job.review_id).eq("org_id", job.org_id);
-      results.push({ reviewId: job.review_id, ok: false, dead });
+  try {
+    const result = await processPendingContractReviewJobs();
+    if (result.hasMore) {
+      after(triggerContractReviewWorker(request.nextUrl.origin));
     }
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error("[contract-review-worker] Køen kunne ikke behandles", {
+      error: error instanceof Error ? error.message : "ukendt fejl",
+    });
+    return NextResponse.json({ error: "Kontraktgennemgangskøen kunne ikke behandles." }, { status: 500 });
   }
-  if (results.length) {
-    const { count } = await db.from("contract_review_jobs").select("id", { count: "exact", head: true }).in("status", ["queued", "error"]);
-    if ((count ?? 0) > 0) after(triggerContractReviewWorker(request.nextUrl.origin));
-  }
-  return NextResponse.json({ processed: results.length, succeeded: results.filter(result => result.ok).length, failed: results.filter(result => !result.ok).length, results });
 }
 
-export async function POST(request: NextRequest) { return processJobs(request); }
+export async function GET(request: NextRequest) {
+  return run(request, "GET");
+}
 
-// Vercel Cron invokes configured paths with GET. Keeping GET and POST on the
-// same authenticated implementation makes the scheduled safety net usable
-// without opening a second code path.
-export async function GET(request: NextRequest) { return processJobs(request); }
+export async function POST(request: NextRequest) {
+  return run(request, "POST");
+}

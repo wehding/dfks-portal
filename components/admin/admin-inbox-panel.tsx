@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, Search, Send } from "lucide-react";
 import { toast } from "sonner";
 import { createAdminInboxMessage, fetchAdminInbox, fetchAdminInboxRecipients, markInboxThreadRead, sendInboxReply } from "@/app/actions/member-inbox";
@@ -13,10 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useI18n } from "@/lib/i18n";
 import { filterInboxRecipients, selectVisibleRecipientIds } from "@/lib/inbox-recipients";
+import type { AdminMessageThread } from "@/lib/admin-message-threads";
 
 type Recipient = { id: string; full_name: string; email: string | null };
-type Message = { id: string; author_role: string; body: string; created_at: string };
-type Thread = { id: string; subject: string; updated_at: string; rettighedshavere: { full_name: string } | null; member_messages: Message[]; category_label?: string; context_title?: string; requiresReply?: boolean; waitingSince?: string | null; unreadCount?: number; can_reply?: boolean; action_href?: string };
+type Thread = AdminMessageThread;
 
 /**
  * Medlemsbeskeder for admin — ny besked (enkelt eller fælles) + tråde med svar.
@@ -25,6 +25,7 @@ type Thread = { id: string; subject: string; updated_at: string; rettighedshaver
 export function AdminInboxPanel() {
   const { t, locale } = useI18n();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [threads, setThreads] = useState<Thread[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [selectedThread, setSelectedThread] = useState<string | null>(null);
@@ -41,22 +42,34 @@ export function AdminInboxPanel() {
     if (!inbox.success) toast.error(inbox.error); else {
       const nextThreads = (inbox.threads ?? []) as Thread[];
       setThreads(nextThreads);
-      const requestedThread = typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("thread");
+      const requestedThread = searchParams.get("thread");
       if (requestedThread && nextThreads.some(thread => thread.id === requestedThread)) setSelectedThread(requestedThread);
     }
     if (!recipientResult.success) toast.error(recipientResult.error); else setRecipients((recipientResult.recipients ?? []) as Recipient[]);
-  }, []);
+  }, [searchParams]);
   // State is intentionally synchronized when the external dialog, storage, or server source changes.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (!selectedThread) return;
+    let cancelled = false;
     void markInboxThreadRead(selectedThread).then(result => {
-      if (!result.success) toast.error("Beskeden kunne ikke markeres som læst");
-      else setThreads(current => current.map(thread => thread.id === selectedThread ? { ...thread, unreadCount: 0 } : thread));
+      if (cancelled) return;
+      if (!result.success) {
+        toast.error(t("messages.markReadError"));
+        return;
+      }
+      setThreads(current => current.map(thread => thread.id === selectedThread ? { ...thread, unreadCount: 0 } : thread));
+      window.dispatchEvent(new Event("works-updated"));
       router.refresh();
+      if (searchParams.get("thread") === selectedThread) {
+        const next = new URLSearchParams(searchParams.toString());
+        next.delete("thread");
+        router.replace(`${window.location.pathname}${next.size ? `?${next}` : ""}#messages`, { scroll: false });
+      }
     });
-  }, [router, selectedThread]);
+    return () => { cancelled = true; };
+  }, [router, searchParams, selectedThread, t]);
   const active = useMemo(() => threads.find(thread => thread.id === selectedThread) ?? null, [threads, selectedThread]);
   const hasRecipientQuery = recipientQuery.trim().length > 0;
   const visibleRecipients = useMemo(
@@ -115,7 +128,7 @@ export function AdminInboxPanel() {
             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${badgeClass}`}>
               {categoryText}
             </span>
-            <span className="text-xs font-semibold text-foreground truncate">{thread.requiresReply && <span className="mr-1 text-amber-700">Afventer svar ·</span>}{thread.rettighedshavere?.full_name ?? "Medlem"}</span>
+            <span className="text-xs font-semibold text-foreground truncate">{thread.unreadCount > 0 && <span className="mr-1 text-blue-700">{thread.unreadCount} ulæst ·</span>}{thread.requiresReply && <span className="mr-1 text-amber-700">Afventer svar ·</span>}{thread.rettighedshavere?.full_name ?? "Medlem"}</span>
           </div>
           <span className="block text-xs font-medium text-muted-foreground truncate">{contextTitle}</span>
         </button>

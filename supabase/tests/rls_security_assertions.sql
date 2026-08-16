@@ -209,7 +209,9 @@ begin
       ('finalize_contract_ai_job(uuid)'),
       ('fail_contract_ai_job(uuid,text,text,text,text,timestamptz,boolean)'),
       ('search_contract_duplicate_candidates(uuid,uuid,text,integer)'),
-      ('configure_contract_import_cron(text,text)')
+      ('configure_contract_import_cron(text,text)'),
+      ('get_statistics_annual_cpi()'),
+      ('upsert_statistics_cpi(jsonb)')
     ) as protected_function(signature)
     where has_function_privilege('anon', 'public.' || protected_function.signature, 'EXECUTE')
        or has_function_privilege('authenticated', 'public.' || protected_function.signature, 'EXECUTE')

@@ -13,6 +13,8 @@ export type StatisticsQueryPlan = {
   groupBy: "year";
   filters: {
     years: number[];
+    yearFrom: number | null;
+    yearTo: number | null;
     gender: "male" | "female" | "other" | null;
     categories: StatisticsCategory[];
     contractType: "a-løn" | "leverandør" | null;
@@ -23,6 +25,50 @@ export type StatisticsQueryPlan = {
     experienceGroup: "new_graduate" | "early_career" | "experienced" | "veteran" | null;
   };
   chart: "line" | "bar" | "table";
+};
+
+export type StatisticsQueryPlanErrorCode = "missing_plan" | "unsupported_metric" | "unsupported_grouping";
+
+export class StatisticsQueryPlanError extends Error {
+  readonly code: StatisticsQueryPlanErrorCode;
+
+  constructor(code: StatisticsQueryPlanErrorCode, message: string) {
+    super(message);
+    this.name = "StatisticsQueryPlanError";
+    this.code = code;
+  }
+}
+
+export const STATISTICS_QUERY_PLAN_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["metric", "groupBy", "filters", "chart"],
+  properties: {
+    metric: { type: "string", enum: [...STATISTICS_METRICS] },
+    groupBy: { type: "string", enum: ["year"] },
+    chart: { type: "string", enum: ["line", "bar", "table"] },
+    filters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["years", "yearFrom", "yearTo", "gender", "categories", "contractType", "producerNames", "producerTypeCodes", "membershipTypes", "professionType", "experienceGroup"],
+      properties: {
+        // Anthropic Structured Outputs understøtter formen, men ikke alle JSON
+        // Schema-begrænsninger. De præcise grænser håndhæves derfor fortsat i
+        // parseStatisticsQueryPlan efter modelsvaret.
+        years: { type: "array", items: { type: "integer" } },
+        yearFrom: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        yearTo: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        gender: { anyOf: [{ type: "string", enum: ["male", "female", "other"] }, { type: "null" }] },
+        categories: { type: "array", items: { type: "string", enum: ["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"] } },
+        contractType: { anyOf: [{ type: "string", enum: ["a-løn", "leverandør"] }, { type: "null" }] },
+        producerNames: { type: "array", items: { type: "string" } },
+        producerTypeCodes: { type: "array", items: { type: "string" } },
+        membershipTypes: { type: "array", items: { type: "string", enum: ["member", "associate", "none", "unknown"] } },
+        professionType: { anyOf: [{ type: "string" }, { type: "null" }] },
+        experienceGroup: { anyOf: [{ type: "string", enum: ["new_graduate", "early_career", "experienced", "veteran"] }, { type: "null" }] },
+      },
+    },
+  },
 };
 
 const allowedMetrics = new Set<string>(STATISTICS_METRICS);
@@ -51,12 +97,14 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   const normalized = question.trim().toLocaleLowerCase("da");
   const base = (metric: StatisticsMetric, chart: StatisticsQueryPlan["chart"] = "line"): StatisticsQueryPlan => ({
     metric, groupBy: "year", chart,
-    filters: { years: [], gender: null, categories: [], contractType: null, producerNames: [], producerTypeCodes: [], membershipTypes: [], professionType: null, experienceGroup: null },
+    filters: { years: [], yearFrom: null, yearTo: null, gender: null, categories: [], contractType: null, producerNames: [], producerTypeCodes: [], membershipTypes: [], professionType: null, experienceGroup: null },
   });
   if (normalized.includes("medianlønnen") && normalized.includes("spillefilm") && normalized.includes("dokumentarfilm")) {
     const plan = base("average_monthly_salary");
     plan.filters.categories = ["feature", "documentary"];
-    plan.filters.years = [2022, 2023, 2024, 2025, 2026];
+    plan.filters.yearFrom = 2022;
+    plan.filters.yearTo = new Date().getFullYear();
+    plan.filters.years = Array.from({ length: plan.filters.yearTo - 2022 + 1 }, (_, index) => 2022 + index);
     return plan;
   }
   if (normalized.includes("gennemsnitlige pension")) return base("average_pension");
@@ -72,17 +120,28 @@ function stringArray(value: unknown, maximum: number, maxLength = 120) {
 }
 
 export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
-  if (!value || typeof value !== "object") throw new Error("AI-planen mangler.");
+  if (!value || typeof value !== "object") throw new StatisticsQueryPlanError("missing_plan", "AI-planen mangler.");
   const raw = value as Record<string, unknown>;
   const metric = normalizedMetric(raw.metric ?? raw.measure ?? raw.target);
-  if (!metric) throw new Error("Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
+  if (!metric) throw new StatisticsQueryPlanError("unsupported_metric", "Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
   const rawGroupBy = Array.isArray(raw.groupBy) ? raw.groupBy[0] : raw.groupBy ?? raw.group_by ?? "year";
-  if (rawGroupBy !== "year" && rawGroupBy !== "år") throw new Error("Kun gruppering pr. år er understøttet endnu.");
+  if (rawGroupBy !== "year" && rawGroupBy !== "år") throw new StatisticsQueryPlanError("unsupported_grouping", "Kun gruppering pr. år er understøttet endnu.");
   const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as Record<string, unknown> : {};
   const legacyYear = Number(rawFilters.year);
-  const years = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
+  const explicitYears = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
     .map(Number).filter(year => Number.isInteger(year) && year >= 1900 && year <= 2200)
     .filter((year, index, all) => all.indexOf(year) === index).sort((a, b) => a - b).slice(0, 200);
+  const currentYear = new Date().getFullYear();
+  const parsedYearFrom = Number(rawFilters.yearFrom);
+  const parsedYearTo = Number(rawFilters.yearTo);
+  const yearFrom = Number.isInteger(parsedYearFrom) && parsedYearFrom >= 1900 && parsedYearFrom <= currentYear ? parsedYearFrom : null;
+  const yearTo = Number.isInteger(parsedYearTo) && parsedYearTo >= 1900
+    ? Math.min(parsedYearTo, currentYear)
+    : yearFrom != null ? currentYear : null;
+  const rangeYears = yearFrom != null && yearTo != null && yearTo >= yearFrom
+    ? Array.from({ length: Math.min(200, yearTo - yearFrom + 1) }, (_, index) => yearFrom + index)
+    : [];
+  const years = [...new Set([...explicitYears, ...rangeYears])].sort((a, b) => a - b).slice(0, 200);
   const legacyCategory = typeof rawFilters.category === "string" ? [rawFilters.category] : [];
   const categories = (Array.isArray(rawFilters.categories) ? rawFilters.categories : legacyCategory)
     .filter((category): category is StatisticsCategory => allowedCategories.has(category as StatisticsCategory))
@@ -93,6 +152,8 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
     groupBy: "year",
     filters: {
       years,
+      yearFrom,
+      yearTo,
       gender: allowedGenders.has(String(rawFilters.gender)) ? rawFilters.gender as StatisticsQueryPlan["filters"]["gender"] : null,
       categories,
       contractType: allowedContractTypes.has(String(rawFilters.contractType)) ? rawFilters.contractType as StatisticsQueryPlan["filters"]["contractType"] : null,

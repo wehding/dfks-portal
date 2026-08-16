@@ -13,8 +13,10 @@ export async function POST(req: NextRequest) {
     const origin = req.nextUrl.origin;
     after(async () => {
       try {
-        const sync = await syncGmailContractMailbox(notification.historyId);
-        if (sync.imported > 0) await triggerContractReviewWorker(origin);
+        await syncGmailContractMailbox(notification.historyId);
+        // Start altid workeren. Det reparerer ogsa tidligere modne jobs, hvis
+        // Gmail-synkroniseringen ikke fandt en ny mail denne gang.
+        await triggerContractReviewWorker(origin);
       } catch (error) {
         console.error("[gmail-contract-import] Synkronisering fejlede", getSafeGmailContractImportError(error));
       }
