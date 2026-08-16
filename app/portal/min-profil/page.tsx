@@ -185,7 +185,12 @@ export default function MinProfilPage() {
                 .from("rettighedshavere")
                 .update({ email, phone, address: formatAddress(streetAddress, postalCode, city), alternative_names: altNavne, email_transactional_enabled: emailTransactionalEnabled, email_broadcast_enabled: emailBroadcastEnabled })
                 .eq("id", profile.id)
-            if (error) throw new Error(error.message)
+            if (error) {
+                const isNameConflict = error.code === "23505" || /rights_holder_name_claims|duplicate key/i.test(error.message)
+                throw new Error(isNameConflict
+                    ? "Et navn eller en navnevariant bruges allerede af en anden profil."
+                    : error.message)
+            }
 
             const statisticsResult = await updateMemberStatisticsProfile({
                 optOutStatistics: !shareStatistics,

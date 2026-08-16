@@ -146,3 +146,33 @@ export function buildCompleteEpisodeOptions({
     return byNumber.get(number) ?? { number, title: `Afsnit ${number}` };
   });
 }
+
+export function buildDfiEpisodeOptions({
+  titles,
+  existingOptions,
+  seasonNumber = 1,
+}: {
+  titles: Array<string | null | undefined>;
+  existingOptions?: EpisodeOptionInput[] | null;
+  seasonNumber?: number;
+}) {
+  const parsedOptions = titles.flatMap(title => {
+    const parsed = parseDfiEpisodeTitleInfo(title ?? "");
+    return parsed?.episodeNumber
+      ? [{ number: parsed.episodeNumber, title: parsed.subtitle || `Afsnit ${parsed.episodeNumber}` }]
+      : [];
+  });
+  const merged = Array.from(
+    new Map([...(existingOptions ?? []), ...parsedOptions].map(option => [Number(option.number), option])).values(),
+  );
+  const totalEpisodes = Math.max(
+    ...titles.map(title => parseDfiEpisodeTitleInfo(title ?? "")?.totalEpisodes ?? 0),
+    ...merged.map(option => Number(option.number) || 0),
+    0,
+  );
+  return buildCompleteEpisodeOptions({
+    episodeCount: totalEpisodes,
+    externalOptions: merged,
+    seasonNumber,
+  });
+}
