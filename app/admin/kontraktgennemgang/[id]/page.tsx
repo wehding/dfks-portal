@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import type { DbContractReview } from "@/lib/db/types"
+import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "@/lib/contract-review-job-status"
 import { useI18n } from "@/lib/i18n"
 
 // ── Types ─────────────────────────────────────────────────────
@@ -208,7 +209,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [result, setResult] = useState<ReviewResult | null>(null)
     const [riskLevel, setRiskLevel] = useState<"LAV" | "MELLEM" | "HØJ" | null>(null)
     const [shouldEscalate, setShouldEscalate] = useState<boolean | null>(null)
-    const [contractText, setContractText] = useState("")
+    const [contractText] = useState("")
     const [mailText, setMailText] = useState("")
     const [mailSubject, setMailSubject] = useState("")
     const [mailEditMode, setMailEditMode] = useState(false)
@@ -254,6 +255,37 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
             .catch(() => toast.error("Kunne ikke hente kontrakt"))
             .finally(() => setLoading(false))
     }, [id])
+
+    useEffect(() => {
+        if (!review) return
+        const analysisStatus = review.analysis_status ?? normalizeContractReviewAnalysisStatus({
+            aiStatus: review.ai_status,
+            intakeStatus: review.intake_status,
+            job: review.analysis_job ? {
+                status: review.analysis_job.status,
+                attempts: review.analysis_job.attempts,
+                next_attempt_at: review.analysis_job.next_attempt_at,
+                error_message: review.analysis_job.error,
+            } : null,
+        })
+        if (!isActiveContractReviewAnalysis(analysisStatus)) return
+        const interval = window.setInterval(async () => {
+            const response = await fetch(`/api/admin/contracts/${id}`).catch(() => null)
+            if (!response?.ok) return
+            const json = await response.json()
+            const updated = json.data as DbContractReview
+            setReview(updated)
+            if (updated.ai_result && updated.analysis_status === "ready") {
+                const nextResult = updated.ai_result as unknown as ReviewResult
+                setResult(nextResult)
+                setMailText(updated.response_draft ?? nextResult.feedbackmail?.tekst ?? "")
+                setMailSubject(updated.response_draft_subject ?? nextResult.feedbackmail?.emne ?? "")
+                if (updated.risk_level) setRiskLevel(updated.risk_level)
+                if (updated.should_escalate != null) setShouldEscalate(updated.should_escalate)
+            }
+        }, 5_000)
+        return () => window.clearInterval(interval)
+    }, [id, review])
 
     // Hent PDF-URL via server-side route (omgår storage RLS)
     useEffect(() => {
@@ -317,16 +349,13 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                 }
                 throw new Error(e.error ?? "Analyse fejlede")
             }
-            const json = await resp.json()
-            const res = json.data.ai_result as unknown as ReviewResult
-            setResult(res)
-            setMailText(res.feedbackmail?.tekst ?? "")
-            setMailSubject(res.feedbackmail?.emne ?? "")
-            if (json.data.risk_level) setRiskLevel(json.data.risk_level)
-            if (json.data.should_escalate != null) setShouldEscalate(json.data.should_escalate)
-            setReview(json.data)
-            setContractText(json.contractText ?? "")
-            toast.success("Ny analyse fuldført")
+            setReview(current => current ? {
+                ...current,
+                ai_status: "analyserer",
+                intake_status: "queued",
+                analysis_status: "queued",
+            } : current)
+            toast.success("Analysen er sat i kø")
         } catch (e: unknown) {
             toast.error(`Analyse fejlede: ${errorMessage(e)}`)
         }

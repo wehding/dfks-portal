@@ -40,6 +40,7 @@ import { type CaseLearningKontrakttype } from "@/lib/ai"
 import { getMyOrgRole } from "@/lib/db/organisations"
 import { useRouter } from "next/navigation"
 import type { DbContractReview } from "@/lib/db/types"
+import { isActiveContractReviewAnalysis, normalizeContractReviewAnalysisStatus } from "@/lib/contract-review-job-status"
 import type { ContractType, ProductionType, DistributionChannel, ProducerSelection } from "@/lib/types"
 import { useI18n } from "@/lib/i18n"
 import {
@@ -127,6 +128,27 @@ const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
     afventer:  { label: "Ikke tildelt",     class: "bg-muted text-muted-foreground border-border" },
     behandling:{ label: "Under behandling", class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
     afsluttet: { label: "Afsluttet",        class: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800" },
+}
+
+const ANALYSIS_STATUS_CONFIG = {
+    queued: { label: { da: "I kø", en: "Queued" }, class: "bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-950 dark:text-slate-300 dark:border-slate-800" },
+    processing: { label: { da: "Analyserer", en: "Analysing" }, class: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800" },
+    retrying: { label: { da: "Prøver igen", en: "Retrying" }, class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
+    failed: { label: { da: "Analyse fejlede – genprøv", en: "Analysis failed – retry" }, class: "bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800" },
+    ready: { label: { da: "Analyse klar", en: "Analysis ready" }, class: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800" },
+} as const
+
+function reviewAnalysisStatus(review: DbContractReview) {
+    return review.analysis_status ?? normalizeContractReviewAnalysisStatus({
+        aiStatus: review.ai_status,
+        intakeStatus: review.intake_status,
+        job: review.analysis_job ? {
+            status: review.analysis_job.status,
+            attempts: review.analysis_job.attempts,
+            next_attempt_at: review.analysis_job.next_attempt_at,
+            error_message: review.analysis_job.error,
+        } : null,
+    })
 }
 
 function relativeTime(dateStr: string, locale: "da" | "en"): string {
@@ -229,8 +251,8 @@ function Indbakke() {
     const [bulkUpdating, setBulkUpdating] = useState(false)
     const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
 
-    const fetchReviews = useCallback(async () => {
-        setLoading(true)
+    const fetchReviews = useCallback(async (showLoading = true) => {
+        if (showLoading) setLoading(true)
         const params = new URLSearchParams()
         params.set("queue", tab === "mine" ? "mine" : "all")
         if (statusFilter.length) params.set("status", statusFilter.join(","))
@@ -246,7 +268,7 @@ function Indbakke() {
         } catch {
             toast.error("Kunne ikke hente kontrakter")
         }
-        setLoading(false)
+        if (showLoading) setLoading(false)
     }, [tab, statusFilter, productionTypeFilter, search])
 
     useEffect(() => {
@@ -259,6 +281,12 @@ function Indbakke() {
         }
     }, [fetchReviews])
 
+    useEffect(() => {
+        if (!reviews.some(review => isActiveContractReviewAnalysis(reviewAnalysisStatus(review)))) return
+        const interval = window.setInterval(() => void fetchReviews(false), 5_000)
+        return () => window.clearInterval(interval)
+    }, [fetchReviews, reviews])
+
     // ── Supabase Realtime — lyt på INSERT og UPDATE ───────────
     useEffect(() => {
         const supabase = createClient()
@@ -267,26 +295,12 @@ function Indbakke() {
             .on(
                 "postgres_changes",
                 { event: "INSERT", schema: "public", table: "contract_reviews" },
-                (payload) => {
-                    setReviews(prev => {
-                        // Undgå dubletter
-                        if (prev.some(r => r.id === (payload.new as DbContractReview).id)) return prev
-                        return [payload.new as DbContractReview, ...prev]
-                    })
-                    setTotalCount(c => c + 1)
-                }
+                () => { void fetchReviews(false) }
             )
             .on(
                 "postgres_changes",
                 { event: "UPDATE", schema: "public", table: "contract_reviews" },
-                (payload) => {
-                    setReviews(prev =>
-                        prev.map(r => r.id === (payload.new as DbContractReview).id
-                            ? payload.new as DbContractReview
-                            : r
-                        )
-                    )
-                }
+                () => { void fetchReviews(false) }
             )
             .on(
                 "postgres_changes",
@@ -309,7 +323,7 @@ function Indbakke() {
             .subscribe()
 
         return () => { supabase.removeChannel(channel) }
-    }, []) // Ét kanal for hele komponentens levetid
+    }, [fetchReviews])
 
     const mineCount = reviews.filter(r => r.status !== "afsluttet").length
     const visibleIds = reviews.map(review => review.id)
@@ -325,6 +339,48 @@ function Indbakke() {
         return new Set([...current, ...visibleIds])
     })
     const openReview = (id: string) => router.push(`/admin/kontraktgennemgang/${id}`)
+    const reanalyseReview = async (reviewId: string) => {
+        setReanalysingIds(previous => new Set([...previous, reviewId]))
+        try {
+            const response = await fetch(`/api/admin/contracts/${reviewId}/reanalyse`, { method: "POST" })
+            const result = await response.json().catch(() => ({})) as { error?: string; missing_file?: boolean }
+            if (!response.ok) {
+                if (result.missing_file) toast.error("Filen mangler – åbn sagen og upload den igen")
+                else toast.error(result.error ?? "Analysen kunne ikke sættes i kø")
+                return
+            }
+            toast.success("Analysen er sat i kø")
+            await fetchReviews(false)
+        } finally {
+            setReanalysingIds(previous => { const next = new Set(previous); next.delete(reviewId); return next })
+        }
+    }
+    const renderAnalysisBadge = (review: DbContractReview) => {
+        const state = reviewAnalysisStatus(review)
+        const config = ANALYSIS_STATUS_CONFIG[state]
+        const label = config.label[locale]
+        const busy = reanalysingIds.has(review.id)
+        const title = state === "retrying" && review.analysis_job?.next_attempt_at
+            ? `Næste automatiske forsøg: ${new Date(review.analysis_job.next_attempt_at).toLocaleString("da-DK")}`
+            : label
+        if (state === "failed") {
+            return <button
+                type="button"
+                title={title}
+                disabled={busy}
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors hover:opacity-80 disabled:cursor-wait ${config.class}`}
+                onClick={event => { event.stopPropagation(); void reanalyseReview(review.id) }}
+            >
+                <RotateCcw className={`h-3 w-3 ${busy ? "animate-spin" : ""}`} />
+                {busy ? (locale === "en" ? "Queuing…" : "Sætter i kø…") : label}
+            </button>
+        }
+        return <span title={title} className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${config.class}`}>
+            {state === "processing" && <RotateCcw className="h-3 w-3 animate-spin" />}
+            {state === "ready" && <CheckCircle2 className="h-3 w-3" />}
+            {label}
+        </span>
+    }
     const runBulkAction = async (action: "claim" | "release" | "complete") => {
         const ids = [...selectedIds]
         if (!ids.length) return
@@ -437,7 +493,7 @@ function Indbakke() {
                 </Select>
 
                 <button
-                    onClick={fetchReviews}
+                    onClick={() => void fetchReviews()}
                     className="flex items-center justify-center gap-1.5 rounded-md border px-3 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground sm:ml-auto sm:border-0 sm:px-0 sm:py-0"
                 >
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -454,13 +510,17 @@ function Indbakke() {
             {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                 <span className="text-sm font-medium">{selectedIds.size} valgt</span>
                 <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("claim")}>Tag valgte</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("claim")}>{locale === "en" ? "Assign selected to me" : "Tildel valgte til mig"}</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("release")}>Frigiv valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("complete")}>Markér afsluttet</Button>
                     <Button size="sm" variant="destructive" disabled={bulkUpdating} onClick={() => setDeleteSelectedOpen(true)}><Trash2 className="mr-1.5 h-4 w-4" />Slet valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
                 </div>
             </div>}
+
+            <p className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                {locale === "en" ? "Case status shows who is responsible for the review. AI status only shows whether the contract has been read. Assignment neither starts analysis nor closes the case." : "Sagsstatus viser, hvem der har ansvaret for gennemgangen. AI-status viser kun, om kontrakten er aflæst. Tildeling starter ikke en analyse og afslutter ikke sagen."}
+            </p>
 
             <Dialog open={deleteSelectedOpen} onOpenChange={open => !bulkUpdating && setDeleteSelectedOpen(open)}>
                 <DialogContent className="max-w-lg">
@@ -510,8 +570,9 @@ function Indbakke() {
                                 <MobileMetaRow label={t("admin.reviewQueue.submitted")}>{relativeTime(r.reviewed_at, locale)}</MobileMetaRow>
                                 <MobileMetaRow label={t("common.type")}>{r.production_type ? PRODUCTION_TYPE_LABELS[r.production_type] ?? r.production_type : "—"}</MobileMetaRow>
                                 <MobileMetaRow label={t("admin.producers.producer")}>{r.producer_name ?? "—"}</MobileMetaRow>
-                                <MobileMetaRow label={t("admin.reviewQueue.assigned")}>{r.assigned_to ? t("admin.reviewQueue.assigned") : t("admin.reviewQueue.unassigned")}</MobileMetaRow>
+                                <MobileMetaRow label={t("admin.reviewQueue.assigned")}>{r.assigned_to ? `${locale === "en" ? "In progress by" : "Under behandling af"} ${r.assigned_to_name ?? (locale === "en" ? "staff member" : "medarbejder")}` : t("admin.reviewQueue.unassigned")}</MobileMetaRow>
                             </div>
+                            <div className="mt-3">{renderAnalysisBadge(r)}</div>
                         </MobileDataCard>
                     })}
                 </MobileCardList>
@@ -575,73 +636,11 @@ function Indbakke() {
                                                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusCfg.class}`}>
                                                     {r.status === "afventer" ? t("admin.reviewQueue.unassigned") : r.status === "behandling" ? t("admin.reviewQueue.processing") : t("admin.reviewQueue.completed")}
                                                 </span>
-                                                {/* AI-analysestatus */}
-                                                {(() => {
-                                                    const analysering = !r.ai_status || r.ai_status === "analyserer"
-                                                    if (analysering && r.ai_status !== "fejl") {
-                                                        const isReanalysing = reanalysingIds.has(r.id)
-                                                        return (
-                                                            <button
-                                                                title="Analyserer — klik for at forcere analyse nu"
-                                                                disabled={isReanalysing}
-                                                                className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900 disabled:cursor-wait"
-                                                                onClick={async e => {
-                                                                    e.stopPropagation()
-                                                                    setReanalysingIds(prev => new Set([...prev, r.id]))
-                                                                    const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
-                                                                    setReanalysingIds(prev => { const n = new Set(prev); n.delete(r.id); return n })
-                                                                    if (res.ok) { toast.success("Analyse fuldført"); fetchReviews(); return }
-                                                                    const json = await res.json().catch(() => ({}))
-                                                                    toast.error(json.error ?? "Kunne ikke starte analyse")
-                                                                }}
-                                                            >
-                                                                <RotateCcw className="h-3 w-3 animate-spin" />
-                                                                Analyserer…
-                                                            </button>
-                                                        )
-                                                    }
-                                                    if (r.ai_status === "fejl" || (r.ai_status !== "klar" && reanalysingIds.has(r.id))) {
-                                                        const isReanalysing = reanalysingIds.has(r.id)
-                                                        return (
-                                                            <button
-                                                                disabled={isReanalysing}
-                                                                title={isReanalysing ? "Analyserer…" : "Analyse fejlede — klik for at genkøre"}
-                                                                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
-                                                                    isReanalysing
-                                                                        ? "bg-blue-50 text-blue-600 border-blue-200 cursor-wait dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800"
-                                                                        : "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800"
-                                                                }`}
-                                                                onClick={async e => {
-                                                                    e.stopPropagation()
-                                                                    setReanalysingIds(prev => new Set([...prev, r.id]))
-                                                                    const res = await fetch(`/api/admin/contracts/${r.id}/reanalyse`, { method: "POST" })
-                                                                    setReanalysingIds(prev => { const n = new Set(prev); n.delete(r.id); return n })
-                                                                    if (res.ok) { toast.success("Analyse fuldført"); fetchReviews(); return }
-                                                                    const json = await res.json().catch(() => ({}))
-                                                                    if (json.missing_file) {
-                                                                        toast.error("Filen mangler — åbn sagen og upload manuelt")
-                                                                    } else {
-                                                                        toast.error(json.error ?? "Kunne ikke genstarte analyse")
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <RotateCcw className={`h-3 w-3 ${isReanalysing ? "animate-spin" : ""}`} />
-                                                                {isReanalysing ? "Analyserer…" : "Fejlede — genkør"}
-                                                            </button>
-                                                        )
-                                                    }
-                                                    if (r.ai_status === "klar") return (
-                                                        <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800">
-                                                            <CheckCircle2 className="h-3 w-3" />
-                                                            Analyse klar
-                                                        </span>
-                                                    )
-                                                    return null
-                                                })()}
+                                                {renderAnalysisBadge(r)}
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 text-muted-foreground">
-                                            {r.assigned_to ? t("admin.reviewQueue.assigned") : t("admin.reviewQueue.unassigned")}
+                                            {r.assigned_to ? `${locale === "en" ? "In progress by" : "Under behandling af"} ${r.assigned_to_name ?? (locale === "en" ? "staff member" : "medarbejder")}` : t("admin.reviewQueue.unassigned")}
                                         </td>
                                     </tr>
                                 )

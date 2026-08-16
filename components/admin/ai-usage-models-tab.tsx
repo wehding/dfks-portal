@@ -26,6 +26,12 @@ type Payload = {
     exchangeRate: { rate_date: string; usd_dkk: number; source: string } | null
     organisations: Array<{ id: string; name: string }>
     statisticsContractScope: "validated_only" | "validated_and_drafts"
+    statisticsHealth: {
+        activeModel: string | null
+        latestSuccessAt: string | null
+        latestFailure: { at: string | null; category: string } | null
+        latestCpiPeriod: string | null
+    }
 }
 
 const COPY = {
@@ -39,6 +45,7 @@ const COPY = {
         recent: "Seneste AI-kald", date: "Tid", stage: "Del", usage: "Input / output", thinking: "Thinking", cost: "Pris", status: "Status",
         standard: "Standard", batch: "Batch-estimat", batchHelp: "Batch er kun en prisberegning og sender ikke kontrakter asynkront.",
         estimated: "~ betyder estimeret tokenforbrug for embeddings.",
+        statisticsHealth: "Status for statistikassistenten", activeStatisticsModel: "Aktiv model", latestStatisticsSuccess: "Seneste succes", latestStatisticsError: "Seneste fejlkategori", latestCpi: "Seneste inflationstal", never: "Ingen endnu", unavailable: "Ikke tilgængelig",
     },
     en: {
         title: "Usage and models", subtitle: "Actual tokens, prices and permanent model choices for contract and statistics AI.",
@@ -50,6 +57,7 @@ const COPY = {
         recent: "Latest AI calls", date: "Time", stage: "Stage", usage: "Input / output", thinking: "Thinking", cost: "Cost", status: "Status",
         standard: "Standard", batch: "Batch estimate", batchHelp: "Batch is a price estimate only and does not submit contracts asynchronously.",
         estimated: "~ marks estimated embedding token usage.",
+        statisticsHealth: "Statistics assistant status", activeStatisticsModel: "Active model", latestStatisticsSuccess: "Latest success", latestStatisticsError: "Latest error category", latestCpi: "Latest inflation data", never: "None yet", unavailable: "Unavailable",
     },
 } as const
 
@@ -154,6 +162,13 @@ export function AiUsageModelsTab() {
             <CardHeader className="pb-2"><CardDescription className="flex items-center gap-2"><card.icon className="h-4 w-4" />{card.label}</CardDescription></CardHeader>
             <CardContent><p className="text-2xl font-semibold tabular-nums">{card.value}</p>{card.sub && <p className="text-xs text-muted-foreground">{card.sub}</p>}</CardContent>
         </Card>)}</div>
+
+        <Card><CardHeader><CardTitle>{text.statisticsHealth}</CardTitle></CardHeader><CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">{text.activeStatisticsModel}</p><p className="mt-1 break-words text-sm font-medium">{data.models.find(model => `${model.provider}/${model.model}` === data.statisticsHealth?.activeModel)?.label ?? data.statisticsHealth?.activeModel ?? text.unavailable}</p></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">{text.latestStatisticsSuccess}</p><p className="mt-1 text-sm font-medium">{data.statisticsHealth?.latestSuccessAt ? new Date(data.statisticsHealth.latestSuccessAt).toLocaleString(locale === "en" ? "en-GB" : "da-DK") : text.never}</p></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">{text.latestStatisticsError}</p><p className="mt-1 break-words text-sm font-medium">{data.statisticsHealth?.latestFailure?.category ?? text.never}</p></div>
+            <div className="rounded-md border p-3"><p className="text-xs text-muted-foreground">{text.latestCpi}</p><p className="mt-1 text-sm font-medium">{data.statisticsHealth?.latestCpiPeriod ?? text.unavailable}</p></div>
+        </CardContent></Card>
 
         <Card><CardHeader><CardTitle>{locale === "en" ? "Statistics contract source" : "Kontraktgrundlag for statistik"}</CardTitle><CardDescription>{locale === "en" ? "Drafts can contain incomplete or unverified extraction data." : "Kladder kan indeholde ufuldstændige eller endnu ikke kontrollerede udtræksdata."}</CardDescription></CardHeader><CardContent className="max-w-md">
             <Select value={statisticsScope} onValueChange={value => void saveStatisticsScope(value as "validated_only" | "validated_and_drafts")}>

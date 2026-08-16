@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callAi } from "@/lib/ai-client";
+import { AiProviderHttpError, callAi } from "@/lib/ai-client";
 import { getAiRuntimeConfig } from "@/lib/ai-runtime";
 import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage";
 import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getAdminStatistics, type StatisticsFilters } from "@/lib/admin-statistics";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
-import { extractStatisticsSeries, parseStatisticsQueryPlan, type StatisticsCategory } from "@/lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA, StatisticsQueryPlanError, type StatisticsCategory } from "@/lib/statistics-query-plan";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
@@ -16,7 +16,8 @@ Returnér kun JSON med: metric, groupBy, filters, chart.
 metric må kun være average_monthly_salary, average_pension, average_working_weeks, contract_count eller contributions.
 Spørgsmål om medianløn bruger average_monthly_salary; statistikmotoren returnerer den personvægtede median.
 groupBy skal være year. chart må være line, bar eller table.
-filters må kun indeholde years, gender, categories, contractType, producerNames, producerTypeCodes, membershipTypes, professionType og experienceGroup.
+filters må kun indeholde years, yearFrom, yearTo, gender, categories, contractType, producerNames, producerTypeCodes, membershipTypes, professionType og experienceGroup.
+Ved en periode som "siden 2022" sættes yearFrom til 2022 og yearTo til ${new Date().getFullYear()}. Ved et enkelt år bruges years. Brug null for en manglende periodegrænse.
 experienceGroup må være new_graduate (0-3 år), early_career (4-7 år), experienced (8-17 år), veteran (18+ år) eller null. Erfaring beregnes i kontraktens år.
 years, categories, producerNames, producerTypeCodes og membershipTypes er arrays.
 Brug tomme arrays eller null for filtre, der ikke fremgår. Højst fem producenter.
@@ -75,28 +76,32 @@ function categoryLabel(category: StatisticsCategory) {
   return category === "feature" ? "Spillefilm" : category === "documentary" ? "Dokumentarfilm" : category;
 }
 
-function safeQueryFailure(error: unknown) {
-  const message = error instanceof Error ? error.message : "";
-  if (error instanceof SyntaxError) return {
-    reason: "Statistikassistenten returnerede ikke en gyldig, sikker forespørgselsplan.",
-    suggestion: "Skriv ét spørgsmål ad gangen og nævn gerne mål, periode og eventuel produktionstype.",
-  };
-  if (message.includes("mål, som statistikmotoren ikke tillader")) return {
-    reason: "Spørgsmålet handler om et mål, som den sikre statistikmotor endnu ikke understøtter.",
-    suggestion: "Spørg fx til løn, pension, arbejdsuger, antal kontrakter eller producentbidrag.",
-  };
-  if (message.includes("gruppering pr. år")) return {
-    reason: "Spørgsmålet kræver en gruppering, som ikke kan beregnes sikkert endnu.",
-    suggestion: "Bed om en udvikling eller sammenligning fordelt på år.",
-  };
-  if (message.includes("AI-planen mangler")) return {
-    reason: "Spørgsmålet indeholdt ikke nok oplysninger til at vælge et sikkert statistikmål.",
-    suggestion: "Nævn fx gennemsnitsløn, pension, arbejdsuger eller antal kontrakter.",
-  };
+function classifyStatisticsQueryError(error: unknown) {
+  if (error instanceof StatisticsQueryPlanError) return {
+    status: 422,
+    errorCode: error.code,
+    reason: error.code === "unsupported_metric"
+      ? "Spørgsmålet handler om et mål, som den sikre statistikmotor endnu ikke understøtter."
+      : error.code === "unsupported_grouping"
+        ? "Spørgsmålet kræver en gruppering, som statistikmotoren endnu ikke understøtter."
+        : "Spørgsmålet indeholdt ikke nok oplysninger til at vælge et sikkert statistikmål.",
+    suggestion: "Spørg fx til løn, pension, arbejdsuger, antal kontrakter eller producentbidrag fordelt på år.",
+  } as const;
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (error instanceof AiProviderHttpError || error instanceof SyntaxError || /api-nøgle|ukendt ai-udbyder|timeout|fetch failed/.test(message)) {
+    return {
+      status: 503,
+      errorCode: error instanceof SyntaxError ? "ai_invalid_response" : error instanceof AiProviderHttpError ? `ai_${error.failureClass}` : "ai_unavailable",
+      reason: "Statistikassistenten er midlertidigt utilgængelig.",
+      suggestion: "Prøv igen om lidt. Hvis fejlen fortsætter, kan en administrator kontrollere modellen i AI-kontrolrummet.",
+    } as const;
+  }
   return {
-    reason: "Spørgsmålet kunne ikke matches entydigt med de godkendte statistikmål og filtre, eller statistikassistenten var midlertidigt utilgængelig.",
-    suggestion: "Forenkle spørgsmålet, brug ét mål ad gangen, og angiv eventuelt år, producent eller produktionstype.",
-  };
+    status: 500,
+    errorCode: "statistics_data_error",
+    reason: "Statistikgrundlaget kunne ikke beregnes lige nu.",
+    suggestion: "Prøv igen. Hvis fejlen fortsætter, skal databasefunktionen kontrolleres af en administrator.",
+  } as const;
 }
 
 export async function POST(request: NextRequest) {
@@ -107,7 +112,6 @@ export async function POST(request: NextRequest) {
   const question = typeof body.question === "string" ? body.question.trim().slice(0, 1000) : "";
   if (question.length < 5) return NextResponse.json({ error: "Skriv et statistikspørgsmål." }, { status: 400 });
 
-  const runtime = await getAiRuntimeConfig("statistics_query");
   const runId = await createAiUsageRun({
     orgId: caller.orgId,
     operationType: "statistics_query",
@@ -116,6 +120,7 @@ export async function POST(request: NextRequest) {
     source: "admin",
   });
   try {
+    const runtime = await getAiRuntimeConfig("statistics_query");
     const response = await callAi({
       provider: runtime.provider,
       model: runtime.model,
@@ -123,6 +128,7 @@ export async function POST(request: NextRequest) {
       userMessage: question,
       maxTokens: 700,
       responseJson: true,
+      responseSchema: STATISTICS_QUERY_PLAN_SCHEMA,
       promptCaching: runtime.promptCachingEnabled,
       usageContext: { runId, orgId: caller.orgId, useCase: "statistics_query", stage: "query" },
     });
@@ -133,6 +139,13 @@ export async function POST(request: NextRequest) {
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
         error: producers.ambiguous.candidates.length ? "Producentnavnet er tvetydigt. Vælg en producent." : "Producenten blev ikke fundet i producentregisteret.",
+        reason: producers.ambiguous.candidates.length
+          ? `Flere producenter matcher “${producers.ambiguous.query}” næsten lige godt.`
+          : `“${producers.ambiguous.query}” kunne ikke matches sikkert med producentregisteret.`,
+        suggestion: producers.ambiguous.candidates.length
+          ? `Præcisér navnet, fx ${producers.ambiguous.candidates.slice(0, 3).map(candidate => candidate.name).join(", ")}.`
+          : "Kontrollér producentnavnet eller brug et bredere spørgsmål uden producentfilter.",
+        code: "ambiguous_producer",
         query: producers.ambiguous.query,
         candidates: producers.ambiguous.candidates,
       }, { status: 409 });
@@ -178,7 +191,16 @@ export async function POST(request: NextRequest) {
         caveats: ["Små eller tomme udsnit returneres ikke som statistik."],
       });
     }
-    const inflation = await getAnnualCpi();
+    let inflation: Awaited<ReturnType<typeof getAnnualCpi>> = [];
+    let inflationUnavailable = false;
+    if (plan.metric === "average_monthly_salary") {
+      try {
+        inflation = await getAnnualCpi();
+        inflationUnavailable = inflation.length === 0;
+      } catch {
+        inflationUnavailable = true;
+      }
+    }
     const inflationMap = new Map(inflation.map(row => [row.year, row.index]));
     const bySeries = new Map<string, typeof allSeries>();
     for (const row of allSeries) bySeries.set(row.seriesKey, [...(bySeries.get(row.seriesKey) ?? []), row]);
@@ -198,6 +220,7 @@ export async function POST(request: NextRequest) {
       ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem forskellige personer og skal tolkes med forsigtighed."] : []),
       ...(includeDrafts ? ["Kladdekontrakter indgår efter organisationens indstilling og kan indeholde endnu ikke kontrollerede data."] : []),
       ...(new Set(comparison.map(row => row.year)).size < 2 ? ["Resultatet dækker kun ét år og kan derfor ikke vise en udvikling over tid."] : []),
+      ...(inflationUnavailable ? ["Inflationsdata er midlertidigt utilgængelige. Løntallene vises derfor nominelt uden inflationskorrektion."] : []),
     ];
     return NextResponse.json({
       suppressed: false,
@@ -211,11 +234,14 @@ export async function POST(request: NextRequest) {
       explanation: `${comparison.length} aggregerede datapunkter blev fundet. Resultater med 1–4 forskellige personer er markeret som statistisk usikre.${includeDrafts ? " Kladder indgår efter organisationens indstilling." : ""}`,
     });
   } catch (error) {
-    await finishAiUsageRun(runId, "failed", "invalid_query_plan");
-    console.error("[statistics-query]", error instanceof Error ? error.message : "Ukendt fejl");
+    const failure = classifyStatisticsQueryError(error);
+    await finishAiUsageRun(runId, "failed", failure.errorCode);
+    console.error("[statistics-query] Forespørgslen fejlede", { category: failure.errorCode });
     return NextResponse.json({
       error: "Forespørgslen kunne ikke gennemføres",
-      ...safeQueryFailure(error),
-    }, { status: 400 });
+      reason: failure.reason,
+      suggestion: failure.suggestion,
+      code: failure.errorCode,
+    }, { status: failure.status });
   }
 }

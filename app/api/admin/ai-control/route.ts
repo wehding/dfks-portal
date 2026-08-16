@@ -5,6 +5,7 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { CONTRACT_AI_MODELS, getContractAiModel, isContractAiUseCase } from "@/lib/ai-models"
 import { getKeyStatus } from "@/lib/ai-key-store"
 import { recordAuditEvent } from "@/lib/audit-log-server"
+import { getLatestStatisticsCpiPeriod } from "@/lib/statistics-cpi"
 
 export const dynamic = "force-dynamic"
 
@@ -50,6 +51,29 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "AI-forbruget kunne ikke hentes. Kontrollér at migrationen er kørt." }, { status: 500 })
     }
 
+    let successfulStatisticsQuery = db.from("ai_usage_runs")
+        .select("completed_at")
+        .eq("operation_type", "statistics_query")
+        .eq("status", "succeeded")
+        .order("completed_at", { ascending: false })
+        .limit(1)
+    let failedStatisticsQuery = db.from("ai_usage_runs")
+        .select("completed_at,error_code")
+        .eq("operation_type", "statistics_query")
+        .eq("status", "failed")
+        .order("completed_at", { ascending: false })
+        .limit(1)
+    if (caller.role !== "superadmin") {
+        successfulStatisticsQuery = successfulStatisticsQuery.eq("org_id", caller.orgId)
+        failedStatisticsQuery = failedStatisticsQuery.eq("org_id", caller.orgId)
+    }
+    const [latestSuccess, latestFailure, latestCpiPeriod] = await Promise.all([
+        successfulStatisticsQuery.maybeSingle(),
+        failedStatisticsQuery.maybeSingle(),
+        getLatestStatisticsCpiPeriod().catch(() => null),
+    ])
+    const statisticsSetting = (settingsResult.data ?? []).find(setting => setting.use_case === "statistics_query") ?? null
+
     return NextResponse.json({
         caller: { role: caller.role, orgId: caller.orgId, canEdit: caller.role === "superadmin" },
         models: CONTRACT_AI_MODELS,
@@ -59,6 +83,15 @@ export async function GET(req: NextRequest) {
         events: eventsResult.data ?? [],
         organisations: organisationsResult.data ?? [],
         statisticsContractScope: statisticsScopeResult.data?.statistics_contract_scope ?? "validated_only",
+        statisticsHealth: {
+            activeModel: statisticsSetting ? `${statisticsSetting.provider}/${statisticsSetting.model}` : null,
+            latestSuccessAt: latestSuccess.data?.completed_at ?? null,
+            latestFailure: latestFailure.data ? {
+                at: latestFailure.data.completed_at,
+                category: latestFailure.data.error_code ?? "unknown",
+            } : null,
+            latestCpiPeriod,
+        },
         from,
     })
 }

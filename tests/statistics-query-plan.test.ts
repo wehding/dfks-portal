@@ -43,3 +43,16 @@ test("queryplan understøtter flere år, kategorier og producenter med faste gr�
   assert.deepEqual(plan.filters.producerNames, ["A", "B", "C", "D", "E"]);
   assert.deepEqual(plan.filters.membershipTypes, ["member", "none"]);
 });
+
+test("siden et år udvides til alle år frem til indeværende år", () => {
+  const currentYear = new Date().getFullYear();
+  const plan = parseStatisticsQueryPlan({
+    metric: "average_monthly_salary",
+    groupBy: "year",
+    chart: "line",
+    filters: { years: [], yearFrom: 2022, yearTo: null },
+  });
+  assert.equal(plan.filters.yearFrom, 2022);
+  assert.equal(plan.filters.yearTo, currentYear);
+  assert.deepEqual(plan.filters.years, Array.from({ length: currentYear - 2022 + 1 }, (_, index) => 2022 + index));
+});

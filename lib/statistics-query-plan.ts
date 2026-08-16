@@ -13,6 +13,8 @@ export type StatisticsQueryPlan = {
   groupBy: "year";
   filters: {
     years: number[];
+    yearFrom: number | null;
+    yearTo: number | null;
     gender: "male" | "female" | "other" | null;
     categories: StatisticsCategory[];
     contractType: "a-løn" | "leverandør" | null;
@@ -23,6 +25,47 @@ export type StatisticsQueryPlan = {
     experienceGroup: "new_graduate" | "early_career" | "experienced" | "veteran" | null;
   };
   chart: "line" | "bar" | "table";
+};
+
+export type StatisticsQueryPlanErrorCode = "missing_plan" | "unsupported_metric" | "unsupported_grouping";
+
+export class StatisticsQueryPlanError extends Error {
+  readonly code: StatisticsQueryPlanErrorCode;
+
+  constructor(code: StatisticsQueryPlanErrorCode, message: string) {
+    super(message);
+    this.name = "StatisticsQueryPlanError";
+    this.code = code;
+  }
+}
+
+export const STATISTICS_QUERY_PLAN_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  additionalProperties: false,
+  required: ["metric", "groupBy", "filters", "chart"],
+  properties: {
+    metric: { type: "string", enum: [...STATISTICS_METRICS] },
+    groupBy: { type: "string", enum: ["year"] },
+    chart: { type: "string", enum: ["line", "bar", "table"] },
+    filters: {
+      type: "object",
+      additionalProperties: false,
+      required: ["years", "yearFrom", "yearTo", "gender", "categories", "contractType", "producerNames", "producerTypeCodes", "membershipTypes", "professionType", "experienceGroup"],
+      properties: {
+        years: { type: "array", maxItems: 200, items: { type: "integer", minimum: 1900, maximum: 2200 } },
+        yearFrom: { anyOf: [{ type: "integer", minimum: 1900, maximum: 2200 }, { type: "null" }] },
+        yearTo: { anyOf: [{ type: "integer", minimum: 1900, maximum: 2200 }, { type: "null" }] },
+        gender: { anyOf: [{ type: "string", enum: ["male", "female", "other"] }, { type: "null" }] },
+        categories: { type: "array", items: { type: "string", enum: ["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"] } },
+        contractType: { anyOf: [{ type: "string", enum: ["a-løn", "leverandør"] }, { type: "null" }] },
+        producerNames: { type: "array", maxItems: 5, items: { type: "string", maxLength: 120 } },
+        producerTypeCodes: { type: "array", maxItems: 20, items: { type: "string", maxLength: 80 } },
+        membershipTypes: { type: "array", maxItems: 4, items: { type: "string", enum: ["member", "associate", "none", "unknown"] } },
+        professionType: { anyOf: [{ type: "string", maxLength: 120 }, { type: "null" }] },
+        experienceGroup: { anyOf: [{ type: "string", enum: ["new_graduate", "early_career", "experienced", "veteran"] }, { type: "null" }] },
+      },
+    },
+  },
 };
 
 const allowedMetrics = new Set<string>(STATISTICS_METRICS);
@@ -38,15 +81,26 @@ function stringArray(value: unknown, maximum: number, maxLength = 120) {
 }
 
 export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
-  if (!value || typeof value !== "object") throw new Error("AI-planen mangler.");
+  if (!value || typeof value !== "object") throw new StatisticsQueryPlanError("missing_plan", "AI-planen mangler.");
   const raw = value as Record<string, unknown>;
-  if (!allowedMetrics.has(String(raw.metric))) throw new Error("Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
-  if (raw.groupBy !== "year") throw new Error("Kun gruppering pr. år er understøttet endnu.");
+  if (!allowedMetrics.has(String(raw.metric))) throw new StatisticsQueryPlanError("unsupported_metric", "Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
+  if (raw.groupBy !== "year") throw new StatisticsQueryPlanError("unsupported_grouping", "Kun gruppering pr. år er understøttet endnu.");
   const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as Record<string, unknown> : {};
   const legacyYear = Number(rawFilters.year);
-  const years = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
+  const explicitYears = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
     .map(Number).filter(year => Number.isInteger(year) && year >= 1900 && year <= 2200)
     .filter((year, index, all) => all.indexOf(year) === index).sort((a, b) => a - b).slice(0, 200);
+  const currentYear = new Date().getFullYear();
+  const parsedYearFrom = Number(rawFilters.yearFrom);
+  const parsedYearTo = Number(rawFilters.yearTo);
+  const yearFrom = Number.isInteger(parsedYearFrom) && parsedYearFrom >= 1900 && parsedYearFrom <= currentYear ? parsedYearFrom : null;
+  const yearTo = Number.isInteger(parsedYearTo) && parsedYearTo >= 1900
+    ? Math.min(parsedYearTo, currentYear)
+    : yearFrom != null ? currentYear : null;
+  const rangeYears = yearFrom != null && yearTo != null && yearTo >= yearFrom
+    ? Array.from({ length: Math.min(200, yearTo - yearFrom + 1) }, (_, index) => yearFrom + index)
+    : [];
+  const years = [...new Set([...explicitYears, ...rangeYears])].sort((a, b) => a - b).slice(0, 200);
   const legacyCategory = typeof rawFilters.category === "string" ? [rawFilters.category] : [];
   const categories = (Array.isArray(rawFilters.categories) ? rawFilters.categories : legacyCategory)
     .filter((category): category is StatisticsCategory => allowedCategories.has(category as StatisticsCategory))
@@ -57,6 +111,8 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
     groupBy: "year",
     filters: {
       years,
+      yearFrom,
+      yearTo,
       gender: allowedGenders.has(String(rawFilters.gender)) ? rawFilters.gender as StatisticsQueryPlan["filters"]["gender"] : null,
       categories,
       contractType: allowedContractTypes.has(String(rawFilters.contractType)) ? rawFilters.contractType as StatisticsQueryPlan["filters"]["contractType"] : null,

@@ -3,6 +3,8 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 const DST_CPI_URL = "https://api.statbank.dk/v1/data/PRIS01/CSV?VAREGR=000000&ENHED=100&Tid=*";
 
+export type AnnualCpi = { year: number; index: number; latestPeriod: string };
+
 function csvCells(line: string) {
   return line.split(";").map(cell => cell.replace(/^"|"$/g, "").replaceAll('""', '"'));
 }
@@ -27,25 +29,32 @@ export async function syncStatisticsCpi() {
     }];
   });
   if (!rows.length) throw new Error("PRIS01 returnerede ingen brugbare indeksværdier.");
-  const db = createServiceClient().schema("analytics");
+  const db = createServiceClient();
   for (let index = 0; index < rows.length; index += 500) {
-    const { error } = await db.from("cpi_monthly").upsert(rows.slice(index, index + 500), { onConflict: "period_month" });
+    const { error } = await db.rpc("upsert_statistics_cpi", {
+      p_rows: rows.slice(index, index + 500).map(row => ({
+        period_month: row.period_month,
+        index_value: row.index_value,
+        source_updated_at: row.source_updated_at,
+      })),
+    });
     if (error) throw new Error(error.message);
   }
   return { count: rows.length, latest: rows.at(-1)?.period_month ?? null, source: "PRIS01" };
 }
 
-export async function getAnnualCpi() {
-  const { data, error } = await createServiceClient().schema("analytics").from("cpi_monthly")
-    .select("period_month,index_value").order("period_month");
+export async function getAnnualCpi(): Promise<AnnualCpi[]> {
+  const { data, error } = await createServiceClient().rpc("get_statistics_annual_cpi");
   if (error) throw new Error(error.message);
-  const groups = new Map<number, number[]>();
-  for (const row of data ?? []) {
-    const year = Number(String(row.period_month).slice(0, 4));
-    groups.set(year, [...(groups.get(year) ?? []), Number(row.index_value)]);
-  }
-  return [...groups.entries()].map(([year, values]) => ({
-    year,
-    index: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 100) / 100,
+  const rows = (data ?? []) as Array<{ year: number | string; index_value: number | string; latest_period: string }>;
+  return rows.map(row => ({
+    year: Number(row.year),
+    index: Number(row.index_value),
+    latestPeriod: String(row.latest_period),
   }));
+}
+
+export async function getLatestStatisticsCpiPeriod() {
+  const annual = await getAnnualCpi();
+  return annual.map(row => row.latestPeriod).filter(Boolean).sort().at(-1) ?? null;
 }

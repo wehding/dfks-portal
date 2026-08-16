@@ -22,8 +22,9 @@ async function run(req: NextRequest) {
     const reconciliation = sync.mode === "reconciliation"
       ? null
       : await reconcileRecentGmailContractMessages();
-    const imported = sync.imported + (reconciliation?.imported ?? 0);
-    if (imported > 0) after(triggerContractReviewWorker(req.nextUrl.origin));
+    // Genstart ogsa koen, naar synkroniseringen kun finder kendte mails. Det
+    // giver cron-kaldet mulighed for at reparere aeldre fastlaaste jobs.
+    after(triggerContractReviewWorker(req.nextUrl.origin));
     const status = await getGmailContractImportStatus();
     return NextResponse.json({ ok: true, configuration, watch, sync, reconciliation, status });
   } catch (error) {
