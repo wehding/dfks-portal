@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { accountAccessPath, isAccountAccessMode } from "@/lib/auth/account-access";
-import { INVITE_COOKIE, INVITE_COOKIE_MAX_AGE } from "@/lib/auth/invite-gate";
+import { INVITE_COOKIE, INVITE_COOKIE_MAX_AGE, getInviteGateCode } from "@/lib/auth/invite-gate";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
@@ -25,8 +25,9 @@ export async function GET(request: NextRequest) {
     : accountAccessPath(mode);
   const response = NextResponse.redirect(new URL(destination, request.url));
 
-  if (!error && process.env.INVITE_CODE) {
-    response.cookies.set(INVITE_COOKIE, process.env.INVITE_CODE, {
+  const inviteCode = getInviteGateCode();
+  if (!error && inviteCode) {
+    response.cookies.set(INVITE_COOKIE, inviteCode, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
