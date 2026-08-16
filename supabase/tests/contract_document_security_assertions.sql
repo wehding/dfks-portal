@@ -10,7 +10,13 @@ declare
   previous_id uuid := gen_random_uuid();
   current_id uuid := gen_random_uuid();
   job_id uuid := gen_random_uuid();
+  second_contract_id uuid := gen_random_uuid();
+  third_contract_id uuid := gen_random_uuid();
+  second_job_id uuid := gen_random_uuid();
+  third_job_id uuid := gen_random_uuid();
   claimed public.contract_document_jobs;
+  claimed_second public.contract_document_jobs;
+  claimed_third public.contract_document_jobs;
 begin
   if has_table_privilege('anon', 'public.contract_document_jobs', 'SELECT')
     or has_table_privilege('authenticated', 'public.contract_document_jobs', 'SELECT')
@@ -37,9 +43,24 @@ begin
 
   insert into public.contract_document_jobs (id, org_id, contract_id, original_storage_path, output_storage_path)
   values (job_id, test_org, current_id, test_org || '/current.pdf', test_org || '/processed/current.pdf');
+  insert into public.contracts (id, org_id, work_id, type, status, pdf_url)
+  values
+    (second_contract_id, test_org, work_id, 'A-løn', 'kladde', test_org || '/second.pdf'),
+    (third_contract_id, test_org, work_id, 'A-løn', 'kladde', test_org || '/third.pdf');
+  insert into public.contract_document_jobs (id, org_id, contract_id, original_storage_path, output_storage_path)
+  values
+    (second_job_id, test_org, second_contract_id, test_org || '/second.pdf', test_org || '/processed/second.pdf'),
+    (third_job_id, test_org, third_contract_id, test_org || '/third.pdf', test_org || '/processed/third.pdf');
   select * into claimed from public.claim_next_contract_document_job(10);
-  if claimed.id <> job_id or claimed.status <> 'processing' then
+  select * into claimed_second from public.claim_next_contract_document_job(10);
+  select * into claimed_third from public.claim_next_contract_document_job(10);
+  if claimed.id is null or claimed_second.id is null or claimed_third.id is null
+    or claimed.id = claimed_second.id or claimed.id = claimed_third.id or claimed_second.id = claimed_third.id
+    or claimed.status <> 'processing' or claimed_second.status <> 'processing' or claimed_third.status <> 'processing' then
     raise exception 'Document queue regression: job was not claimed safely';
+  end if;
+  if position('for update skip locked' in lower(pg_get_functiondef('public.claim_next_contract_document_job(integer)'::regprocedure))) = 0 then
+    raise exception 'Document queue regression: parallel claims are not protected by SKIP LOCKED';
   end if;
   perform public.finish_contract_document_job(job_id, 'completed', '[]'::jsonb, true, 2, 1000, null, null);
   if not exists (
@@ -47,6 +68,7 @@ begin
     where id = current_id and pdf_url = test_org || '/current.pdf'
       and processed_pdf_url = test_org || '/processed/current.pdf'
       and document_processing_status = 'ready'
+      and status = 'kladde'
   ) then
     raise exception 'Document queue regression: original or derivative state is incorrect';
   end if;
@@ -55,6 +77,10 @@ begin
     where contract_id = current_id and attachment_id is null and status = 'queued'
   ) then
     raise exception 'Document queue regression: completed OCR did not atomically queue AI analysis';
+  end if;
+  if (select count(*) from public.contract_ai_jobs
+      where contract_id = current_id and attachment_id is null and status = 'queued') <> 1 then
+    raise exception 'Document queue regression: completed OCR did not create exactly one active AI job';
   end if;
 end $$;
 

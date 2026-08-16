@@ -14,7 +14,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY server.mjs ./
+COPY server.mjs processor.mjs backfill.mjs ./
 
 ENV NODE_ENV=production PORT=8080
 USER node
