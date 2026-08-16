@@ -101,6 +101,17 @@ function errorMessage(error: unknown) {
     return error instanceof Error ? error.message : "Fejl"
 }
 
+function formatInvitationDate(value: string | null | undefined) {
+    if (!value) return null
+    return new Date(value).toLocaleString("da-DK", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+    })
+}
+
 function getAffiliation(rh: RettighedshaverWithAffiliation, orgId: string) {
     return rh.org_affiliations?.find(a => a.org_id === orgId) ?? null
 }
@@ -562,6 +573,15 @@ export default function RettighedshavereAdminPage() {
         return visible.filter(rh => selectedIds.has(rh.id) && rh.email && !rh.onboarding_completed_at)
     }
 
+    function inviteTargetSummary() {
+        const targets = inviteTargets()
+        return {
+            targets,
+            firstInvites: targets.filter(rh => !rh.invite_sent_at).length,
+            repeatInvites: targets.filter(rh => rh.invite_sent_at).length,
+        }
+    }
+
     function handleBulkSendInvitation() {
         if (!orgId) return
         if (selectedIds.size === 0) return
@@ -752,28 +772,29 @@ export default function RettighedshavereAdminPage() {
         if (!portalAction) return
         const { rh, type } = portalAction
         if (!rh.email) { toast.error("Email er påkrævet for at sende invitationslink"); return }
+        const invitationAction = type === "invite" && rh.invite_sent_at ? "reminder" : type
         setPortalLoading(true)
         try {
             const res = await fetch("/api/admin/user", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(
-                    type === "invite"
+                    invitationAction === "invite"
                         ? { action: "invite", email: rh.email, name: rh.full_name, rhId: rh.id }
-                        : type === "reminder"
+                        : invitationAction === "reminder"
                             ? { action: "reminder", email: rh.email, name: rh.full_name, rhId: rh.id }
                         : { action: "reset", userId: rh.user_id, email: rh.email }
                 ),
             })
             const json = await res.json() as AdminUserResponse
             if (!res.ok) throw new Error(json.error)
-            const link = type === "invite" || type === "reminder" ? json.invite_url : json.reset_url
+            const link = invitationAction === "invite" || invitationAction === "reminder" ? json.invite_url : json.reset_url
             setPortalLink(link ?? null)
-            if (type === "invite" || type === "reminder") {
+            if (invitationAction === "invite" || invitationAction === "reminder") {
                 setPortalEmailStatus({ sent: Boolean(json.email_sent), error: json.email_error })
                 const inviteSentAt = json.email_sent ? new Date().toISOString() : rh.invite_sent_at ?? null
                 setRows(prev => prev.map(r => r.id === rh.id ? { ...r, user_id: json.user_id ?? null, invite_sent_at: inviteSentAt } : r))
-                if (json.email_sent) toast.success(type === "reminder" ? `2. invitation sendt til ${rh.email}` : `Invitation sendt til ${rh.email}`)
+                if (json.email_sent) toast.success(invitationAction === "reminder" ? `2. invitation sendt til ${rh.email}` : `Invitation sendt til ${rh.email}`)
                 else toast.warning(`Bruger oprettet, men mailen kunne ikke sendes (${json.email_error ?? "ukendt"}). Kopiér linket manuelt.`)
             }
         } catch (e: unknown) {
@@ -800,6 +821,8 @@ export default function RettighedshavereAdminPage() {
             </button>
         )
     }
+
+    const bulkInviteSummary = inviteTargetSummary()
 
     return (
         <div className="space-y-6">
@@ -1098,17 +1121,12 @@ export default function RettighedshavereAdminPage() {
                                                 <DropdownMenuSeparator />
                                                 {!rh.onboarding_completed_at && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "invite" }); setPortalLink(null); setPortalEmailStatus(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />{rh.invite_sent_at ? "Gensend invitation" : "Send invitation"}
+                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send invitation
                                                     </DropdownMenuItem>
                                                 )}
                                                 {hasLogin && rh.email && (
                                                     <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reset" }); setPortalLink(null); setPortalEmailStatus(null) }}>
                                                         <KeyRound className="h-3.5 w-3.5 mr-2" />Nulstil password
-                                                    </DropdownMenuItem>
-                                                )}
-                                                {rh.invite_sent_at && !rh.onboarding_completed_at && rh.email && (
-                                                    <DropdownMenuItem onClick={() => { setPortalAction({ rh, type: "reminder" }); setPortalLink(null); setPortalEmailStatus(null) }}>
-                                                        <Mail className="h-3.5 w-3.5 mr-2" />Send 2. invitation
                                                     </DropdownMenuItem>
                                                 )}
                                                 <DropdownMenuSeparator />
@@ -1524,10 +1542,18 @@ export default function RettighedshavereAdminPage() {
                     <DialogHeader>
                         <DialogTitle>Send invitationer</DialogTitle>
                         <DialogDescription>
-                            Send invitation til {inviteTargets().length} valgt(e) person(er)?
-                            Personer der allerede har fået en invitation, får en påmindelse i stedet.
+                            Send invitation til {bulkInviteSummary.targets.length} valgt(e) person(er)?
                         </DialogDescription>
                     </DialogHeader>
+                    <div className="space-y-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                        <div>Første invitation: {bulkInviteSummary.firstInvites}</div>
+                        <div>Allerede inviteret, får nyt link/2. invitation: {bulkInviteSummary.repeatInvites}</div>
+                    </div>
+                    {bulkInviteSummary.repeatInvites > 0 && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                            Nogle af de valgte rettighedshavere har allerede fået en invitation. Hvis du fortsætter, får de et nyt link.
+                        </div>
+                    )}
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setInviteConfirmOpen(false)} disabled={bulkSendingInvitations}>Annuller</Button>
                         <Button onClick={confirmBulkSendInvitation} disabled={bulkSendingInvitations}>
@@ -1610,15 +1636,19 @@ export default function RettighedshavereAdminPage() {
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>
-                            {portalAction?.type === "invite" ? "Inviter til portal" : portalAction?.type === "reminder" ? "Send 2. invitation" : "Nulstil password"}
+                            {portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Inviter til portal" : "Nulstil password"}
                         </DialogTitle>
                         <DialogDescription>
-                            {portalAction?.type === "invite"
+                            {portalAction?.type === "invite" || portalAction?.type === "reminder"
                                 ? `Send en invitation til ${portalAction.rh.full_name} (${portalAction.rh.email}). Hvis mailen ikke kan sendes, vises linket til manuel deling.`
-                                : portalAction?.type === "reminder"
-                                    ? `Send en 2. invitation med nyt invitationslink til ${portalAction.rh.full_name} (${portalAction.rh.email}).`
                                 : `Generér et nulstillingslink til ${portalAction?.rh.full_name}. Del linket med dem direkte.`}
                         </DialogDescription>
+                        {(portalAction?.type === "invite" || portalAction?.type === "reminder") && portalAction.rh.invite_sent_at && !portalLink && (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                                Denne rettighedshaver har allerede fået sendt en invitation den {formatInvitationDate(portalAction.rh.invite_sent_at)}.
+                                Hvis du sender igen, får personen et nyt link.
+                            </div>
+                        )}
                     </DialogHeader>
 
                     {portalLink ? (
@@ -1670,7 +1700,7 @@ export default function RettighedshavereAdminPage() {
                         {!portalLink && (
                             <Button onClick={handlePortalAction} disabled={portalLoading || !portalAction?.rh.email}>
                                 {portalLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                                {portalAction?.type === "invite" ? "Send invitation" : portalAction?.type === "reminder" ? "Send 2. invitation" : "Generér nulstillingslink"}
+                                {portalAction?.type === "invite" || portalAction?.type === "reminder" ? "Send invitation" : "Generér nulstillingslink"}
                             </Button>
                         )}
                     </DialogFooter>
