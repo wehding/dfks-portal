@@ -6,7 +6,7 @@ import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getAdminStatistics, type StatisticsFilters } from "@/lib/admin-statistics";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
-import { extractStatisticsSeries, parseStatisticsQueryPlan, type StatisticsCategory } from "@/lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan, type StatisticsCategory } from "@/lib/statistics-query-plan";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
@@ -23,6 +23,32 @@ Brug tomme arrays eller null for filtre, der ikke fremgår. Højst fem producent
 Spillefilm er category feature og dokumentarfilm er category documentary.
 Medlem er membershipType member, tilknyttet medlem er associate og ikke medlem er none.
 Forsøg aldrig at identificere personer og skriv aldrig SQL.`;
+
+const STATISTICS_QUERY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["metric", "groupBy", "filters", "chart"],
+  properties: {
+    metric: { type: "string", enum: ["average_monthly_salary", "average_pension", "average_working_weeks", "contract_count", "contributions"] },
+    groupBy: { type: "string", enum: ["year"] },
+    chart: { type: "string", enum: ["line", "bar", "table"] },
+    filters: {
+      type: "object", additionalProperties: false,
+      required: ["years", "gender", "categories", "contractType", "producerNames", "producerTypeCodes", "membershipTypes", "professionType", "experienceGroup"],
+      properties: {
+        years: { type: "array", items: { type: "integer", minimum: 1900, maximum: 2200 } },
+        gender: { anyOf: [{ type: "string", enum: ["male", "female", "other"] }, { type: "null" }] },
+        categories: { type: "array", items: { type: "string", enum: ["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"] } },
+        contractType: { anyOf: [{ type: "string", enum: ["a-løn", "leverandør"] }, { type: "null" }] },
+        producerNames: { type: "array", maxItems: 5, items: { type: "string" } },
+        producerTypeCodes: { type: "array", items: { type: "string" } },
+        membershipTypes: { type: "array", items: { type: "string", enum: ["member", "associate", "none", "unknown"] } },
+        professionType: { anyOf: [{ type: "string" }, { type: "null" }] },
+        experienceGroup: { anyOf: [{ type: "string", enum: ["new_graduate", "early_career", "experienced", "veteran"] }, { type: "null" }] },
+      },
+    },
+  },
+} as const;
 
 type ProducerCandidate = { id: string; name: string; score: number };
 
@@ -116,18 +142,20 @@ export async function POST(request: NextRequest) {
     source: "admin",
   });
   try {
-    const response = await callAi({
+    const predefinedPlan = predefinedStatisticsQueryPlan(question);
+    const response = predefinedPlan ? null : await callAi({
       provider: runtime.provider,
       model: runtime.model,
       system: SYSTEM,
       userMessage: question,
       maxTokens: 700,
       responseJson: true,
+      responseSchema: STATISTICS_QUERY_SCHEMA,
       promptCaching: runtime.promptCachingEnabled,
       usageContext: { runId, orgId: caller.orgId, useCase: "statistics_query", stage: "query" },
     });
-    const jsonText = response.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
-    const plan = parseStatisticsQueryPlan(JSON.parse(jsonText));
+    const jsonText = response?.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+    const plan = predefinedPlan ?? parseStatisticsQueryPlan(JSON.parse(jsonText ?? ""));
     const producers = await resolveProducerNames(plan.filters.producerNames);
     if (producers.ambiguous) {
       await finishAiUsageRun(runId, "succeeded");

@@ -4,12 +4,13 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, MessageSquare } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { createClient } from "@/lib/supabase/client"
+import { markInboxThreadRead } from "@/app/actions/member-inbox"
 
 type BeskedRad = {
     workId: string
+    requestId: string
     title: string
     year: number | null
     memberName: string | null
@@ -51,11 +52,16 @@ export function VaerkerBeskederTab({ onCountLoaded }: { onCountLoaded?: (n: numb
 
         const mapped: BeskedRad[] = data
             .map((w: any) => {
-                const allComments = (w.work_change_requests ?? [])
-                    .flatMap((r: any) => r.work_change_request_comments ?? [])
-                const unread = allComments.filter(
-                    (c: any) => c.author_role === "member" && !c.admin_read_at
-                )
+                const requests = (w.work_change_requests ?? []).map((request: any) => ({
+                    ...request,
+                    unread: (request.work_change_request_comments ?? []).filter(
+                        (comment: any) => comment.author_role === "member" && !comment.admin_read_at
+                    ),
+                }))
+                const activeRequest = requests
+                    .filter((request: any) => request.unread.length > 0)
+                    .sort((left: any, right: any) => String(right.unread.at(-1)?.created_at ?? "").localeCompare(String(left.unread.at(-1)?.created_at ?? "")))[0]
+                const unread = activeRequest?.unread ?? []
                 if (unread.length === 0) return null
 
                 const sorted = [...unread].sort(
@@ -65,6 +71,7 @@ export function VaerkerBeskederTab({ onCountLoaded }: { onCountLoaded?: (n: numb
 
                 return {
                     workId: w.id,
+                    requestId: activeRequest.id,
                     title: w.title,
                     year: w.year,
                     memberName,
@@ -117,7 +124,12 @@ export function VaerkerBeskederTab({ onCountLoaded }: { onCountLoaded?: (n: numb
                         <tr
                             key={r.workId}
                             className="hover:bg-muted/30 cursor-pointer transition-colors"
-                            onClick={() => router.push(`/admin/vaerker?id=${r.workId}`)}
+                            onClick={async () => {
+                                await markInboxThreadRead(`work-${r.requestId}`)
+                                setRows(current => current.filter(row => row.requestId !== r.requestId))
+                                onCountLoaded?.(Math.max(0, rows.length - 1))
+                                router.push(`/admin/vaerker?id=${r.workId}&request=${r.requestId}`)
+                            }}
                         >
                             <td className="px-4 py-3">
                                 <div className="font-medium">{r.title}</div>
@@ -140,7 +152,13 @@ export function VaerkerBeskederTab({ onCountLoaded }: { onCountLoaded?: (n: numb
                                     variant="ghost"
                                     size="sm"
                                     className="gap-1.5"
-                                    onClick={e => { e.stopPropagation(); router.push(`/admin/vaerker?id=${r.workId}`) }}
+                                    onClick={async e => {
+                                        e.stopPropagation()
+                                        await markInboxThreadRead(`work-${r.requestId}`)
+                                        setRows(current => current.filter(row => row.requestId !== r.requestId))
+                                        onCountLoaded?.(Math.max(0, rows.length - 1))
+                                        router.push(`/admin/vaerker?id=${r.workId}&request=${r.requestId}`)
+                                    }}
                                 >
                                     <MessageSquare className="h-3.5 w-3.5" />
                                     {r.unreadCount > 1 ? `${r.unreadCount} beskeder` : "Se besked"}

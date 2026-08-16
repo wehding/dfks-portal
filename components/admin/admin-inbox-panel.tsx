@@ -16,7 +16,7 @@ import { filterInboxRecipients, selectVisibleRecipientIds } from "@/lib/inbox-re
 
 type Recipient = { id: string; full_name: string; email: string | null };
 type Message = { id: string; author_role: string; body: string; created_at: string };
-type Thread = { id: string; subject: string; updated_at: string; rettighedshavere: { full_name: string } | null; member_messages: Message[]; category_label?: string; context_title?: string; requiresReply?: boolean; waitingSince?: string | null; can_reply?: boolean; action_href?: string };
+type Thread = { id: string; subject: string; updated_at: string; rettighedshavere: { full_name: string } | null; member_messages: Message[]; category_label?: string; context_title?: string; requiresReply?: boolean; waitingSince?: string | null; unreadCount?: number; can_reply?: boolean; action_href?: string };
 
 /**
  * Medlemsbeskeder for admin — ny besked (enkelt eller fælles) + tråde med svar.
@@ -49,7 +49,14 @@ export function AdminInboxPanel() {
   // State is intentionally synchronized when the external dialog, storage, or server source changes.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (selectedThread) void markInboxThreadRead(selectedThread); }, [selectedThread]);
+  useEffect(() => {
+    if (!selectedThread) return;
+    void markInboxThreadRead(selectedThread).then(result => {
+      if (!result.success) toast.error("Beskeden kunne ikke markeres som læst");
+      else setThreads(current => current.map(thread => thread.id === selectedThread ? { ...thread, unreadCount: 0 } : thread));
+      router.refresh();
+    });
+  }, [router, selectedThread]);
   const active = useMemo(() => threads.find(thread => thread.id === selectedThread) ?? null, [threads, selectedThread]);
   const hasRecipientQuery = recipientQuery.trim().length > 0;
   const visibleRecipients = useMemo(

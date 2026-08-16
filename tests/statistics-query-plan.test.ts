@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStatisticsSeries, parseStatisticsQueryPlan } from "../lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan } from "../lib/statistics-query-plan";
 
 test("queryplan accepterer kun kendte mål og renser fritekstfiltre", () => {
   const plan = parseStatisticsQueryPlan({
@@ -42,4 +42,15 @@ test("queryplan understøtter flere år, kategorier og producenter med faste gr�
   assert.deepEqual(plan.filters.categories, ["feature", "documentary"]);
   assert.deepEqual(plan.filters.producerNames, ["A", "B", "C", "D", "E"]);
   assert.deepEqual(plan.filters.membershipTypes, ["member", "none"]);
+});
+
+test("faste statistikforslag bruger deterministiske sikre planer", () => {
+  assert.equal(predefinedStatisticsQueryPlan("Hvor mange kontrakter er der registreret pr. år?")?.metric, "contract_count");
+  assert.deepEqual(predefinedStatisticsQueryPlan("Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?")?.filters.categories, ["feature", "documentary"]);
+});
+
+test("queryplan accepterer ufarlige modelvariationer", () => {
+  const plan = parseStatisticsQueryPlan({ measure: "pension", group_by: "år", filters: {} });
+  assert.equal(plan.metric, "average_pension");
+  assert.equal(plan.groupBy, "year");
 });
