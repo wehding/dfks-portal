@@ -291,8 +291,14 @@ export async function generateEpisodesForSeries(params: {
     }
   }
 
+  // En godkendt rettelse med et eksplicit antal må ikke utilsigtet oprette
+  // flere afsnit, blot fordi den eksterne kilde indeholder en længere sæson.
+  const boundedEpisodes = requestedTotalEpisodes
+    ? episodesToInsert.filter(episode => episode.episode_number <= requestedTotalEpisodes)
+    : episodesToInsert;
+
   // 5. Gem kun de afsnit, som mangler i databasen
-  const missingEpisodesToInsert = episodesToInsert.filter(episode => !existingEpisodeNumbers.has(episode.episode_number));
+  const missingEpisodesToInsert = boundedEpisodes.filter(episode => !existingEpisodeNumbers.has(episode.episode_number));
   if (missingEpisodesToInsert.length === 0) {
     return { success: true, count: existingEpisodeNumbers.size, existing: true };
   }
