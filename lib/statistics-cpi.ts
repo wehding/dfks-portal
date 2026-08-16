@@ -1,34 +1,37 @@
 import "server-only";
 import { createServiceClient } from "@/lib/supabase/service";
+import { parseStatisticsCpiCsv } from "@/lib/statistics-cpi-parser";
 
 const DST_CPI_URL = "https://api.statbank.dk/v1/data/PRIS01/CSV?VAREGR=000000&ENHED=100&Tid=*";
 
 export type AnnualCpi = { year: number; index: number; latestPeriod: string };
 
-function csvCells(line: string) {
-  return line.split(";").map(cell => cell.replace(/^"|"$/g, "").replaceAll('""', '"'));
+async function fetchStatisticsCpiRows() {
+  const response = await fetch(DST_CPI_URL, {
+    next: { revalidate: 86_400 },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`Danmarks Statistik svarede med ${response.status}.`);
+  const rows = parseStatisticsCpiCsv(await response.text());
+  if (!rows.length) throw new Error("PRIS01 returnerede ingen brugbare indeksværdier.");
+  return rows;
+}
+
+function annualCpiFromMonthly(rows: Awaited<ReturnType<typeof fetchStatisticsCpiRows>>): AnnualCpi[] {
+  const byYear = new Map<number, typeof rows>();
+  for (const row of rows) {
+    const year = Number(row.period_month.slice(0, 4));
+    byYear.set(year, [...(byYear.get(year) ?? []), row]);
+  }
+  return [...byYear.entries()].map(([year, months]) => ({
+    year,
+    index: Math.round(months.reduce((sum, row) => sum + row.index_value, 0) / months.length * 100) / 100,
+    latestPeriod: months.map(row => row.period_month).sort().at(-1) ?? `${year}-01-01`,
+  })).sort((left, right) => left.year - right.year);
 }
 
 export async function syncStatisticsCpi() {
-  const response = await fetch(DST_CPI_URL, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
-  if (!response.ok) throw new Error(`Danmarks Statistik svarede med ${response.status}.`);
-  const lines = (await response.text()).trim().split(/\r?\n/);
-  const rows = lines.slice(1).flatMap(line => {
-    const cells = csvCells(line);
-    const period = cells.find(cell => /^\d{4}M\d{2}$/.test(cell));
-    const rawValue = cells.at(-1)?.replace(".", "").replace(",", ".");
-    const value = Number(rawValue);
-    if (!period || !Number.isFinite(value)) return [];
-    const [year, month] = period.split("M").map(Number);
-    return [{
-      period_month: `${year}-${String(month).padStart(2, "0")}-01`,
-      index_value: value,
-      source: "Danmarks Statistik PRIS01",
-      source_updated_at: new Date().toISOString(),
-      synced_at: new Date().toISOString(),
-    }];
-  });
-  if (!rows.length) throw new Error("PRIS01 returnerede ingen brugbare indeksværdier.");
+  const rows = await fetchStatisticsCpiRows();
   const db = createServiceClient();
   for (let index = 0; index < rows.length; index += 500) {
     const { error } = await db.rpc("upsert_statistics_cpi", {
@@ -45,13 +48,18 @@ export async function syncStatisticsCpi() {
 
 export async function getAnnualCpi(): Promise<AnnualCpi[]> {
   const { data, error } = await createServiceClient().rpc("get_statistics_annual_cpi");
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as Array<{ year: number | string; index_value: number | string; latest_period: string }>;
-  return rows.map(row => ({
-    year: Number(row.year),
-    index: Number(row.index_value),
-    latestPeriod: String(row.latest_period),
-  }));
+  if (!error && data?.length) {
+    const rows = data as Array<{ year: number | string; index_value: number | string; latest_period: string }>;
+    return rows.map(row => ({
+      year: Number(row.year),
+      index: Number(row.index_value),
+      latestPeriod: String(row.latest_period),
+    }));
+  }
+  // Driftssikker fallback: en manglende/ny migration eller en tom privat tabel
+  // må ikke gøre lønstatistikken ubrugelig. Der hentes kun officielle,
+  // aggregerede PRIS01-indeks; ingen portaldata forlader serveren.
+  return annualCpiFromMonthly(await fetchStatisticsCpiRows());
 }
 
 export async function getLatestStatisticsCpiPeriod() {

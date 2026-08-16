@@ -37,10 +37,10 @@ const categoryLabels: Record<string, string> = { feature: "Spillefilm", tvSeries
 const formatKr = (value: number) => `${value.toLocaleString("da-DK")} kr.`;
 const querySuggestions = [
   "Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?",
-  "Hvordan har den gennemsnitlige pension udviklet sig over alle år?",
-  "Hvor mange kontrakter er der registreret pr. år?",
-  "Hvordan har producentbidragene udviklet sig over alle år?",
-  "Hvordan har det gennemsnitlige antal arbejdsuger udviklet sig over alle år?",
+  "Sammenlign gennemsnitslønnen for A-løn og leverandørkontrakter over alle år.",
+  "Sammenlign pension og arbejdsuger for spillefilm og dokumentarfilm siden 2022.",
+  "Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?",
+  "Hvordan har andelen med Copydan- og streamingforbehold udviklet sig over alle år?",
 ];
 const chartLabels: Record<StatisticsChartType, string> = { table: "Tabel", bar: "Søjlediagram", horizontal_bar: "Vandret søjlediagram", grouped_bar: "Grupperet søjlediagram", stacked_bar: "Stablet søjlediagram", pie: "Cirkeldiagram", donut: "Ringdiagram", stacked_100: "Stablet 100 %-søjlediagram", line: "Linjediagram", area: "Arealdiagram", histogram: "Histogram", box_plot: "Boksplot", scatter: "Prikdiagram", bubble: "Boblediagram" };
 const demoSalary = [
@@ -58,18 +58,42 @@ function DataTable({ headers, rows }: { headers: string[]; rows: Array<Array<str
   return <div className="max-w-full overflow-x-auto rounded-lg border"><Table className="min-w-max"><TableHeader><TableRow>{headers.map((header, index) => <TableHead key={`${header}-${index}`}>{header}</TableHead>)}</TableRow></TableHeader><TableBody>{rows.map((row, index) => <TableRow key={index}>{row.map((value, cell) => <TableCell key={cell}>{value}</TableCell>)}</TableRow>)}</TableBody></Table></div>;
 }
 
-function AiChartView({ chart, rows, labels }: { chart: StatisticsChartType; rows: Array<Record<string, number>>; labels: Array<[string, string]> }) {
+function formatStatisticsValue(value: number, unit: "dkk" | "percent" | "weeks" | "count") {
+  if (unit === "dkk") return formatKr(Math.round(value));
+  if (unit === "percent") return `${value.toLocaleString("da-DK", { maximumFractionDigits: 1 })}%`;
+  if (unit === "weeks") return `${value.toLocaleString("da-DK", { maximumFractionDigits: 1 })} uger`;
+  return value.toLocaleString("da-DK", { maximumFractionDigits: 1 });
+}
+
+type AiSeriesRow = {
+  year: number; value: number; contractCount: number; memberCount: number; lowSample: boolean;
+  seriesKey: string; seriesLabel: string; metric: string; metricLabel: string;
+  unit: "dkk" | "percent" | "weeks" | "count";
+  inflationIndex?: number | null; realValue?: number | null; realChangePercent?: number | null;
+};
+
+type AiAnswer = {
+  suppressed?: boolean; minimum?: number; explanation?: string; understoodAs?: string; interpretedBy?: "rules" | "ai";
+  caveats?: string[]; chart?: "line" | "bar" | "table";
+  plan?: { metrics?: string[]; compareBy?: string[]; adjustForInflation?: boolean };
+  lowSample?: boolean; includeDrafts?: boolean; candidates?: Array<{ id: string; name: string }>;
+  metricMeta?: Array<{ metric: string; label: string; unit: "dkk" | "percent" | "weeks" | "count"; additive: boolean }>;
+  series?: AiSeriesRow[];
+};
+
+function AiChartView({ chart, rows, labels, unit }: { chart: StatisticsChartType; rows: Array<Record<string, number>>; labels: Array<[string, string]>; unit: AiSeriesRow["unit"] }) {
   const colors = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ec4899"];
+  const formatter = (value: number | string | undefined) => formatStatisticsValue(Number(value ?? 0), unit);
   if (chart === "pie" || chart === "donut") {
     const row = rows[0] ?? {};
     const values = labels.map(([key, label]) => ({ name: label, value: Number(row[key] ?? 0) }));
-    return <PieChart><Tooltip contentStyle={tooltipStyle} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={`${value.name}-${index}`} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
+    return <PieChart><Tooltip contentStyle={tooltipStyle} formatter={formatter} /><Legend /><Pie data={values} dataKey="value" nameKey="name" innerRadius={chart === "donut" ? 65 : 0} outerRadius={110}>{values.map((value, index) => <Cell key={`${value.name}-${index}`} fill={colors[index % colors.length]} />)}</Pie></PieChart>;
   }
-  if (chart === "line") return <LineChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Line connectNulls key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} />)}</LineChart>;
-  if (chart === "area") return <AreaChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Area key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.25} />)}</AreaChart>;
+  if (chart === "line") return <LineChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} formatter={formatter} /><Legend />{labels.map(([key, label], index) => <Line connectNulls key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} />)}</LineChart>;
+  if (chart === "area") return <AreaChart data={rows}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="year" /><YAxis /><Tooltip contentStyle={tooltipStyle} formatter={formatter} /><Legend />{labels.map(([key, label], index) => <Area key={key} dataKey={key} name={label} stroke={colors[index % colors.length]} fill={colors[index % colors.length]} fillOpacity={0.25} />)}</AreaChart>;
   const horizontal = chart === "horizontal_bar";
   const stacked = chart === "stacked_bar" || chart === "stacked_100";
-  return <BarChart data={rows} layout={horizontal ? "vertical" : "horizontal"} stackOffset={chart === "stacked_100" ? "expand" : "none"}><CartesianGrid strokeDasharray="3 3" />{horizontal ? <><XAxis type="number" /><YAxis type="category" dataKey="year" width={70} /></> : <><XAxis dataKey="year" /><YAxis tickFormatter={chart === "stacked_100" ? value => `${Math.round(Number(value) * 100)}%` : undefined} /></>}<Tooltip contentStyle={tooltipStyle} /><Legend />{labels.map(([key, label], index) => <Bar key={key} dataKey={key} name={label} stackId={stacked ? "total" : undefined} fill={colors[index % colors.length]} />)}</BarChart>;
+  return <BarChart data={rows} layout={horizontal ? "vertical" : "horizontal"} stackOffset={chart === "stacked_100" ? "expand" : "none"}><CartesianGrid strokeDasharray="3 3" />{horizontal ? <><XAxis type="number" /><YAxis type="category" dataKey="year" width={70} /></> : <><XAxis dataKey="year" /><YAxis tickFormatter={chart === "stacked_100" ? value => `${Math.round(Number(value) * 100)}%` : undefined} /></>}<Tooltip contentStyle={tooltipStyle} formatter={formatter} /><Legend />{labels.map(([key, label], index) => <Bar key={key} dataKey={key} name={label} stackId={stacked ? "total" : undefined} fill={colors[index % colors.length]} />)}</BarChart>;
 }
 
 export default function AdminStatistikPage() {
@@ -86,7 +110,7 @@ export default function AdminStatistikPage() {
   const [error, setError] = useState<string | null>(null);
   const [aiQuestion, setAiQuestion] = useState("Sammenlign den gennemsnitlige lønudvikling for dokumentarfilm og spillefilm for alle år.");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiAnswer, setAiAnswer] = useState<{ suppressed?: boolean; minimum?: number; explanation?: string; caveats?: string[]; chart?: "line" | "bar" | "table"; plan?: { metric?: string }; lowSample?: boolean; includeDrafts?: boolean; candidates?: Array<{ id: string; name: string }>; series?: Array<{ year: number; value: number; contractCount: number; memberCount: number; lowSample: boolean; seriesKey: string; seriesLabel: string; inflationIndex?: number | null; realChangePercent?: number | null }> } | null>(null);
+  const [aiAnswer, setAiAnswer] = useState<AiAnswer | null>(null);
   const [aiError, setAiError] = useState<{ title: string; reason: string; suggestion?: string } | null>(null);
   const [selectedCharts, setSelectedCharts] = useState<StatisticsChartType[]>([]);
 
@@ -126,23 +150,43 @@ export default function AdminStatistikPage() {
     }
     return [...rows.values()].sort((left, right) => left.year - right.year);
   }, [data]);
-  const aiChart = useMemo(() => {
-    const labels = new Map<string, string>();
-    const rows = new Map<number, Record<string, number>>();
-    for (const item of aiAnswer?.series ?? []) {
-      labels.set(item.seriesKey, item.seriesLabel);
-      rows.set(item.year, { ...(rows.get(item.year) ?? { year: item.year }), [item.seriesKey]: item.value });
-    }
-    return { rows: [...rows.values()].sort((left, right) => Number(left.year) - Number(right.year)), labels: [...labels.entries()] };
-  }, [aiAnswer]);
-  const chartShape = useMemo(() => {
-    const timePoints = new Set((aiAnswer?.series ?? []).map(row => row.year)).size;
-    const seriesCount = new Set((aiAnswer?.series ?? []).map(row => row.seriesKey)).size;
-    const additive = aiAnswer?.plan?.metric === "contract_count" || aiAnswer?.plan?.metric === "contributions";
-    return { pointCount: aiAnswer?.series?.length ?? 0, seriesCount, timePointCount: timePoints, categoryCount: Math.max(timePoints, seriesCount), observationCount: 0, numericDimensions: 1, additive };
-  }, [aiAnswer]);
-  const effectiveCharts = useMemo(() => selectedCharts.length ? selectedCharts : recommendCharts(chartShape), [selectedCharts, chartShape]);
-  const rejectedCharts = useMemo(() => effectiveCharts.map(chart => ({ chart, ...evaluateChartEligibility(chart, chartShape) })).filter(result => !result.eligible), [effectiveCharts, chartShape]);
+  const aiMetricGroups = useMemo(() => {
+    const metaByMetric = new Map((aiAnswer?.metricMeta ?? []).map(meta => [meta.metric, meta]));
+    const grouped = new Map<string, AiSeriesRow[]>();
+    for (const item of aiAnswer?.series ?? []) grouped.set(item.metric, [...(grouped.get(item.metric) ?? []), item]);
+    return [...grouped.entries()].map(([metric, series]) => {
+      const labels = new Map<string, string>();
+      const rows = new Map<number, Record<string, number>>();
+      for (const item of series) {
+        labels.set(item.seriesKey, item.seriesLabel);
+        rows.set(item.year, { ...(rows.get(item.year) ?? { year: item.year }), [item.seriesKey]: item.value });
+      }
+      const timePointCount = new Set(series.map(row => row.year)).size;
+      const seriesCount = new Set(series.map(row => row.seriesKey)).size;
+      const meta = metaByMetric.get(metric) ?? { metric, label: series[0]?.metricLabel ?? metric, unit: series[0]?.unit ?? "count", additive: false };
+      const shape = {
+        pointCount: series.length,
+        seriesCount,
+        timePointCount,
+        categoryCount: Math.max(timePointCount, seriesCount),
+        observationCount: 0,
+        numericDimensions: 1,
+        additive: meta.additive,
+        overlappingCategories: (aiAnswer?.plan?.compareBy ?? []).some(dimension => dimension === "producer_type" || dimension === "membership_type"),
+      };
+      const charts = selectedCharts.length ? selectedCharts : recommendCharts(shape);
+      return {
+        metric,
+        meta,
+        series,
+        chartRows: [...rows.values()].sort((left, right) => Number(left.year) - Number(right.year)),
+        labels: [...labels.entries()],
+        charts,
+        rejectedCharts: charts.map(chart => ({ chart, ...evaluateChartEligibility(chart, shape) })).filter(result => !result.eligible),
+        eligibleCharts: charts.filter(chart => chart !== "table" && evaluateChartEligibility(chart, shape).eligible),
+      };
+    });
+  }, [aiAnswer, selectedCharts]);
   const applyYearRange = () => {
     const from = Number(yearFrom);
     const to = Number(yearTo);
@@ -224,11 +268,14 @@ export default function AdminStatistikPage() {
         {aiError && <Alert variant="destructive"><AlertTitle>{aiError.title}</AlertTitle><AlertDescription><span className="block">{aiError.reason}</span>{aiError.suggestion && <span className="mt-1 block">Forslag: {aiError.suggestion}</span>}</AlertDescription></Alert>}
         {aiAnswer?.suppressed && <Alert><ShieldCheck className="h-4 w-4" /><AlertTitle>Ikke nok data til et sikkert resultat</AlertTitle><AlertDescription>Det valgte udsnit indeholder færre end {aiAnswer.minimum ?? 5} forskellige personer. Prøv en længere periode, færre filtre eller en bredere produktionstype.</AlertDescription></Alert>}
         {aiAnswer && !aiAnswer.suppressed && <div className="space-y-3 rounded-lg border p-4">
-          <p className="text-sm">{aiAnswer.explanation}</p>
+          <div className="space-y-1 text-sm"><p className="font-medium">Sådan blev spørgsmålet forstået</p><p>{aiAnswer.understoodAs}</p><p className="text-muted-foreground">{aiAnswer.explanation}</p></div>
+          {aiMetricGroups.map(group => <section key={group.metric} className="space-y-3" aria-labelledby={`metric-${group.metric}`}>
+            <h3 id={`metric-${group.metric}`} className="font-semibold">{group.meta.label}</h3>
+            {group.rejectedCharts.map(result => <Alert key={`${group.metric}-${result.chart}`}><AlertTitle>{chartLabels[result.chart]} kan ikke bruges til {group.meta.label.toLocaleLowerCase("da")}</AlertTitle><AlertDescription>{result.reason}</AlertDescription></Alert>)}
+            {group.eligibleCharts.map(chart => <Card key={`${group.metric}-${chart}`}><CardHeader><CardTitle className="text-sm">{chartLabels[chart]} · {group.meta.label}</CardTitle></CardHeader><CardContent className="h-[320px] min-w-0"><ResponsiveChartContainer minWidth={0}><AiChartView chart={chart} rows={group.chartRows} labels={group.labels} unit={group.meta.unit} /></ResponsiveChartContainer></CardContent></Card>)}
+            {(group.charts.includes("table") || selectedCharts.length === 0) && <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Personer", "Grundlag", "Reel værdi", "Realændring"]} rows={group.series.map(row => [row.seriesLabel, row.year, formatStatisticsValue(row.value, row.unit), row.contractCount, row.memberCount, row.lowSample ? "Usikkert" : "≥ 5", row.realValue == null ? "—" : formatStatisticsValue(row.realValue, row.unit), row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />}
+          </section>)}
           {Boolean(aiAnswer.caveats?.length) && <Alert><AlertTitle>Forbehold ved resultatet</AlertTitle><AlertDescription><ul className="list-disc space-y-1 pl-5">{aiAnswer.caveats?.map(caveat => <li key={caveat}>{caveat}</li>)}</ul></AlertDescription></Alert>}
-          {rejectedCharts.map(result => <Alert key={result.chart}><AlertTitle>{chartLabels[result.chart]} kan ikke bruges</AlertTitle><AlertDescription>{result.reason}</AlertDescription></Alert>)}
-          {effectiveCharts.filter(chart => chart !== "table" && evaluateChartEligibility(chart, chartShape).eligible).map(chart => <Card key={chart}><CardHeader><CardTitle className="text-sm">{chartLabels[chart]}</CardTitle></CardHeader><CardContent className="h-[320px]"><ResponsiveChartContainer><AiChartView chart={chart} rows={aiChart.rows} labels={aiChart.labels} /></ResponsiveChartContainer></CardContent></Card>)}
-          {(effectiveCharts.includes("table") || selectedCharts.length === 0) && <DataTable headers={["Serie", "År", "Resultat", "Kontrakter", "Grundlag", "Inflationsindeks", "Realændring"]} rows={(aiAnswer.series ?? []).map(row => [row.seriesLabel, row.year, row.value.toLocaleString("da-DK"), row.contractCount, row.lowSample ? "Usikkert" : "≥ 5", row.inflationIndex ?? "—", row.realChangePercent == null ? "—" : `${row.realChangePercent}%`])} />}
           {aiAnswer.lowSample && <Alert><AlertTitle>Statistisk usikkert grundlag</AlertTitle><AlertDescription>Mindst ét datapunkt bygger på færre end 5 forskellige personer.</AlertDescription></Alert>}
         </div>}
       </CardContent>
