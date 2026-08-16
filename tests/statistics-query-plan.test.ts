@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStatisticsSeries, parseStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA } from "../lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA } from "../lib/statistics-query-plan";
 
 function collectSchemaKeys(value: unknown, result = new Set<string>()) {
   if (!value || typeof value !== "object") return result;
@@ -75,4 +75,15 @@ test("siden et år udvides til alle år frem til indeværende år", () => {
   assert.equal(plan.filters.yearFrom, 2022);
   assert.equal(plan.filters.yearTo, currentYear);
   assert.deepEqual(plan.filters.years, Array.from({ length: currentYear - 2022 + 1 }, (_, index) => 2022 + index));
+});
+
+test("faste statistikforslag bruger deterministiske sikre planer", () => {
+  assert.equal(predefinedStatisticsQueryPlan("Hvor mange kontrakter er der registreret pr. år?")?.metric, "contract_count");
+  assert.deepEqual(predefinedStatisticsQueryPlan("Hvordan har medianlønnen for spillefilm og dokumentarfilm udviklet sig siden 2022?")?.filters.categories, ["feature", "documentary"]);
+});
+
+test("queryplan accepterer ufarlige modelvariationer", () => {
+  const plan = parseStatisticsQueryPlan({ measure: "pension", group_by: "år", filters: {} });
+  assert.equal(plan.metric, "average_pension");
+  assert.equal(plan.groupBy, "year");
 });

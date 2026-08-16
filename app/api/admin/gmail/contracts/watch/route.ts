@@ -22,8 +22,8 @@ async function run(req: NextRequest) {
     const reconciliation = sync.mode === "reconciliation"
       ? null
       : await reconcileRecentGmailContractMessages();
-    // Genstart ogsa koen, naar synkroniseringen kun finder kendte mails. Det
-    // giver cron-kaldet mulighed for at reparere aeldre fastlaaste jobs.
+    // Start også workeren, når Gmail-synkroniseringen kun fandt dubletter.
+    // Der kan ligge ældre køjob fra et tidligere afbrudt webhook-kald.
     after(triggerContractReviewWorker(req.nextUrl.origin));
     const status = await getGmailContractImportStatus();
     return NextResponse.json({ ok: true, configuration, watch, sync, reconciliation, status });

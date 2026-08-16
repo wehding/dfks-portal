@@ -6,7 +6,7 @@ import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { getAdminStatistics, type StatisticsFilters } from "@/lib/admin-statistics";
 import { createClient } from "@/lib/supabase/server";
 import { assertAdminRole } from "@/lib/supabase/assert-admin";
-import { extractStatisticsSeries, parseStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA, StatisticsQueryPlanError, type StatisticsCategory } from "@/lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, predefinedStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA, StatisticsQueryPlanError, type StatisticsCategory } from "@/lib/statistics-query-plan";
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
@@ -128,20 +128,24 @@ export async function POST(request: NextRequest) {
     source: "admin",
   });
   try {
-    const runtime = await getAiRuntimeConfig("statistics_query");
-    const response = await callAi({
-      provider: runtime.provider,
-      model: runtime.model,
-      system: SYSTEM,
-      userMessage: question,
-      maxTokens: 700,
-      responseJson: true,
-      responseSchema: STATISTICS_QUERY_PLAN_SCHEMA,
-      promptCaching: runtime.promptCachingEnabled,
-      usageContext: { runId, orgId: caller.orgId, useCase: "statistics_query", stage: "query" },
-    });
-    const jsonText = response.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
-    const plan = parseStatisticsQueryPlan(JSON.parse(jsonText));
+    const predefinedPlan = predefinedStatisticsQueryPlan(question);
+    let response: string | null = null;
+    if (!predefinedPlan) {
+      const runtime = await getAiRuntimeConfig("statistics_query");
+      response = await callAi({
+        provider: runtime.provider,
+        model: runtime.model,
+        system: SYSTEM,
+        userMessage: question,
+        maxTokens: 700,
+        responseJson: true,
+        responseSchema: STATISTICS_QUERY_PLAN_SCHEMA,
+        promptCaching: runtime.promptCachingEnabled,
+        usageContext: { runId, orgId: caller.orgId, useCase: "statistics_query", stage: "query" },
+      });
+    }
+    const jsonText = response?.replace(/^\s*```(?:json)?/i, "").replace(/```\s*$/, "").trim();
+    const plan = predefinedPlan ?? parseStatisticsQueryPlan(JSON.parse(jsonText ?? ""));
     const producers = await resolveProducerNames(plan.filters.producerNames);
     if (producers.ambiguous) {
       await finishAiUsageRun(runId, "succeeded");

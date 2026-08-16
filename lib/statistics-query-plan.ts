@@ -78,6 +78,42 @@ const allowedContractTypes = new Set(["a-løn", "leverandør"]);
 const allowedMembershipTypes = new Set(["member", "associate", "none", "unknown"]);
 const allowedExperienceGroups = new Set(["new_graduate", "early_career", "experienced", "veteran"]);
 
+const metricAliases: Record<string, StatisticsMetric> = {
+  average_salary: "average_monthly_salary",
+  median_salary: "average_monthly_salary",
+  monthly_salary: "average_monthly_salary",
+  pension: "average_pension",
+  working_weeks: "average_working_weeks",
+  contracts: "contract_count",
+  producer_contributions: "contributions",
+};
+
+function normalizedMetric(value: unknown) {
+  const key = String(value ?? "").trim().toLocaleLowerCase("en");
+  return allowedMetrics.has(key) ? key as StatisticsMetric : metricAliases[key] ?? null;
+}
+
+export function predefinedStatisticsQueryPlan(question: string): StatisticsQueryPlan | null {
+  const normalized = question.trim().toLocaleLowerCase("da");
+  const base = (metric: StatisticsMetric, chart: StatisticsQueryPlan["chart"] = "line"): StatisticsQueryPlan => ({
+    metric, groupBy: "year", chart,
+    filters: { years: [], yearFrom: null, yearTo: null, gender: null, categories: [], contractType: null, producerNames: [], producerTypeCodes: [], membershipTypes: [], professionType: null, experienceGroup: null },
+  });
+  if (normalized.includes("medianlønnen") && normalized.includes("spillefilm") && normalized.includes("dokumentarfilm")) {
+    const plan = base("average_monthly_salary");
+    plan.filters.categories = ["feature", "documentary"];
+    plan.filters.yearFrom = 2022;
+    plan.filters.yearTo = new Date().getFullYear();
+    plan.filters.years = Array.from({ length: plan.filters.yearTo - 2022 + 1 }, (_, index) => 2022 + index);
+    return plan;
+  }
+  if (normalized.includes("gennemsnitlige pension")) return base("average_pension");
+  if (normalized.includes("hvor mange kontrakter") || normalized.includes("antal kontrakter")) return base("contract_count", "bar");
+  if (normalized.includes("producentbidrag")) return base("contributions");
+  if (normalized.includes("arbejdsuger")) return base("average_working_weeks");
+  return null;
+}
+
 function stringArray(value: unknown, maximum: number, maxLength = 120) {
   const values = Array.isArray(value) ? value : typeof value === "string" && value.trim() ? [value] : [];
   return [...new Set(values.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(Boolean).map(item => item.slice(0, maxLength)))].slice(0, maximum);
@@ -86,8 +122,10 @@ function stringArray(value: unknown, maximum: number, maxLength = 120) {
 export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (!value || typeof value !== "object") throw new StatisticsQueryPlanError("missing_plan", "AI-planen mangler.");
   const raw = value as Record<string, unknown>;
-  if (!allowedMetrics.has(String(raw.metric))) throw new StatisticsQueryPlanError("unsupported_metric", "Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
-  if (raw.groupBy !== "year") throw new StatisticsQueryPlanError("unsupported_grouping", "Kun gruppering pr. år er understøttet endnu.");
+  const metric = normalizedMetric(raw.metric ?? raw.measure ?? raw.target);
+  if (!metric) throw new StatisticsQueryPlanError("unsupported_metric", "Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
+  const rawGroupBy = Array.isArray(raw.groupBy) ? raw.groupBy[0] : raw.groupBy ?? raw.group_by ?? "year";
+  if (rawGroupBy !== "year" && rawGroupBy !== "år") throw new StatisticsQueryPlanError("unsupported_grouping", "Kun gruppering pr. år er understøttet endnu.");
   const rawFilters = raw.filters && typeof raw.filters === "object" ? raw.filters as Record<string, unknown> : {};
   const legacyYear = Number(rawFilters.year);
   const explicitYears = (Array.isArray(rawFilters.years) ? rawFilters.years : Number.isInteger(legacyYear) ? [legacyYear] : [])
@@ -110,7 +148,7 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
     .filter((category, index, all) => all.indexOf(category) === index);
   const legacyProducer = typeof rawFilters.producerName === "string" ? [rawFilters.producerName] : [];
   return {
-    metric: raw.metric as StatisticsMetric,
+    metric,
     groupBy: "year",
     filters: {
       years,

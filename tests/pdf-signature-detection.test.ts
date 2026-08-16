@@ -14,6 +14,7 @@ test("digital PDF signature takes precedence", () => {
     status: "yes",
     method: "digital",
     page: null,
+    date: null,
     evidence: "Digital underskrift registreret lokalt i PDF'en.",
   });
 });
@@ -28,6 +29,7 @@ test("handwritten PDF strokes identify page", () => {
     status: "yes",
     method: "handwritten",
     page: 2,
+    date: null,
     evidence: "Håndskrevet underskrift registreret lokalt på side 2.",
   });
 });
