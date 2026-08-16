@@ -108,6 +108,23 @@ export const CONTRACT_EXTRACTION_SCHEMA_VERSION = CONTRACT_IMPORT_SCHEMA_VERSION
 export const CONTRACT_EXTRACTION_CHUNK_CHARS = 90_000;
 export const CONTRACT_EXTRACTION_MIN_TEXT_CHARS = 120;
 
+const USABLE_CONTRACT_FIELDS = [
+  "employerName", "parentCompanyName", "rightsHolderName", "workTitle", "director",
+  "creditedFunction", "contractDate", "startDate", "endDate", "salary", "workingDays",
+  "workingWeeks", "pensionPercent", "collectiveAgreementName", "distribution", "specialNotes",
+] as const;
+
+/** Prevents a syntactically valid, but effectively empty, AI response from
+ * being presented as a successful contract extraction. Boolean defaults and
+ * signature metadata are deliberately insufficient on their own. */
+export function hasUsableContractExtraction(data: Record<string, unknown>) {
+  return USABLE_CONTRACT_FIELDS.some(field => {
+    const value = data[field];
+    if (typeof value === "string") return value.trim().length > 0;
+    return typeof value === "number" && Number.isFinite(value);
+  });
+}
+
 function splitOversizedPage(page: string, maxChars: number) {
   const parts: string[] = [];
   let remainder = page.trim();

@@ -17,6 +17,7 @@ import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
     contractExtractionResponseSchema,
+    hasUsableContractExtraction,
     mergeContractExtractionChunks,
     normalizeContractExtraction,
     splitContractTextForExtraction,
@@ -154,6 +155,15 @@ export async function runContractExtraction(maskedText: string, context: Contrac
     }
 
     let extracted = mergeContractExtractionChunks(extractedChunks)
+    if (!hasUsableContractExtraction(extracted)) {
+        const cause = new ContractImportPipelineError({
+            message: "AI fandt ingen genkendelige kontraktoplysninger",
+            code: "no_usable_contract_data",
+            failureClass: "invalid_output",
+        })
+        await finishAiUsageRun(runId, "failed", cause.code)
+        return { ok: false, error: cause.message, errorCause: cause }
+    }
     const aiSignature = {
         status: extracted.signatureStatus ?? "unknown",
         method: extracted.signatureMethod ?? "unknown",

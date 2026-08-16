@@ -85,13 +85,13 @@ export function MobileDataCard({
 }
 
 export function SummaryGrid({ children, className }: { children: React.ReactNode; className?: string }) {
-    return <div className={cn("grid min-w-0 max-w-full grid-cols-3 gap-2 sm:gap-4", className)}>{children}</div>
+    return <div className={cn("grid min-w-0 max-w-full grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:gap-3", className)}>{children}</div>
 }
 
 export function SummaryCard({ label, value, className }: { label: string; value: React.ReactNode; className?: string }) {
-    return <div className={cn("min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:px-6 sm:py-5", className)}>
-        <p className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:text-sm">{label}</p>
-        <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:text-3xl">{value}</p>
+    return <div className={cn("min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:flex sm:min-w-44 sm:items-center sm:justify-between sm:gap-4 sm:px-4 sm:py-2.5", className)}>
+        <p className="line-clamp-2 min-h-8 text-[11px] font-medium leading-4 text-muted-foreground sm:min-h-0 sm:line-clamp-1 sm:text-sm">{label}</p>
+        <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:mt-0 sm:text-xl">{value}</p>
     </div>
 }
 
