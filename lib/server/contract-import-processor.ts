@@ -514,7 +514,7 @@ export async function processPendingContractJobs(orgId?: string | null) {
 
 export async function runDirectContractJob(input: { contractId: string; orgId?: string | null; actorUserId?: string | null }) {
   const admin = createServiceClient({ audit: { actorUserId: input.actorUserId, actorOrgId: input.orgId, source: "admin", correlationId: crypto.randomUUID(), mode: "summary" } });
-  let query = admin.from("contracts").select("id,org_id,pdf_url").eq("id", input.contractId);
+  let query = admin.from("contracts").select("id,org_id,pdf_url,processed_pdf_url").eq("id", input.contractId);
   if (input.orgId) query = query.eq("org_id", input.orgId);
   const contract = await query.maybeSingle();
   assertDatabase(contract, "Kontrakten kunne ikke hentes");
@@ -524,7 +524,7 @@ export async function runDirectContractJob(input: { contractId: string; orgId?: 
     contract_id: contract.data.id,
     org_id: contract.data.org_id,
     attempts: 0,
-    pdf_url: contract.data.pdf_url,
+    pdf_url: contract.data.processed_pdf_url ?? contract.data.pdf_url,
     attachment_id: null,
     stage: "extraction",
     provider: null,

@@ -133,21 +133,40 @@ export async function intakeContractFile(input: {
     return { ok: false as const, status: 500, error: "Kontrakten kunne ikke oprettes" };
   }
 
-  const runtimeConfig = await getAiRuntimeConfig("contract_extraction");
-  const { data: job, error: jobError } = await db.from("contract_ai_jobs").insert({
-    contract_id: contract.id,
-    org_id: actor.orgId,
-    created_by: actor.userId,
-    status: "queued",
-    stage: "extraction",
-    priority: 100,
-    provider: runtimeConfig.provider,
-    model: runtimeConfig.model,
-    prompt_version: CONTRACT_IMPORT_PROMPT_VERSION,
-    schema_version: CONTRACT_IMPORT_SCHEMA_VERSION,
-    next_attempt_at: new Date().toISOString(),
-  }).select("id").single();
-  if (jobError || !job) {
+  const isPdf = input.file.contentType === "application/pdf" || input.file.name.toLowerCase().endsWith(".pdf");
+  let aiJobId: string | null = null;
+  let queueError: { message?: string } | null = null;
+  if (isPdf) {
+    const outputPath = `${actor.orgId}/processed/${contract.id}/normalised.pdf`;
+    const result = await db.from("contract_document_jobs").insert({
+      contract_id: contract.id,
+      org_id: actor.orgId,
+      created_by: actor.userId,
+      original_storage_path: storagePath,
+      output_storage_path: outputPath,
+      status: "queued",
+      priority: 100,
+    });
+    queueError = result.error;
+  } else {
+    const runtimeConfig = await getAiRuntimeConfig("contract_extraction");
+    const result = await db.from("contract_ai_jobs").insert({
+      contract_id: contract.id,
+      org_id: actor.orgId,
+      created_by: actor.userId,
+      status: "queued",
+      stage: "extraction",
+      priority: 100,
+      provider: runtimeConfig.provider,
+      model: runtimeConfig.model,
+      prompt_version: CONTRACT_IMPORT_PROMPT_VERSION,
+      schema_version: CONTRACT_IMPORT_SCHEMA_VERSION,
+      next_attempt_at: new Date().toISOString(),
+    }).select("id").single();
+    queueError = result.error;
+    aiJobId = result.data?.id ?? null;
+  }
+  if (queueError || (!isPdf && !aiJobId)) {
     await db.from("contracts").delete().eq("id", contract.id);
     await db.storage.from("kontrakter").remove([storagePath]);
     await db.from("contract_import_items").update({ status: "dead", error_code: "job_create", error_message: "Analysejobbet kunne ikke oprettes" }).eq("id", item.id);
@@ -186,7 +205,7 @@ export async function intakeContractFile(input: {
   const itemUpdate = await db.from("contract_import_items").update({
     storage_path: storagePath,
     contract_id: contract.id,
-    ai_job_id: job.id,
+    ai_job_id: aiJobId,
     status: "queued",
   }).eq("id", item.id);
   if (itemUpdate.error) {

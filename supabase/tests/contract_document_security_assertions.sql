@@ -1,0 +1,56 @@
+begin;
+
+select plan(1);
+
+do $$
+declare
+  test_org uuid := gen_random_uuid();
+  actor_id uuid := gen_random_uuid();
+  previous_id uuid := gen_random_uuid();
+  current_id uuid := gen_random_uuid();
+  job_id uuid := gen_random_uuid();
+  claimed public.contract_document_jobs;
+begin
+  if has_table_privilege('anon', 'public.contract_document_jobs', 'SELECT')
+    or has_table_privilege('authenticated', 'public.contract_document_jobs', 'SELECT')
+    or has_function_privilege('authenticated', 'public.claim_next_contract_document_job(integer)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.finish_contract_document_job(uuid,text,jsonb,boolean,integer,integer,text,text)', 'EXECUTE') then
+    raise exception 'Document queue regression: browser roles can access the server-only queue';
+  end if;
+
+  insert into public.organisations (id, name) values (test_org, 'Document security test ' || test_org::text);
+  insert into auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
+  values (actor_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', actor_id || '@example.invalid', '', now(), now());
+  insert into public.contracts (id, org_id, type, status, pdf_url)
+  values
+    (previous_id, test_org, 'A-løn', 'kladde', test_org || '/previous.pdf'),
+    (current_id, test_org, 'A-løn', 'kladde', test_org || '/current.pdf');
+
+  perform set_config('request.jwt.claim.role', 'service_role', true);
+
+  perform public.link_contract_version(previous_id, current_id, actor_id);
+  if not exists (select 1 from public.contracts where id = previous_id and superseded_by_contract_id = current_id) then
+    raise exception 'Version regression: previous contract was not linked';
+  end if;
+
+  insert into public.contract_document_jobs (id, org_id, contract_id, original_storage_path, output_storage_path)
+  values (job_id, test_org, current_id, test_org || '/current.pdf', test_org || '/processed/current.pdf');
+  select * into claimed from public.claim_next_contract_document_job(10);
+  if claimed.id <> job_id or claimed.status <> 'processing' then
+    raise exception 'Document queue regression: job was not claimed safely';
+  end if;
+  perform public.finish_contract_document_job(job_id, 'completed', '[]'::jsonb, true, 2, 1000, null, null);
+  if not exists (
+    select 1 from public.contracts
+    where id = current_id and pdf_url = test_org || '/current.pdf'
+      and processed_pdf_url = test_org || '/processed/current.pdf'
+      and document_processing_status = 'ready'
+  ) then
+    raise exception 'Document queue regression: original or derivative state is incorrect';
+  end if;
+end $$;
+
+select pass('Kontraktversioner og dokumentkø har server-only adgang og bevarer originalen');
+select * from finish();
+
+rollback;

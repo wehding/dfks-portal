@@ -306,16 +306,27 @@ export async function saveUploadedContract(params: {
   }
 
   if (!params.deferAiJob) {
-    const { error: jobError } = await db.from("contract_ai_jobs").insert({
-      contract_id: saved.id,
-      org_id: orgId,
-      status: "queued",
-      priority: 0,
-    });
+    const isPdf = params.filePath.toLowerCase().endsWith(".pdf");
+    const result = isPdf
+      ? await db.from("contract_document_jobs").insert({
+        contract_id: saved.id,
+        org_id: orgId,
+        created_by: user.id,
+        original_storage_path: params.filePath,
+        output_storage_path: `${orgId}/processed/${saved.id}/normalised.pdf`,
+        status: "queued",
+        priority: 100,
+      })
+      : await db.from("contract_ai_jobs").insert({
+        contract_id: saved.id,
+        org_id: orgId,
+        status: "queued",
+        priority: 0,
+      });
 
-    if (jobError) {
-      console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
-    } else {
+    if (result.error) {
+      console.error("Kunne ikke oprette behandlingsjob for uploadet kontrakt:", result.error);
+    } else if (!isPdf) {
       triggerContractAiJobProcessing(orgId);
     }
   }
@@ -334,12 +345,28 @@ export async function queueUploadedContractAiJob(contractId: string) {
   const orgId = await requireOrgId(db, user.id);
   const { data: contract } = await db
     .from("contracts")
-    .select("id")
+    .select("id,pdf_url")
     .eq("id", contractId)
     .eq("org_id", orgId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
   if (!contract) return { success: false, error: "Kontrakten blev ikke fundet" };
+
+  if (contract.pdf_url?.toLowerCase().endsWith(".pdf")) {
+    const { data: existingDocumentJob } = await db.from("contract_document_jobs")
+      .select("id").eq("contract_id", contractId).in("status", ["queued", "processing", "failed"]).limit(1).maybeSingle();
+    if (existingDocumentJob) return { success: true, alreadyQueued: true };
+    const { error } = await db.from("contract_document_jobs").insert({
+      contract_id: contractId,
+      org_id: orgId,
+      created_by: user.id,
+      original_storage_path: contract.pdf_url,
+      output_storage_path: `${orgId}/processed/${contractId}/normalised.pdf`,
+      status: "queued",
+      priority: 100,
+    });
+    return error ? { success: false, error: error.message } : { success: true, alreadyQueued: false };
+  }
 
   const { data: existing } = await db
     .from("contract_ai_jobs")

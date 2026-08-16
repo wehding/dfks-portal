@@ -60,12 +60,9 @@ function ensureHighlightCSS() {
     const style = document.createElement("style")
     style.id = id
     style.textContent = `
-        .react-pdf__Page__textContent span[data-hl="true"] {
-            background: rgba(253,224,71,0.45) !important;
-        }
         .react-pdf__Page__textContent span[data-hl="active"] {
-            background: rgba(34,197,94,0.4) !important;
-            box-shadow: 0 0 0 1px rgba(22,163,74,0.5) !important;
+            background: rgba(253,224,71,0.55) !important;
+            box-shadow: 0 0 0 1px rgba(202,138,4,0.45) !important;
         }
     `
     document.head.appendChild(style)
@@ -114,7 +111,9 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     }) ?? activeCandidates[0] ?? null
     const normActive = resolvedActive ? norm(resolvedActive) : null
 
-    const allHighlights = [...highlights, ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim()))]
+    // Kildehenvisninger markeres først, når brugeren aktivt klikker på lynet.
+    // `highlights` bruges fortsat til at finde siden, men males ikke permanent.
+    const allHighlights = activeCandidates
 
     allHighlights.forEach((quote) => {
         if (!quote || quote.length < 2) return
@@ -145,7 +144,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                     const matched = spanMap.filter(({ start, end }) => start < snEnd && end > snIdx)
                     if (!matched.length) continue
                     matched.forEach(({ span }) => {
-                        span.setAttribute("data-hl", isActive ? "active" : "true")
+                        if (isActive) span.setAttribute("data-hl", "active")
                     })
                     if (isActive && matched[0]) {
                         matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -161,7 +160,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                 const trimmed = matched.filter(({ start }) => start < matchEnd)
                 if (!trimmed.length) continue
                 trimmed.forEach(({ span }) => {
-                    span.setAttribute("data-hl", isActive ? "active" : "true")
+                    if (isActive) span.setAttribute("data-hl", "active")
                 })
                 if (isActive && trimmed[0]) {
                     trimmed[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -268,9 +267,9 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.min(2.5, s + 0.2))}><ZoomIn className="h-3.5 w-3.5" /></Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(1.0)}><Maximize2 className="h-3.5 w-3.5" /></Button>
-                {highlights.filter(Boolean).length > 0 && (
+                {activeHighlight && (
                     <span className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
-                        {highlights.filter(Boolean).length} markeringer
+                        Aktiv kilde markeres med gul
                     </span>
                 )}
             </div>

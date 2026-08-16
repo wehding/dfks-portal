@@ -1,0 +1,133 @@
+# Cloud Run: privat PDF-normalisering og OCR
+
+Denne opsætning udføres i den indloggede Google Cloud Console i browseren. Der
+bruges ikke `gcloud` til oprettelse eller ændring af Cloud Run, IAM eller Scheduler.
+
+## Datastrøm
+
+1. Portalen gemmer originalen uændret i den private Supabase Storage-bucket.
+2. En server-only databasekø indeholder kun interne id'er og storage-stier.
+3. Cloud Scheduler kalder den private Cloud Run-service med Google OIDC.
+4. Cloud Run identificerer sig over for portalen med sin egen Google-signatur.
+5. Portalen udsteder et downloadlink med ti minutters levetid og et Supabase
+   upload-token, begrænset til én tilfældig outputsti for netop det pågældende job.
+   Supabase-upload-tokenet er gyldigt i to timer, men kan ikke overskrive en allerede
+   færdig upload. Ved et kontrolleret genforsøg slettes kun den afledte outputfil først.
+6. Cloud Run retter sideretning, deskewer og OCR-behandler lokalt i den midlertidige
+   container. Midlertidige filer slettes i `finally`.
+7. Den behandlede kopi uploades til en separat sti. Originalen overskrives aldrig.
+8. Først efter afsluttet behandling oprettes AI-jobbet. AI bruger den behandlede kopi.
+
+Cloud Run modtager aldrig Supabase service-role, refresh-tokens eller AI-nøgler.
+
+## Browserplan i Google Cloud Console
+
+### 1. Vælg eksisterende organisation og projekt
+
+- Log ind med DFKS' Google Cloud-administratorkonto.
+- Vælg et eksisterende DFKS-projekt med aktiv fakturering, eller opret et særskilt
+  projekt med navnet `DFKS Portal PDF Processing` efter ansvarlig godkendelse.
+- Vælg EU-regionen `europe-north1` konsekvent for Artifact Registry og Cloud Run.
+- Accept af prøveperiode, betalingskonto og juridiske vilkår foretages af den
+  ansvarlige bruger, ikke automatisk af Codex.
+
+### 2. Aktivér API'er
+
+I **APIs & Services → Library** aktiveres:
+
+- Cloud Run Admin API
+- Cloud Build API
+- Artifact Registry API
+- Cloud Scheduler API
+- IAM Service Account Credentials API
+
+### 3. Opret servicekonti
+
+I **IAM & Admin → Service Accounts**:
+
+- `dfks-pdf-worker`: identitet for selve containeren. Ingen projektroller tildeles.
+- `dfks-pdf-scheduler`: må kun få `Cloud Run Invoker` på den konkrete service.
+
+Der oprettes ingen JSON-nøgler. Identitet leveres af Cloud Run og Scheduler.
+
+### 4. Byg containeren i browseren
+
+I **Cloud Run → Create service → Continuously deploy** eller Cloud Builds browserflow
+vælges repository og mappen `cloud-run/contract-document-worker` med dens Dockerfile.
+Artifact Registry placeres i `europe-north1`. Buildlogs må ikke indeholde kontrakter,
+miljøvariabler eller filnavne.
+
+### 5. Opret privat Cloud Run-service
+
+Anbefalede indstillinger:
+
+- Navn: `dfks-contract-document-worker`
+- Region: `europe-north1`
+- Authentication: **Require authentication**
+- Ingress: **Internal and Cloud Load Balancing** hvis Scheduler kan nå servicen i den
+  valgte projektopsætning; ellers **All** med IAM-godkendelse stadig påkrævet.
+- Service account: `dfks-pdf-worker`
+- Minimum instances: 0
+- Maximum instances: 1 til første driftstest, derefter højst et bevidst valgt lavt tal
+- Concurrency: 1
+- Memory: 2 GiB
+- CPU: 2
+- Request timeout: 15 minutter
+- Execution environment: anden generation
+
+Tilføj aldrig `allUsers` eller `allAuthenticatedUsers` som invoker.
+
+Miljøvariabler:
+
+- `PORTAL_BASE_URL=https://dfks-portal-hazel.vercel.app`
+- `OCR_CLOUD_RUN_AUDIENCE=<fast audience, identisk med Vercel>`
+- `SUPABASE_URL=<projektets offentlige URL>`
+- `SUPABASE_ANON_KEY=<projektets offentlige anon/publishable key>`
+
+Ingen af disse er en service-role. Den faste audience er ikke en hemmelighed.
+
+### 6. Tilføj Vercel-konfiguration
+
+Portalen skal have:
+
+- `OCR_CLOUD_RUN_AUDIENCE` med samme værdi som Cloud Run
+- `OCR_CLOUD_RUN_SERVICE_ACCOUNT` med den fulde mail på `dfks-pdf-worker`
+
+En ny deployment er nødvendig. Der må ikke tilføjes en Google service-account JSON-nøgle.
+
+### 7. Opret Scheduler-job
+
+I **Cloud Scheduler → Create job**:
+
+- Region: `europe-north1`
+- Frekvens: hvert minut under indkøring, senere efter den ønskede kapacitet
+- Target: HTTP
+- URL: Cloud Run-servicens `/run`
+- Method: POST
+- Auth header: OIDC token
+- Service account: `dfks-pdf-scheduler`
+- Audience: Cloud Run-servicens origin
+
+Tildel derefter kun Scheduler-kontoen rollen **Cloud Run Invoker** på denne service.
+
+### 8. Logning, overvågning og sletning
+
+- Aktivér Data Access-auditlogs for Cloud Run/IAM-ændringer.
+- Logbaseret alarm ved gentagne `document_job_failed`, men uden PDF-indhold, stier,
+  personnavne eller tokenværdier i alarmteksten.
+- Cloud Run-logretention sættes efter DFKS' dokumenterede databevaringspolitik.
+- Containerens midlertidige filsystem betragtes som flygtigt; oprydning sker efter
+  hvert job og altid ved fejl.
+
+## Accepttest
+
+- Uautoriseret HTTP-kald til Cloud Run afvises.
+- En anden Google-servicekonto afvises af portalens claim- og complete-endpoints.
+- Browserroller kan ikke læse `contract_document_jobs`.
+- Et udløbet download-token kan ikke genbruges, og upload-tokenet kan ikke bruges til
+  andre stier eller til at overskrive en allerede færdig upload.
+- Originalens hash og storage-sti er uændret efter behandling.
+- 90°, 180° og 270° testsider vises korrekt i portalen.
+- En billedbaseret PDF får tekstlag; en PDF med tekst bevarer eksisterende tekst.
+- Filer over 25 MB og ugyldige PDF'er får konkrete, sikre fejlbeskeder.
+- Ingen kontrakt, filsti, token eller persondata findes i Cloud Run-loggen.

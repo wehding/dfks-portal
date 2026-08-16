@@ -118,7 +118,7 @@ export function classifyContractImportFailure(
   if (details.code === "insufficient_text" || details.code === "ocr_required") {
     return {
       status: "dead", itemStatus: "needs_ocr", failureClass: "input", errorCode: "ocr_required",
-      safeMessage: "Filen indeholder ikke nok læsbar tekst og kræver OCR eller en tydeligere fil.",
+      safeMessage: "Scannet PDF uden tilstrækkeligt tekstlag. Dokumentet skal OCR-behandles, før AI kan aflæse det.",
       nextAttemptAt: null, refundAttempt: false,
     };
   }

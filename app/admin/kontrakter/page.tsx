@@ -45,6 +45,7 @@ import { WORK_TYPES } from "@/lib/work-types"
 import { buildCompleteEpisodeOptions, contractEpisodeTag } from "@/lib/series-episodes"
 import { TableSkeleton } from "@/components/ui/data-skeletons"
 import { ListResultSummary } from "@/components/list-result-summary"
+import { GoogleDriveContractPicker } from "@/components/admin/google-drive-contract-picker"
 import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
@@ -63,6 +64,11 @@ type ContractRow = {
     overenskomst: string | null
     status: string
     pdf_url: string | null
+    processed_pdf_url: string | null
+    document_processing_status: string
+    document_processing_error_code: string | null
+    superseded_by_contract_id: string | null
+    previous_version_count: number
     contract_date: string | null
     start_date: string | null
     end_date: string | null
@@ -307,7 +313,7 @@ function YearCountCard({ contracts, availableYears, currentYear }: {
         return year === selectedYear
     }).length
     return (
-        <div className="min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:px-6 sm:py-5">
+        <div className="min-w-0 rounded-lg border bg-card px-3 py-3 text-card-foreground sm:flex sm:min-w-52 sm:items-center sm:gap-3 sm:px-4 sm:py-2.5">
             <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] font-medium leading-4 text-muted-foreground sm:text-sm">Kontrakter i</p>
                 <select
@@ -318,12 +324,12 @@ function YearCountCard({ contracts, availableYears, currentYear }: {
                     {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
             </div>
-            <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:text-3xl">{count}</p>
+            <p className="mt-1 text-xl font-bold tabular-nums text-foreground sm:ml-auto sm:mt-0">{count}</p>
         </div>
     )
 }
 
-function AdminKontrakterContent() {
+function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "upload" }) {
     const { locale, t } = useI18n()
     const [contracts, setContracts] = useState<ContractRow[]>([])
     const [employers, setEmployers] = useState<Employer[]>([])
@@ -345,6 +351,9 @@ function AdminKontrakterContent() {
     const [duplicatesOpen, setDuplicatesOpen] = useState(false)
     const [archiveEditOpen, setArchiveEditOpen] = useState(false)
     const [deleteEditOpen, setDeleteEditOpen] = useState(false)
+    const [versionDialogOpen, setVersionDialogOpen] = useState(false)
+    const [currentVersionId, setCurrentVersionId] = useState("")
+    const [versionSaving, setVersionSaving] = useState(false)
     const [missingWorkValidation, setMissingWorkValidation] = useState<{ contractId: string; title: string; openNextAfterSave: boolean } | null>(null)
     const [adminReply, setAdminReply] = useState("")
     const [replySaving, setReplySaving] = useState(false)
@@ -640,7 +649,8 @@ function AdminKontrakterContent() {
                     supabase
                         .from("contracts")
                         .select(`
-                            id, type, overenskomst, status, pdf_url,
+                            id, type, overenskomst, status, pdf_url, processed_pdf_url,
+                            document_processing_status, document_processing_error_code, superseded_by_contract_id,
                             contract_date, start_date, end_date, created_at,
                             employer_id, rights_holder_id, working_title,
                             season_number, episode_numbers,
@@ -666,7 +676,7 @@ function AdminKontrakterContent() {
 
                 if (contractsRes.error) console.error("Kontrakter query fejl:", contractsRes.error.message)
                 if (contractsRes.data) {
-                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
+                    const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; superseded_by_contract_id?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
                     const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
@@ -705,7 +715,11 @@ function AdminKontrakterContent() {
                         }
                     }
                     const importStates = await getContractImportStates(rawContracts.map(contract => contract.id))
-                    setContracts(rawContracts.map((r) => {
+                    const previousCounts = rawContracts.reduce<Record<string, number>>((counts, row) => {
+                        if (row.superseded_by_contract_id) counts[row.superseded_by_contract_id] = (counts[row.superseded_by_contract_id] ?? 0) + 1
+                        return counts
+                    }, {})
+                    setContracts(rawContracts.filter(r => !r.superseded_by_contract_id).map((r) => {
                         const validation = Array.isArray(r.contract_validations) ? r.contract_validations[0] : r.contract_validations
                         return ({
                         id: r.id,
@@ -713,6 +727,11 @@ function AdminKontrakterContent() {
                         overenskomst: r.overenskomst,
                         status: r.status,
                         pdf_url: r.pdf_url,
+                        processed_pdf_url: r.processed_pdf_url ?? null,
+                        document_processing_status: r.document_processing_status ?? "pending",
+                        document_processing_error_code: r.document_processing_error_code ?? null,
+                        superseded_by_contract_id: r.superseded_by_contract_id ?? null,
+                        previous_version_count: previousCounts[r.id] ?? 0,
                         contract_date: r.contract_date,
                         start_date: r.start_date,
                         end_date: r.end_date,
@@ -830,9 +849,10 @@ function AdminKontrakterContent() {
     const openPdf = async (contract: ContractRow) => {
         setViewContract(contract)
         setViewPdfUrl(null)
-        if (!contract.pdf_url) return
+        const displayPath = contract.processed_pdf_url ?? contract.pdf_url
+        if (!displayPath) return
         const supabase = createClient()
-        const { data } = await supabase.storage.from("kontrakter").createSignedUrl(contract.pdf_url, 3600)
+        const { data } = await supabase.storage.from("kontrakter").createSignedUrl(displayPath, 3600)
         if (data?.signedUrl) setViewPdfUrl(data.signedUrl)
     }
 
@@ -1030,9 +1050,10 @@ function AdminKontrakterContent() {
         setNavneTjekResult(null)
         setSeriesSectionRequested(false)
 
-        if (c.pdf_url) {
+        const displayPath = c.processed_pdf_url ?? c.pdf_url
+        if (displayPath) {
             const supabase = createClient()
-            supabase.storage.from("kontrakter").createSignedUrl(c.pdf_url, 3600).then(({ data }) => {
+            supabase.storage.from("kontrakter").createSignedUrl(displayPath, 3600).then(({ data }) => {
                 if (data?.signedUrl) setEditDocUrl(data.signedUrl)
             })
         }
@@ -1121,6 +1142,7 @@ function AdminKontrakterContent() {
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
+            ...c,
             id: row.id,
             type: row.type,
             overenskomst: row.overenskomst,
@@ -1697,6 +1719,27 @@ function AdminKontrakterContent() {
     const toggleAllFiltered = () => {
         setSelectedIds(allFilteredSelected ? [] : filtered.map(contract => contract.id))
     }
+    const markAsPreviousVersion = async () => {
+        if (!editContract || !currentVersionId) return
+        setVersionSaving(true)
+        try {
+            const response = await fetch(`/api/admin/contracts/${editContract.id}/versions`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ currentContractId: currentVersionId }),
+            })
+            const json = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(json.error ?? "Kontrakterne kunne ikke forbindes")
+            setContracts(items => items.filter(item => item.id !== editContract.id).map(item => item.id === currentVersionId ? { ...item, previous_version_count: item.previous_version_count + 1 } : item))
+            setVersionDialogOpen(false)
+            closeEditDialog()
+            toast.success("Kontrakten er markeret som tidligere version")
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Kontrakterne kunne ikke forbindes")
+        } finally {
+            setVersionSaving(false)
+        }
+    }
 
     const SortButton = ({ label, sortId }: { label: string; sortId: SortKey }) => (
         <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => handleSort(sortId)}>
@@ -1720,20 +1763,26 @@ function AdminKontrakterContent() {
 
     return (
         <div className="space-y-6">
-            <SummaryGrid>
+            {view === "archive" && <SummaryGrid>
                 <SummaryCard label="Kontrakter i alt" value={stats.total} />
                 <YearCountCard contracts={contracts} availableYears={availableYears} currentYear={currentYear} />
                 <SummaryCard label="Validerede" value={stats.validerede} />
-            </SummaryGrid>
+            </SummaryGrid>}
 
-            <div className="flex justify-end">
+            {view === "upload" && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card p-4">
+                <div>
+                    <h2 className="font-semibold">Upload fra computer eller telefon</h2>
+                    <p className="text-sm text-muted-foreground">Filer gemmes som kladder og behandles sikkert i baggrunden.</p>
+                </div>
                 <Button size="sm" className="gap-1.5" onClick={() => { setShowUpload(true); setUploadPhase("select"); setUploadItems([]); setActiveUploadBatchId(null); setUploadRightsHolderId(""); setUploadRightsHolderSearch("") }}>
                     <Upload className="h-4 w-4" />
                     Upload kontrakter
                 </Button>
-            </div>
+            </div>}
 
-            {recentImportBatches.length > 0 && (
+            {view === "upload" && <GoogleDriveContractPicker onImported={() => void loadImportBatches()} />}
+
+            {view === "upload" && recentImportBatches.length > 0 && (
                 <section className="rounded-lg border bg-card p-3 sm:p-4" aria-labelledby="recent-imports-title">
                     <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
@@ -1770,6 +1819,7 @@ function AdminKontrakterContent() {
                 </section>
             )}
 
+            {view === "archive" && <>
             {/* Filters */}
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center">
                 <div className="relative w-full lg:w-auto">
@@ -1917,6 +1967,9 @@ function AdminKontrakterContent() {
                                             {contractEpisodeTag(c.season_number, c.episode_numbers) && (
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
+                                            {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
+                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
+                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2003,6 +2056,9 @@ function AdminKontrakterContent() {
                                             {contractEpisodeTag(c.season_number, c.episode_numbers) && (
                                                 <Badge variant="outline" className="font-mono text-[10px]">{contractEpisodeTag(c.season_number, c.episode_numbers)}</Badge>
                                             )}
+                                            {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
+                                            {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
+                                            {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2049,6 +2105,7 @@ function AdminKontrakterContent() {
                     </TableBody>
                 </Table>
             </ResponsiveTableFrame>
+            </>}
 
             {/* PDF Viewer */}
             <Dialog open={!!viewContract} onOpenChange={() => { setViewContract(null); setViewPdfUrl(null) }}>
@@ -2106,8 +2163,9 @@ function AdminKontrakterContent() {
                                     <p className="text-xs text-muted-foreground mt-1">PDF, Word (.doc og .docx) eller TXT — ingen samlet batchgrænse, maks. 25 MB pr. fil</p>
                                     <p className="mt-1 text-[11px] text-muted-foreground">Filerne uploades i små bidder og analyseres automatisk i baggrunden.</p>
                                     <input id="bulk-file-input" type="file" accept={ADMIN_CONTRACT_UPLOAD_ACCEPT} multiple className="hidden" onChange={handleFileSelect} />
-                </div>
-            </div>
+                                </div>
+                            </div>
+                            <GoogleDriveContractPicker onImported={() => void loadImportBatches()} />
                             {uploadItems.length > 0 && (
                                 <div className="space-y-2">
                                     <Label className="text-xs text-muted-foreground font-medium">Valgte filer ({uploadItems.length})</Label>
@@ -2232,6 +2290,27 @@ function AdminKontrakterContent() {
             </Dialog>
 
             {/* Edit */}
+            <Dialog open={versionDialogOpen} onOpenChange={setVersionDialogOpen}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Markér som tidligere version</DialogTitle>
+                        <DialogDescription>Vælg den reviderede kontrakt, som fremover skal være den aktuelle version. Den tidligere version bevares i historikken og fjernes fra hovedlisten.</DialogDescription>
+                    </DialogHeader>
+                    <Select value={currentVersionId} onValueChange={setCurrentVersionId}>
+                        <SelectTrigger><SelectValue placeholder="Vælg aktuel kontrakt" /></SelectTrigger>
+                        <SelectContent>
+                            {contracts.filter(candidate => candidate.id !== editContract?.id && (!editContract?.work_id || candidate.work_id === editContract.work_id)).map(candidate => (
+                                <SelectItem key={candidate.id} value={candidate.id}>{candidate.work_title ?? candidate.working_title ?? "Kontrakt"} · {new Date(candidate.created_at).toLocaleDateString("da-DK")}</SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setVersionDialogOpen(false)}>Annuller</Button>
+                        <Button onClick={markAsPreviousVersion} disabled={!currentVersionId || versionSaving}>{versionSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Gem version</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={!!editContract} onOpenChange={o => { if (!o && !editSaving) { closeEditDialog() } }}>
                 <DialogContent
                     ref={editDialogRef}
@@ -2266,6 +2345,9 @@ function AdminKontrakterContent() {
                         <Button type="button" variant="outline" size="sm" className="gap-2" onClick={handleArchiveEdit} disabled={editSaving}>
                             <Archive className="h-4 w-4" />
                             Arkiver
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => { setCurrentVersionId(""); setVersionDialogOpen(true) }} disabled={editSaving}>
+                            Markér som tidligere version
                         </Button>
                         {editContract?.pdf_url && (
                             <Button
@@ -2868,8 +2950,9 @@ function AdminKontrakterContent() {
 
 function AdminKontrakterPageInner() {
     const searchParams = useSearchParams()
-    const initialTab = searchParams.get("tab") === "valideringskoe" ? "valideringskoe" : "arkiv"
-    const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe">(initialTab)
+    const requestedTab = searchParams.get("tab")
+    const initialTab = requestedTab === "valideringskoe" ? "valideringskoe" : requestedTab === "upload" ? "upload" : "arkiv"
+    const [activeTab, setActiveTab] = useState<"arkiv" | "valideringskoe" | "upload">(initialTab)
     const [køCount, setKøCount] = useState<number>(0)
 
     useEffect(() => {
@@ -2925,10 +3008,24 @@ function AdminKontrakterPageInner() {
                         </span>
                     )}
                 </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab("upload")}
+                    className={[
+                        "px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors",
+                        activeTab === "upload"
+                            ? "border-foreground text-foreground"
+                            : "border-transparent text-muted-foreground hover:text-foreground",
+                    ].join(" ")}
+                >
+                    Kontraktupload
+                </button>
             </div>
             {activeTab === "arkiv"
-                ? <Suspense><AdminKontrakterContent /></Suspense>
-                : <ValideringskøTab onAfventerCount={setKøCount} />
+                ? <Suspense><AdminKontrakterContent view="archive" /></Suspense>
+                : activeTab === "upload"
+                    ? <Suspense><AdminKontrakterContent view="upload" /></Suspense>
+                    : <ValideringskøTab onAfventerCount={setKøCount} />
             }
         </div>
     )
