@@ -52,16 +52,19 @@ export const STATISTICS_QUERY_PLAN_SCHEMA: Record<string, unknown> = {
       additionalProperties: false,
       required: ["years", "yearFrom", "yearTo", "gender", "categories", "contractType", "producerNames", "producerTypeCodes", "membershipTypes", "professionType", "experienceGroup"],
       properties: {
-        years: { type: "array", maxItems: 200, items: { type: "integer", minimum: 1900, maximum: 2200 } },
-        yearFrom: { anyOf: [{ type: "integer", minimum: 1900, maximum: 2200 }, { type: "null" }] },
-        yearTo: { anyOf: [{ type: "integer", minimum: 1900, maximum: 2200 }, { type: "null" }] },
+        // Anthropic Structured Outputs understøtter formen, men ikke alle JSON
+        // Schema-begrænsninger. De præcise grænser håndhæves derfor fortsat i
+        // parseStatisticsQueryPlan efter modelsvaret.
+        years: { type: "array", items: { type: "integer" } },
+        yearFrom: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        yearTo: { anyOf: [{ type: "integer" }, { type: "null" }] },
         gender: { anyOf: [{ type: "string", enum: ["male", "female", "other"] }, { type: "null" }] },
         categories: { type: "array", items: { type: "string", enum: ["feature", "tvSeries", "documentary", "docSeries", "short", "tvEntertainment", "reality", "other"] } },
         contractType: { anyOf: [{ type: "string", enum: ["a-løn", "leverandør"] }, { type: "null" }] },
-        producerNames: { type: "array", maxItems: 5, items: { type: "string", maxLength: 120 } },
-        producerTypeCodes: { type: "array", maxItems: 20, items: { type: "string", maxLength: 80 } },
-        membershipTypes: { type: "array", maxItems: 4, items: { type: "string", enum: ["member", "associate", "none", "unknown"] } },
-        professionType: { anyOf: [{ type: "string", maxLength: 120 }, { type: "null" }] },
+        producerNames: { type: "array", items: { type: "string" } },
+        producerTypeCodes: { type: "array", items: { type: "string" } },
+        membershipTypes: { type: "array", items: { type: "string", enum: ["member", "associate", "none", "unknown"] } },
+        professionType: { anyOf: [{ type: "string" }, { type: "null" }] },
         experienceGroup: { anyOf: [{ type: "string", enum: ["new_graduate", "early_career", "experienced", "veteran"] }, { type: "null" }] },
       },
     },

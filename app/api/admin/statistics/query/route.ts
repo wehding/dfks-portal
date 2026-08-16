@@ -88,6 +88,14 @@ function classifyStatisticsQueryError(error: unknown) {
     suggestion: "Spørg fx til løn, pension, arbejdsuger, antal kontrakter eller producentbidrag fordelt på år.",
   } as const;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (error instanceof AiProviderHttpError && error.failureClass === "input") {
+    return {
+      status: 500,
+      errorCode: "ai_request_invalid",
+      reason: "Statistikassistentens modelopsætning kunne ikke bruges til forespørgslen.",
+      suggestion: "En administrator kan kontrollere modelvalget og statistikfunktionen i AI-kontrolrummet.",
+    } as const;
+  }
   if (error instanceof AiProviderHttpError || error instanceof SyntaxError || /api-nøgle|ukendt ai-udbyder|timeout|fetch failed/.test(message)) {
     return {
       status: 503,

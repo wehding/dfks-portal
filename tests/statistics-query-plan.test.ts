@@ -1,6 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractStatisticsSeries, parseStatisticsQueryPlan } from "../lib/statistics-query-plan";
+import { extractStatisticsSeries, parseStatisticsQueryPlan, STATISTICS_QUERY_PLAN_SCHEMA } from "../lib/statistics-query-plan";
+
+function collectSchemaKeys(value: unknown, result = new Set<string>()) {
+  if (!value || typeof value !== "object") return result;
+  if (Array.isArray(value)) {
+    for (const item of value) collectSchemaKeys(item, result);
+    return result;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    result.add(key);
+    collectSchemaKeys(child, result);
+  }
+  return result;
+}
+
+test("queryplanschemaet kan sendes direkte til Anthropic Structured Outputs", () => {
+  const keys = collectSchemaKeys(STATISTICS_QUERY_PLAN_SCHEMA);
+  for (const unsupported of ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"]) {
+    assert.equal(keys.has(unsupported), false, `${unsupported} må ikke sendes til Anthropic`);
+  }
+});
 
 test("queryplan accepterer kun kendte mål og renser fritekstfiltre", () => {
   const plan = parseStatisticsQueryPlan({
