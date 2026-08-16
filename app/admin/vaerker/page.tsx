@@ -1946,7 +1946,7 @@ export default function VaerksadministrationPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Værksadministration"
+        title="Værksarkiv"
         subtitle={`${filtered.length} af ${works.length} værker`}
         actions={
             <Button className="gap-2" onClick={() => setAddOpen(true)}>

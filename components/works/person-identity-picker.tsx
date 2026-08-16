@@ -5,18 +5,20 @@ import Image from "next/image";
 import { Loader2 } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 
-export function PersonIdentityPicker({ candidates, selected, loading, error, sourceErrors, onSelect }: {
+export function PersonIdentityPicker({ candidates, selected, loading, error, sourceErrors, onSelect, loadingLabel, mergingLabel }: {
   candidates: PersonCandidate[];
   selected: Record<string, boolean>;
   loading: boolean;
   error?: string | null;
   sourceErrors?: { dfi?: boolean; tmdb?: boolean; wikidata?: boolean };
   onSelect: (candidate: PersonCandidate) => void;
+  loadingLabel?: string;
+  mergingLabel?: string;
 }) {
   const { t } = useI18n();
-  if (loading && candidates.length === 0) return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{t("works.searchingNameVariants")}</div>;
+  if (loading && candidates.length === 0) return <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />{loadingLabel ?? t("works.searchingNameVariants")}</div>;
   return <div className="space-y-5">
-    {loading && <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("works.addingNameVariantResults")}</div>}
+    {loading && <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{mergingLabel ?? t("works.addingNameVariantResults")}</div>}
     {(["dfi", "tmdb", "wikidata"] as const).map(source => {
       const sourceCandidates = candidates.filter(candidate => candidate.source === source);
       return <section key={source} className="space-y-2">

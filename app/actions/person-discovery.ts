@@ -225,16 +225,20 @@ export async function confirmExternalPersonIdentity(
       return { success: false, error: error instanceof Error ? error.message : "Portrættet kunne ikke gemmes." };
     }
   }
-  const { error } = await db
-    .from("rettighedshavere")
-    .update({ alternative_names: variants, ...(storedPortraitUrl ? { portrait_url: storedPortraitUrl } : {}) })
-    .eq("id", holder.id);
-  if (error) return { success: false, error: error.message };
-  const { error: deleteError } = await db.from("rights_holder_external_identities").delete().eq("rights_holder_id", holder.id);
-  if (deleteError) return { success: false, error: deleteError.message };
-  if (rows.length) {
-    const { error: insertError } = await db.from("rights_holder_external_identities").insert(rows);
-    if (insertError) return { success: false, error: insertError.message };
+  const { error } = await db.rpc("replace_rights_holder_person_identity", {
+    p_rights_holder_id: holder.id,
+    p_variants: variants,
+    p_identities: rows,
+    p_portrait_url: storedPortraitUrl,
+  });
+  if (error) {
+    const isNameConflict = error.code === "23505" || /rights_holder_name_claims|duplicate key/i.test(error.message);
+    return {
+      success: false,
+      error: isNameConflict
+        ? "Et navn eller en navnevariant bruges allerede af en anden profil."
+        : error.message,
+    };
   }
   return { success: true, portraitUrl: storedPortraitUrl };
 }
