@@ -14,9 +14,9 @@ import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 import {
-    CONTRACT_EXTRACTION_JSON_SCHEMA,
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
+    contractExtractionResponseSchema,
     mergeContractExtractionChunks,
     normalizeContractExtraction,
     splitContractTextForExtraction,
@@ -139,7 +139,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
                     ? `---KONTRAKT---\n${chunks[index]}`
                     : `---KONTRAKT, DEL ${index + 1} AF ${chunks.length}---\nUdtræk kun oplysninger, der fremgår af denne del.\n${chunks[index]}`,
                 responseJson: true,
-                responseSchema: CONTRACT_EXTRACTION_JSON_SCHEMA,
+                responseSchema: contractExtractionResponseSchema(config.provider),
                 promptCaching: config.promptCachingEnabled,
                 usageContext: { runId, orgId: context.orgId, useCase: "contract_extraction", stage: "extraction" },
             })

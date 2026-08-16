@@ -7,6 +7,7 @@ import {
 } from "../lib/contract-import-job";
 import {
   CONTRACT_EXTRACTION_JSON_SCHEMA,
+  contractExtractionResponseSchema,
   mergeContractExtractionChunks,
   normalizeContractExtraction,
   splitContractTextForExtraction,
@@ -105,6 +106,11 @@ test("det fælles AI-skema er et lukket JSON-objekt med centrale felter", () => 
   for (const field of ["workTitle", "rightsHolderName", "seasonNumber", "episodeNumbers", "salary", "copydan", "signatureStatus", "_sources"]) {
     assert.ok(field in properties);
   }
+});
+
+test("Anthropic bruger JSON-prompten når det fulde schema overskrider providergrænserne", () => {
+  assert.equal(contractExtractionResponseSchema("anthropic"), undefined);
+  assert.equal(contractExtractionResponseSchema("google"), CONTRACT_EXTRACTION_JSON_SCHEMA);
 });
 
 test("AI-produktionstyper mappes til portalens fælles værkstyper", () => {
