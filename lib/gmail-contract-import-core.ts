@@ -3,6 +3,23 @@ export const GMAIL_CONTRACT_INPUT_LABEL = "kontrakter";
 export const GMAIL_CONTRACT_OUTPUT_LABEL = "kontrakt gennemgang";
 export const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 export const MAX_GMAIL_CONTRACT_BYTES = 25 * 1024 * 1024;
+export const GMAIL_RECONCILIATION_DAYS = 7;
+
+export type GmailDateRange = {
+  after: Date;
+  before: Date;
+};
+
+export type GmailImportMessageResult = {
+  imported: number;
+  skipped: number;
+  alreadyKnown: number;
+};
+
+export type GmailImportBatchResult = GmailImportMessageResult & {
+  messages: number;
+  failed: number;
+};
 
 const SUPPORTED_EXTENSIONS = new Set(["pdf", "doc", "docx"]);
 const SUPPORTED_MIME_TYPES = new Set([
@@ -64,6 +81,66 @@ export function encodeBase64Url(value: string): string {
 
 export function decodeBase64Url(value: string): Buffer {
   return decodeBase64UrlBuffer(value);
+}
+
+export function getGmailReconciliationRange(
+  now = new Date(),
+  days = GMAIL_RECONCILIATION_DAYS,
+): GmailDateRange {
+  if (Number.isNaN(now.getTime())) throw new Error("Tidspunktet for Gmail-genkontrollen er ugyldigt.");
+  if (!Number.isInteger(days) || days < 1 || days > 30) {
+    throw new Error("Gmail-genkontrollen skal være mellem 1 og 30 dage.");
+  }
+  return {
+    after: new Date(now.getTime() - days * 24 * 60 * 60 * 1000),
+    before: new Date(now.getTime() + 60 * 1000),
+  };
+}
+
+export function buildGmailDateRangeQuery(range: GmailDateRange): string {
+  const after = range.after.getTime();
+  const before = range.before.getTime();
+  if (Number.isNaN(after) || Number.isNaN(before) || after >= before) {
+    throw new Error("Datointervallet for Gmail-genkontrollen er ugyldigt.");
+  }
+  return `after:${Math.floor(after / 1000)} before:${Math.ceil(before / 1000)} has:attachment`;
+}
+
+export function buildGmailAttachmentExternalSourceId(messageId: string, fileHash: string): string {
+  const normalizedMessageId = messageId.trim();
+  const normalizedHash = fileHash.trim().toLowerCase();
+  if (!normalizedMessageId || !/^[a-f0-9]{64}$/.test(normalizedHash)) {
+    throw new Error("Gmail-bilagets stabile identitet er ugyldig.");
+  }
+  return `${normalizedMessageId}:sha256:${normalizedHash}`;
+}
+
+export async function processGmailMessageBatch(
+  messageIds: string[],
+  importer: (messageId: string) => Promise<GmailImportMessageResult>,
+  onFailure?: (messageId: string, error: unknown) => void,
+): Promise<GmailImportBatchResult> {
+  const uniqueMessageIds = [...new Set(messageIds.filter(Boolean))];
+  const result: GmailImportBatchResult = {
+    imported: 0,
+    skipped: 0,
+    alreadyKnown: 0,
+    messages: uniqueMessageIds.length,
+    failed: 0,
+  };
+
+  for (const messageId of uniqueMessageIds) {
+    try {
+      const imported = await importer(messageId);
+      result.imported += imported.imported;
+      result.skipped += imported.skipped;
+      result.alreadyKnown += imported.alreadyKnown;
+    } catch (error) {
+      result.failed += 1;
+      onFailure?.(messageId, error);
+    }
+  }
+  return result;
 }
 
 function headerValue(headers: GmailHeader[] | undefined, name: string): string | null {
