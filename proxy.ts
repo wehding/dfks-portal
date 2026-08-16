@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
-import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
+import { INVITE_COOKIE, getInviteGateCode } from "@/lib/auth/invite-gate"
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
 import { isPublicPath } from "@/lib/auth/public-paths"
 
@@ -13,10 +13,12 @@ export async function proxy(req: NextRequest) {
     }
 
     // ── Invite-kode gate ──────────────────────────────────────
-    // Kun aktiv når INVITE_CODE env var er sat (produktion/test)
-    if (process.env.INVITE_CODE) {
+    // Testgaten kræver eksplicit opt-in. En gammel INVITE_CODE må ikke blokere
+    // den almindelige login-side for nye browsere.
+    const inviteCode = getInviteGateCode()
+    if (inviteCode) {
         const token = req.cookies.get(INVITE_COOKIE)?.value
-        if (token !== process.env.INVITE_CODE) {
+        if (token !== inviteCode) {
             const url = req.nextUrl.clone()
             url.pathname = "/invite"
             url.searchParams.set("from", pathname)
