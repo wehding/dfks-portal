@@ -5,7 +5,7 @@ import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
 import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
-import { addManualWorkAndLinkContract, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
+import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
 import { retryMemberAttachmentAnalysis } from "@/app/actions/member-attachments";
 import { confirmContractEpisodes } from "@/app/actions/contract-episode-confirmations";
@@ -188,10 +188,16 @@ export default function MineKontrakterClient({
   initialContracts,
   myWorks = [],
   rightsHolderId,
+  initialOpenContractId,
+  editorOnly = false,
+  onEditorClose,
 }: {
   initialContracts: Contract[];
   myWorks?: MyWork[];
   rightsHolderId: string;
+  initialOpenContractId?: string;
+  editorOnly?: boolean;
+  onEditorClose?: () => void;
 }) {
   const { t } = useI18n();
   const [contracts, setContracts] = useState(initialContracts);
@@ -222,45 +228,63 @@ export default function MineKontrakterClient({
   const [detectedEpisodeCount, setDetectedEpisodeCount] = useState<number | null>(null);
   const [episodesLoading, setEpisodesLoading] = useState(false);
   const [episodesError, setEpisodesError] = useState<string | null>(null);
-  const [confirmationSeason, setConfirmationSeason] = useState(1);
-  const [confirmationEpisodes, setConfirmationEpisodes] = useState("");
-  const [confirmEntireSeason, setConfirmEntireSeason] = useState(false);
-  const [confirmationSaving, setConfirmationSaving] = useState(false);
+  const [editingLinkedEpisodes, setEditingLinkedEpisodes] = useState(false);
 
   useEffect(() => {
     if (!selectedContract) return;
-    setConfirmationSeason(selectedContract.season_number ?? 1);
-    setConfirmationEpisodes((selectedContract.episode_numbers ?? []).join(", "));
-    setConfirmEntireSeason(false);
+    setAddSeason(String(selectedContract.season_number ?? 1));
+    setSelectedEpisodes(selectedContract.episode_numbers ?? []);
+    setEditingLinkedEpisodes(false);
   }, [selectedContract]);
 
-  async function handleConfirmEpisodes() {
+  async function loadLinkedEpisodeOptions(requestedSeason?: number) {
+    if (!selectedContract?.work_id) return;
+    setEpisodesLoading(true);
+    setEpisodesError(null);
+    const result = await fetchMemberSeriesEpisodeOptions({ rightsHolderId, workId: selectedContract.work_id, seasonNumber: requestedSeason });
+    setEpisodesLoading(false);
+    if (!result.success) {
+      setEpisodesError(result.error ?? "Afsnittene kunne ikke hentes");
+      return;
+    }
+    setAddSeason(String(result.seasonNumber ?? selectedContract.season_number ?? 1));
+    setDetectedEpisodeCount(result.episodeCount ?? result.options.length);
+    setEpisodeOptions(result.options);
+    const saved = selectedContract.episode_numbers ?? [];
+    const isCurrentSeason = (result.seasonNumber ?? selectedContract.season_number ?? 1) === (selectedContract.season_number ?? 1);
+    setSelectedEpisodes(isCurrentSeason ? (saved.length ? saved : result.options.map(option => option.number)) : []);
+  }
+
+  async function handleSaveLinkedEpisodes() {
     if (!selectedContract) return;
-    const episodeNumbers = confirmationEpisodes
-      .split(/[,;\s]+/)
-      .map(Number)
-      .filter(value => Number.isInteger(value) && value > 0);
-    setConfirmationSaving(true);
+    if (!selectedEpisodes.length) {
+      toast.error("Vælg mindst ét afsnit");
+      return;
+    }
+    const completeOptions = buildCompleteEpisodeOptions({ episodeCount: detectedEpisodeCount ?? episodeOptions.length, externalOptions: episodeOptions, seasonNumber: Number(addSeason) || 1 });
+    const entireSeason = completeOptions.length > 0 && completeOptions.every(option => selectedEpisodes.includes(option.number));
+    setLinkingSaving(true);
     const result = await confirmContractEpisodes({
       contractId: selectedContract.id,
-      seasonNumber: confirmationSeason,
-      episodeNumbers,
-      entireSeason: confirmEntireSeason,
+      seasonNumber: Number(addSeason) || 1,
+      episodeNumbers: selectedEpisodes,
+      entireSeason,
     });
-    setConfirmationSaving(false);
+    setLinkingSaving(false);
     if (!result.success) {
       toast.error(result.error ?? "Afsnittene kunne ikke bekræftes");
       return;
     }
     const updated = {
       ...selectedContract,
-      season_number: confirmationSeason,
-      episode_numbers: confirmEntireSeason ? [] : episodeNumbers,
+      season_number: Number(addSeason) || 1,
+      episode_numbers: entireSeason ? [] : selectedEpisodes,
       episode_confirmed: true,
     };
     setSelectedContract(updated);
     setContracts(previous => previous.map(contract => contract.id === updated.id ? updated : contract));
-    toast.success("Afsnittene er bekræftet");
+    setEditingLinkedEpisodes(false);
+    toast.success("Værk og afsnit er opdateret");
   }
 
   // Live polling for at opdatere titler og status på nyligt uploadede kontrakter i baggrunden
@@ -558,7 +582,7 @@ export default function MineKontrakterClient({
     const res = await deleteMemberContract(id);
     if (res.success) {
       setContracts(prev => prev.filter(c => c.id !== id));
-      setSelectedContract(null);
+      closeContractEditor();
       setMsg({ type: "success", text: "Kontrakt slettet." });
     } else {
       setMsg({ type: "error", text: res.error ?? "Kunne ikke slette" });
@@ -598,6 +622,19 @@ export default function MineKontrakterClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contracts, searchParams, selectedContract?.id]);
 
+  useEffect(() => {
+    if (!initialOpenContractId || selectedContract?.id === initialOpenContractId) return;
+    const contract = contracts.find(item => item.id === initialOpenContractId);
+    if (contract) void openContract(contract);
+    // Open only when the requested contract changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialOpenContractId, contracts, selectedContract?.id]);
+
+  function closeContractEditor() {
+    setSelectedContract(null);
+    onEditorClose?.();
+  }
+
   async function markCommentsRead(contract: Contract) {
     const hasUnread = (contract.contract_comments ?? []).some(
       c => c.author_role === "admin" && !c.member_read_at
@@ -624,7 +661,12 @@ export default function MineKontrakterClient({
     const res = await linkContractToWork(selectedContract.id, workId);
     if (res.success) {
       const linked = workId ? myWorks.find(w => w.id === workId) ?? null : null;
-      const updatedContract = { ...selectedContract, works: linked ? { id: linked.id, title: linked.title, year: linked.year } : null };
+      const updatedContract = {
+        ...selectedContract,
+        work_id: workId,
+        works: linked ? { id: linked.id, title: linked.title, year: linked.year, type: linked.type } : null,
+        ...(!workId ? { season_number: null, episode_numbers: null, episode_confirmed: false } : {}),
+      };
       setSelectedContract(updatedContract as Contract);
       setContracts(prev => prev.map(c => c.id === selectedContract.id ? updatedContract as Contract : c));
       setMsg({ type: "success", text: workId ? `Koblet til "${linked?.title}"` : "Kobling fjernet" });
@@ -636,6 +678,11 @@ export default function MineKontrakterClient({
 
   async function handleLinkUnifiedWork() {
     if (!selectedContract || !pickedUnifiedResult) return;
+    const isSeries = pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie";
+    if (isSeries && !selectedEpisodes.length) {
+      toast.error("Vælg mindst ét afsnit");
+      return;
+    }
     setLinkingSaving(true);
     try {
       const activeSeason = parseInt(addSeason) || 1;
@@ -647,13 +694,31 @@ export default function MineKontrakterClient({
         role: "Klipper",
       });
       if (res.success && res.workId) {
+        const completeOptions = buildCompleteEpisodeOptions({
+          episodeCount: detectedEpisodeCount ?? episodeOptions.length,
+          externalOptions: episodeOptions,
+          seasonNumber: activeSeason,
+        });
+        const entireSeason = isSeries && completeOptions.length > 0 && completeOptions.every(option => selectedEpisodes.includes(option.number));
+        if (isSeries) {
+          const confirmation = await confirmContractEpisodes({
+            contractId: selectedContract.id,
+            seasonNumber: activeSeason,
+            episodeNumbers: selectedEpisodes,
+            entireSeason,
+          });
+          if (!confirmation.success) {
+            await linkContractToWork(selectedContract.id, null);
+            throw new Error(confirmation.error ?? "Afsnitsvalget kunne ikke gemmes");
+          }
+        }
         toast.success("Værket er nu tilknyttet kontrakten.");
-        const isSeries = pickedUnifiedResult.type === "tv-serie" || pickedUnifiedResult.type === "dokumentar-serie";
         const updatedContract: Contract = {
           ...selectedContract,
           work_id: res.workId,
           season_number: isSeries ? activeSeason : null,
-          episode_numbers: isSeries && selectedEpisodes.length ? selectedEpisodes : null,
+          episode_numbers: isSeries ? (entireSeason ? [] : selectedEpisodes) : null,
+          episode_confirmed: isSeries || selectedContract.episode_confirmed,
           works: {
             id: res.workId,
             title: pickedUnifiedResult.title,
@@ -740,6 +805,14 @@ export default function MineKontrakterClient({
         setLinkingSaving(false);
         return;
       }
+      const manualIsSeries = isManualSeries(manualWork);
+      const manualEpisodes = manualWork.selected_episodes;
+      if (manualIsSeries && !manualEpisodes.length) {
+        toast.error("Vælg mindst ét afsnit");
+        return;
+      }
+      const manualEpisodeCount = Number(manualWork.episode_count) || 0;
+      const coversWholeSeason = manualIsSeries && manualEpisodeCount > 0 && manualEpisodes.length >= manualEpisodeCount;
       const result = await addManualWorkAndLinkContract({
         rightsHolderId,
         role: "Klipper",
@@ -749,6 +822,8 @@ export default function MineKontrakterClient({
         reusePending: manualLinkRetry?.pending,
         forceCreateDuplicate,
         workData: manualWorkData(),
+        contractScope: manualIsSeries ? { seasonNumber: Number(manualWork.season_number) || 1, episodeNumbers: manualEpisodes } : null,
+        coversWholeSeason,
       });
       if (!result.success) {
         if ("duplicate" in result && result.duplicate && "matches" in result && Array.isArray(result.matches)) {
@@ -764,6 +839,18 @@ export default function MineKontrakterClient({
       if (!result.workId) {
         toast.error("Værket blev oprettet uden et gyldigt værk-id. Prøv igen.");
         return;
+      }
+      if (manualIsSeries) {
+        const confirmation = await confirmContractEpisodes({
+          contractId: selectedContract.id,
+          seasonNumber: Number(manualWork.season_number) || 1,
+          episodeNumbers: manualEpisodes,
+          entireSeason: coversWholeSeason,
+        });
+        if (!confirmation.success) {
+          toast.error(confirmation.error ?? "Værket blev oprettet, men afsnitsvalget kunne ikke gemmes. Prøv igen.");
+          return;
+        }
       }
 
       if (note && selectedContract) {
@@ -784,7 +871,7 @@ export default function MineKontrakterClient({
         title: manualWork.title.trim(),
         year: Number(manualWork.year),
         type: manualWork.type,
-      });
+      }, manualIsSeries ? Number(manualWork.season_number) || 1 : null, manualIsSeries ? (coversWholeSeason ? [] : manualEpisodes) : null);
       setManualWorkOpen(false);
       setManualWorkMatches([]);
       setManualLinkRetry(null);
@@ -802,6 +889,13 @@ export default function MineKontrakterClient({
     setLinkingSaving(true);
     try {
       const selectedEpisodes = manualWork.selected_episodes;
+      const manualIsSeries = isManualSeries(manualWork);
+      if (manualIsSeries && !selectedEpisodes.length) {
+        toast.error("Vælg mindst ét afsnit");
+        return;
+      }
+      const episodeCount = Number(manualWork.episode_count) || 0;
+      const coversWholeSeason = manualIsSeries && episodeCount > 0 && selectedEpisodes.length >= episodeCount;
       const assignment = await linkExistingWorkForMember({
         rightsHolderId,
         workId: match.id,
@@ -814,12 +908,29 @@ export default function MineKontrakterClient({
         toast.error(assignment.error ?? "Kunne ikke vælge det eksisterende værk.");
         return;
       }
-      const linked = await linkContractToWork(selectedContract.id, match.id);
+      const linked = await linkContractToWork(selectedContract.id, match.id, manualIsSeries ? {
+        seasonNumber: Number(manualWork.season_number) || 1,
+        episodeNumbers: selectedEpisodes,
+        coversWholeSeason,
+        episodeSelectionConfirmed: true,
+      } : undefined);
       if (!linked.success) {
         toast.error(linked.error ?? "Kontrakten kunne ikke tilknyttes værket.");
         return;
       }
-      applyLinkedWork({ id: match.id, title: match.title, year: match.year, type: match.type });
+      if (manualIsSeries) {
+        const confirmation = await confirmContractEpisodes({
+          contractId: selectedContract.id,
+          seasonNumber: Number(manualWork.season_number) || 1,
+          episodeNumbers: selectedEpisodes,
+          entireSeason: coversWholeSeason,
+        });
+        if (!confirmation.success) {
+          toast.error(confirmation.error ?? "Afsnitsvalget kunne ikke gemmes");
+          return;
+        }
+      }
+      applyLinkedWork({ id: match.id, title: match.title, year: match.year, type: match.type }, manualIsSeries ? Number(manualWork.season_number) || 1 : null, manualIsSeries ? (coversWholeSeason ? [] : selectedEpisodes) : null);
       setManualWorkOpen(false);
       setManualWorkMatches([]);
       toast.success("Det eksisterende værk er tilknyttet kontrakten.");
@@ -837,7 +948,7 @@ export default function MineKontrakterClient({
   }
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className={editorOnly ? "contents [&>:not(.member-contract-editor-overlay)]:hidden" : "flex flex-col gap-6"}>
 
       {/* Header */}
       <PortalPageHeader
@@ -1112,8 +1223,8 @@ export default function MineKontrakterClient({
       {/* Kontrakt-detalje-overlay */}
       {selectedContract && (
         <div
-          className="fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
-          onClick={e => { if (e.target === e.currentTarget) setSelectedContract(null); }}
+          className="member-contract-editor-overlay fixed inset-0 bg-black/40 z-50 flex items-end justify-center p-0 sm:items-center sm:p-6"
+          onClick={e => { if (e.target === e.currentTarget) closeContractEditor(); }}
         >
           <div className={`bg-background text-foreground rounded-t-xl border flex max-h-[96svh] w-full overflow-hidden sm:rounded-xl sm:max-h-[90vh] ${viewUrl ? "max-w-5xl" : "max-w-md"}`}>
 
@@ -1130,7 +1241,7 @@ export default function MineKontrakterClient({
               {/* Titel + luk */}
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold text-foreground">{contractDisplayTitle(selectedContract)}</h2>
-                <button onClick={() => setSelectedContract(null)} className="text-gray-400 hover:text-gray-600">
+                <button onClick={closeContractEditor} className="text-gray-400 hover:text-gray-600">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -1149,14 +1260,48 @@ export default function MineKontrakterClient({
               <div className="pt-2 border-t border-b pb-4">
                 <p className="text-sm font-bold text-foreground mb-2">Forbind med værk</p>
                 {selectedContract.works ? (
-                  <div className="flex items-center justify-between bg-muted rounded-lg border px-3 py-2.5">
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{formatContractWorkTitle(selectedContract)}</p>
-                      {selectedContract.works.year && <p className="text-xs text-muted-foreground">{selectedContract.works.year}</p>}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-muted rounded-lg border px-3 py-2.5">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{formatContractWorkTitle(selectedContract)}</p>
+                        {selectedContract.works.year && <p className="text-xs text-muted-foreground">{selectedContract.works.year}</p>}
+                      </div>
+                      <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} className="text-gray-400 hover:text-gray-600 p-1" aria-label="Fjern værktilknytning">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                    <button onClick={() => handleLinkWork(null)} disabled={linkingSaving} className="text-gray-400 hover:text-gray-600 p-1">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    {String(selectedContract.works.type ?? "").includes("serie") && (
+                      <div className="rounded-lg border p-3">
+                        {!editingLinkedEpisodes ? (
+                          <Button type="button" size="sm" variant="outline" className="w-full" onClick={() => { setEditingLinkedEpisodes(true); void loadLinkedEpisodeOptions(); }}>
+                            Rediger afsnit
+                          </Button>
+                        ) : (
+                          <div className="space-y-3">
+                            {episodesLoading ? (
+                              <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Henter afsnit…</div>
+                            ) : episodesError ? (
+                              <p className="text-xs text-destructive">{episodesError}</p>
+                            ) : (
+                              <SeriesEpisodeSelector
+                                season={Number(addSeason) || 1}
+                                onSeasonChange={season => { setAddSeason(String(season)); setSelectedEpisodes([]); void loadLinkedEpisodeOptions(season); }}
+                                options={buildCompleteEpisodeOptions({ episodeCount: detectedEpisodeCount ?? episodeOptions.length, externalOptions: episodeOptions, seasonNumber: Number(addSeason) || 1 })}
+                                selected={selectedEpisodes}
+                                onSelectedChange={setSelectedEpisodes}
+                                compact
+                              />
+                            )}
+                            <div className="flex gap-2">
+                              <Button type="button" size="sm" variant="outline" className="flex-1" onClick={() => setEditingLinkedEpisodes(false)}>Annuller</Button>
+                              <Button type="button" size="sm" className="flex-1" disabled={linkingSaving || episodesLoading || !selectedEpisodes.length} onClick={() => void handleSaveLinkedEpisodes()}>
+                                {linkingSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Gem afsnit
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1279,52 +1424,6 @@ export default function MineKontrakterClient({
                 )}
               </div>
 
-              {selectedContract.works && String(selectedContract.works.type ?? "").includes("serie") && !selectedContract.episode_confirmed && (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-                  <p className="text-sm font-semibold">Bekræft dine serieafsnit</p>
-                  <p className="mt-1 text-xs">Før kontrakten kan valideres, skal du bekræfte, hvilken sæson og hvilke afsnit du har arbejdet på.</p>
-                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div>
-                      <Label htmlFor="confirmation-season" className="text-xs">Sæson</Label>
-                      <Input
-                        id="confirmation-season"
-                        type="number"
-                        min={1}
-                        value={confirmationSeason}
-                        onChange={event => setConfirmationSeason(Math.max(1, Math.floor(Number(event.target.value) || 1)))}
-                        disabled={confirmationSaving}
-                        className="mt-1 bg-background"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="confirmation-episodes" className="text-xs">Afsnit</Label>
-                      <Input
-                        id="confirmation-episodes"
-                        value={confirmationEpisodes}
-                        onChange={event => setConfirmationEpisodes(event.target.value)}
-                        placeholder="Fx 1, 2, 3"
-                        disabled={confirmationSaving || confirmEntireSeason}
-                        className="mt-1 bg-background"
-                      />
-                    </div>
-                  </div>
-                  <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={confirmEntireSeason}
-                      onChange={event => setConfirmEntireSeason(event.target.checked)}
-                      disabled={confirmationSaving}
-                      className="h-4 w-4"
-                    />
-                    Jeg arbejdede på hele sæsonen
-                  </label>
-                  <Button type="button" size="sm" className="mt-3 w-full" disabled={confirmationSaving} onClick={() => void handleConfirmEpisodes()}>
-                    {confirmationSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Bekræft afsnit
-                  </Button>
-                </div>
-              )}
-
               <StatusBadge status={selectedContract.status} />
               {shouldShowWorkLinkBadge(hasLinkedWork(selectedContract.work_id), selectedContract.status) && <WorkLinkBadge linked={hasLinkedWork(selectedContract.work_id)} />}
               {unreadAdminMessageCount(selectedContract.contract_comments) > 0 && <MessageStatusBadge count={unreadAdminMessageCount(selectedContract.contract_comments)} label="Ny besked" tone="attention" />}
@@ -1433,7 +1532,7 @@ export default function MineKontrakterClient({
                 composerPlaceholder="Skriv en besked til DFKS..."
                 sendLabel="Send besked"
                 footer={(
-                  <Button type="button" variant="outline" onClick={() => setSelectedContract(null)} className="w-full sm:w-auto">
+                  <Button type="button" variant="outline" onClick={closeContractEditor} className="w-full sm:w-auto">
                     Gem kontrakt
                   </Button>
                 )}
