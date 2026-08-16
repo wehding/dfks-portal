@@ -19,13 +19,17 @@ import {
 export type StatisticsFilters = {
   years?: number[];
   gender?: string | null;
+  genders?: string[];
   categories?: string[];
   contractType?: string | null;
+  contractTypes?: string[];
   producerIds?: string[];
   producerTypeCodes?: string[];
   membershipTypes?: string[];
   professionType?: string | null;
+  professionTypes?: string[];
   experienceGroup?: ExperienceGroup | null;
+  experienceGroups?: ExperienceGroup[];
 };
 
 type FactRow = {
@@ -108,6 +112,22 @@ function personWeighted(items: ContractRow[], value: (row: ContractRow) => numbe
   return {
     median: Math.round(median(values)),
     average: values.length ? Math.round(values.reduce((sum, row) => sum + row, 0) / values.length) : 0,
+  };
+}
+
+function personWeightedSummary(items: ContractRow[], value: (row: ContractRow) => number, decimals = 1) {
+  const byPerson = new Map<string, number[]>();
+  for (const item of items) {
+    const calculated = value(item);
+    if (!Number.isFinite(calculated) || calculated < 0) continue;
+    byPerson.set(item.rightsHolderId, [...(byPerson.get(item.rightsHolderId) ?? []), calculated]);
+  }
+  const values = [...byPerson.values()].map(personValues => personValues.reduce((sum, current) => sum + current, 0) / personValues.length);
+  if (!values.length) return { median: 0, average: 0 };
+  const factor = 10 ** decimals;
+  return {
+    median: Math.round(median(values) * factor) / factor,
+    average: Math.round(values.reduce((sum, current) => sum + current, 0) / values.length * factor) / factor,
   };
 }
 
@@ -200,17 +220,22 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const years = [...new Set(sourceRows.map(row => row.year))].sort((a, b) => b - a);
   const rows = sourceRows.filter(row => {
     if (filters.years?.length && !filters.years.includes(row.year)) return false;
-    if (filters.gender && row.gender !== filters.gender) return false;
+    const genders = filters.genders?.length ? filters.genders : filters.gender ? [filters.gender] : [];
+    if (genders.length && (!row.gender || !genders.includes(row.gender))) return false;
     if (filters.categories?.length && (!row.category || !filters.categories.includes(row.category))) return false;
-    if (filters.contractType && row.type !== filters.contractType) return false;
+    const contractTypes = filters.contractTypes?.length ? filters.contractTypes : filters.contractType ? [filters.contractType] : [];
+    if (contractTypes.length && !contractTypes.includes(row.type)) return false;
     if (!overlaps(row.producerIds, filters.producerIds)) return false;
     if (!overlaps(row.producerTypeCodes, filters.producerTypeCodes)) return false;
     if (filters.membershipTypes?.length) {
       const memberships = row.membershipTypes.length ? row.membershipTypes : ["none"];
       if (!overlaps(memberships, filters.membershipTypes)) return false;
     }
-    if (filters.professionType && row.professionType !== filters.professionType.trim().toLocaleLowerCase("da")) return false;
-    if (filters.experienceGroup && experienceGroupAt(row.professionalStartYear, row.year) !== filters.experienceGroup) return false;
+    const professionTypes = filters.professionTypes?.length ? filters.professionTypes : filters.professionType ? [filters.professionType] : [];
+    if (professionTypes.length && !professionTypes.map(value => value.trim().toLocaleLowerCase("da")).includes(row.professionType)) return false;
+    const experienceGroups = filters.experienceGroups?.length ? filters.experienceGroups : filters.experienceGroup ? [filters.experienceGroup] : [];
+    const rowExperienceGroup = experienceGroupAt(row.professionalStartYear, row.year);
+    if (experienceGroups.length && (!rowExperienceGroup || !experienceGroups.includes(rowExperienceGroup))) return false;
     return true;
   });
 
@@ -225,8 +250,8 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     };
   }
 
-  const salary = groupSafe(rows.filter(row => (statisticsNumber(row.data.salary) ?? 0) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
-    const monthly = personWeighted(items.filter(row => row.type !== "leverandør"), row => salaryDataToMonthly(row.data));
+  const salary = groupSafe(rows.filter(row => Number.isFinite(salaryDataToMonthly(row.data)) && salaryDataToMonthly(row.data) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
+    const monthly = personWeighted(items, row => salaryDataToMonthly(row.data));
     const daily = personWeighted(items, row => salaryDataToWeekly(row.data) / 5);
     return {
       year: Number(year),
@@ -238,7 +263,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   }).sort((left, right) => left.year - right.year);
 
   const salaryByCategory = groupSafe(
-    rows.filter(row => (statisticsNumber(row.data.salary) ?? 0) > 0 && (row.category === "feature" || row.category === "documentary")),
+    rows.filter(row => Number.isFinite(salaryDataToMonthly(row.data)) && salaryDataToMonthly(row.data) > 0 && (row.category === "feature" || row.category === "documentary")),
     row => `${row.year}:${row.category}`,
     minimumGroupSize,
   ).map(([key, items]) => {
@@ -247,21 +272,25 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     return { year: Number(year), category, monthlyRate: values.median, averageMonthlyRate: values.average, ...sampleMeta(items) };
   }).sort((left, right) => left.year - right.year || left.category.localeCompare(right.category));
 
-  const pensionValue = (row: ContractRow) => statisticsNumber(statisticsDataValue(row.data, ["pensionEmployerPercent", "pensionPercent"]));
-  const pension = groupSafe(rows.filter(row => (pensionValue(row) ?? 0) > 0), row => row.year, minimumGroupSize).map(([year, items]) => ({
+  const pensionValue = (row: ContractRow) => {
+    const value = statisticsNumber(statisticsDataValue(row.data, ["pensionEmployerPercent", "pensionPercent"]));
+    if (value != null && value >= 0) return value;
+    return row.data.pensionStatus === "not_applicable" ? 0 : null;
+  };
+  const pension = groupSafe(rows.filter(row => pensionValue(row) != null), row => row.year, minimumGroupSize).map(([year, items]) => ({
     year: Number(year),
     avgPensionPercent: personWeightedAverage(items, row => pensionValue(row) ?? Number.NaN),
     ...sampleMeta(items),
   })).sort((left, right) => left.year - right.year);
 
   const workingWeeks = groupSafe(rows.filter(row => (statisticsNumber(row.data.workingWeeks) ?? 0) > 0), row => row.year, minimumGroupSize).map(([year, items]) => {
-    const values = items.map(row => weeksInYear(
+    const values = personWeightedSummary(items, row => weeksInYear(
       typeof row.data.startDate === "string" ? row.data.startDate : row.startDate,
       typeof row.data.endDate === "string" ? row.data.endDate : null,
       statisticsNumber(row.data.workingWeeks) ?? 0,
       Number(year),
-    )).filter(value => value > 0).sort((a, b) => a - b);
-    return { year: Number(year), avgWeeks: Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10, medianWeeks: values[Math.floor(values.length / 2)], ...sampleMeta(items) };
+    ), 1);
+    return { year: Number(year), avgWeeks: values.average, medianWeeks: values.median, ...sampleMeta(items) };
   }).sort((left, right) => left.year - right.year);
 
   const contractCounts = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => ({
@@ -279,6 +308,22 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     return { category: String(category), svodPercent: streaming.yesPercent, svodUnknown: streaming.unknownCount, copydanPercent: copydan.yesPercent, copydanUnknown: copydan.unknownCount, royaltyPercent: royalty.yesPercent, royaltyUnknown: royalty.unknownCount, ...sampleMeta(items) };
   });
 
+  const rightsByYear = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => {
+    const streaming = rightsDistribution(items, ["svod", "streamingReservation", "streaming", "rightsOverview.streamingforbehold"], true);
+    const copydan = rightsDistribution(items, ["copydan", "copydanReservation", "rightsOverview.copydanforbehold"], true);
+    const royalty = rightsDistribution(items, ["royalty", "royaltyClause"]);
+    return {
+      year: Number(year),
+      streamingPercent: streaming.yesPercent,
+      streamingUnknown: streaming.unknownCount,
+      copydanPercent: copydan.yesPercent,
+      copydanUnknown: copydan.unknownCount,
+      royaltyPercent: royalty.yesPercent,
+      royaltyUnknown: royalty.unknownCount,
+      ...sampleMeta(items),
+    };
+  }).sort((left, right) => left.year - right.year);
+
   const gender = groupSafe(rows.filter(row => row.gender), row => String(row.gender), minimumGroupSize).map(([genderKey, items]) => ({
     gender: String(genderKey),
     count: new Set(items.map(row => row.rightsHolderId)).size,
@@ -289,8 +334,12 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
   const aiClauses = groupSafe(rows, row => row.year, minimumGroupSize).map(([year, items]) => ({
     year: Number(year),
     withClause: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length,
-    withoutClause: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) !== true).length,
-    pct: Math.round(items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length / items.length * 100),
+    withoutClause: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === false).length,
+    unknownCount: items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) == null).length,
+    pct: (() => {
+      const known = items.filter(row => statisticsBoolean(row.data.aiDataMiningClause) != null);
+      return known.length ? Math.round(known.filter(row => statisticsBoolean(row.data.aiDataMiningClause) === true).length / known.length * 100) : 0;
+    })(),
     ...sampleMeta(items),
   })).sort((left, right) => left.year - right.year);
 
@@ -298,8 +347,9 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     const values = items.map(row => contributionForContract({ id: row.id, premiereYear: row.year, type: row.type, extractedData: row.data })).filter(Boolean) as NonNullable<ReturnType<typeof contributionForContract>>[];
     return {
       year: Number(year),
-      totalHolidayPayAmount: Math.round(values.reduce((sum, value) => sum + value.holidayPay, 0)),
-      totalBetaAmount: Math.round(values.reduce((sum, value) => sum + value.beta, 0)),
+      totalHolidayPayAmount: Math.round(values.reduce((sum, value) => sum + (value.holidayPay ?? 0), 0)),
+      totalBetaAmount: Math.round(values.reduce((sum, value) => sum + (value.beta ?? 0), 0)),
+      incompleteContributionCount: values.filter(value => value.holidayPay == null || value.beta == null).length,
       ...sampleMeta(items),
     };
   }).sort((left, right) => left.year - right.year);
@@ -317,6 +367,7 @@ export async function getAdminStatistics(orgId: string, filters: StatisticsFilte
     workingWeeks,
     contractCounts,
     rights,
+    rightsByYear,
     gender,
     aiClauses,
     contributions,

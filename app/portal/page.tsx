@@ -12,6 +12,7 @@ import { SalaryStatsCard, type SalaryStatPoint } from "@/components/portal/salar
 import { salaryDataToWeekly } from "@/lib/statistics-calculations";
 import { EXPERIENCE_GROUPS, experienceGroupAt, type ExperienceGroup } from "@/lib/experience-groups";
 import { normalizeStatisticsMinimumGroupSize } from "@/lib/statistics-privacy";
+import { memberSalaryBenchmark } from "@/lib/member-statistics";
 import { resolveOrgId } from "@/lib/org";
 
 type ContractRow = { id: string; working_title: string | null; work_id: string | null; contract_comments: Array<{ author_role: string; member_read_at: string | null }> | null };
@@ -119,14 +120,14 @@ export default async function PortalDashboardPage() {
   {
     const [{ data: orgContracts }, { data: participantRows }, { data: organisation }] = await Promise.all([
       db.from("contracts")
-        .select("id,type,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)")
+        .select("id,type,status,working_title,start_date,contract_date,rights_holder_id,rettighedshavere(professional_start_year)")
         .eq("org_id", orgId),
       db.from("org_affiliations")
         .select("rights_holder_id,statistics_participation")
         .eq("org_id", orgId)
         .eq("statistics_participation", true),
       db.from("organisations")
-        .select("statistics_minimum_group_size")
+        .select("statistics_minimum_group_size,statistics_contract_scope")
         .eq("id", orgId)
         .maybeSingle(),
     ]);
@@ -134,11 +135,14 @@ export default async function PortalDashboardPage() {
     const minimumGroupSize = normalizeStatisticsMinimumGroupSize(organisation?.statistics_minimum_group_size);
     const contractIds = (orgContracts ?? []).map(contract => contract.id);
     const { data: validations } = contractIds.length
-      ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds)
+      ? await db.from("contract_validations").select("contract_id,extracted_data").in("contract_id", contractIds).order("created_at", { ascending: true })
       : { data: [] as Array<{ contract_id: string; extracted_data: Record<string, unknown> | null }> };
     const extractedMap = new Map((validations ?? []).map(validation => [validation.contract_id, validation.extracted_data]));
     const salaryRows: Array<{ year: number; weekly: number; mine: boolean; contributes: boolean; holderId: string | null; professionalStartYear: number | null }> = [];
     for (const contract of orgContracts ?? []) {
+      const includedStatus = contract.status === "valideret"
+        || (organisation?.statistics_contract_scope === "validated_and_drafts" && contract.status === "kladde");
+      if (!includedStatus) continue;
       const extracted = extractedMap.get(contract.id) as Record<string, unknown> | null | undefined;
       if (!extracted?.salary || contract.type === "leverandør") continue;
       const holderRow = Array.isArray(contract.rettighedshavere) ? contract.rettighedshavere[0] : contract.rettighedshavere;
@@ -154,20 +158,9 @@ export default async function PortalDashboardPage() {
       if (isMine) ownStatisticsContracts.push({ id: contract.id, title: contract.working_title || "Kontrakt", year, weekly: Math.round(weekly) });
     }
     const avg = (list: number[]) => (list.length ? Math.round(list.reduce((sum, value) => sum + value, 0) / list.length) : null);
-    // Gennemsnit pr. MEDLEM (ikke pr. kontrakt) og kun for år med nok distinkte bidragydere.
-    // Det sikrer at et enkelt medlems ugeløn aldrig kan aflæses som "gennemsnit" et år med få bidragydere.
-    const yearlyAverage = (rows: typeof salaryRows) => {
-      const byHolder = new Map<string, number[]>();
-      for (const row of rows) {
-        if (!row.contributes || !row.holderId) continue;
-        const list = byHolder.get(row.holderId) ?? [];
-        list.push(row.weekly);
-        byHolder.set(row.holderId, list);
-      }
-      if (byHolder.size < minimumGroupSize) return null;
-      const perHolderMeans = Array.from(byHolder.values()).map(list => list.reduce((sum, value) => sum + value, 0) / list.length);
-      return Math.round(perHolderMeans.reduce((sum, value) => sum + value, 0) / perHolderMeans.length);
-    };
+    // Median pr. MEDLEM (ikke pr. kontrakt). Medlemsbenchmark kræver både
+    // organisationens personminimum og mindst ti kvalificerede kontrakter.
+    const yearlyAverage = (rows: typeof salaryRows) => memberSalaryBenchmark(rows, minimumGroupSize);
     salaryPoints = [...new Set(salaryRows.map(row => row.year))].sort((a, b) => a - b).map(year => {
       const yearRows = salaryRows.filter(row => row.year === year);
       return {

@@ -80,7 +80,10 @@ export function effectiveCopydanStatus(contract: {
 }
 
 export function weeklySalaryWithPersonalSupplement(data: Record<string, unknown> | null | undefined) {
-  const weekly = salaryDataToWeekly(data);
+  // Contract review's `salary` field is explicitly a weekly salary. Older AI
+  // results therefore legitimately omit salaryUnit here. Statistics remains
+  // stricter and does not infer a unit from an otherwise ambiguous number.
+  const weekly = salaryDataToWeekly(data ? { ...data, salaryUnit: data.salaryUnit ?? "weekly" } : data);
   return Number.isFinite(weekly) ? weekly : null;
 }
 
