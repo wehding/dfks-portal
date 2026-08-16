@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
 import { errorMessage } from "@/lib/error-message";
 import React, { useMemo, useState, useEffect } from "react";
-import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon } from "lucide-react";
+import { FileText, Upload, X, Trash2, Search, Loader2, Paperclip, Sparkles, Link as LinkIcon, History } from "lucide-react";
 import { addMemberContractComment, deleteMemberContract, fetchMemberContractDetail, fetchMemberContractsList, getContractSignedUrl, linkContractToWork, markContractCommentsRead } from "@/app/actions/member-contracts";
 import { addManualWorkAndLinkContract, fetchMemberSeriesEpisodeOptions, linkExistingWorkForMember, searchWorksUnified, resolveUnifiedSearchResultDetails, type UnifiedSearchWorkResult } from "@/app/actions/member-works";
 import { createAndLinkWorkForContract } from "@/app/actions/work-management";
@@ -38,6 +38,7 @@ const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px]
 type Validation = { has_credit_clause: boolean | null; has_overenskomst_incorporation: boolean | null; notes: string | null; extracted_data?: Record<string, unknown> | null; validated_at?: string | null } | null;
 type Attachment = { id: string; type: string; title: string | null; pdf_url: string | null; created_at: string; ai_status?: "analyserer" | "klar" | "fejl" | null; ai_result?: Record<string, unknown> | null };
 type ContractComment = { id: string; author_role: "member" | "admin"; message: string; created_at: string; member_read_at?: string | null; admin_read_at?: string | null };
+type ContractVersion = { id: string; working_title: string | null; contract_date: string | null; created_at: string; pdf_url: string | null; processed_pdf_url: string | null; isCurrent: boolean };
 export type Contract = {
   id: string;
   type: string | null;
@@ -47,6 +48,7 @@ export type Contract = {
   start_date: string | null;
   end_date: string | null;
   pdf_url: string | null;
+  processed_pdf_url?: string | null;
   work_id: string | null;
   working_title: string | null;
   created_at: string | null;
@@ -210,6 +212,7 @@ export default function MineKontrakterClient({
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [viewUrl, setViewUrl] = useState<string | null>(null);
   const [viewLoading, setViewLoading] = useState(false);
+  const [contractVersions, setContractVersions] = useState<ContractVersion[]>([]);
   const [workSearch, setWorkSearch] = useState("");
   const [linkingSaving, setLinkingSaving] = useState(false);
   const [unifiedResults, setUnifiedResults] = useState<UnifiedSearchWorkResult[]>([]);
@@ -598,6 +601,11 @@ export default function MineKontrakterClient({
     setManualWorkMatches([]);
     setManualLinkRetry(null);
     setViewUrl(null);
+    setContractVersions([]);
+    void fetch(`/api/portal/contracts/${contract.id}/versions`, { cache: "no-store" })
+      .then(response => response.ok ? response.json() : null)
+      .then(json => setContractVersions(json?.versions ?? []))
+      .catch(() => undefined);
     const detail = await fetchMemberContractDetail(contract.id);
     if (detail.success && detail.contract) {
       normalized = normalizeContract(detail.contract as unknown as Contract);
@@ -605,11 +613,20 @@ export default function MineKontrakterClient({
       setContracts(prev => prev.map(c => c.id === contract.id ? normalized : c));
     }
     void markCommentsRead(normalized);
-    const pdfUrl = normalized.pdf_url ?? contract.pdf_url;
+    const pdfUrl = normalized.processed_pdf_url ?? normalized.pdf_url ?? contract.processed_pdf_url ?? contract.pdf_url;
     if (!pdfUrl) return;
     setViewLoading(true);
     const res = await getContractSignedUrl(pdfUrl);
     setViewUrl(res.url ?? null);
+    setViewLoading(false);
+  }
+
+  async function openContractVersion(version: ContractVersion) {
+    const path = version.processed_pdf_url ?? version.pdf_url;
+    if (!path) return;
+    setViewLoading(true);
+    const result = await getContractSignedUrl(path);
+    setViewUrl(result.url ?? null);
     setViewLoading(false);
   }
 
@@ -1255,6 +1272,19 @@ export default function MineKontrakterClient({
                 <Button type="button" variant="outline" className="md:hidden" onClick={() => window.open(viewUrl, "_blank", "noopener,noreferrer")}>
                   Åbn PDF
                 </Button>
+              )}
+              {contractVersions.length > 1 && (
+                <div className="rounded-lg border p-3">
+                  <p className="flex items-center gap-2 text-sm font-semibold"><History className="h-4 w-4" />Versionshistorik</p>
+                  <div className="mt-2 space-y-1">
+                    {contractVersions.map(version => (
+                      <button key={version.id} type="button" onClick={() => void openContractVersion(version)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-muted">
+                        <span>{version.isCurrent ? "Aktuel version" : "Tidligere version"}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(version.contract_date ?? version.created_at).toLocaleDateString("da-DK")}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               {/* Værkskobling */}
               <div className="pt-2 border-t border-b pb-4">

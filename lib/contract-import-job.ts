@@ -118,7 +118,16 @@ export function classifyContractImportFailure(
   if (details.code === "insufficient_text" || details.code === "ocr_required") {
     return {
       status: "dead", itemStatus: "needs_ocr", failureClass: "input", errorCode: "ocr_required",
-      safeMessage: "Filen indeholder ikke nok læsbar tekst og kræver OCR eller en tydeligere fil.",
+      safeMessage: "Scannet PDF uden tilstrækkeligt tekstlag. Dokumentet skal OCR-behandles, før AI kan aflæse det.",
+      nextAttemptAt: null, refundAttempt: false,
+    };
+  }
+
+  if (details.code === "no_usable_contract_data") {
+    return {
+      status: "dead", itemStatus: "dead", failureClass: "invalid_output",
+      errorCode: "no_usable_contract_data",
+      safeMessage: "AI kunne læse filen, men fandt ingen genkendelige kontraktoplysninger. Kontrollér, at dokumentet er en kontrakt, og at teksten er læsbar.",
       nextAttemptAt: null, refundAttempt: false,
     };
   }

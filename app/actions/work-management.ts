@@ -919,6 +919,23 @@ export async function fetchAdminWorkDetail(workId: string) {
   return { success: true, work: data };
 }
 
+export async function fetchAdminWorkRequestDetail(requestId: string) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
+  if (!admin) return { success: false, error: "Mangler adminrettigheder." };
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const { data: request, error } = await db.from("work_change_requests")
+    .select("id,work_id")
+    .eq("id", requestId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) return { success: false, error: error.message };
+  if (!request) return { success: false, error: "Beskedtråden blev ikke fundet." };
+  const detail = await fetchAdminWorkDetail(request.work_id);
+  return detail.success ? { ...detail, requestId: request.id } : detail;
+}
+
 export async function deleteAdminWorkPermanently(params: { workId: string }) {
   const { supabase, user } = await currentUser();
   const admin = await assertAdminRole(supabase, USER_ADMIN_ROLES);
@@ -1911,6 +1928,7 @@ export async function markWorkRequestCommentsRead(requestId: string, viewerRole:
 
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
+  revalidatePath("/admin");
   return { success: true };
 }
 

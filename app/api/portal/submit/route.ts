@@ -2,7 +2,6 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { createContractReviewIntake, triggerContractReviewWorker } from "@/lib/contract-review-intake";
-import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
 import { resolveOrgId } from "@/lib/org";
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -49,53 +48,10 @@ export async function POST(request: NextRequest) {
         focus_areas: list(form?.get("focusAreas")), notes: form?.get("notes") || null,
       },
     });
-    if (!intake.duplicate) {
-      // Kør analysen direkte i after() — ingen HTTP-runde til worker-endpointet,
-      // ingen afhængighed af CONTRACT_REVIEW_JOB_SECRET. Fald tilbage til
-      // HTTP-workeren hvis direkte analyse fejler, så cron-jobbet kan genoptage.
-      after(async () => {
-        try {
-          const db = createServiceClient();
-          const { data: review } = await db
-            .from("contract_reviews")
-            .select("*")
-            .eq("id", intake.reviewId)
-            .single();
-          if (!review?.storage_path) throw new Error("Fil mangler i storage");
-          const { data: file, error: fileError } = await db.storage
-            .from("contract-reviews")
-            .download(review.storage_path);
-          if (fileError || !file) throw new Error("Kunne ikke hente fil");
-          await analyseExistingContractReview({
-            reviewId: review.id,
-            orgId: review.org_id,
-            fileBuffer: Buffer.from(await file.arrayBuffer()),
-            fileName: review.file_name ?? intake.reviewId,
-            memberName: review.member_name,
-            memberId: review.member_id,
-            memberEmail: review.member_email,
-            contractType: review.contract_type,
-            productionType: review.production_type,
-            distributionChannels: review.distribution_channels ?? [],
-            producerName: review.producer_name,
-            producerOverenskomst: review.producer_overenskomst_bound == null
-              ? null
-              : String(review.producer_overenskomst_bound),
-            focusAreas: review.focus_areas ?? [],
-            notes: review.notes,
-            source: "portal",
-          });
-          await db
-            .from("contract_review_jobs")
-            .update({ status: "done", locked_at: null, locked_by: null, updated_at: new Date().toISOString() })
-            .eq("review_id", intake.reviewId);
-        } catch {
-          // Fejl logges ikke her da after() kører efter response — cron-job
-          // eller manuel genkørsel tager sig af genoptagelse.
-          triggerContractReviewWorker(request.nextUrl.origin).catch(() => undefined);
-        }
-      });
-    }
+    // Portal- og Gmail-intake behandles altid af den samme ko. Det sikrer ens
+    // retry, modelvalg, maskering og forbrugsregistrering. Kaldet foretages ogsa
+    // ved en dublet, sa et eksisterende modent job kan blive genoptaget.
+    after(triggerContractReviewWorker(request.nextUrl.origin));
     return NextResponse.json({ success: true, review_id: intake.reviewId, duplicate: intake.duplicate });
   } catch (error) {
     console.error("[review-intake] Portalindsendelse fejlede", error instanceof Error ? error.message : "Ukendt fejl");

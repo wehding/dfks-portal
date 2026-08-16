@@ -23,7 +23,7 @@ export function salarySupplements(data: Record<string, unknown> | null | undefin
 export function salaryDataToWeekly(data: Record<string, unknown> | null | undefined) {
   const salary = statisticsNumber(data?.salary);
   if (salary == null || salary <= 0) return Number.NaN;
-  const unitValue = String(data?.salaryUnit ?? "weekly").trim().toLocaleLowerCase("da");
+  const unitValue = String(data?.salaryUnit ?? "").trim().toLocaleLowerCase("da");
   const unit = ["uge", "ugeløn", "week"].includes(unitValue) ? "weekly"
     : ["dag", "dagsløn", "day"].includes(unitValue) ? "daily"
       : ["måned", "månedsløn", "month"].includes(unitValue) ? "monthly"
@@ -55,8 +55,8 @@ export function contributionForContract(contract: StatisticsContract) {
     weeks,
     weeklyRate: baseWeekly,
     totalSalary,
-    holidayPay: isFreelance || !Number.isFinite(holidayRate) ? 0 : Math.round(totalSalary * holidayRate / 100),
-    beta: isFreelance || !Number.isFinite(betaRate) ? 0 : Math.round(totalSalary * betaRate / 100),
+    holidayPay: isFreelance ? 0 : Number.isFinite(holidayRate) ? Math.round(totalSalary * holidayRate / 100) : null,
+    beta: isFreelance ? 0 : Number.isFinite(betaRate) ? Math.round(totalSalary * betaRate / 100) : null,
     holidayRate,
     betaRate,
     isFreelance,
@@ -76,8 +76,9 @@ export function aggregateContributionsByYear(contracts: StatisticsContract[]) {
       year,
       avgHolidayPayRate: Math.round(avgHolidayPayRate * 10) / 10,
       avgBetaRate: Math.round(avgBetaRate * 100) / 100,
-      totalHolidayPayAmount: rows.reduce((sum, row) => sum + row.holidayPay, 0),
-      totalBetaAmount: rows.reduce((sum, row) => sum + row.beta, 0),
+      totalHolidayPayAmount: rows.reduce((sum, row) => sum + (row.holidayPay ?? 0), 0),
+      totalBetaAmount: rows.reduce((sum, row) => sum + (row.beta ?? 0), 0),
+      incompleteContributionCount: rows.filter(row => row.holidayPay == null || row.beta == null).length,
       contractCount: yearContracts.length,
     };
   }).filter(row => row.contractCount > 0);

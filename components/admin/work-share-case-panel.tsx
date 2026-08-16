@@ -84,7 +84,7 @@ export function WorkShareCasePanel() {
             <div key={dispute.id} className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-950 dark:bg-amber-500/10 dark:text-amber-100">
               <p className="font-medium">{dispute.works?.title ?? "Ukendt værk"}{dispute.works?.season_number ? ` · sæson ${dispute.works.season_number}` : ""}{dispute.works?.episode_number ? ` · afsnit ${dispute.works.episode_number}` : ""}</p>
               <p className="mt-1 text-sm">{dispute.rettighedshavere?.full_name ?? "Et medlem"} oplyser, at værket eller afsnittet blev klippet alene, selv om andre klippere er registreret.</p>
-              <p className="mt-1 text-xs opacity-80">Ret først eventuelle forkerte tilknytninger i værksadministrationen. Acceptér derefter indsigelsen, eller bed medlemmet gennemgå medklipperne igen.</p>
+              <p className="mt-1 text-xs opacity-80">Ret først eventuelle forkerte tilknytninger i Værksarkiv. Acceptér derefter indsigelsen, eller bed medlemmet gennemgå medklipperne igen.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" disabled={busy === dispute.id} onClick={() => {
                   setBusy(dispute.id);

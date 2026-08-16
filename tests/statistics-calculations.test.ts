@@ -7,6 +7,11 @@ test("normalizes weekly and daily salary to monthly", () => {
   assert.equal(salaryToMonthly(2_000, "daily"), 43_333);
 });
 
+test("manglende lønenhed bliver ikke antaget som ugeløn", () => {
+  assert.equal(Number.isNaN(salaryDataToWeekly({ salary: 10_000 })), true);
+  assert.equal(contributionForContract({ id: "a", type: "a-løn", premiereYear: 2025, extractedData: { salary: 10_000, workingWeeks: 10 } }), null);
+});
+
 test("adds personal and post-production supplements consistently", () => {
   const data = { salary: 10_000, salaryUnit: "weekly", personalSupplement: 1_000, postProductionSupplement: 500 };
   assert.equal(salaryDataToWeekly(data), 11_500);
@@ -21,5 +26,11 @@ test("aggregates actual producer contributions per year", () => {
   ]);
   assert.equal(rows[0].totalHolidayPayAmount, 1_000);
   assert.equal(rows[0].totalBetaAmount, 500);
-  assert.equal(contributionForContract({ id: "b", type: "leverandør", premiereYear: 2025, extractedData: { salary: 10_000, workingWeeks: 10 } })?.holidayPay, 0);
+  assert.equal(contributionForContract({ id: "b", type: "leverandør", premiereYear: 2025, extractedData: { salary: 10_000, salaryUnit: "weekly", workingWeeks: 10 } })?.holidayPay, 0);
+});
+
+test("manglende bidragssatser markeres som ukendte og tælles ikke som nul-aftaler", () => {
+  const contribution = contributionForContract({ id: "a", type: "a-løn", premiereYear: 2025, extractedData: { salary: 10_000, salaryUnit: "weekly", workingWeeks: 10 } });
+  assert.equal(contribution?.holidayPay, null);
+  assert.equal(contribution?.beta, null);
 });

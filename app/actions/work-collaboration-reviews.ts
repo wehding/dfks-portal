@@ -133,7 +133,7 @@ export async function resolveCollaborationDispute(params: { reviewId: string; de
   if (params.decision === "accept_solo") {
     const { count } = await db.from("work_assignments").select("id", { count: "exact", head: true })
       .eq("org_id", admin.orgId).eq("work_id", review.work_id).neq("rights_holder_id", review.rights_holder_id);
-    if (count) throw new Error("Fjern eller ret først de modstridende klippertildelinger i værksadministrationen.");
+    if (count) throw new Error("Fjern eller ret først de modstridende klippertildelinger i Værksarkiv.");
   }
   const now = new Date().toISOString();
   const status = params.decision === "accept_solo" ? "solo_confirmed" : "pending";

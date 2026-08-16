@@ -17,7 +17,7 @@ type RawContract = Omit<Contract, "works" | "employers"> & {
   contract_comments?: Contract["contract_comments"] | null;
 };
 
-const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
+const CONTRACT_LIST_SELECT = "id, type, overenskomst, status, contract_date, start_date, end_date, pdf_url, processed_pdf_url, work_id, working_title, season_number, episode_numbers, created_at, works(id, title, year, type), employers(id, name), contract_validations(has_credit_clause, has_overenskomst_incorporation, notes, validated_at)";
 
 function getWorkRelation(row: WorkAssignmentRow) {
   return Array.isArray(row.works) ? row.works[0] ?? null : row.works;
@@ -64,6 +64,7 @@ export default async function MineKontrakterPage() {
       .from("contracts")
       .select(CONTRACT_LIST_SELECT)
       .eq("rights_holder_id", rh.id)
+      .is("superseded_by_contract_id", null)
       .order("created_at", { ascending: false });
 
     if (listRes.error && !isMissingAttachmentRelationError(listRes.error)) {

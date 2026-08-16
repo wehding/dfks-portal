@@ -525,7 +525,7 @@ export async function findContractWorkExternalIds(contractId: string) {
   const input = workIdentityInput(work, parent);
   const resolution = await resolveWorkIdentity(input);
   const candidate = resolution.status === "matched" ? resolution.candidates[0] : null;
-  if (!candidate) return { success: false, error: "Der blev ikke fundet et sikkert match. Brug Værksadmin til manuel kontrol." };
+  if (!candidate) return { success: false, error: "Der blev ikke fundet et sikkert match. Brug Værksarkiv til manuel kontrol." };
   const applied = await applyCandidate({ db, work, parent, input, candidate, actor, manual: false });
   if (!applied.applied) return { success: false, error: "Det fundne ID bruges allerede af et andet værk." };
   await persistResolution(db, work.id, input, resolution, actor.userId);

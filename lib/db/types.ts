@@ -201,7 +201,7 @@ export interface DbContractReview {
     org_id: string
     member_name: string | null
     member_email: string | null
-    ai_result: Record<string, unknown>
+    ai_result: Record<string, unknown> | null
     reviewed_by: string | null
     reviewed_at: string
     // Indbakke-felter (tilføjet 2026-06-12)
@@ -233,7 +233,25 @@ export interface DbContractReview {
     risk_level: "LAV" | "MELLEM" | "HØJ" | null
     should_escalate: boolean | null
     ai_status: "analyserer" | "klar" | "fejl"
-    created_at: string
+    compliance_extract?: Record<string, unknown> | null
+    intake_source: "portal" | "admin" | "gmail" | "legacy"
+    external_source_id: string | null
+    file_hash: string | null
+    intake_status: string
+    completed_at: string | null
+    soft_deleted_at: string | null
+    legal_hold: boolean
+    legal_hold_reason: string | null
+    legal_hold_set_by: string | null
+    legal_hold_review_at: string | null
+    assigned_to_name?: string | null
+    analysis_status?: "queued" | "processing" | "retrying" | "failed" | "ready"
+    analysis_job?: {
+        status: "queued" | "processing" | "error" | "dead" | "done"
+        attempts: number
+        next_attempt_at: string | null
+        error: string | null
+    } | null
 }
 
 export interface DbAgreement {

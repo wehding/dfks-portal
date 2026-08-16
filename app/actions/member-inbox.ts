@@ -11,6 +11,7 @@ import { addMemberContractComment, addAdminContractComment, markContractComments
 import { addScreeningClaimComment, markScreeningClaimCommentsRead } from "@/app/actions/screenings";
 import { addAdminWorkRequestComment, markWorkRequestCommentsRead } from "@/app/actions/work-management";
 import { calculateThreadResponseState } from "@/lib/admin-dashboard";
+import type { AdminMessageThread } from "@/lib/admin-message-threads";
 
 // De sammensatte tråd-id'er fra fetchMemberInbox/fetchAdminInbox: "contract-<uuid>" og
 // "screening-<uuid>" peger IKKE på member_message_threads. Denne helper afkoder kilden, så
@@ -34,6 +35,83 @@ async function signedInUser() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   return { supabase, user };
+}
+
+function decorateAdminThread(
+  thread: Omit<AdminMessageThread, "requiresReply" | "waitingSince">,
+): AdminMessageThread {
+  const state = calculateThreadResponseState(thread.member_messages.map(message => ({
+    role: message.author_role === "member" ? "member" as const : "staff" as const,
+    createdAt: message.created_at,
+  })));
+  return { ...thread, ...state };
+}
+
+async function loadAdminWorkThreads(
+  db: ReturnType<typeof createServiceClient>,
+  orgId: string,
+): Promise<AdminMessageThread[]> {
+  const { data: workRequests, error } = await db.from("work_change_requests")
+    .select("id,work_id,requested_by_rights_holder_id,status,created_at,reviewed_at,works(title),rettighedshavere(full_name,email),work_change_request_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
+    .eq("org_id", orgId);
+  if (error) throw new Error(error.message);
+
+  return (workRequests ?? []).map(request => {
+    const storedComments = [...((request.work_change_request_comments ?? []) as Array<{
+      id: string;
+      author_user_id: string;
+      author_role: "member" | "admin";
+      message: string;
+      created_at: string;
+      admin_read_at: string | null;
+    }>)]
+      .sort((left, right) => left.created_at.localeCompare(right.created_at));
+    const memberMessages: AdminMessageThread["member_messages"] = [
+      {
+        id: `work-request-${request.id}`,
+        author_user_id: "",
+        author_role: "member" as const,
+        body: "Der er indsendt en rettelse til værket.",
+        created_at: request.created_at,
+      },
+      ...storedComments.map(comment => ({
+        id: comment.id,
+        author_user_id: comment.author_user_id,
+        author_role: comment.author_role,
+        body: comment.message,
+        created_at: comment.created_at,
+      })),
+    ];
+    if (request.status !== "pending" && request.reviewed_at) {
+      memberMessages.push({
+        id: `work-reviewed-${request.id}`,
+        author_user_id: "",
+        author_role: "admin",
+        body: "Værksanmodningen er behandlet.",
+        created_at: request.reviewed_at,
+      });
+    }
+    memberMessages.sort((left, right) => left.created_at.localeCompare(right.created_at));
+    const work = Array.isArray(request.works) ? request.works[0] : request.works;
+    const holder = Array.isArray(request.rettighedshavere) ? request.rettighedshavere[0] : request.rettighedshavere;
+    const contextTitle = `Værk: ${work?.title ?? "Rettelse"}`;
+    return decorateAdminThread({
+      id: `work-${request.id}`,
+      source_type: "work",
+      category_label: "Værk",
+      context_title: contextTitle,
+      subject: `Værkbesked: ${work?.title ?? "Rettelse"}`,
+      updated_at: memberMessages.at(-1)?.created_at ?? request.created_at,
+      created_at: memberMessages[0]?.created_at ?? request.created_at,
+      rettighedshavere: holder ?? null,
+      member_messages: memberMessages,
+      unreadCount: storedComments.filter(comment => comment.author_role === "member" && !comment.admin_read_at).length,
+      can_reply: true,
+      action_href: `/admin/vaerker?request=${encodeURIComponent(request.id)}`,
+      workId: request.work_id,
+      requestId: request.id,
+    });
+  });
 }
 
 // Sørger for at medlemmet har organisationens velkomstbesked liggende som første
@@ -184,16 +262,31 @@ export async function fetchAdminInbox() {
     .eq("org_id", orgId).order("updated_at", { ascending: false });
   if (error) return { success: false, error: error.message, threads: [] };
 
-  const decorate = (thread: any) => {
-    const state = calculateThreadResponseState((thread.member_messages ?? []).map((message: any) => ({
-      role: message.author_role === "member" ? "member" as const : "staff" as const,
-      createdAt: message.created_at,
-    })));
-    return { ...thread, ...state };
-  };
-  const unifiedThreads: any[] = (directThreads ?? []).map(t => decorate({
-    ...t, source_type: "direct", category_label: "Generelt", context_title: t.subject, can_reply: true,
-  }));
+  const unifiedThreads: AdminMessageThread[] = (directThreads ?? []).map(thread => {
+    const participant = (thread.member_message_participants ?? []).find(row => row.user_id === user.id);
+    const lastReadAt = participant?.last_read_at ?? "";
+    const messages = (thread.member_messages ?? []).map(message => ({
+      id: message.id,
+      author_user_id: message.author_user_id,
+      author_role: message.author_role as "member" | "admin",
+      body: message.body,
+      created_at: message.created_at,
+    }));
+    return decorateAdminThread({
+      id: thread.id,
+      source_type: "direct",
+      subject: thread.subject,
+      category_label: "Generelt",
+      context_title: thread.subject,
+      updated_at: thread.updated_at,
+      created_at: thread.created_at,
+      rettighedshavere: Array.isArray(thread.rettighedshavere) ? thread.rettighedshavere[0] ?? null : thread.rettighedshavere,
+      member_messages: messages,
+      unreadCount: messages.filter(message => message.author_role === "member" && message.created_at > lastReadAt).length,
+      can_reply: true,
+      action_href: null,
+    });
+  });
 
   // Kontraktkommentarer for admin
   const { data: adminContracts } = await db.from("contracts")
@@ -205,16 +298,13 @@ export async function fetchAdminInbox() {
     if (!comments.length) return;
     const workTitle = c.working_title || "Kontrakt";
     const lastComment = comments.sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-    const unread = comments.some(m => m.author_role === "member" && !m.admin_read_at);
     const rh = Array.isArray(c.rettighedshavere) ? c.rettighedshavere[0] : c.rettighedshavere;
-    unifiedThreads.push(decorate({
+    unifiedThreads.push(decorateAdminThread({
       id: `contract-${c.id}`,
-      contract_id: c.id,
       source_type: "contract",
       category_label: "Kontrakt",
       context_title: `Kontrakt: ${workTitle}`,
       subject: `Kontraktbesked: ${workTitle}`,
-      rights_holder_id: c.rights_holder_id,
       rettighedshavere: rh,
       updated_at: lastComment?.created_at || c.id,
       created_at: comments[0]?.created_at || c.id,
@@ -225,15 +315,14 @@ export async function fetchAdminInbox() {
         body: m.message,
         created_at: m.created_at,
       })),
-      member_message_participants: [{ user_id: user.id, last_read_at: unread ? null : new Date().toISOString() }],
+      unreadCount: comments.filter(m => m.author_role === "member" && !m.admin_read_at).length,
       can_reply: true,
+      action_href: `/admin/kontrakter?contract=${encodeURIComponent(c.id)}`,
     }));
   });
 
-  const [{ data: workRequests }, { data: claims }, { data: reviews }] = await Promise.all([
-    db.from("work_change_requests")
-      .select("id,work_id,requested_by_rights_holder_id,status,created_at,reviewed_at,works(title),rettighedshavere(full_name,email),work_change_request_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
-      .eq("org_id", orgId),
+  const [workThreads, { data: claims }, { data: reviews }] = await Promise.all([
+    loadAdminWorkThreads(db, orgId),
     db.from("screening_claims")
       .select("id,profile_id,title,channel,status,created_at,reviewed_at,screening_claim_comments(id,author_user_id,author_role,message,created_at,admin_read_at)")
       .eq("org_id", orgId),
@@ -242,22 +331,7 @@ export async function fetchAdminInbox() {
       .eq("org_id", orgId),
   ]);
 
-  for (const request of workRequests ?? []) {
-    const comments = [{ id: `work-request-${request.id}`, author_user_id: "", author_role: "member", message: "Der er indsendt en rettelse til værket.", created_at: request.created_at }, ...((request.work_change_request_comments ?? []) as any[])]
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
-    if (request.status !== "pending" && request.reviewed_at) {
-      comments.push({ id: `work-reviewed-${request.id}`, author_user_id: "", author_role: "admin", message: "Værksanmodningen er behandlet.", created_at: request.reviewed_at });
-      comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
-    }
-    const work = Array.isArray(request.works) ? request.works[0] : request.works;
-    const holder = Array.isArray(request.rettighedshavere) ? request.rettighedshavere[0] : request.rettighedshavere;
-    unifiedThreads.push(decorate({
-      id: `work-${request.id}`, source_type: "work", category_label: "Værk", context_title: `Værk: ${work?.title ?? "Rettelse"}`,
-      subject: `Værkbesked: ${work?.title ?? "Rettelse"}`, updated_at: comments.at(-1)?.created_at ?? request.created_at,
-      created_at: comments[0]?.created_at ?? request.created_at, rettighedshavere: holder, can_reply: true,
-      member_messages: comments.map(message => ({ ...message, body: message.message })),
-    }));
-  }
+  unifiedThreads.push(...workThreads);
 
   const profileIds = [...new Set((claims ?? []).map(claim => claim.profile_id))];
   const { data: screeningHolders } = profileIds.length
@@ -271,23 +345,25 @@ export async function fetchAdminInbox() {
       comments.push({ id: `screening-reviewed-${claim.id}`, author_user_id: "", author_role: "admin", message: "Visningsindberetningen er behandlet.", created_at: claim.reviewed_at });
       comments.sort((a, b) => a.created_at.localeCompare(b.created_at));
     }
-    unifiedThreads.push(decorate({
+    unifiedThreads.push(decorateAdminThread({
       id: `screening-${claim.id}`, source_type: "screening", category_label: "Visning", context_title: `Visning: ${claim.title}${claim.channel ? ` · ${claim.channel}` : ""}`,
       subject: `Visningsbesked: ${claim.title}`, updated_at: comments.at(-1)?.created_at ?? claim.created_at,
       created_at: comments[0]?.created_at ?? claim.created_at, rettighedshavere: holderByUserId.get(claim.profile_id) ?? null, can_reply: true,
       member_messages: comments.map(message => ({ ...message, body: message.message })),
+      unreadCount: ((claim.screening_claim_comments ?? []) as any[]).filter(message => message.author_role === "member" && !message.admin_read_at).length,
+      action_href: `/admin/aftalelicens?claim=${encodeURIComponent(claim.id)}`,
     }));
   }
 
   for (const review of reviews ?? []) {
-    const messages = [{ id: `review-request-${review.id}`, author_user_id: "", author_role: "member", body: review.notes || "Kontrakten afventer juridisk gennemgang.", created_at: review.reviewed_at }];
+    const messages: AdminMessageThread["member_messages"] = [{ id: `review-request-${review.id}`, author_user_id: "", author_role: "member", body: review.notes || "Kontrakten afventer juridisk gennemgang.", created_at: review.reviewed_at }];
     if (review.jurist_response_at) messages.push({ id: `review-response-${review.id}`, author_user_id: "", author_role: "admin", body: review.jurist_response || "Gennemgangen er besvaret.", created_at: review.jurist_response_at });
     else if (!["afventer", "behandling"].includes(review.status) && review.updated_at) messages.push({ id: `review-closed-${review.id}`, author_user_id: "", author_role: "admin", body: "Kontraktgennemgangen er afsluttet.", created_at: review.updated_at });
-    unifiedThreads.push(decorate({
+    unifiedThreads.push(decorateAdminThread({
       id: `review-${review.id}`, source_type: "review", category_label: "Kontraktgennemgang", context_title: review.file_name || "Kontraktgennemgang",
       subject: review.file_name || "Kontraktgennemgang", updated_at: review.jurist_response_at || review.reviewed_at, created_at: review.reviewed_at,
       rettighedshavere: { full_name: review.member_name || "Medlem", email: review.member_email }, member_messages: messages,
-      can_reply: false, action_href: `/admin/kontraktgennemgang/${review.id}`,
+      unreadCount: 0, can_reply: false, action_href: `/admin/kontraktgennemgang/${review.id}`,
     }));
   }
 
@@ -295,6 +371,30 @@ export async function fetchAdminInbox() {
     ? String(a.waitingSince).localeCompare(String(b.waitingSince))
     : new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()));
   return { success: true, threads: unifiedThreads };
+}
+
+export async function fetchAdminWorkInbox() {
+  const { supabase, user } = await signedInUser();
+  if (!user || !(await assertAdminRole(supabase))) {
+    return { success: false, error: "Mangler adminrettigheder", threads: [] as AdminMessageThread[] };
+  }
+  const db = createServiceClient();
+  const orgId = await requireOrgId(db, user.id);
+  try {
+    const threads = (await loadAdminWorkThreads(db, orgId))
+      .filter(thread => thread.unreadCount > 0)
+      .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime());
+    return { success: true, threads };
+  } catch (error) {
+    console.error("[admin-work-inbox] Værksbeskeder kunne ikke hentes", {
+      error: error instanceof Error ? error.message : "ukendt fejl",
+    });
+    return {
+      success: false,
+      error: "Værksbeskederne kunne ikke hentes. Prøv igen.",
+      threads: [] as AdminMessageThread[],
+    };
+  }
 }
 
 export async function fetchAdminInboxRecipients() {

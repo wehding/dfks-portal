@@ -451,12 +451,9 @@ export default function PortalLayout({
                 <AppShellTopBar>
                     <SidebarTrigger className="shrink-0" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
-                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground md:hidden">
+                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">
                         {currentPageTitle}
                     </h1>
-                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground md:block">
-                        {brand.short_name} {t("nav.rightsPortal")}
-                    </span>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <PortalContextualHelp />
                         <LanguageToggle />

@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import { completeOnboarding } from "@/app/actions/member-profile";
-import { searchOnboardingCredits, type OnboardingCredit } from "@/app/actions/dfi";
+import { resolveOnboardingEpisodeOptions, searchOnboardingCreditsForCurrentUser, type OnboardingCredit } from "@/app/actions/dfi";
 import { getOnboardingWorkImportStatus, retryOnboardingWorkImport, startOnboardingWorkImport, type OnboardingImportStatus } from "@/app/actions/onboarding-work-import";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ArrowRight, ArrowLeft, Loader2 } from "lucide-react";
@@ -14,6 +14,12 @@ import { toast } from "sonner";
 import { validateOnboardingField, type OnboardingField } from "@/lib/onboarding-validation";
 import { parseOnboardingAddress } from "@/lib/onboarding-address";
 import { isTransientNetworkError, retryTransientNetwork } from "@/lib/transient-network-retry";
+import { checkNameVariantAvailability } from "@/app/actions/rights-holder-names";
+import { isDuplicateProfileName } from "@/lib/rights-holder-name";
+import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
+import { buildCompleteEpisodeOptions, type SeriesEpisodeOption } from "@/lib/series-episodes";
+import { parseSeasonNumberFromTitle } from "@/lib/dfi-metadata";
+import { seasonLookupMessage } from "@/lib/season-selection";
 
 type OnboardingProfile = {
   full_name?: string | null;
@@ -105,7 +111,15 @@ export default function OnboardingClient({
   const [personSourceErrors, setPersonSourceErrors] = useState<{ dfi?: boolean; tmdb?: boolean; wikidata?: boolean }>({});
   const [alternativeNames, setAlternativeNames] = useState<string[]>(rh?.alternative_names ?? []);
   const [newAlternativeName, setNewAlternativeName] = useState("");
+  const [variantAvailability, setVariantAvailability] = useState<{ loading: boolean; available: boolean; error: string | null }>({ loading: false, available: false, error: null });
   const [selectedPortraitUrl, setSelectedPortraitUrl] = useState<string | null>(null);
+  const [expandedSeries, setExpandedSeries] = useState<Record<string, boolean>>({});
+  const [seriesSeasons, setSeriesSeasons] = useState<Record<string, number>>({});
+  const [seriesEpisodes, setSeriesEpisodes] = useState<Record<string, number[]>>({});
+  const [episodeOptions, setEpisodeOptions] = useState<Record<string, SeriesEpisodeOption[]>>({});
+  const [episodeLoading, setEpisodeLoading] = useState<Record<string, boolean>>({});
+  const [episodeErrors, setEpisodeErrors] = useState<Record<string, string | null>>({});
+  const episodeRequestIds = React.useRef<Record<string, number>>({});
   const isOrganisationMember = Boolean(rh?.is_member);
 
   // Import-fremdrift
@@ -170,9 +184,69 @@ export default function OnboardingClient({
 
   const fullNameValue = invitedName;
 
+  React.useEffect(() => {
+    const value = newAlternativeName.trim();
+    if (!value || isDuplicateProfileName({ candidate: value, canonicalName: invitedName, variants: alternativeNames })) {
+      setVariantAvailability({ loading: false, available: false, error: value ? "Navnet findes allerede på din profil." : null });
+      return;
+    }
+    let cancelled = false;
+    setVariantAvailability({ loading: true, available: false, error: null });
+    const timer = setTimeout(() => {
+      void checkNameVariantAvailability(value).then(result => {
+        if (!cancelled) setVariantAvailability({ loading: false, available: result.available, error: result.error });
+      });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [alternativeNames, invitedName, newAlternativeName]);
+
   const isSeriesCredit = (credit: OnboardingCredit) => {
     const category = `${credit.category} ${credit.raw?.media_type ?? ""} ${credit.raw?.type ?? ""}`.toLowerCase();
     return category.includes("serie") || category.includes("tv");
+  };
+
+  const seasonForCredit = (credit: OnboardingCredit) => {
+    const rawTitle = credit.raw?.title ?? credit.raw?.name ?? credit.raw?.Title ?? credit.raw?.DanishTitle;
+    return credit.season_number ?? parseSeasonNumberFromTitle(credit.title) ?? parseSeasonNumberFromTitle(rawTitle) ?? 1;
+  };
+
+  const displayEpisodeOptions = (credit: OnboardingCredit) => {
+    const season = seriesSeasons[credit.id] ?? seasonForCredit(credit);
+    if (episodeOptions[credit.id]) return episodeOptions[credit.id];
+    return buildCompleteEpisodeOptions({
+      episodeCount: Math.max(Number(credit.raw?.episode_count ?? credit.raw?.number_of_episodes ?? 0) || 0, credit.episode_options?.length ?? 0),
+      externalOptions: credit.episode_options ?? [],
+      localChildren: Array.isArray(credit.raw?.__local_children) ? credit.raw.__local_children : [],
+      seasonNumber: season,
+    });
+  };
+
+  const selectedEpisodesForCredit = (credit: OnboardingCredit) => {
+    if (Object.prototype.hasOwnProperty.call(seriesEpisodes, credit.id)) return seriesEpisodes[credit.id];
+    const available = new Set(displayEpisodeOptions(credit).map(option => option.number));
+    return (credit.suggested_episodes ?? []).filter(number => available.has(number));
+  };
+
+  const loadEpisodesForSeason = async (credit: OnboardingCredit, season: number) => {
+    const requestId = (episodeRequestIds.current[credit.id] ?? 0) + 1;
+    episodeRequestIds.current[credit.id] = requestId;
+    setEpisodeLoading(current => ({ ...current, [credit.id]: true }));
+    setEpisodeErrors(current => ({ ...current, [credit.id]: null }));
+    const result = await resolveOnboardingEpisodeOptions(credit, season);
+    if (episodeRequestIds.current[credit.id] !== requestId) return;
+    if (result.success) {
+      setEpisodeOptions(current => ({ ...current, [credit.id]: result.options }));
+      setSeriesEpisodes(current => {
+        if (Object.prototype.hasOwnProperty.call(current, credit.id)) return current;
+        const available = new Set(result.options.map(option => option.number));
+        return { ...current, [credit.id]: (credit.suggested_episodes ?? []).filter(number => available.has(number)) };
+      });
+    } else {
+      setEpisodeOptions(current => ({ ...current, [credit.id]: [] }));
+      setSeriesEpisodes(current => ({ ...current, [credit.id]: [] }));
+      setEpisodeErrors(current => ({ ...current, [credit.id]: seasonLookupMessage(locale, result.status === "error" ? "error" : "not_found", season) }));
+    }
+    setEpisodeLoading(current => ({ ...current, [credit.id]: false }));
   };
 
   const revealCreditsProgressively = async (credits: OnboardingCredit[]) => {
@@ -239,7 +313,12 @@ export default function OnboardingClient({
 
   const addAlternativeName = async () => {
     const value = newAlternativeName.trim();
-    if (!value || alternativeNames.some(name => name.localeCompare(value, "da-DK", { sensitivity: "base" }) === 0)) return;
+    if (!value || isDuplicateProfileName({ candidate: value, canonicalName: invitedName, variants: alternativeNames })) return;
+    const availability = await checkNameVariantAvailability(value);
+    if (!availability.available) {
+      setVariantAvailability({ loading: false, available: false, error: availability.error });
+      return;
+    }
     const nextNames = [...alternativeNames, value];
     setAlternativeNames(nextNames);
     setNewAlternativeName("");
@@ -281,7 +360,12 @@ export default function OnboardingClient({
           setPersonSearchError(confirmation.error ?? "Personmatch kunne ikke gemmes.");
           return;
         }
-        const searchResult = await retryTransientNetwork(() => searchOnboardingCredits(undefined, undefined, dfiSearchQuery));
+        setDfiCredits([]);
+        setSelectedDfiCredits({});
+        setExpandedSeries({});
+        setSeriesEpisodes({});
+        setEpisodeOptions({});
+        const searchResult = await retryTransientNetwork(() => searchOnboardingCreditsForCurrentUser());
         setPersonSourceErrors(current => ({
           ...current,
           dfi: Boolean(current.dfi || searchResult.sourceErrors?.dfi),
@@ -305,7 +389,11 @@ export default function OnboardingClient({
       const approved = dfiCredits
         .filter((c) => selectedDfiCredits[c.id])
         .map((c) => isSeriesCredit(c)
-          ? { ...c, selected_episodes: [] }
+          ? {
+              ...c,
+              season_number: seriesSeasons[c.id] ?? seasonForCredit(c),
+              selected_episodes: selectedEpisodesForCredit(c),
+            }
           : c
         );
       if (approved.length > 0) {
@@ -626,8 +714,9 @@ export default function OnboardingClient({
                     placeholder={t("onboarding.addNameVariant")}
                     style={{ flex: "1 1 220px", minWidth: 0, padding: "8px 10px", fontSize: "13px", borderRadius: "6px", border: "1px solid var(--input)", color: "var(--foreground)" }}
                   />
-                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--input)", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}>{t("onboarding.addVariant")}</button>
+                  <button type="button" onClick={() => void addAlternativeName()} disabled={!newAlternativeName.trim() || isSearchingDfi || variantAvailability.loading || !variantAvailability.available} style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--input)", background: "var(--card)", cursor: "pointer", color: "var(--foreground)" }}>{variantAvailability.loading ? "Kontrollerer…" : t("onboarding.addVariant")}</button>
                 </div>
+                {variantAvailability.error && <p className="m-0 text-xs text-destructive" role="alert">{variantAvailability.error}</p>}
               </div>
               {isOrganisationMember && portraitOptions.length > 0 && (
                 <div style={{ padding: "14px", border: "1px solid var(--border)", borderRadius: "8px", background: "var(--card)", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -650,7 +739,7 @@ export default function OnboardingClient({
                   </div>
                 </div>
               )}
-              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} error={personSearchError} sourceErrors={personSourceErrors} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
+              <PersonIdentityPicker candidates={personCandidates} selected={selectedPersonCandidates} loading={isSearchingDfi} loadingLabel="Søger efter værker…" mergingLabel="Tilføjer værker fra navnevarianten…" error={personSearchError} sourceErrors={personSourceErrors} onSelect={candidate => { setSelectedPersonCandidates(current => ({ ...current, [candidate.key]: !current[candidate.key] })); setPersonSearchError(null); }} />
             </div>
           )}
 
@@ -735,10 +824,50 @@ export default function OnboardingClient({
                                 <span>•</span>
                                 <span>{c.source.toUpperCase()}</span>
                                 {c.imdb_id && <span>IMDb {c.imdb_id}</span>}
-                                {isSeries && selectedDfiCredits[c.id] && <span className="font-semibold text-amber-800 dark:text-amber-200">• Afsnit og eventuelle medklippere udfyldes senere under Mine værker</span>}
+                                {isSeries && selectedDfiCredits[c.id] && <span className="font-semibold text-amber-800 dark:text-amber-200">• {displayEpisodeOptions(c).length} afsnit fundet</span>}
                               </div>
                             </div>
                           </label>
+                          {isSeries && selectedDfiCredits[c.id] && (
+                            <div className="ml-7 mt-3 rounded-md border bg-background p-3">
+                              <button
+                                type="button"
+                                className="text-sm font-medium text-foreground"
+                                onClick={() => {
+                                  const willExpand = !expandedSeries[c.id];
+                                  setExpandedSeries(current => ({ ...current, [c.id]: willExpand }));
+                                  if (willExpand && displayEpisodeOptions(c).length === 0 && !episodeLoading[c.id]) {
+                                    void loadEpisodesForSeason(c, seriesSeasons[c.id] ?? seasonForCredit(c));
+                                  }
+                                }}
+                              >
+                                {expandedSeries[c.id] ? "Skjul afsnit" : "Vælg afsnit"} · {selectedEpisodesForCredit(c).length} valgt
+                              </button>
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {c.source === "dfi" && c.episode_options?.length ? "Afsnit fra DFI" : c.source === "tmdb" ? "Afsnit fra TMDB" : displayEpisodeOptions(c).length ? "Afsnit fra lokale data eller ekstern fallback" : "Afsnit undersøges ved udfoldning"}
+                              </p>
+                              {expandedSeries[c.id] && (
+                                <div className="mt-3 space-y-2">
+                                  <SeriesEpisodeSelector
+                                    season={seriesSeasons[c.id] ?? seasonForCredit(c)}
+                                    onSeasonChange={season => {
+                                      setSeriesSeasons(current => ({ ...current, [c.id]: season }));
+                                      setSeriesEpisodes(current => ({ ...current, [c.id]: [] }));
+                                      setEpisodeOptions(current => ({ ...current, [c.id]: [] }));
+                                      void loadEpisodesForSeason(c, season);
+                                    }}
+                                    options={displayEpisodeOptions(c)}
+                                    selected={selectedEpisodesForCredit(c)}
+                                    onSelectedChange={episodes => setSeriesEpisodes(current => ({ ...current, [c.id]: episodes }))}
+                                    loading={Boolean(episodeLoading[c.id])}
+                                    error={episodeErrors[c.id]}
+                                    label="Vælg afsnit"
+                                  />
+                                  {c.suggested_episodes?.length ? <p className="text-xs text-muted-foreground">DFI-krediterede afsnit er valgt som forslag. Du kan rette valget.</p> : null}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}

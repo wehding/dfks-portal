@@ -172,7 +172,8 @@ begin
     'import_sources',
     'drive_import_runs',
     'drive_import_folders',
-    'drive_import_queue_items'
+    'drive_import_queue_items',
+    'rights_holder_name_claims'
   ] loop
     if not exists (
       select 1 from pg_class relation
@@ -209,13 +210,21 @@ begin
       ('finalize_contract_ai_job(uuid)'),
       ('fail_contract_ai_job(uuid,text,text,text,text,timestamptz,boolean)'),
       ('search_contract_duplicate_candidates(uuid,uuid,text,integer)'),
-      ('configure_contract_import_cron(text,text)')
+      ('configure_contract_import_cron(text,text)'),
+      ('get_statistics_annual_cpi()'),
+      ('upsert_statistics_cpi(jsonb)')
     ) as protected_function(signature)
     where has_function_privilege('anon', 'public.' || protected_function.signature, 'EXECUTE')
        or has_function_privilege('authenticated', 'public.' || protected_function.signature, 'EXECUTE')
        or not has_function_privilege('service_role', 'public.' || protected_function.signature, 'EXECUTE')
   ) then
     raise exception 'RLS failure: a contract-import worker function has unsafe execute privileges';
+  end if;
+
+  if has_function_privilege('anon', 'public.replace_rights_holder_person_identity(uuid,text[],jsonb,text)', 'EXECUTE')
+    or has_function_privilege('authenticated', 'public.replace_rights_holder_person_identity(uuid,text[],jsonb,text)', 'EXECUTE')
+    or not has_function_privilege('service_role', 'public.replace_rights_holder_person_identity(uuid,text[],jsonb,text)', 'EXECUTE') then
+    raise exception 'RLS failure: person identity replacement has unsafe execute privileges';
   end if;
 end $$;
 
