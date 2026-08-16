@@ -3,9 +3,11 @@ import "server-only";
 import { JWT, OAuth2Client } from "google-auth-library";
 import { normalizePrivateKey } from "@/lib/email/gmail-core";
 import {
+  buildGmailDateRangeQuery,
   buildAddLabelRequest,
   GMAIL_CONTRACT_MAILBOX,
   GMAIL_MODIFY_SCOPE,
+  type GmailDateRange,
   type GmailMessage,
 } from "@/lib/gmail-contract-import-core";
 
@@ -115,11 +117,15 @@ export async function listGmailHistory(startHistoryId: string, inputLabelId: str
   return { messageIds: [...messageIds], historyId: latestHistoryId };
 }
 
-export async function listMessagesForLabel(inputLabelId: string): Promise<string[]> {
+export async function listMessagesForLabel(inputLabelId: string, range: GmailDateRange): Promise<string[]> {
   const ids = new Set<string>();
   let pageToken: string | undefined;
   do {
-    const params = new URLSearchParams({ labelIds: inputLabelId, maxResults: "500" });
+    const params = new URLSearchParams({
+      labelIds: inputLabelId,
+      maxResults: "500",
+      q: buildGmailDateRangeQuery(range),
+    });
     if (pageToken) params.set("pageToken", pageToken);
     const result = await gmailRequest<{ messages?: Array<{ id?: string }>; nextPageToken?: string }>(`/messages?${params}`);
     for (const message of result.messages ?? []) if (message.id) ids.add(message.id);
