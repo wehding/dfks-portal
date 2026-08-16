@@ -178,6 +178,10 @@ export async function runContractExtraction(maskedText: string, context: Contrac
                 extracted.signatureMethod = signature.method
                 extracted.signaturePage = signature.page
                 extracted.signatureEvidence = signature.evidence
+                // OCR-normaliserede PDF'er kan gøre en håndskrevet dato læsbar.
+                // Bevar altid en dato, som AI allerede har fundet, og brug kun
+                // den lokale dato som supplement.
+                extracted.signatureDate ??= signature.date
             }
         } catch (error) {
             extracted._signatureDetection = { ai: aiSignature, local: { status: "error" } }

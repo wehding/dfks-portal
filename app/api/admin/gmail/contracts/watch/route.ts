@@ -22,8 +22,9 @@ async function run(req: NextRequest) {
     const reconciliation = sync.mode === "reconciliation"
       ? null
       : await reconcileRecentGmailContractMessages();
-    const imported = sync.imported + (reconciliation?.imported ?? 0);
-    if (imported > 0) after(triggerContractReviewWorker(req.nextUrl.origin));
+    // Start også workeren, når Gmail-synkroniseringen kun fandt dubletter.
+    // Der kan ligge ældre køjob fra et tidligere afbrudt webhook-kald.
+    after(triggerContractReviewWorker(req.nextUrl.origin));
     const status = await getGmailContractImportStatus();
     return NextResponse.json({ ok: true, configuration, watch, sync, reconciliation, status });
   } catch (error) {

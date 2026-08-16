@@ -28,6 +28,8 @@ export function shouldShowWorkLinkBadge(hasLinkedWork: boolean, status: string) 
 
 export type TriState = "yes" | "no" | "unknown" | "implicit";
 export type ContractReadiness = "recommended" | "recommended_with_warnings" | "needs_information" | "blocked" | "not_applicable";
+export type ContractReadinessWarning = "signature_missing" | "agreement_unknown";
+export type ContractReadinessDetails = { status: ContractReadiness; warnings: ContractReadinessWarning[] };
 
 const COPYDAN_AGREEMENTS = new Set(["de4-fiktion", "faf", "faf-dokumentar", "dj", "metal"]);
 
@@ -82,16 +84,23 @@ export function weeklySalaryWithPersonalSupplement(data: Record<string, unknown>
   return Number.isFinite(weekly) ? weekly : null;
 }
 
-export function contractReadiness(contract: { status?: string | null; work_id?: string | null; employer_id?: string | null; rights_holder_id?: string | null; overenskomst?: string | null; validation_data?: Record<string, unknown> | null }): ContractReadiness {
-  if (contract.status === "valideret" || contract.status === "arkiveret") return "not_applicable";
+export function contractReadinessDetails(contract: { status?: string | null; work_id?: string | null; employer_id?: string | null; rights_holder_id?: string | null; overenskomst?: string | null; validation_data?: Record<string, unknown> | null }): ContractReadinessDetails {
+  if (contract.status === "valideret" || contract.status === "arkiveret") return { status: "not_applicable", warnings: [] };
   const data = contract.validation_data ?? {};
-  if (data.validationBlocked === true) return "blocked";
-  if (!contract.work_id || !contract.employer_id || !contract.rights_holder_id) return "needs_information";
+  if (data.validationBlocked === true) return { status: "blocked", warnings: [] };
+  if (!contract.work_id || !contract.employer_id || !contract.rights_holder_id) return { status: "needs_information", warnings: [] };
   const copydan = effectiveCopydanStatus(contract);
   const streaming = normalizeTriState(nestedValue(data, ["svod", "streaming", "streamingReservation", "rightsOverview.streamingforbehold"]));
-  if (data.rightsNotApplicable !== true && ![copydan, streaming].some(value => value === "yes" || value === "implicit")) return "needs_information";
+  if (data.rightsNotApplicable !== true && ![copydan, streaming].some(value => value === "yes" || value === "implicit")) return { status: "needs_information", warnings: [] };
   const signature = normalizeTriState(nestedValue(data, ["signatureStatus", "hasSignature", "signature", "signed", "isSigned"]));
   const agreement = normalizeTriState(nestedValue(data, ["agreementStatus", "collectiveAgreement", "rightsOverview.overenskomst"]));
   const agreementKnown = Boolean(contract.overenskomst && contract.overenskomst !== "ingen") || agreement === "yes" || agreement === "implicit";
-  return (signature === "yes" || signature === "implicit") && agreementKnown ? "recommended" : "recommended_with_warnings";
+  const warnings: ContractReadinessWarning[] = [];
+  if (signature !== "yes" && signature !== "implicit") warnings.push("signature_missing");
+  if (!agreementKnown) warnings.push("agreement_unknown");
+  return { status: warnings.length ? "recommended_with_warnings" : "recommended", warnings };
+}
+
+export function contractReadiness(contract: Parameters<typeof contractReadinessDetails>[0]): ContractReadiness {
+  return contractReadinessDetails(contract).status;
 }

@@ -125,7 +125,7 @@ const PRODUCTION_TYPE_LABELS: Record<string, string> = {
 
 const STATUS_CONFIG: Record<string, { label: string; class: string }> = {
     afventer:  { label: "Ikke tildelt",     class: "bg-muted text-muted-foreground border-border" },
-    behandling:{ label: "Under behandling", class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
+    behandling:{ label: "Tildelt og under behandling", class: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800" },
     afsluttet: { label: "Afsluttet",        class: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800" },
 }
 
@@ -454,8 +454,8 @@ function Indbakke() {
             {selectedIds.size > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 px-4 py-3">
                 <span className="text-sm font-medium">{selectedIds.size} valgt</span>
                 <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("claim")}>Tag valgte</Button>
-                    <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("release")}>Frigiv valgte</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} title="Tildeler sagerne til dig uden at ændre analyse eller validering" onClick={() => void runBulkAction("claim")}>Tildel valgte til mig</Button>
+                    <Button size="sm" variant="outline" disabled={bulkUpdating} title="Fjerner din tildeling og lægger sagerne tilbage i den fælles kø" onClick={() => void runBulkAction("release")}>Frigiv valgte til køen</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => void runBulkAction("complete")}>Markér afsluttet</Button>
                     <Button size="sm" variant="destructive" disabled={bulkUpdating} onClick={() => setDeleteSelectedOpen(true)}><Trash2 className="mr-1.5 h-4 w-4" />Slet valgte</Button>
                     <Button size="sm" variant="outline" disabled={bulkUpdating} onClick={() => setSelectedIds(new Set())}>Ryd valg</Button>
@@ -582,7 +582,7 @@ function Indbakke() {
                                                         const isReanalysing = reanalysingIds.has(r.id)
                                                         return (
                                                             <button
-                                                                title="Analyserer — klik for at forcere analyse nu"
+                                                                title="Venter på eller udfører analyse — klik for at køre analyse nu"
                                                                 disabled={isReanalysing}
                                                                 className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900 disabled:cursor-wait"
                                                                 onClick={async e => {
@@ -596,7 +596,7 @@ function Indbakke() {
                                                                 }}
                                                             >
                                                                 <RotateCcw className="h-3 w-3 animate-spin" />
-                                                                Analyserer…
+                                                                {!r.ai_run_at ? "Venter på analyse" : "Analyserer…"}
                                                             </button>
                                                         )
                                                     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contractReadiness, effectiveCopydanStatus, hasCopydanAgreementReference, normalizeTriState, weeklySalaryWithPersonalSupplement } from "../lib/contract-list-status";
+import { contractReadiness, contractReadinessDetails, effectiveCopydanStatus, hasCopydanAgreementReference, normalizeTriState, weeklySalaryWithPersonalSupplement } from "../lib/contract-list-status";
 
 test("normaliserer gamle og nested AI-værdier", () => {
   assert.equal(normalizeTriState("implicit via overenskomst"), "implicit");
@@ -43,14 +43,16 @@ test("aftalenavn og bekræftet henvisning kræves samtidig", () => {
 });
 
 test("overenskomsthenvisning anbefaler med advarsel uden underskrift", () => {
-  assert.equal(contractReadiness({
+  const contract = {
     status: "kladde",
     work_id: "work",
     employer_id: "producer",
     rights_holder_id: "holder",
     overenskomst: "de4-fiktion",
     validation_data: { agreementReferenceStatus: "yes", signatureStatus: "unknown" },
-  }), "recommended_with_warnings");
+  };
+  assert.equal(contractReadiness(contract), "recommended_with_warnings");
+  assert.deepEqual(contractReadinessDetails(contract).warnings, ["signature_missing"]);
 });
 
 test("ugelønsresume tæller aldrig to navne for samme personlige tillæg", () => {

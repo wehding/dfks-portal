@@ -50,7 +50,7 @@ import { ProductionCompanyPicker } from "@/components/production-company-picker"
 import { ManualWorkFormFields } from "@/components/works/manual-work-form"
 import type { ProductionCompanySelection } from "@/lib/production-companies"
 import { extractedProductionCompanyNames } from "@/lib/production-companies"
-import { contractReadiness, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
+import { contractReadiness, contractReadinessDetails, effectiveCopydanStatus, isPendingContractValidation, normalizeTriState } from "@/lib/contract-list-status"
 import { contractDataToManualWorkSeed, emptyManualWorkForm, validateManualWork, type ManualWorkFormValue } from "@/lib/manual-work"
 
 const ContractAiDataEditor = dynamic(() => import("./ContractAiDataEditor").then(mod => mod.ContractAiDataEditor), { ssr: false })
@@ -208,7 +208,7 @@ type ImportBatchSummary = {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-    kladde: "Kladde",
+    kladde: "Afventer validering",
     valideret: "Valideret",
     arkiveret: "Arkiveret",
 }
@@ -277,6 +277,8 @@ function hasContractWorkLink(contract: ContractRow) {
 
 function ContractStatusBadges({ contract, compact = false }: { contract: ContractRow; compact?: boolean }) {
     const badgeClass = compact ? "text-[10px]" : "text-xs"
+    const readiness = contractReadinessDetails(contract)
+    const hasMaterialWarning = readiness.warnings.some(warning => warning !== "signature_missing")
     return (
         <div className={`flex flex-wrap gap-1.5 ${compact ? "flex-col items-start" : "items-center justify-end"}`}>
             <Badge className={`w-fit font-normal ${badgeClass} ${STATUS_CLASS[contract.status] ?? ""}`}>
@@ -291,9 +293,9 @@ function ContractStatusBadges({ contract, compact = false }: { contract: Contrac
                     {AI_JOB_LABELS[contract.ai_job_status] ?? contract.ai_job_status}
                 </Badge>
             )}
-            {["recommended", "recommended_with_warnings"].includes(contractReadiness(contract)) && (
+            {["recommended", "recommended_with_warnings"].includes(readiness.status) && (
                 <Badge variant="outline" className={`w-fit border-blue-300 bg-blue-50 font-normal text-blue-700 ${badgeClass}`}>
-                    {contractReadiness(contract) === "recommended_with_warnings" ? "Validering anbefalet · kontrollér advarsler" : "Validering anbefalet"}
+                    {hasMaterialWarning ? "Validering anbefalet · kontrollér advarsler" : "Validering anbefalet"}
                 </Badge>
             )}
             {contract.status !== "valideret" && (

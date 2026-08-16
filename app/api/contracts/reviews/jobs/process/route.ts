@@ -3,8 +3,17 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { requireInternalSecretApi } from "@/lib/api-auth";
 import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
 
-export async function POST(request: NextRequest) {
-  if (!requireInternalSecretApi(request, "contract-review")) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
+function isAuthorizedWorker(request: NextRequest) {
+  const cronSecret = process.env.CRON_SECRET;
+  return requireInternalSecretApi(request, "contract-review")
+    || Boolean(cronSecret && request.headers.get("authorization") === `Bearer ${cronSecret}`);
+}
+
+async function processJobs(request: NextRequest) {
+  if (!isAuthorizedWorker(request)) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 });
   const db = createServiceClient();
   const workerId = crypto.randomUUID();
   const results: Array<{ reviewId: string; ok: boolean; dead?: boolean }> = [];
@@ -61,3 +70,10 @@ export async function POST(request: NextRequest) {
   }
   return NextResponse.json({ processed: results.length, succeeded: results.filter(result => result.ok).length, failed: results.filter(result => !result.ok).length, results });
 }
+
+export async function POST(request: NextRequest) { return processJobs(request); }
+
+// Vercel Cron invokes configured paths with GET. Keeping GET and POST on the
+// same authenticated implementation makes the scheduled safety net usable
+// without opening a second code path.
+export async function GET(request: NextRequest) { return processJobs(request); }
