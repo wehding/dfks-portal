@@ -8,6 +8,7 @@ import {
 import {
   CONTRACT_EXTRACTION_JSON_SCHEMA,
   contractExtractionResponseSchema,
+  hasUsableContractExtraction,
   mergeContractExtractionChunks,
   normalizeContractExtraction,
   splitContractTextForExtraction,
@@ -59,6 +60,17 @@ test("for lidt tekst markeres som OCR-opgave", () => {
   }), 1);
   assert.equal(decision.status, "dead");
   assert.equal(decision.itemStatus, "needs_ocr");
+});
+
+test("tomt AI-resultat bliver ikke registreret som en vellykket aflæsning", () => {
+  assert.equal(hasUsableContractExtraction({ copydan: false, svod: false, signatureStatus: "unknown" }), false);
+  assert.equal(hasUsableContractExtraction({ workTitle: "Reservatet", copydan: false }), true);
+  const decision = classifyContractImportFailure(new ContractImportPipelineError({
+    message: "ingen felter", code: "no_usable_contract_data", failureClass: "invalid_output",
+  }), 1);
+  assert.equal(decision.status, "dead");
+  assert.equal(decision.errorCode, "no_usable_contract_data");
+  assert.match(decision.safeMessage, /ingen genkendelige kontraktoplysninger/i);
 });
 
 test("store kontrakter opdeles uden at miste slutningen eller underskriftssiden", () => {

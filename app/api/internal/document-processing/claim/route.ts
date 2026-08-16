@@ -21,7 +21,9 @@ export async function POST(request: Request) {
   const download = await db.storage.from("kontrakter").createSignedUrl(job.original_storage_path, 10 * 60, {
     download: false,
   });
-  if (job.attempts > 1) await db.storage.from("kontrakter").remove([job.output_storage_path]);
+  // Derivater er reproducerbare og må aldrig genbruges fra et tidligere
+  // mislykket/manuelt afvist job. Originalen berøres ikke.
+  await db.storage.from("kontrakter").remove([job.output_storage_path]);
   const upload = await db.storage.from("kontrakter").createSignedUploadUrl(job.output_storage_path);
   if (download.error || upload.error) {
     await db.rpc("finish_contract_document_job", {

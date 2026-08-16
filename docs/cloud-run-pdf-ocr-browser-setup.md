@@ -25,8 +25,7 @@ Cloud Run modtager aldrig Supabase service-role, refresh-tokens eller AI-nøgler
 ### 1. Vælg eksisterende organisation og projekt
 
 - Log ind med DFKS' Google Cloud-administratorkonto.
-- Vælg et eksisterende DFKS-projekt med aktiv fakturering, eller opret et særskilt
-  projekt med navnet `DFKS Portal PDF Processing` efter ansvarlig godkendelse.
+- Vælg Google Cloud-projektet `DFKS Portal` (`dfks-portal`) med aktiv fakturering.
 - Vælg EU-regionen `europe-north1` konsekvent for Artifact Registry og Cloud Run.
 - Accept af prøveperiode, betalingskonto og juridiske vilkår foretages af den
   ansvarlige bruger, ikke automatisk af Codex.
@@ -131,3 +130,28 @@ Tildel derefter kun Scheduler-kontoen rollen **Cloud Run Invoker** på denne ser
 - En billedbaseret PDF får tekstlag; en PDF med tekst bevarer eksisterende tekst.
 - Filer over 25 MB og ugyldige PDF'er får konkrete, sikre fejlbeskeder.
 - Ingen kontrakt, filsti, token eller persondata findes i Cloud Run-loggen.
+
+## Begrænsning af konsekvensen ved et sikkerhedsbrud
+
+- Workerens servicekonto har ingen generelle projekt- eller Storage-roller. Selv ved
+  overtagelse af en aktiv container giver identiteten derfor ikke adgang til at
+  gennemse kontraktarkivet.
+- Portalen udsteder kun et kortlivet downloadlink til den ene kontrakt, som jobbet
+  har claimet, og et upload-token til netop jobbets afledte outputsti.
+- Workeren accepterer kun downloadadresser fra DFKS' forventede Supabase-origin,
+  følger ikke redirects og stopper downloadstrømmen ved 25 MB. Det begrænser både
+  server-side request forgery og ressourceangreb, hvis en jobrække bliver manipuleret.
+- Kommandoerne til OCR, PDF-info og tekstudtræk har faste argumenter og køres uden
+  shell. Filnavne, kontrakttekst og databaseværdier kan derfor ikke blive fortolket
+  som systemkommandoer.
+- Midlertidige filer oprettes isoleret med begrænsede filrettigheder og slettes i
+  alle afslutningsforløb. Originalfilen er uforanderlig; kun en reproducerbar kopi
+  kan slettes og genskabes.
+- Ved mistanke om brud kan Scheduler pauses, `Cloud Run Invoker` fjernes fra
+  schedulerkontoen og Vercels forventede worker-identitet ændres. Det stopper nye
+  dokumentudleveringer uden at slette kontrakterne.
+
+Den resterende risiko er, at den aktive Cloud Run-instans nødvendigvis kan se den
+ene kontrakt, som den behandler. Google Cloud er derfor en databehandler i dette
+flow og skal være omfattet af DFKS' databehandleraftale, logpolitik og
+hændelsesberedskab.

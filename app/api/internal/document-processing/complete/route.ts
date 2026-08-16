@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { CONTRACT_IMPORT_PROMPT_VERSION, CONTRACT_IMPORT_SCHEMA_VERSION } from "@/lib/contract-import-job";
-import { getAiRuntimeConfig } from "@/lib/ai-runtime";
 import { verifyOcrCloudRunRequest } from "@/lib/server/cloud-run-identity";
 import { createServiceClient } from "@/lib/supabase/service";
 
@@ -44,8 +42,8 @@ export async function POST(request: Request) {
     p_status: body.status,
     p_orientation_corrections: corrections,
     p_ocr_applied: Boolean(body.ocrApplied),
-    p_page_count: Number.isInteger(body.pageCount) ? body.pageCount : null,
-    p_text_char_count: Number.isInteger(body.textCharCount) ? body.textCharCount : null,
+    p_page_count: Number.isInteger(body.pageCount) && Number(body.pageCount) >= 1 && Number(body.pageCount) <= 10_000 ? body.pageCount : null,
+    p_text_char_count: Number.isInteger(body.textCharCount) && Number(body.textCharCount) >= 0 && Number(body.textCharCount) <= 100_000_000 ? body.textCharCount : null,
     p_error_code: body.errorCode?.slice(0, 80) || null,
     p_safe_error_message: body.safeErrorMessage?.slice(0, 500) || null,
   });
@@ -53,24 +51,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Dokumentjobbet kunne ikke afsluttes" }, { status: 409 });
   }
 
-  if (body.status === "completed") {
-    const existing = await db.from("contract_ai_jobs").select("id").eq("contract_id", finished.contract_id).is("attachment_id", null).limit(1);
-    if (!existing.data?.length) {
-      const runtimeConfig = await getAiRuntimeConfig("contract_extraction");
-      await db.from("contract_ai_jobs").insert({
-        contract_id: finished.contract_id,
-        org_id: finished.org_id,
-        created_by: finished.created_by,
-        status: "queued",
-        stage: "extraction",
-        priority: 100,
-        provider: runtimeConfig.provider,
-        model: runtimeConfig.model,
-        prompt_version: CONTRACT_IMPORT_PROMPT_VERSION,
-        schema_version: CONTRACT_IMPORT_SCHEMA_VERSION,
-        next_attempt_at: new Date().toISOString(),
-      });
-    }
-  }
   return NextResponse.json({ ok: true });
 }

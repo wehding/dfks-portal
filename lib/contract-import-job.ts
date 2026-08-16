@@ -123,6 +123,15 @@ export function classifyContractImportFailure(
     };
   }
 
+  if (details.code === "no_usable_contract_data") {
+    return {
+      status: "dead", itemStatus: "dead", failureClass: "invalid_output",
+      errorCode: "no_usable_contract_data",
+      safeMessage: "AI kunne læse filen, men fandt ingen genkendelige kontraktoplysninger. Kontrollér, at dokumentet er en kontrakt, og at teksten er læsbar.",
+      nextAttemptAt: null, refundAttempt: false,
+    };
+  }
+
   if (details.failureClass === "invalid_output" || details.code === "invalid_json") {
     if (attempt < 2) {
       return {

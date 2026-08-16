@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-type Connection = { id: string; status: string; account_label: string | null; display_name: string };
+type Connection = { id: string; provider: string; status: string; account_label: string | null; display_name: string };
 type DriveEntry = { id: string; name: string; size?: number; revision?: string };
 
 export function GoogleDriveContractPicker({ onImported }: { onImported?: () => void }) {
@@ -24,7 +24,7 @@ export function GoogleDriveContractPicker({ onImported }: { onImported?: () => v
     fetch("/api/admin/import-connections", { cache: "no-store" }).then(async response => {
       const json = await response.json();
       if (!response.ok) throw new Error(json.error);
-      setConnection((json.connections ?? []).find((item: Connection) => item.status === "connected") ?? null);
+      setConnection((json.connections ?? []).find((item: Connection) => item.provider === "google_drive" && item.status === "connected") ?? null);
     }).catch(error => toast.error(error instanceof Error ? error.message : "Google Drive-forbindelsen kunne ikke hentes"))
       .finally(() => setLoading(false));
   }, []);

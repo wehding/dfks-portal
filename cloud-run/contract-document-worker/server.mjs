@@ -8,7 +8,9 @@ import { createClient } from "@supabase/supabase-js";
 const required = ["PORTAL_BASE_URL", "OCR_CLOUD_RUN_AUDIENCE", "SUPABASE_URL", "SUPABASE_ANON_KEY"];
 for (const key of required) if (!process.env[key]) throw new Error(`Missing ${key}`);
 const portalBaseUrl = new URL(process.env.PORTAL_BASE_URL).origin;
+const supabaseOrigin = new URL(process.env.SUPABASE_URL).origin;
 const maxBytes = 25 * 1024 * 1024;
+const minReadableTextChars = 120;
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
@@ -67,6 +69,24 @@ async function complete(token, body) {
   if (!response.ok) throw new Error("completion_callback_failed");
 }
 
+async function readResponseWithLimit(response, byteLimit) {
+  if (!response.body) throw new Error("download_failed");
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > byteLimit) {
+      await reader.cancel();
+      throw new Error("file_too_large");
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, total);
+}
+
 async function processOne() {
   const token = await identityToken();
   const claim = await portal("/api/internal/document-processing/claim", token, { method: "POST" });
@@ -79,11 +99,14 @@ async function processOne() {
     const inputPath = join(workDir, "input.pdf");
     const outputPath = join(workDir, "output.pdf");
     const sidecarPath = join(workDir, "ocr.txt");
-    const source = await fetch(job.downloadUrl, { signal: AbortSignal.timeout(60_000) });
+    const downloadUrl = new URL(job.downloadUrl);
+    if (downloadUrl.origin !== supabaseOrigin) throw new Error("invalid_download_origin");
+    const source = await fetch(downloadUrl, { signal: AbortSignal.timeout(60_000), redirect: "error" });
     if (!source.ok) throw new Error("download_failed");
+    if (new URL(source.url).origin !== supabaseOrigin) throw new Error("invalid_download_origin");
     const contentLength = Number(source.headers.get("content-length") || 0);
     if (contentLength > Math.min(job.maxBytes || maxBytes, maxBytes)) throw new Error("file_too_large");
-    const input = Buffer.from(await source.arrayBuffer());
+    const input = await readResponseWithLimit(source, Math.min(job.maxBytes || maxBytes, maxBytes));
     if (input.length > maxBytes || input.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("invalid_pdf");
     await import("node:fs/promises").then(fs => fs.writeFile(inputPath, input, { mode: 0o600 }));
 
@@ -103,17 +126,31 @@ async function processOne() {
     await run("pdftotext", [outputPath, join(workDir, "text.txt")], 60_000);
     const extractedText = await readFile(join(workDir, "text.txt"), "utf8").catch(() => "");
     const sidecar = await readFile(sidecarPath, "utf8").catch(() => "");
+    const textCharCount = extractedText.replace(/\s/g, "").length;
+    if (textCharCount < minReadableTextChars) {
+      await complete(token, {
+        jobId: job.jobId,
+        status: "needs_review",
+        orientationCorrections: orientationCorrections(ocrResult.stderr),
+        ocrApplied: sidecar.trim().length > 0,
+        pageCount,
+        textCharCount,
+        errorCode: "ocr_no_readable_text",
+        safeErrorMessage: "OCR-behandlingen fandt ikke nok læsbar tekst. Kontrollér scanningens kvalitet og om dokumentet faktisk indeholder kontrakttekst.",
+      });
+      return { processed: true, jobId: job.jobId, pageCount, needsReview: true };
+    }
     await complete(token, {
       jobId: job.jobId,
       status: "completed",
       orientationCorrections: orientationCorrections(ocrResult.stderr),
       ocrApplied: sidecar.trim().length > 0,
       pageCount,
-      textCharCount: extractedText.trim().length,
+      textCharCount,
     });
     return { processed: true, jobId: job.jobId, pageCount };
   } catch (error) {
-    const code = ["file_too_large", "invalid_pdf", "processed_file_too_large"].includes(error?.message)
+    const code = ["file_too_large", "invalid_pdf", "processed_file_too_large", "invalid_download_origin"].includes(error?.message)
       ? error.message : "document_processing_failed";
     const needsReview = code !== "document_processing_failed";
     try {
@@ -123,6 +160,8 @@ async function processOne() {
         errorCode: code,
         safeErrorMessage: code === "invalid_pdf"
           ? "Filen er ikke en gyldig PDF."
+          : code === "invalid_download_origin"
+            ? "Den midlertidige filadresse kom ikke fra den forventede lagerkonto."
           : code === "file_too_large" || code === "processed_file_too_large"
             ? "PDF-filen overskrider den tilladte størrelse."
             : "PDF'en kunne ikke normaliseres eller OCR-behandles.",

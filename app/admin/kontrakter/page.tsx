@@ -93,6 +93,35 @@ type ContractRow = {
     import_status?: string | null
 }
 
+type ContractVersion = {
+    id: string
+    working_title: string | null
+    status: string
+    contract_date: string | null
+    created_at: string
+    pdf_url: string | null
+    processed_pdf_url: string | null
+    superseded_at: string | null
+    superseded_by_contract_id: string | null
+}
+
+function documentProcessingErrorMessage(contract: ContractRow) {
+    const messages: Record<string, string> = {
+        ocr_no_readable_text: "OCR fandt ikke nok læsbar tekst. Kontrollér scanningens kvalitet og at filen indeholder kontrakttekst.",
+        invalid_pdf: "Filen er ikke en gyldig PDF.",
+        file_too_large: "PDF-filen er større end den tilladte grænse på 25 MB.",
+        processed_file_too_large: "Den OCR-behandlede PDF blev for stor og kræver manuel behandling.",
+        invalid_download_origin: "Den midlertidige filadresse kom ikke fra den forventede lagerkonto.",
+        signed_url_failed: "Systemet kunne ikke oprette sikker, midlertidig adgang til PDF-filen.",
+        document_processing_failed: "PDF'en kunne ikke rettes eller OCR-behandles efter de automatiske forsøg.",
+    }
+    if (contract.document_processing_error_code) {
+        return messages[contract.document_processing_error_code] ?? "PDF-behandlingen fejlede og kræver manuel kontrol."
+    }
+    if (contract.document_processing_status === "failed") return "PDF-behandlingen fejlede og prøves automatisk igen, hvis der er forsøg tilbage."
+    return null
+}
+
 type ContractComment = {
     id: string
     author_role: "member" | "admin"
@@ -352,6 +381,9 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
     const [archiveEditOpen, setArchiveEditOpen] = useState(false)
     const [deleteEditOpen, setDeleteEditOpen] = useState(false)
     const [versionDialogOpen, setVersionDialogOpen] = useState(false)
+    const [versionHistoryOpen, setVersionHistoryOpen] = useState(false)
+    const [versionHistory, setVersionHistory] = useState<ContractVersion[]>([])
+    const [versionHistoryLoading, setVersionHistoryLoading] = useState(false)
     const [currentVersionId, setCurrentVersionId] = useState("")
     const [versionSaving, setVersionSaving] = useState(false)
     const [missingWorkValidation, setMissingWorkValidation] = useState<{ contractId: string; title: string; openNextAfterSave: boolean } | null>(null)
@@ -694,7 +726,6 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                                 .select("contract_id, status, error_message, created_at")
                                 .in("contract_id", rawContracts.map(r => r.id))
                                 .is("attachment_id", null)
-                                .neq("status", "done")
                                 .order("created_at", { ascending: false }),
                             supabase.from("contract_attachments").select("id,contract_id,title,ai_status,ai_result").in("contract_id", rawContracts.map(r => r.id)).order("created_at", { ascending: false }),
                         ])
@@ -1114,7 +1145,8 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
         const { data } = await supabase
             .from("contracts")
             .select(`
-                id, type, overenskomst, status, pdf_url,
+                id, type, overenskomst, status, pdf_url, processed_pdf_url,
+                document_processing_status, document_processing_error_code,
                 contract_date, start_date, end_date, created_at,
                 employer_id, rights_holder_id, working_title,
                 season_number, episode_numbers,
@@ -1138,7 +1170,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             .limit(1)
 
         if (!data) return
-        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
+        const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
         const validation = Array.isArray(row.contract_validations) ? row.contract_validations[0] : row.contract_validations
         const latestJob = (jobs ?? [])[0] as { status?: string; error_message?: string | null } | undefined
         const detail: ContractRow = {
@@ -1147,6 +1179,9 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             type: row.type,
             overenskomst: row.overenskomst,
             status: row.status,
+            processed_pdf_url: row.processed_pdf_url ?? null,
+            document_processing_status: row.document_processing_status ?? "pending",
+            document_processing_error_code: row.document_processing_error_code ?? null,
             pdf_url: row.pdf_url,
             contract_date: row.contract_date,
             start_date: row.start_date,
@@ -1294,6 +1329,14 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
         if (!contract || !orgId) return
         if (!contract.pdf_url) {
             toast.error("Kontrakten mangler fil")
+            return
+        }
+        if (contract.pdf_url.toLowerCase().endsWith(".pdf") && contract.document_processing_status !== "ready") {
+            const message = documentProcessingErrorMessage(contract)
+                ?? (contract.document_processing_status === "processing"
+                    ? "PDF'en er ved at blive rettet og OCR-behandlet. Start AI-aflæsningen igen, når PDF-behandlingen er færdig."
+                    : "PDF'en skal først rettes og OCR-behandles, før AI-aflæsningen kan startes.")
+            if (!automatic) toast.error(message)
             return
         }
         setEditSaving(true)
@@ -1712,6 +1755,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
         ? editValidationData.rightsOverview as Record<string, unknown>
         : {}
     const editStreamingStatus = normalizeTriState(editValidationData.svod ?? editValidationData.streamingReservation ?? editRightsOverview.streamingforbehold)
+    const editDocumentError = editContract ? documentProcessingErrorMessage(editContract) : null
     const activeUploadBatch = activeUploadBatchId ? recentImportBatches.find(batch => batch.id === activeUploadBatchId) ?? null : null
     const toggleSelected = (id: string) => {
         setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id])
@@ -1739,6 +1783,33 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
         } finally {
             setVersionSaving(false)
         }
+    }
+
+    const showVersionHistory = async () => {
+        if (!editContract) return
+        setVersionHistoryOpen(true)
+        setVersionHistoryLoading(true)
+        setVersionHistory([])
+        try {
+            const response = await fetch(`/api/admin/contracts/${editContract.id}/versions`, { cache: "no-store" })
+            const json = await response.json().catch(() => ({}))
+            if (!response.ok) throw new Error(json.error ?? "Versionshistorikken kunne ikke hentes")
+            setVersionHistory(Array.isArray(json.versions) ? json.versions : [])
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Versionshistorikken kunne ikke hentes")
+            setVersionHistoryOpen(false)
+        } finally {
+            setVersionHistoryLoading(false)
+        }
+    }
+
+    const openContractVersion = async (version: ContractVersion) => {
+        const path = version.processed_pdf_url ?? version.pdf_url
+        if (!path) return toast.error("Denne version har ingen dokumentfil")
+        const supabase = createClient()
+        const { data, error } = await supabase.storage.from("kontrakter").createSignedUrl(path, 10 * 60)
+        if (error || !data?.signedUrl) return toast.error("Dokumentet kunne ikke åbnes sikkert")
+        window.open(data.signedUrl, "_blank", "noopener,noreferrer")
     }
 
     const SortButton = ({ label, sortId }: { label: string; sortId: SortKey }) => (
@@ -1970,6 +2041,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
                                             {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
                                             {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
+                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2059,6 +2131,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                                             {c.previous_version_count > 0 && <Badge variant="outline">Har tidligere version</Badge>}
                                             {c.document_processing_status === "processing" && <Badge variant="outline">PDF behandles</Badge>}
                                             {c.document_processing_status === "needs_review" && <Badge variant="destructive">PDF kræver manuel kontrol</Badge>}
+                                            {c.document_processing_status === "failed" && <Badge variant="destructive">PDF-behandling fejlede</Badge>}
                                             {unreadMemberComments > 0 && (
                                                 <Badge variant="outline" className="border-blue-300 bg-blue-100 text-blue-800">
                                                     <MessageSquare className="mr-1 h-3 w-3" />
@@ -2299,15 +2372,49 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                     <Select value={currentVersionId} onValueChange={setCurrentVersionId}>
                         <SelectTrigger><SelectValue placeholder="Vælg aktuel kontrakt" /></SelectTrigger>
                         <SelectContent>
-                            {contracts.filter(candidate => candidate.id !== editContract?.id && (!editContract?.work_id || candidate.work_id === editContract.work_id)).map(candidate => (
+                            {contracts.filter(candidate => candidate.id !== editContract?.id && Boolean(editContract?.work_id) && candidate.work_id === editContract?.work_id).map(candidate => (
                                 <SelectItem key={candidate.id} value={candidate.id}>{candidate.work_title ?? candidate.working_title ?? "Kontrakt"} · {new Date(candidate.created_at).toLocaleDateString("da-DK")}</SelectItem>
                             ))}
                         </SelectContent>
                     </Select>
+                    {!editContract?.work_id && <p className="text-sm text-amber-700">Tilknyt først kontrakten til et værk. Kun kontrakter på det samme værk kan forbindes som versioner.</p>}
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setVersionDialogOpen(false)}>Annuller</Button>
                         <Button onClick={markAsPreviousVersion} disabled={!currentVersionId || versionSaving}>{versionSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Gem version</Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={versionHistoryOpen} onOpenChange={setVersionHistoryOpen}>
+                <DialogContent className="sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>Kontraktens versionshistorik</DialogTitle>
+                        <DialogDescription>Den aktuelle kontrakt vises øverst. Tidligere versioner er bevaret, men vises ikke som selvstændige opslag i kontraktarkivet.</DialogDescription>
+                    </DialogHeader>
+                    <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+                        {versionHistoryLoading ? (
+                            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin" /></div>
+                        ) : versionHistory.length === 0 ? (
+                            <p className="py-6 text-center text-sm text-muted-foreground">Ingen tidligere versioner fundet.</p>
+                        ) : versionHistory.map((version, index) => (
+                            <div key={version.id} className="flex flex-col gap-3 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-sm font-medium">{version.working_title ?? editContract?.work_title ?? "Kontrakt"}</p>
+                                        <Badge variant={index === 0 ? "default" : "outline"}>{index === 0 ? "Aktuel version" : `Tidligere version ${versionHistory.length - index}`}</Badge>
+                                    </div>
+                                    <p className="mt-1 text-xs text-muted-foreground">
+                                        {version.contract_date ? `Kontraktdato ${new Date(version.contract_date).toLocaleDateString("da-DK")}` : `Oprettet ${new Date(version.created_at).toLocaleDateString("da-DK")}`}
+                                        {version.superseded_at ? ` · erstattet ${new Date(version.superseded_at).toLocaleDateString("da-DK")}` : ""}
+                                    </p>
+                                </div>
+                                <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void openContractVersion(version)} disabled={!version.pdf_url && !version.processed_pdf_url}>
+                                    <Eye className="h-4 w-4" />Åbn dokument
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                    <DialogFooter><Button variant="outline" onClick={() => setVersionHistoryOpen(false)}>Luk</Button></DialogFooter>
                 </DialogContent>
             </Dialog>
 
@@ -2349,6 +2456,11 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                         <Button type="button" variant="outline" size="sm" onClick={() => { setCurrentVersionId(""); setVersionDialogOpen(true) }} disabled={editSaving}>
                             Markér som tidligere version
                         </Button>
+                        {Boolean(editContract?.previous_version_count) && (
+                            <Button type="button" variant="outline" size="sm" className="gap-2" onClick={() => void showVersionHistory()} disabled={editSaving}>
+                                <FileText className="h-4 w-4" />Versionshistorik
+                            </Button>
+                        )}
                         {editContract?.pdf_url && (
                             <Button
                                 type="button"
@@ -2372,6 +2484,12 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
 	                    </div>
                         {!editForm?.work_id && (
                             <p className="mt-2 text-xs text-amber-600">Hvis du validerer uden et værk tilknyttet, bliver du spurgt om der skal oprettes et nyt værk med arbejdstitlen.</p>
+                        )}
+                        {(editContract?.ai_job_error || editDocumentError) && (
+                            <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800" role="alert">
+                                <p className="font-medium">Kontrakten kræver manuel kontrol</p>
+                                <p className="mt-0.5">{editContract?.ai_job_error ?? editDocumentError}</p>
+                            </div>
                         )}
                     </div>
                     {editForm && (

@@ -354,7 +354,7 @@ export async function queueUploadedContractAiJob(contractId: string) {
 
   if (contract.pdf_url?.toLowerCase().endsWith(".pdf")) {
     const { data: existingDocumentJob } = await db.from("contract_document_jobs")
-      .select("id").eq("contract_id", contractId).in("status", ["queued", "processing", "failed"]).limit(1).maybeSingle();
+      .select("id").eq("contract_id", contractId).in("status", ["queued", "processing", "failed"]).lt("attempts", 5).limit(1).maybeSingle();
     if (existingDocumentJob) return { success: true, alreadyQueued: true };
     const { error } = await db.from("contract_document_jobs").insert({
       contract_id: contractId,
@@ -365,7 +365,9 @@ export async function queueUploadedContractAiJob(contractId: string) {
       status: "queued",
       priority: 100,
     });
-    return error ? { success: false, error: error.message } : { success: true, alreadyQueued: false };
+    if (error) return { success: false, error: error.message };
+    await db.from("contracts").update({ document_processing_status: "pending", document_processing_error_code: null }).eq("id", contractId).eq("org_id", orgId);
+    return { success: true, alreadyQueued: false };
   }
 
   const { data: existing } = await db

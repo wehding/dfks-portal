@@ -49,13 +49,17 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     actorUserId: caller.userId, actorOrgId: caller.orgId, actorRole: caller.role,
     source: "admin", correlationId: crypto.randomUUID(), mode: "summary",
   } });
-  const rows = await db.from("contracts").select("id").eq("org_id", caller.orgId).in("id", [previousContractId, currentContractId]);
+  const rows = await db.from("contracts").select("id,work_id").eq("org_id", caller.orgId).in("id", [previousContractId, currentContractId]);
   if (rows.error || rows.data?.length !== 2) return NextResponse.json({ error: "Kontrakterne blev ikke fundet i organisationen" }, { status: 404 });
+  const [first, second] = rows.data;
+  if (!first.work_id || !second.work_id || first.work_id !== second.work_id) {
+    return NextResponse.json({ error: "Begge kontrakter skal være knyttet til det samme værk" }, { status: 409 });
+  }
   const linked = await db.rpc("link_contract_version", {
     p_previous_contract_id: previousContractId,
     p_current_contract_id: currentContractId,
     p_actor_user_id: caller.userId,
   });
-  if (linked.error) return NextResponse.json({ error: "Kontrakterne kunne ikke forbindes som versioner" }, { status: 409 });
+  if (linked.error) return NextResponse.json({ error: "Kontrakterne kunne ikke forbindes som versioner. Kontrollér, at de ikke allerede indgår i en anden versionskæde." }, { status: 409 });
   return NextResponse.json({ ok: true });
 }

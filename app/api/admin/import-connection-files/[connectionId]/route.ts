@@ -44,8 +44,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ con
       nextCursor: result.nextPageToken,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Filerne kunne ikke hentes";
-    return NextResponse.json({ error: message }, { status: 502 });
+    console.warn("[drive-picker] Google Drive kunne ikke gennemses", error instanceof Error ? error.message : "ukendt fejl");
+    return NextResponse.json({ error: "Google Drive kunne ikke åbnes. Kontrollér forbindelsen og prøv igen." }, { status: 502 });
   }
 }
 
@@ -54,6 +54,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ co
   if (!caller) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 });
   const connection = await organisationConnection((await context.params).connectionId, caller.orgId);
   if (!connection || connection.status !== "connected") return NextResponse.json({ error: "Forbindelsen blev ikke fundet" }, { status: 404 });
+  if (connection.provider !== "google_drive") return NextResponse.json({ error: "Kun Google Drive understøttes her" }, { status: 409 });
   const body = await request.json().catch(() => ({})) as { fileIds?: unknown };
   const fileIds = Array.isArray(body.fileIds)
     ? [...new Set(body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 1024))].slice(0, 500)

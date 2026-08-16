@@ -6,6 +6,7 @@ do $$
 declare
   test_org uuid := gen_random_uuid();
   actor_id uuid := gen_random_uuid();
+  work_id uuid := gen_random_uuid();
   previous_id uuid := gen_random_uuid();
   current_id uuid := gen_random_uuid();
   job_id uuid := gen_random_uuid();
@@ -21,10 +22,11 @@ begin
   insert into public.organisations (id, name) values (test_org, 'Document security test ' || test_org::text);
   insert into auth.users (id, instance_id, aud, role, email, encrypted_password, created_at, updated_at)
   values (actor_id, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', actor_id || '@example.invalid', '', now(), now());
-  insert into public.contracts (id, org_id, type, status, pdf_url)
+  insert into public.works (id, org_id, title, type) values (work_id, test_org, 'Versionsværk', 'fiktion');
+  insert into public.contracts (id, org_id, work_id, type, status, pdf_url)
   values
-    (previous_id, test_org, 'A-løn', 'kladde', test_org || '/previous.pdf'),
-    (current_id, test_org, 'A-løn', 'kladde', test_org || '/current.pdf');
+    (previous_id, test_org, work_id, 'A-løn', 'kladde', test_org || '/previous.pdf'),
+    (current_id, test_org, work_id, 'A-løn', 'kladde', test_org || '/current.pdf');
 
   perform set_config('request.jwt.claim.role', 'service_role', true);
 
@@ -47,6 +49,12 @@ begin
       and document_processing_status = 'ready'
   ) then
     raise exception 'Document queue regression: original or derivative state is incorrect';
+  end if;
+  if not exists (
+    select 1 from public.contract_ai_jobs
+    where contract_id = current_id and attachment_id is null and status = 'queued'
+  ) then
+    raise exception 'Document queue regression: completed OCR did not atomically queue AI analysis';
   end if;
 end $$;
 

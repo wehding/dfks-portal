@@ -51,6 +51,8 @@ create table if not exists public.contract_document_jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
+  constraint contract_document_jobs_page_count_check check (page_count is null or page_count between 1 and 10000),
+  constraint contract_document_jobs_text_char_count_check check (text_char_count is null or text_char_count between 0 and 100000000),
   constraint contract_document_jobs_safe_paths check (
     original_storage_path !~ '(^|/)\.\.(/|$)'
     and output_storage_path !~ '(^|/)\.\.(/|$)'
@@ -59,7 +61,7 @@ create table if not exists public.contract_document_jobs (
 
 create unique index if not exists contract_document_jobs_one_active_contract_idx
   on public.contract_document_jobs (contract_id)
-  where status in ('queued', 'processing', 'failed');
+  where status in ('queued', 'processing') or (status = 'failed' and attempts < 5);
 create index if not exists contract_document_jobs_claim_idx
   on public.contract_document_jobs (status, next_attempt_at, priority desc, created_at)
   where status in ('queued', 'processing', 'failed');
@@ -131,6 +133,7 @@ set search_path = public, pg_temp
 as $$
 declare
   finished public.contract_document_jobs;
+  new_ai_job_id uuid;
 begin
   if auth.role() <> 'service_role' then
     raise exception 'forbidden' using errcode = '42501';
@@ -164,6 +167,48 @@ begin
       document_processing_error_code = p_error_code,
       document_processed_at = case when p_status = 'completed' then now() else document_processed_at end
   where id = finished.contract_id;
+
+  -- OCR-afslutning og AI-genkø skal være én databasehandling. Ellers kan
+  -- callbacken nå at gemme den behandlede PDF uden at få kontrakten tilbage
+  -- i AI-køen. Aktive jobs på originalfilen lukkes, mens afsluttede jobs
+  -- bevares som historik. Det nye job bruger altid den behandlede PDF via
+  -- claim_next_contract_ai_job nedenfor.
+  if p_status = 'completed' then
+    update public.contract_ai_jobs
+    set status = 'dead',
+        failure_class = 'input',
+        error_code = 'superseded_by_document_processing',
+        error_message = 'Jobbet blev erstattet af analyse af den OCR-behandlede PDF.',
+        lease_expires_at = null,
+        completed_at = now(),
+        updated_at = now()
+    where contract_id = finished.contract_id
+      and attachment_id is null
+      and status in ('queued', 'processing', 'retry_wait', 'blocked', 'error');
+
+    insert into public.contract_ai_jobs (
+      contract_id, org_id, created_by, status, stage, priority, next_attempt_at
+    ) values (
+      finished.contract_id, finished.org_id, finished.created_by,
+      'queued', 'extraction', 100, now()
+    ) returning id into new_ai_job_id;
+
+    update public.contract_import_items
+    set ai_job_id = new_ai_job_id,
+        status = 'queued',
+        error_code = null,
+        error_message = null,
+        next_attempt_at = now(),
+        updated_at = now()
+    where id = (
+      select item.id
+      from public.contract_import_items item
+      where item.contract_id = finished.contract_id
+        and item.status in ('queued', 'analysing', 'matching', 'retryable_error', 'blocked', 'needs_ocr', 'dead')
+      order by item.created_at desc
+      limit 1
+    );
+  end if;
   return finished;
 end;
 $$;
@@ -191,8 +236,8 @@ begin
   if previous_row.id is null or current_row.id is null or previous_row.org_id <> current_row.org_id then
     raise exception 'contracts must exist in the same organisation' using errcode = '22023';
   end if;
-  if previous_row.work_id is not null and current_row.work_id is not null and previous_row.work_id <> current_row.work_id then
-    raise exception 'contracts must refer to the same work' using errcode = '22023';
+  if previous_row.work_id is null or current_row.work_id is null or previous_row.work_id <> current_row.work_id then
+    raise exception 'contracts must refer to the same linked work' using errcode = '22023';
   end if;
   cursor_id := p_current_contract_id;
   for i in 1..100 loop
