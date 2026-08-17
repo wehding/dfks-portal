@@ -793,8 +793,7 @@ function AdminValideringPageInner() {
 
     // Aktiver source-link: fieldId identificerer knappen, quote navigerer i PDF
     const activateSource = (fieldId: string, quote: string | null | undefined) => {
-        console.log("[activateSource]", fieldId, { quote: quote?.slice(0, 80) ?? null, contractTextLen: contractText?.length ?? 0, storedDocxLen: storedDocxText?.length ?? 0 })
-        setActiveField(fieldId)
+setActiveField(fieldId)
         setActiveSource(quote ?? null)
     }
 
@@ -1806,6 +1805,7 @@ function normChar(s: string): string {
     return s
         .toLowerCase()
         .replace(/[\u00a0\u2009\u202f]/g, " ")
+        .replace(/[\r\n\t]/g, " ")
         .replace(/[\u2013\u2014\u2212]/g, "-")
         .replace(/[\u201c\u201d\u2018\u2019\u0027\u2032]/g, "'")
         .replace(/_/g, " ")
@@ -1875,12 +1875,6 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
             const isSection = sectionHighlights.includes(quote)
             const q = normQ(quote)
             const candidates = [q.slice(0, 60), q.slice(0, 40), q.slice(0, 25)].filter(c => c.length >= 4)
-
-            if (isActive) {
-                candidates.forEach((n, i) => {
-                    console.log(`[TextViewer] kandidat ${i}: "${n.slice(0, 35)}" → idx=${normText.indexOf(n)}`)
-                })
-            }
 
             for (const needle of candidates) {
                 const idx = normText.indexOf(needle)
