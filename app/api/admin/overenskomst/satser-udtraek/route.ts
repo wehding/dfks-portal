@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
         const rawText = await callAi({
             provider: runtime.provider,
             model: runtime.model,
-            maxTokens: 4000,
+            maxTokens: 8000,
             responseJson: true,
             system: `Du er ekspert i danske overenskomster. Udtræk ALLE satser fra det givne dokument.
 
