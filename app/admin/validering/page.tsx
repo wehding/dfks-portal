@@ -793,6 +793,7 @@ function AdminValideringPageInner() {
 
     // Aktiver source-link: fieldId identificerer knappen, quote navigerer i PDF
     const activateSource = (fieldId: string, quote: string | null | undefined) => {
+        console.log("[activateSource]", fieldId, { quote: quote?.slice(0, 80) ?? null, contractTextLen: contractText?.length ?? 0, storedDocxLen: storedDocxText?.length ?? 0 })
         setActiveField(fieldId)
         setActiveSource(quote ?? null)
     }
