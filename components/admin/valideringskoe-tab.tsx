@@ -95,8 +95,10 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
         if (error || !data) { setLoading(false); return }
 
-        // Hent import-status + hvilke kontrakter har AI-udtræk (server-side, omgår RLS)
-        const importResult = await getContractImportStates(data.map((c: any) => c.id))
+        // Hent import-status + hvilke kontrakter har AI-udtræk (kun kladde — begrænser URL-størrelse)
+        const kladdeIds = data.filter((c: any) => c.status === "kladde").map((c: any) => c.id)
+        const importResult = await getContractImportStates(kladdeIds)
+        console.log("[ValideringskøTab] importResult:", { success: importResult.success, statesCount: Object.keys(importResult.states ?? {}).length, withAiDataCount: importResult.withAiData?.length ?? "undefined" })
         const importStates = importResult.success ? importResult.states : {}
         const aiDataSet = new Set(importResult.success ? importResult.withAiData : [])
 
