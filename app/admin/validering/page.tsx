@@ -1876,6 +1876,11 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
             const q = normQ(quote)
             const candidates = [q.slice(0, 60), q.slice(0, 40), q.slice(0, 25)].filter(c => c.length >= 4)
 
+            if (isActive) {
+                const results = candidates.map(n => ({ needle: n.slice(0, 30), idx: normText.indexOf(n) }))
+                console.log("[TextViewer] søger:", { quote: quote.slice(0, 50), normTextLen: normText.length, candidates: results })
+            }
+
             for (const needle of candidates) {
                 const idx = normText.indexOf(needle)
                 if (idx === -1) continue
