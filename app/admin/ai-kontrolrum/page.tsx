@@ -1162,19 +1162,14 @@ const BILAG_TYPER = [
     { id: "bilag", label: "Andet bilag" },
 ]
 
+// Kanoniske overenskomst-IDs — bruges i knowledge_chunks, overenskomst_satser og klassifikatoren.
+// Tilføj nye overenskomster her og re-upload PDF i upload-formularen.
 const OVERENSKOMST_TYPER = [
-    { id: "de4", label: "De4 (fiktion)" },
-    { id: "faf", label: "FAF (fiktion)" },
+    { id: "de4-fiktion",    label: "De4 Fiktionsoverenskomst" },
+    { id: "faf",            label: "FAF (fiktion/spillefilm)" },
     { id: "faf-dokumentar", label: "FAF (dokumentar)" },
-    { id: "dj", label: "DJ" },
-    { id: "metal", label: "Metal" },
-    { id: "de4-fiction-2022", label: "De4 Fiktionsoverenskomst 2022" },
-    { id: "faf-fiction-2025", label: "FAF Fiktion 2025–2027" },
-    { id: "faf-documentary", label: "FAF Kort- og dokumentarfilm" },
-    { id: "dj-tv-2024", label: "DJ TV 2024–2026" },
-    { id: "faf-tv-employee-2008", label: "FAF/DJ TV – ansatte" },
-    { id: "faf-tv-freelance-2008", label: "FAF/DJ TV – lønmodtagerfreelancere" },
-    { id: "dr-metal-2025", label: "DR og Dansk Metal 2025–2028" },
+    { id: "dj",             label: "DJ" },
+    { id: "metal",          label: "Metal" },
 ]
 
 const KATEGORIER = [
@@ -1782,10 +1777,11 @@ type Sats = {
 }
 
 const OVERENSKOMST_LABELS: Record<string, string> = {
-    "de4-fiktion": "De4 Fiktionsoverenskomst",
-    "dokumentar": "FAF Dokumentaroverenskomst",
-    "dj": "DJ",
-    "metal": "Metal",
+    "de4-fiktion":    "De4 Fiktionsoverenskomst",
+    "faf":            "FAF (fiktion/spillefilm)",
+    "faf-dokumentar": "FAF (dokumentar)",
+    "dj":             "DJ",
+    "metal":          "Metal",
 }
 
 const ENHED_OPTIONS = ["kr/uge", "kr/dag", "kr/time", "%"]

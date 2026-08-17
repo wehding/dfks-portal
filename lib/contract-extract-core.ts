@@ -60,7 +60,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
 {"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
 
-overenskomst: Kendte id'er — brug præcis disse: "de4" (De4/Fiktionsoverenskomsten), "faf" (FAF fiktion/spillefilm), "faf-dokumentar" (FAF dokumentar), "dj" (DJ), "metal" (Metal/DR-Metal). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart.
+overenskomst: Brug præcis ét af disse id'er: "de4-fiktion" (De4/Fiktionsoverenskomsten), "faf" (FAF fiktion/spillefilm), "faf-dokumentar" (FAF dokumentar), "dj" (DJ/TV), "metal" (Metal/DR-Metal). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,
@@ -92,9 +92,19 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             .neq("kategori", "fuldt-dokument")
             .neq("kategori", "lønskema")
 
+        // Alias-map: kanonisk ID → alle ID-varianter der kan ligge i knowledge_chunks.
+        // Gamle uploads brugte kortere IDs — vi søger på alle varianter så ingen data går tabt.
+        const OVERENSKOMST_ALIASES: Record<string, string[]> = {
+            "de4-fiktion":   ["de4-fiktion", "de4", "de4-fiction-2022"],
+            "faf":           ["faf", "faf-fiction-2025"],
+            "faf-dokumentar":["faf-dokumentar", "faf-documentary", "dokumentar"],
+            "dj":            ["dj", "dj-tv-2024"],
+            "metal":         ["metal", "dr-metal-2025"],
+        }
+
         if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
-            // Kun chunks for den identificerede overenskomst
-            overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
+            const aliases = OVERENSKOMST_ALIASES[detectedOverenskomst] ?? [detectedOverenskomst]
+            overenskomstQuery = overenskomstQuery.in("overenskomst", aliases)
         } else if (detectedOverenskomst === "ingen") {
             // Ingen overenskomst — spring overenskomst-chunks over
             overenskomstQuery = overenskomstQuery.eq("overenskomst", "INGEN_MATCH")
