@@ -78,14 +78,12 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const [activeTab, setActiveTab] = useState<"afventer" | "gennemgaede">("afventer")
     const [importFilter, setImportFilter] = useState<string>("all")
 
-    useEffect(() => {
-        let cancelled = false
-        void (async () => {
-            const supabase = createClient()
-            const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
-            const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
-            const orgId = context?.orgId
-            if (!orgId) { if (!cancelled) setLoading(false); return }
+    const load = useCallback(async () => {
+        const supabase = createClient()
+        const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
+        const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
+        const orgId = context?.orgId
+        if (!orgId) { setLoading(false); return }
 
         const { data, error } = await supabase
             .from("contracts")
@@ -95,7 +93,6 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
         if (error || !data) { setLoading(false); return }
 
-        // Hent import-status + hvilke kontrakter har AI-udtræk (kun kladde — begrænser URL-størrelse)
         const kladdeIds = data.filter((c: any) => c.status === "kladde").map((c: any) => c.id)
         const importResult = await getContractImportStates(kladdeIds)
         console.log("[ValideringskøTab] importResult:", { success: importResult.success, statesCount: Object.keys(importResult.states ?? {}).length, withAiDataCount: importResult.withAiData?.length ?? "undefined" })
