@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useRef, useMemo, useEffect, useCallback, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import {
     Check, X, FileText, Upload, ArrowLeft, Building2, AlertTriangle,
@@ -92,7 +92,9 @@ const statusLabel: Record<string, string> = {
 
 function AdminValideringPageInner() {
     const { t } = useI18n()
+    const router = useRouter()
     const searchParams = useSearchParams()
+    const cameFromQueue = searchParams.get("id") !== null
     const [contracts, setContracts] = useState<ValidatingContract[]>([])
     const [pageLoading, setPageLoading] = useState(true)
     const [reviewingId, setReviewingId] = useState<string | null>(searchParams.get("id"))
@@ -431,6 +433,10 @@ function AdminValideringPageInner() {
     }, [reviewingContract?.id])
 
     const leaveReview = () => {
+        if (cameFromQueue) {
+            router.push("/admin/kontrakter?tab=valideringskoe")
+            return
+        }
         setReviewingId(null); setLocalPdfUrl(null); setLocalPdfFile(null)
         setStoredDocxText(null)
         setFormData({}); setContractText(""); setSources({}); setActiveSource(null); setActiveField(null)
