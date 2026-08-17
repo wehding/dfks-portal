@@ -5,6 +5,7 @@ import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { requireStaffModuleApi } from "@/lib/api-auth"
 import { extractWordText } from "@/lib/word-text"
+import { errorMessage } from "@/lib/error-message"
 
 function sb() {
     return createClient(
@@ -192,7 +193,7 @@ export async function POST(req: NextRequest) {
 
 export async function DELETE(req: NextRequest) {
     try {
-        const auth = await requireAdminApi()
+        const auth = await requireStaffModuleApi("contract_reviews", "write")
         if (!auth.ok) return auth.response
         const { searchParams } = new URL(req.url)
         const overenskomst = searchParams.get("overenskomst")
