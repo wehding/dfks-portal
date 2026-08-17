@@ -54,17 +54,25 @@ export async function findOwnersForContracts(contractIds: string[]) {
 export async function getContractImportStates(contractIds: string[]) {
   const session = await createClient();
   const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin", "jurist"]);
-  if (!caller) return { success: false, error: "Ikke autoriseret", states: {} as Record<string, string> };
+  if (!caller) return { success: false, error: "Ikke autoriseret", states: {} as Record<string, string>, withAiData: [] as string[] };
   const ids = [...new Set(contractIds.filter(Boolean))].slice(0, 500);
-  if (!ids.length) return { success: true, states: {} as Record<string, string> };
+  if (!ids.length) return { success: true, states: {} as Record<string, string>, withAiData: [] as string[] };
   const db = createServiceClient();
-  const { data, error } = await db.from("contract_import_items")
-    .select("contract_id,status,created_at")
-    .eq("org_id", caller.orgId)
-    .in("contract_id", ids)
-    .order("created_at", { ascending: false });
-  if (error) return { success: false, error: "Importstatus kunne ikke hentes", states: {} as Record<string, string> };
+  const [importRes, validationRes] = await Promise.all([
+    db.from("contract_import_items")
+      .select("contract_id,status,created_at")
+      .eq("org_id", caller.orgId)
+      .in("contract_id", ids)
+      .order("created_at", { ascending: false }),
+    db.from("contract_validations")
+      .select("contract_id,extracted_data")
+      .in("contract_id", ids),
+  ]);
+  if (importRes.error) return { success: false, error: "Importstatus kunne ikke hentes", states: {} as Record<string, string>, withAiData: [] as string[] };
   const states: Record<string, string> = {};
-  for (const item of data ?? []) if (item.contract_id && !states[item.contract_id]) states[item.contract_id] = item.status;
-  return { success: true, states };
+  for (const item of importRes.data ?? []) if (item.contract_id && !states[item.contract_id]) states[item.contract_id] = item.status;
+  const withAiData = (validationRes.data ?? [])
+    .filter(v => v.extracted_data != null && typeof v.extracted_data === "object" && Object.keys(v.extracted_data as object).length > 0)
+    .map(v => v.contract_id as string);
+  return { success: true, states, withAiData };
 }

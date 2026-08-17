@@ -89,31 +89,28 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
         const { data, error } = await supabase
             .from("contracts")
-            .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name), contract_validations(id, extracted_data)")
+            .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name)")
             .eq("org_id", orgId)
             .order("created_at", { ascending: false })
 
         if (error || !data) { setLoading(false); return }
 
-        // Hent import-status for alle kontrakter
+        // Hent import-status + hvilke kontrakter har AI-udtræk (server-side, omgår RLS)
         const importResult = await getContractImportStates(data.map((c: any) => c.id))
         const importStates = importResult.success ? importResult.states : {}
+        const aiDataSet = new Set(importResult.success ? importResult.withAiData : [])
 
-        const mapped: KøRow[] = data.map((c: any) => {
-            const val = Array.isArray(c.contract_validations) ? c.contract_validations[0] : c.contract_validations
-            const hasAiData = val?.extracted_data != null && Object.keys(val.extracted_data).length > 0
-            return {
-                id: c.id,
-                displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
-                displayMember: c.rettighedshavere?.full_name ?? "—",
-                displayEmployer: c.employers?.name ?? null,
-                contract_date: c.contract_date,
-                created_at: c.created_at,
-                status: c.status,
-                validation_id: hasAiData ? val.id : null,
-                import_status: importStates[c.id] ?? null,
-            }
-        })
+        const mapped: KøRow[] = data.map((c: any) => ({
+            id: c.id,
+            displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
+            displayMember: c.rettighedshavere?.full_name ?? "—",
+            displayEmployer: c.employers?.name ?? null,
+            contract_date: c.contract_date,
+            created_at: c.created_at,
+            status: c.status,
+            validation_id: aiDataSet.has(c.id) ? c.id : null,
+            import_status: importStates[c.id] ?? null,
+        }))
         setRows(mapped)
         setLoading(false)
     }, [onAfventerCount])
