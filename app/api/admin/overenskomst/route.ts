@@ -57,6 +57,22 @@ export async function POST(req: NextRequest) {
         if (!pdfTekst.trim()) {
             return NextResponse.json({ error: "Dokumentet indeholder ingen læsbar tekst." }, { status: 422 })
         }
+
+        // Hent eksisterende kategorinavne fra DB — bruges som vejledning til AI'en
+        let tidligereKategorier: string[] = []
+        try {
+            const { data: katRows } = await sb()
+                .from("knowledge_chunks")
+                .select("kategori")
+                .not("kategori", "is", null)
+                .neq("kategori", "fuldt-dokument")
+            tidligereKategorier = [...new Set((katRows ?? []).map(r => r.kategori as string))].sort()
+        } catch { /* ingen kategorier tilgængelige */ }
+
+        const kategorikontekst = tidligereKategorier.length > 0
+            ? `\n\nAllerede brugte kategorinavne på tværs af indekserede overenskomster: ${tidligereKategorier.map(k => `"${k}"`).join(", ")}. Brug et af disse navne hvis afsnittet reelt svarer til en allerede brugt kategori; ellers foreslå et nyt præcist dansk navn.`
+            : ""
+
         const runtime = await getAiRuntimeConfig("contract_advice")
         const rawText = await callAi({
             provider: runtime.provider,
@@ -64,43 +80,69 @@ export async function POST(req: NextRequest) {
             maxTokens: 4000,
             responseJson: true,
             promptCaching: runtime.promptCachingEnabled,
-            system: `Du er ekspert i danske filmoverenskomster.
-Analyser det uploadede dokument og find disse specifikke sektioner:
-- Helligdagsbetaling (sats i % eller kr)
-- BETA-fond (bidragssats)
-- Copydan-forbehold (tekst om rettigheder)
-- Streaming-forbehold / SVOD (tekst om streamingrettigheder og Create Denmark)
-- Royalty (sats og beregningsgrundlag)
-- Pension (bidragssats)
-- Opsigelse (varsler for begge parter)
+            system: `Du er ekspert i danske overenskomster (film, TV, medie og lignende brancher).
 
-For hver sektion: udtræk den præcise tekst fra dokumentet og angiv din tillid (høj/lav).
-Høj tillid: sektionen er eksplicit og tydelig. Lav tillid: sektionen er uklar, mangler eller er implicit.
+Analyser det uploadede dokument og identificer de reelt betydningsfulde, indholdsmæssigt afgrænsede afsnit. Du bestemmer selv hvilke afsnit der er relevante — begræns dig ikke til en fast liste. Fokuser på afsnit med konkrete rettigheder, pligter, satser eller frister. Udelad rent administrative afsnit som "ikrafttræden", "underskrifter" og lignende, medmindre de indeholder noget indholdsmæssigt væsentligt.
+
+Typiske typer af indhold der ofte er relevante: løn/honorar, pension, arbejdstid/overarbejde, ferie/orlov/barsel, ophavsrettigheder/rettigheder, opsigelse/varsler, fonde og bidragspuljer, tvistløsning — men dokumentet kan indeholde andet, og du skal finde hvad der faktisk er der.
+
+For hvert afsnit:
+- Angiv afsnittets overskrift præcis som den står i dokumentet
+- Angiv de første 60 tegn af afsnittet (start_marker) — bruges til at finde teksten i dokumentet
+- Giv afsnittet en kort, præcis dansk kategori-betegnelse (fx "pension", "barsel", "arbejdstid", "ophavsret", "opsigelse")
+- Angiv din tillid: høj hvis afsnittet er eksplicit og tydelig, lav hvis uklart eller implicit
+- Angiv eventuelt en sats hvis der er en konkret procentsats eller beløb${kategorikontekst}
+
+VIGTIGT: Inkluder IKKE den fulde tekst i JSON-svaret — kun titel, start_marker, kategori, tillid og sats.
 
 Returner KUN valid JSON uden markdown:
 {
   "sektioner": [
     {
-      "titel": "Helligdagsbetaling",
-      "tekst": "præcis tekst fra dokumentet",
-      "kategori": "helligdagsbetaling",
+      "titel": "Afsnittets overskrift fra dokumentet",
+      "start_marker": "de første 60 tegn af afsnittet",
+      "kategori": "pension",
       "tillid": "høj",
-      "sats": "1%"
+      "sats": "9 %"
     }
   ]
-}
-
-Kategorier: helligdagsbetaling, beta-fond, copydan-forbehold, streaming-forbehold, royalty, pension, opsigelse, andet`,
-            userMessage: `Analysér denne ${String(overenskomst).slice(0, 120)}-overenskomst gyldig fra ${String(gyldigFra).slice(0, 20)} og find alle relevante sektioner.\n\n${maskPersonalData(pdfTekst).slice(0, 180_000)}`,
+}`,
+            userMessage: `Analysér denne ${String(overenskomst).slice(0, 120)}-overenskomst gyldig fra ${String(gyldigFra).slice(0, 20)} og identificer alle indholdsmæssigt relevante afsnit.\n\n${maskPersonalData(pdfTekst).slice(0, 180_000)}`,
         })
         const firstBrace = rawText.indexOf("{")
         const lastBrace = rawText.lastIndexOf("}")
         if (firstBrace === -1 || lastBrace === -1) {
             return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
         }
-        const parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1))
-        // Returner sektioner + fuld tekst til klienten
-        return NextResponse.json({ ...parsed, pdfTekst })
+        // Fjern kontroltegn der kan ødelægge JSON (null-bytes, form feeds m.m.)
+        const cleanText = rawText.slice(firstBrace, lastBrace + 1).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
+        const parsed = JSON.parse(cleanText)
+
+        // Brug start_marker til at finde den fulde sektions-tekst i pdfTekst
+        // Normaliser til sammenligning: fjern overskydende mellemrum og linjeskift
+        const normPdf = pdfTekst.replace(/\s+/g, " ").trim()
+        type RawSektion = { titel: string; start_marker?: string; kategori: string; tillid?: string; sats?: string; tekst?: string }
+        const sektionerMedTekst = (parsed.sektioner as RawSektion[] ?? []).map((s, idx, arr) => {
+            if (s.tekst) return s  // Allerede udfyldt (fremtidssikring)
+            const marker = s.start_marker ?? s.titel
+            const normMarker = marker.replace(/\s+/g, " ").trim()
+            const startIdx = normPdf.indexOf(normMarker)
+            if (startIdx === -1) {
+                // Marker ikke fundet — brug titel som tekst
+                return { ...s, tekst: s.titel }
+            }
+            // Find slutningen: næste sektions start_marker eller titel, eller 4000 tegn
+            let endIdx = normPdf.length
+            for (let j = idx + 1; j < arr.length; j++) {
+                const nextMarker = (arr[j].start_marker ?? arr[j].titel).replace(/\s+/g, " ").trim()
+                const found = normPdf.indexOf(nextMarker, startIdx + normMarker.length)
+                if (found !== -1) { endIdx = found; break }
+            }
+            const tekst = normPdf.slice(startIdx, Math.min(endIdx, startIdx + 6000)).trim()
+            return { ...s, tekst }
+        })
+
+        return NextResponse.json({ sektioner: sektionerMedTekst, pdfTekst })
     } catch (e: unknown) {
         console.error("[overenskomst] analysis failed", e instanceof Error ? e.name : "unknown")
         return NextResponse.json({ error: "Dokumentet kunne ikke analyseres." }, { status: 500 })
@@ -120,8 +162,20 @@ export async function PUT(req: NextRequest) {
 
         const supabase = sb()
 
-        // Deaktivér gamle chunks for denne overenskomst
-        await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("org_id", auth.orgId).eq("overenskomst", overenskomst)
+        // Slå agreement_id op via overenskomst-kode (agreement.code = overenskomst)
+        const { data: agreementRow } = await supabase
+            .from("agreements")
+            .select("id")
+            .eq("code", overenskomst)
+            .maybeSingle()
+        const agreement_id: string | null = agreementRow?.id ?? null
+
+        // Deaktivér gamle chunks for denne overenskomst (via agreement_id hvis tilgængeligt, ellers overenskomst-streng)
+        if (agreement_id) {
+            await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("org_id", auth.orgId).eq("agreement_id", agreement_id)
+        } else {
+            await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("org_id", auth.orgId).eq("overenskomst", overenskomst)
+        }
 
         let indekseret = 0
         const fejl: string[] = []
@@ -142,6 +196,7 @@ export async function PUT(req: NextRequest) {
                     metadata: { sats: sektion.sats ?? null, overenskomst, gyldig_fra: gyldigFra },
                     embedding,
                     overenskomst: overenskomst.toLowerCase(),
+                    agreement_id,
                     kategori: sektion.kategori,
                     gyldig_fra: gyldigFra,
                     aktiv: true,
@@ -179,6 +234,7 @@ export async function PUT(req: NextRequest) {
                         metadata: { overenskomst, gyldig_fra: gyldigFra, chunk_nr: i },
                         embedding,
                         overenskomst: overenskomst.toLowerCase(),
+                        agreement_id,
                         kategori: "fuldt-dokument",
                         gyldig_fra: gyldigFra,
                         aktiv: true,
@@ -269,12 +325,13 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
         }
         const supabase = sb()
-        const { error } = await supabase
-            .from("knowledge_chunks")
-            .update({ aktiv })
-            .eq("org_id", auth.orgId)
-            .eq("overenskomst", overenskomst)
-            .eq("gyldig_fra", gyldigFra)
+        const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id = agr?.id ?? null
+
+        let q = supabase.from("knowledge_chunks").update({ aktiv }).eq("org_id", auth.orgId).eq("gyldig_fra", gyldigFra)
+        q = agreement_id ? q.eq("agreement_id", agreement_id) : q.eq("overenskomst", overenskomst)
+
+        const { error } = await q
         if (error) {
             console.error("[overenskomst] version update failed", error.code)
             return NextResponse.json({ error: "Overenskomstversionen kunne ikke opdateres." }, { status: 500 })
@@ -297,13 +354,18 @@ export async function DELETE(req: NextRequest) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
         }
         const supabase = sb()
+        const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id = agr?.id ?? null
+
+        let chunksQuery = agreement_id
+            ? supabase.from("knowledge_chunks").delete().eq("agreement_id", agreement_id).eq("gyldig_fra", gyldigFra)
+            : supabase.from("knowledge_chunks").delete().eq("overenskomst", overenskomst).eq("gyldig_fra", gyldigFra)
+        if (!auth.global) {
+            chunksQuery = chunksQuery.or(`org_id.is.null,org_id.eq.${auth.orgId}`)
+        }
 
         const [chunksRes, uploadsRes] = await Promise.all([
-            supabase.from("knowledge_chunks")
-                .delete()
-                .eq("org_id", auth.orgId)
-                .eq("overenskomst", overenskomst)
-                .eq("gyldig_fra", gyldigFra),
+            chunksQuery,
             supabase.from("overenskomst_uploads")
                 .delete()
                 .eq("org_id", auth.orgId)
@@ -329,16 +391,16 @@ export async function GET() {
     if (!auth.ok) return auth.response
     const supabase = sb()
 
-    // Hent alle versioner (aktive + arkiverede)
+    // Hent alle versioner (aktive + arkiverede) — inkl. agreement_id for korrekt gruppering
     let chunksQuery = supabase
         .from("knowledge_chunks")
-        .select("overenskomst, kategori, kilde_id, aktiv, gyldig_fra")
+        .select("overenskomst, agreement_id, kategori, kilde_id, aktiv, gyldig_fra")
         .not("overenskomst", "is", null)
         .neq("kategori", "fuldt-dokument")
         .order("gyldig_fra", { ascending: false })
     let agreementsQuery = supabase
         .from("agreements")
-        .select("id,code,title,parties,production_types,profession_roles,employment_forms,content_url,source_url,status,valid_from,valid_to,notes,agreement_pension_rules(id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status),agreement_wage_rules(id,profession_role,wage_group,employment_form,rate_kind,amount,currency,unit,pension_included,valid_from,valid_to,source_title,source_url,source_section,source_checked_at,source_note,status)")
+        .select("id,code,title,parties,production_types,profession_roles,employment_forms,content_url,source_url,status,valid_from,valid_to,notes,agreement_pension_rules(id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status),agreement_wage_rules(id,profession_role,wage_group,employment_form,rate_kind,amount,currency,unit,pension_included,valid_from,valid_to,source_title,source_url,source_section,source_checked_at,source_note,status),agreement_percentage_rules(id,label,percent,basis,trigger_condition,category,profession_role,employment_form,section_reference,source_title,source_url,source_checked_at,source_note,valid_from,valid_to,status)")
         .not("code", "is", null)
         .order("title")
     if (!auth.global) {
@@ -347,19 +409,25 @@ export async function GET() {
     }
     const [{ data: chunks }, { data: agreementRegistry, error: registryError }] = await Promise.all([chunksQuery, agreementsQuery])
 
+    // Byg id → code-map fra agreements så vi kan nøgle versioner på agreement.code
+    const agreementCodeById = new Map<string, string>((agreementRegistry ?? []).map(a => [a.id, a.code]))
+
     const BILAG_KATEGORIER = ["lønskema", "lønskema-satser", "standardkontrakt-aloen", "standardkontrakt-leverandoer", "bilag"]
 
-    // Gruppér per overenskomst + gyldig_fra (en version = én kombination)
+    // Gruppér per agreement.code (foretrukket) eller overenskomst-streng (legacy) + gyldig_fra
     type Version = { kategorier: string[]; bilag: string[]; antal: number; aktiv: boolean; gyldig_fra: string }
     const versioner: Record<string, Version[]> = {}
 
     for (const c of chunks ?? []) {
-        if (!c.overenskomst || !c.gyldig_fra) continue
-        if (!versioner[c.overenskomst]) versioner[c.overenskomst] = []
-        let ver = versioner[c.overenskomst].find(v => v.gyldig_fra === c.gyldig_fra)
+        if (!c.gyldig_fra) continue
+        // Brug agreement.code hvis chunk er koblet, ellers falder tilbage til overenskomst-strengen
+        const nøgle = (c.agreement_id && agreementCodeById.get(c.agreement_id)) ?? c.overenskomst
+        if (!nøgle) continue
+        if (!versioner[nøgle]) versioner[nøgle] = []
+        let ver = versioner[nøgle].find(v => v.gyldig_fra === c.gyldig_fra)
         if (!ver) {
             ver = { kategorier: [], bilag: [], antal: 0, aktiv: !!c.aktiv, gyldig_fra: c.gyldig_fra }
-            versioner[c.overenskomst].push(ver)
+            versioner[nøgle].push(ver)
         }
         ver.antal++
         if (c.kategori) {
@@ -371,6 +439,13 @@ export async function GET() {
         }
     }
 
+    // Saml alle unikke kategorinavne (til autocomplete i UI)
+    const alleKategorier = [...new Set(
+        (chunks ?? [])
+            .map(c => c.kategori)
+            .filter((k): k is string => !!k && k !== "fuldt-dokument" && !BILAG_KATEGORIER.includes(k))
+    )].sort()
+
     if (registryError) console.error("[overenskomst] registry read failed", registryError.code)
-    return NextResponse.json({ versioner, agreementRegistry: registryError ? [] : agreementRegistry ?? [], registryError: registryError ? "Registeret kunne ikke hentes." : null })
+    return NextResponse.json({ versioner, agreementRegistry: registryError ? [] : agreementRegistry ?? [], registryError: registryError ? "Registeret kunne ikke hentes." : null, kategorier: alleKategorier })
 }

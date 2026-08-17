@@ -14,6 +14,7 @@ import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
+import { resolveAgreementsCode } from "@/lib/overenskomst-alias-map"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
@@ -124,7 +125,109 @@ export async function runContractExtraction(maskedText: string, context: Contrac
         source: context.source,
     })
 
-    const systemPrompt = await loadContractPrompt()
+    // Trin 0: Hent aktive overenskomst-IDs fra knowledge_chunks — bruges i klassifikatorens prompt
+    // så klassifikatoren altid kender præcis de overenskomster der er indekseret i RAG'en.
+    const supabaseForIds = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+    let aktiveOverenskomstIds: string[] = []
+    try {
+        const { data: idRows } = await supabaseForIds
+            .from("knowledge_chunks")
+            .select("overenskomst")
+            .eq("kilde_type", "overenskomst")
+            .eq("aktiv", true)
+            .not("overenskomst", "is", null)
+            .neq("kategori", "fuldt-dokument")
+        aktiveOverenskomstIds = [...new Set((idRows ?? []).map(r => r.overenskomst as string))]
+    } catch {
+        // Fallback — klassifikatoren returnerer "ukendt" og alle chunks hentes
+    }
+    const overenskomstListe = aktiveOverenskomstIds.length > 0
+        ? `Tilgængelige overenskomst-id'er i videnbasen: ${aktiveOverenskomstIds.map(id => `"${id}"`).join(", ")}. Brug præcis ét af disse id'er.`
+        : `Returner overenskomstens navn som et kortform-id med bindestreg (fx "de4-fiktion", "faf", "faf-dokumentar").`
+
+    // Trin 1: Hurtig klassifikation — find overenskomst og kontraktdato uden at kende reglerne endnu
+    let detectedOverenskomst: string | null = null
+    let detectedContractDate: string | null = null
+    try {
+        const classifyResponse = await callAiDetailed({
+            provider: config.provider,
+            model: config.model,
+            maxTokens: 256,
+            system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
+{"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
+
+overenskomst: ${overenskomstListe} Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart eller ingen match.
+contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
+            userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
+            responseJson: true,
+        })
+        const classifyMatch = classifyResponse.text.match(/\{[\s\S]*\}/)
+        if (classifyMatch) {
+            const c = JSON.parse(classifyMatch[0]) as { overenskomst?: string; contractDate?: string }
+            detectedOverenskomst = c.overenskomst ?? null
+            detectedContractDate = c.contractDate ?? null
+        }
+        console.log("[contract-extract] klassifikation:", { detectedOverenskomst, detectedContractDate, raw: classifyResponse.text.slice(0, 200) })
+    } catch (e) {
+        console.warn("[contract-extract] Klassifikation fejlede, fortsætter uden overenskomst-kontekst:", e)
+    }
+
+    // Trin 2: Hent reference docs + relevante overenskomst-chunks baseret på klassifikation
+    let systemPrompt = buildContractExtractionPrompt()
+    try {
+        const supabase = supabaseForIds  // genbrug klienten fra Trin 0
+
+        let overenskomstQuery = supabase
+            .from("knowledge_chunks")
+            .select("kilde_titel, tekst, overenskomst, kategori, gyldig_fra")
+            .eq("kilde_type", "overenskomst")
+            .neq("kategori", "fuldt-dokument")
+            .neq("kategori", "lønskema")
+
+        if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
+            // Oversæt kort kanonisk id (fx "de4-fiktion") til agreements.code (fx "de4-fiction-2022")
+            // via den autoritative alias-mapping — direkte strengmatch ville aldrig ramme pga. format-forskel.
+            const agreementsCode = resolveAgreementsCode(detectedOverenskomst) ?? detectedOverenskomst
+            const { data: agrRow } = await supabaseForIds
+                .from("agreements")
+                .select("id")
+                .eq("code", agreementsCode)
+                .maybeSingle()
+            if (agrRow?.id) {
+                overenskomstQuery = overenskomstQuery.eq("agreement_id", agrRow.id)
+            } else {
+                // Ingen agreements-række fundet — søg direkte på overenskomst-streng
+                overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
+            }
+        } else if (detectedOverenskomst === "ingen") {
+            overenskomstQuery = overenskomstQuery.eq("overenskomst", "INGEN_MATCH")
+        }
+
+        if (detectedContractDate) {
+            // Kun versioner der var gyldig på kontraktdatoen — nyeste version per kategori
+            overenskomstQuery = overenskomstQuery.lte("gyldig_fra", detectedContractDate)
+        }
+
+        overenskomstQuery = overenskomstQuery.order("gyldig_fra", { ascending: false })
+
+        const [{ data: refDocs }, { data: overenskomstChunks, error: chunksError }] = await Promise.all([
+            supabase
+                .from("reference_docs")
+                .select("title, doc_subtype, content_text")
+                .eq("archived", false)
+                .not("content_text", "is", null),
+            overenskomstQuery,
+        ])
+        console.log("[contract-extract] chunks hentet:", { count: overenskomstChunks?.length ?? 0, error: chunksError?.message ?? null, kategorier: overenskomstChunks?.map(c => c.kategori) })
+        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
+    } catch (e) {
+        console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
+    }
+
     const extractedChunks: Record<string, unknown>[] = []
     const usage: AiTokenUsage = { inputTokens: 0, outputTokens: 0, cacheWriteTokens: 0, cacheReadTokens: 0 }
     let providerRequestId: string | null = null
