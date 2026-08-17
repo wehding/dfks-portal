@@ -62,7 +62,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
 
 overenskomst: "de4" hvis De4/Fiktionsoverenskomsten nævnes. "faf" hvis FAF-spillefilm. "faf-dok" hvis FAF-dokumentar. "ingen" hvis ingen overenskomst. "ukendt" hvis uklart.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
-            userMessage: `---KONTRAKT (kun klassifikation)---\n${maskedText.slice(0, 3000)}`,
+            userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,
         })
         const classifyMatch = classifyResponse.text.match(/\{[\s\S]*\}/)
