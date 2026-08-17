@@ -353,8 +353,6 @@ function AdminValideringPageInner() {
     // Pre-fill form when opening a contract that has existing validation data
     useEffect(() => {
         if (!reviewingId) return
-        const c = contracts.find(x => x.id === reviewingId)
-        if (!c) return
 
         void getContractValidationData(reviewingId).then(res => {
             const validation = res.success ? res.data : null
