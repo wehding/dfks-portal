@@ -1276,8 +1276,12 @@ function OverenskomsterTab() {
 
     // Ny fil-tilføjelse state
     const [nyFil, setNyFil] = useState<File | null>(null)
-    const [nyOverenskomst, setNyOverenskomst] = useState("")
     const [nyGyldigFra, setNyGyldigFra] = useState("")
+    const [uploadTarget, setUploadTarget] = useState<string | null>(null) // agreement.id
+    const [visOpretForm, setVisOpretForm] = useState(false)
+    const [opretForm, setOpretForm] = useState({ code: "", title: "", parties: "", valid_from: "" })
+    const [opretLoading, setOpretLoading] = useState(false)
+    const [nyOverenskomst, setNyOverenskomst] = useState("")
 
     const refreshAktive = () => {
         fetch("/api/admin/overenskomst")
@@ -1349,21 +1353,22 @@ function OverenskomsterTab() {
     }
 
     const erstatVersion = (overenskomst: string) => {
-        // Præ-udfyld upload-formularen med den aktuelle overenskomst-type
+        const agreement = agreementRegistry.find(a => a.code === overenskomst)
+        if (agreement) {
+            setUploadTarget(agreement.id)
+        }
         setNyOverenskomst(overenskomst)
         setNyGyldigFra("")
         setNyFil(null)
-        // Scroll til toppen
-        window.scrollTo({ top: 0, behavior: "smooth" })
-        toast("Upload ny version i formularen øverst")
     }
 
-    const tilføjTilKø = () => {
-        if (!nyFil || !nyOverenskomst || !nyGyldigFra) return
+    const tilføjTilKø = (agreementCode?: string) => {
+        const overenskomst = agreementCode ?? nyOverenskomst
+        if (!nyFil || !overenskomst || !nyGyldigFra) return
         setKø(prev => [...prev, {
             id: crypto.randomUUID(),
             fil: nyFil,
-            overenskomst: nyOverenskomst,
+            overenskomst,
             gyldigFra: nyGyldigFra,
             status: "afventer",
             sektioner: [],
@@ -1371,9 +1376,27 @@ function OverenskomsterTab() {
         setNyFil(null)
         setNyOverenskomst("")
         setNyGyldigFra("")
-        // Reset file input
-        const input = document.getElementById("ok-fil-input") as HTMLInputElement
+        setUploadTarget(null)
+        const input = document.getElementById(`ok-fil-input-${overenskomst}`) as HTMLInputElement
         if (input) input.value = ""
+    }
+
+    const opretOverenskomst = async () => {
+        if (!opretForm.code || !opretForm.title) return
+        setOpretLoading(true)
+        const parties = opretForm.parties.split(",").map(s => s.trim()).filter(Boolean)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...opretForm, parties }),
+        })
+        const data = await res.json()
+        setOpretLoading(false)
+        if (!res.ok) return toast.error(data.error ?? "Kunne ikke oprette overenskomst")
+        toast.success("Overenskomst oprettet")
+        setVisOpretForm(false)
+        setOpretForm({ code: "", title: "", parties: "", valid_from: "" })
+        refreshAktive()
     }
 
     const analyserItem = async (id: string) => {
@@ -1446,6 +1469,10 @@ function OverenskomsterTab() {
     const afventende = kø.filter(i => i.status === "afventer").length
     const klarTilIndeksering = kø.filter(i => i.status === "klar")
 
+    // Beregn hvilke versioner der IKKE er koblet til et registerkort
+    const linkedCodes = new Set(agreementRegistry.map(a => a.code))
+    const unlinkedKeys = Object.keys(versioner).filter(k => !linkedCodes.has(k))
+
     return (
         <div className="space-y-6">
             <div className="rounded-lg border p-4 space-y-3">
@@ -1472,139 +1499,210 @@ function OverenskomsterTab() {
                 </div>}
                 {registryError && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">Registeret er ikke klar endnu. Kør den tilhørende databasemigration.</p>}
                 <div className="grid gap-3 lg:grid-cols-2">
-                    {agreementRegistry.map(agreement => (
-                        <div key={agreement.id} className="rounded-md border p-3 space-y-3">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <p className="text-sm font-medium">{agreement.title}</p>
-                                        <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
-                                    </div>
-                                    <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
-                                </div>
-                                <div className="flex gap-2">
-                                    {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
-                                    {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <details className="group rounded-md border bg-background" open>
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Aktuel minimumsløn</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-2 border-t p-3">
-                                        {agreement.agreement_wage_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret et kontrolleret lønskema.</p>}
-                                        {agreement.agreement_wage_rules
-                                            .slice()
-                                            .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
-                                            .map(rule => (
-                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
-                                                    {rule.amount !== null && rule.unit ? (
-                                                        <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
-                                                    ) : (
-                                                        <p className="font-medium">Ingen verificeret aktuel sats</p>
-                                                    )}
-                                                    <p className="text-muted-foreground">
-                                                        {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
-                                                        {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
-                                                    </p>
-                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
-                                                </div>
-                                            ))}
-                                    </div>
-                                </details>
-
-                                <details className="group rounded-md border bg-background">
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Pension</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-2 border-t p-3">
-                                        {agreement.agreement_pension_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret en pensionsregel.</p>}
-                                        {agreement.agreement_pension_rules
-                                            .slice()
-                                            .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
-                                            .map(rule => (
-                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
-                                                    <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
-                                                    <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
-                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
-                                                </div>
-                                            ))}
-                                    </div>
-                                </details>
-
-                                <details className="group rounded-md border bg-background">
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Kilder og brug i kontraktgennemgang</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-3 border-t p-3 text-xs text-muted-foreground">
-                                        <p>
-                                            Kilderne giver AI’en et kontrolleret sammenligningsgrundlag. De beviser ikke i sig selv, at en kontrakt er omfattet. AI’en skal også kontrollere kontraktens henvisning, produktionstype, funktion, dato og ansættelsesform og vise usikkerhed for administratoren.
-                                        </p>
-                                        <div className="space-y-1">
-                                            {agreement.source_url && <p><span className="font-medium text-foreground">Officiel oversigt: </span><a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Producentforeningens eller organisationens kildeside</a></p>}
-                                            {agreement.content_url && <p><span className="font-medium text-foreground">Aftaletekst: </span><a href={agreement.content_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Åbn den registrerede overenskomst</a></p>}
-                                            {Array.from(new Map(agreement.agreement_wage_rules.map(rule => [rule.source_url, rule])).values()).map(rule => (
-                                                <p key={rule.source_url}><span className="font-medium text-foreground">Lønskema: </span><a href={rule.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{rule.source_title}</a> · kontrolleret {rule.source_checked_at}</p>
-                                            ))}
+                    {agreementRegistry.map(agreement => {
+                        const agreementVersions = versioner[agreement.code] ?? []
+                        const isUploadOpen = uploadTarget === agreement.id
+                        return (
+                            <div key={agreement.id} className="rounded-md border p-3 space-y-3">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <p className="text-sm font-medium">{agreement.title}</p>
+                                            <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
                                         </div>
-                                        <p>Funktioner i registeret: {agreement.profession_roles.join(", ") || "ikke angivet"}</p>
-                                        {agreement.notes && <p><span className="font-medium text-foreground">Bemærkning: </span>{agreement.notes}</p>}
+                                        <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
+                                        <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{agreement.code}</p>
                                     </div>
-                                </details>
+                                    <div className="flex gap-2">
+                                        {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
+                                        {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <details className="group rounded-md border bg-background" open>
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Aktuel minimumsløn</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {agreement.agreement_wage_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret et kontrolleret lønskema.</p>}
+                                            {agreement.agreement_wage_rules
+                                                .slice()
+                                                .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
+                                                .map(rule => (
+                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                        {rule.amount !== null && rule.unit ? (
+                                                            <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
+                                                        ) : (
+                                                            <p className="font-medium">Ingen verificeret aktuel sats</p>
+                                                        )}
+                                                        <p className="text-muted-foreground">
+                                                            {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
+                                                            {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
+                                                        </p>
+                                                        {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </details>
+
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Pension</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {agreement.agreement_pension_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret en pensionsregel.</p>}
+                                            {agreement.agreement_pension_rules
+                                                .slice()
+                                                .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
+                                                .map(rule => (
+                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                        <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
+                                                        <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
+                                                        {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                    </div>
+                                                ))}
+                                        </div>
+                                    </details>
+
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Kilder og brug i kontraktgennemgang</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-3 border-t p-3 text-xs text-muted-foreground">
+                                            <p>
+                                                Kilderne giver AI’en et kontrolleret sammenligningsgrundlag. De beviser ikke i sig selv, at en kontrakt er omfattet. AI’en skal også kontrollere kontraktens henvisning, produktionstype, funktion, dato og ansættelsesform og vise usikkerhed for administratoren.
+                                            </p>
+                                            <div className="space-y-1">
+                                                {agreement.source_url && <p><span className="font-medium text-foreground">Officiel oversigt: </span><a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Producentforeningens eller organisationens kildeside</a></p>}
+                                                {agreement.content_url && <p><span className="font-medium text-foreground">Aftaletekst: </span><a href={agreement.content_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Åbn den registrerede overenskomst</a></p>}
+                                                {Array.from(new Map(agreement.agreement_wage_rules.map(rule => [rule.source_url, rule])).values()).map(rule => (
+                                                    <p key={rule.source_url}><span className="font-medium text-foreground">Lønskema: </span><a href={rule.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{rule.source_title}</a> · kontrolleret {rule.source_checked_at}</p>
+                                                ))}
+                                            </div>
+                                            <p>Funktioner i registeret: {agreement.profession_roles.join(", ") || "ikke angivet"}</p>
+                                            {agreement.notes && <p><span className="font-medium text-foreground">Bemærkning: </span>{agreement.notes}</p>}
+                                        </div>
+                                    </details>
+
+                                    {/* Indekserede versioner + upload */}
+                                    <details className="group rounded-md border bg-background" open={agreementVersions.length === 0 || isUploadOpen}>
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Indekserede versioner {agreementVersions.length > 0 ? `(${agreementVersions.length})` : ""}</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="border-t">
+                                            {agreementVersions.length === 0 && !isUploadOpen && (
+                                                <p className="px-3 py-3 text-xs text-muted-foreground">Ingen indekserede versioner endnu.</p>
+                                            )}
+                                            {agreementVersions.length > 0 && (
+                                                <div className="divide-y">
+                                                    {agreementVersions.map(ver => (
+                                                        <OverenskomstVersionRække
+                                                            key={ver.gyldig_fra}
+                                                            ok={agreement.code}
+                                                            ver={ver}
+                                                            onToggleArkiv={() => toggleArkiv(agreement.code, ver.gyldig_fra, !ver.aktiv)}
+                                                            onSlet={() => sletVersion(agreement.code, ver.gyldig_fra)}
+                                                            onErstat={() => { setUploadTarget(agreement.id); setNyGyldigFra(""); setNyFil(null) }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {/* Inline upload form */}
+                                            {isUploadOpen ? (
+                                                <div className="p-3 space-y-3 border-t">
+                                                    <p className="text-xs font-medium">Tilføj ny version til {agreement.code}</p>
+                                                    <div
+                                                        className="rounded border-2 border-dashed p-3 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
+                                                        onClick={() => document.getElementById(`ok-fil-input-${agreement.id}`)?.click()}
+                                                    >
+                                                        <input
+                                                            id={`ok-fil-input-${agreement.id}`}
+                                                            type="file"
+                                                            accept=".pdf"
+                                                            className="hidden"
+                                                            onChange={e => setNyFil(e.target.files?.[0] ?? null)}
+                                                        />
+                                                        {nyFil ? (
+                                                            <p className="text-xs font-medium">{nyFil.name}</p>
+                                                        ) : (
+                                                            <>
+                                                                <FileUp className="mx-auto h-4 w-4 text-muted-foreground/50 mb-1" />
+                                                                <p className="text-xs text-muted-foreground">Klik for at vælge PDF</p>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Gyldig fra</Label>
+                                                        <Input type="date" className="h-8 text-xs" value={nyGyldigFra} onChange={e => setNyGyldigFra(e.target.value)} />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" className="flex-1 gap-1" onClick={() => tilføjTilKø(agreement.code)} disabled={!nyFil || !nyGyldigFra}>
+                                                            <Plus className="h-3 w-3" />Tilføj til kø
+                                                        </Button>
+                                                        <Button size="sm" variant="ghost" onClick={() => { setUploadTarget(null); setNyFil(null); setNyGyldigFra("") }}>
+                                                            Annullér
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="p-2">
+                                                    <Button size="sm" variant="ghost" className="w-full gap-1.5 text-xs"
+                                                        onClick={() => { setUploadTarget(agreement.id); setNyGyldigFra(""); setNyFil(null) }}>
+                                                        <Plus className="h-3 w-3" />Tilføj version
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </details>
+                                </div>
+                            </div>
+                        )
+                    })}
+
+                    {/* Opret ny overenskomst-kort */}
+                    {visOpretForm ? (
+                        <div className="rounded-md border p-3 space-y-3">
+                            <p className="text-sm font-medium">Opret overenskomst</p>
+                            <div className="space-y-2">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Overenskomst-id (code)</Label>
+                                    <Input className="h-8 text-xs font-mono" placeholder="fx de4-fiction-2022" value={opretForm.code} onChange={e => setOpretForm(f => ({ ...f, code: e.target.value.toLowerCase().replace(/\s+/g, "-") }))} />
+                                    <p className="text-[10px] text-muted-foreground">Bruges som nøgle i RAG — brug bindestreg, ikke mellemrum</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Titel</Label>
+                                    <Input className="h-8 text-xs" placeholder="De4 Fiktionsoverenskomst 2022" value={opretForm.title} onChange={e => setOpretForm(f => ({ ...f, title: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Parter (kommasepareret)</Label>
+                                    <Input className="h-8 text-xs" placeholder="DFKS, De4" value={opretForm.parties} onChange={e => setOpretForm(f => ({ ...f, parties: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Gyldig fra</Label>
+                                    <Input type="date" className="h-8 text-xs" value={opretForm.valid_from} onChange={e => setOpretForm(f => ({ ...f, valid_from: e.target.value }))} />
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button size="sm" className="flex-1" disabled={!opretForm.code || !opretForm.title || opretLoading} onClick={opretOverenskomst}>
+                                    {opretLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}Opret
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => { setVisOpretForm(false); setOpretForm({ code: "", title: "", parties: "", valid_from: "" }) }}>Annullér</Button>
                             </div>
                         </div>
-                    ))}
-                </div>
-            </div>
-            {/* Sektion A — Tilføj til kø */}
-            <div className="rounded-lg border p-4 space-y-4">
-                <p className="text-sm font-medium">Tilføj overenskomst</p>
-                <div className="space-y-3">
-                    <div
-                        className="rounded-lg border-2 border-dashed p-4 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
-                        onClick={() => document.getElementById("ok-fil-input")?.click()}
-                    >
-                        <input id="ok-fil-input" type="file" accept=".pdf" className="hidden"
-                            onChange={e => setNyFil(e.target.files?.[0] ?? null)} />
-                        {nyFil ? (
-                            <p className="text-sm font-medium">{nyFil.name}</p>
-                        ) : (
-                            <>
-                                <FileUp className="mx-auto h-5 w-5 text-muted-foreground/50 mb-1" />
-                                <p className="text-xs text-muted-foreground">Klik for at vælge PDF</p>
-                            </>
-                        )}
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1">
-                            <Label className="text-xs">Overenskomst-id</Label>
-                            <Input
-                                list="ok-typer-list"
-                                className="h-8 text-xs"
-                                placeholder="fx de4-fiktion"
-                                value={nyOverenskomst}
-                                onChange={e => setNyOverenskomst(e.target.value.trim())}
-                            />
-                            <datalist id="ok-typer-list">
-                                {Object.keys(versioner).map(id => (
-                                    <option key={id} value={id} />
-                                ))}
-                            </datalist>
-                            <p className="text-[10px] text-muted-foreground">Vælg eksisterende eller skriv nyt id</p>
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Gyldig fra</Label>
-                            <Input type="date" className="h-8 text-xs" value={nyGyldigFra} onChange={e => setNyGyldigFra(e.target.value)} />
-                        </div>
-                    </div>
-                    <Button className="w-full gap-1.5" onClick={tilføjTilKø}
-                        disabled={!nyFil || !nyOverenskomst || !nyGyldigFra}>
-                        <Plus className="h-3.5 w-3.5" />Tilføj til kø
-                    </Button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setVisOpretForm(true)}
+                            className="rounded-md border border-dashed p-3 flex flex-col items-center justify-center gap-2 min-h-[120px] hover:border-muted-foreground/40 hover:bg-muted/20 transition-colors w-full text-left"
+                        >
+                            <Plus className="h-5 w-5 text-muted-foreground/50" />
+                            <p className="text-xs text-muted-foreground">Opret overenskomst</p>
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -1623,12 +1721,11 @@ function OverenskomsterTab() {
                     <div className="space-y-2">
                         {kø.map(item => (
                             <div key={item.id} className="rounded-lg border">
-                                {/* Header */}
                                 <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
                                     <div className="min-w-0">
                                         <p className="text-sm font-medium truncate">{item.fil.name}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {OVERENSKOMST_LABELS[item.overenskomst] ?? item.overenskomst} · {item.gyldigFra}
+                                        <p className="text-xs text-muted-foreground font-mono">
+                                            {item.overenskomst} · {item.gyldigFra}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
@@ -1669,7 +1766,6 @@ function OverenskomsterTab() {
                                     </div>
                                 </div>
 
-                                {/* Bekræftelsespanel */}
                                 {aktivItem === item.id && item.sektioner.length > 0 && (
                                     <div className="p-4 space-y-3">
                                         <p className="text-xs text-muted-foreground">
@@ -1714,7 +1810,6 @@ function OverenskomsterTab() {
                         ))}
                     </div>
 
-                    {/* Indeksér alle klare */}
                     {klarTilIndeksering.length > 1 && (
                         <Button variant="outline" className="w-full gap-1.5"
                             onClick={() => klarTilIndeksering.forEach(i => indekserItem(i.id))}>
@@ -1724,19 +1819,22 @@ function OverenskomsterTab() {
                 </div>
             )}
 
-            {/* Sektion C — Indekserede overenskomster */}
-            {Object.keys(versioner).length > 0 && (
+            {/* Ældre indekserede versioner der ikke er koblet til et registerkort */}
+            {unlinkedKeys.length > 0 && (
                 <div className="space-y-3">
                     <Separator />
-                    <p className="text-sm font-medium">Indekserede overenskomster</p>
+                    <div>
+                        <p className="text-sm font-medium">Ældre indekserede versioner</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Disse versioner er ikke koblet til et registerkort. Upload ny version via det relevante registerkort for at opdatere.</p>
+                    </div>
                     <div className="space-y-2">
-                        {Object.entries(versioner).map(([ok, vers]) => (
+                        {unlinkedKeys.map(ok => (
                             <div key={ok} className="rounded-lg border">
                                 <div className="px-4 py-2.5 border-b bg-muted/30">
-                                    <p className="text-sm font-medium">{OVERENSKOMST_LABELS[ok] ?? ok}</p>
+                                    <p className="text-sm font-medium font-mono">{ok}</p>
                                 </div>
                                 <div className="divide-y">
-                                    {vers.map(ver => (
+                                    {versioner[ok].map(ver => (
                                         <OverenskomstVersionRække
                                             key={ver.gyldig_fra}
                                             ok={ok}
