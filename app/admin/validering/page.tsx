@@ -391,6 +391,8 @@ function AdminValideringPageInner() {
                 personalSupplement: ed.personalSupplement ?? "",
                 otherSupplements: ed.otherSupplements ?? "",
                 workingWeeks: ed.workingWeeks ?? "",
+                prolongationWeeks: ed.prolongationWeeks ?? "",
+                prolongationNote: ed.prolongationNote ?? "",
                 svod: impliedBySvod,
                 copydan: impliedByCopydan,
                 royalty: impliedByRoyalty,
@@ -469,6 +471,8 @@ function AdminValideringPageInner() {
                 personalSupplement: formData.personalSupplement ? Number(formData.personalSupplement) : undefined,
                 otherSupplements: formData.otherSupplements || undefined,
                 workingWeeks: formData.workingWeeks ? Number(formData.workingWeeks) : undefined,
+                prolongationWeeks: formData.prolongationWeeks ? Number(formData.prolongationWeeks) : undefined,
+                prolongationNote: formData.prolongationNote || undefined,
                 svod: !!formData.svod,
                 copydan: !!formData.copydan,
                 royalty: !!formData.royalty,
@@ -623,6 +627,8 @@ function AdminValideringPageInner() {
             personalSupplement:            ed.personalSupplement ?? "",
             otherSupplements:              ed.otherSupplements ?? "",
             workingWeeks:                  ed.workingWeeks ?? "",
+            prolongationWeeks:             ed.prolongationWeeks ?? "",
+            prolongationNote:              ed.prolongationNote ?? "",
             // SVOD og Copydan er inkluderet i De4-overenskomsten
             svod:                          impliedDe4 ? true : !!ed.svod,
             copydan:                       impliedDe4 ? true : !!ed.copydan,
@@ -1217,6 +1223,14 @@ function AdminValideringPageInner() {
                                 <F src={fieldSrc("workingWeeks")} label={<>{t("admin.validation.workingWeeks")}<SourceBtn quote={weeksHl} active={activeField === "workingWeeks"} onClick={() => activateSource("workingWeeks", weeksHl)} /></>}>
                                     <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 </F>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <F src={fieldSrc("prolongationWeeks")} label="Prolongationsuger">
+                                        <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
+                                    </F>
+                                    <F src={fieldSrc("prolongationNote")} label="Prolongation — vilkår">
+                                        <Input value={String(formData.prolongationNote ?? "")} onChange={(e) => setField("prolongationNote", e.target.value)} placeholder="fx juleferie 21.12–07.01" />
+                                    </F>
+                                </div>
                                 <Separator />
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <F src={fieldSrc("pensionPercent")} label={<>{t("admin.validation.pensionPercent")}<SourceBtn quote={sources.pension ?? undefined} active={activeField === "pension"} onClick={() => activateSource("pension", sources.pension)} /></>}>

@@ -71,6 +71,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             detectedOverenskomst = c.overenskomst ?? null
             detectedContractDate = c.contractDate ?? null
         }
+        console.log("[contract-extract] klassifikation:", { detectedOverenskomst, detectedContractDate, raw: classifyResponse.text.slice(0, 200) })
     } catch (e) {
         console.warn("[contract-extract] Klassifikation fejlede, fortsætter uden overenskomst-kontekst:", e)
     }
@@ -106,7 +107,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
 
         overenskomstQuery = overenskomstQuery.order("gyldig_fra", { ascending: false })
 
-        const [{ data: refDocs }, { data: overenskomstChunks }] = await Promise.all([
+        const [{ data: refDocs }, { data: overenskomstChunks, error: chunksError }] = await Promise.all([
             supabase
                 .from("reference_docs")
                 .select("title, doc_subtype, content_text")
@@ -114,6 +115,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
                 .not("content_text", "is", null),
             overenskomstQuery,
         ])
+        console.log("[contract-extract] chunks hentet:", { count: overenskomstChunks?.length ?? 0, error: chunksError?.message ?? null, kategorier: overenskomstChunks?.map(c => c.kategori) })
         systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
     } catch (e) {
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
