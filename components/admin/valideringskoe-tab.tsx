@@ -99,17 +99,20 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
         const importResult = await getContractImportStates(data.map((c: any) => c.id))
         const importStates = importResult.success ? importResult.states : {}
 
-        const mapped: KøRow[] = data.map((c: any) => ({
-            id: c.id,
-            displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
-            displayMember: c.rettighedshavere?.full_name ?? "—",
-            displayEmployer: c.employers?.name ?? null,
-            contract_date: c.contract_date,
-            created_at: c.created_at,
-            status: c.status,
-            validation_id: c.contract_validations?.[0]?.id ?? null,
-            import_status: importStates[c.id] ?? null,
-        }))
+        const mapped: KøRow[] = data.map((c: any) => {
+            const val = Array.isArray(c.contract_validations) ? c.contract_validations[0] : c.contract_validations
+            return {
+                id: c.id,
+                displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
+                displayMember: c.rettighedshavere?.full_name ?? "—",
+                displayEmployer: c.employers?.name ?? null,
+                contract_date: c.contract_date,
+                created_at: c.created_at,
+                status: c.status,
+                validation_id: val?.id ?? null,
+                import_status: importStates[c.id] ?? null,
+            }
+        })
         setRows(mapped)
         setLoading(false)
     }, [onAfventerCount])
