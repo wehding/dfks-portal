@@ -1239,6 +1239,49 @@ export default function RettighedshavereAdminPage() {
                             <div className="space-y-1"><Label>Email</Label><Input type="email" value={editForm.email} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} /></div>
                             <div className="space-y-1"><Label>Telefon</Label><Input value={editForm.phone} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} /></div>
                         </div>
+                        {editTarget && (
+                            <section className="space-y-3 rounded-lg border p-3 sm:p-4">
+                                <div>
+                                    <h3 className="font-semibold">Portaladgang</h3>
+                                    <p className="text-xs text-muted-foreground">
+                                        {hasPortalAccess(editTarget)
+                                            ? "Send et nyt loginlink uden at oprette en ekstra bruger."
+                                            : "Send en invitation, så rettighedshaveren kan oprette sin adgang."}
+                                    </p>
+                                </div>
+                                {(!editForm.email.trim() || editForm.email.trim() !== (editTarget.email ?? "").trim() || editForm.full_name.trim() !== editTarget.full_name.trim()) && (
+                                    <p className="text-xs text-amber-700">
+                                        {!editForm.email.trim() ? "Tilføj og gem en emailadresse først." : "Gem ændringer til navn eller email, før du sender et nyt link."}
+                                    </p>
+                                )}
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    disabled={
+                                        editSaving
+                                        || !editForm.email.trim()
+                                        || editForm.email.trim() !== (editTarget.email ?? "").trim()
+                                        || editForm.full_name.trim() !== editTarget.full_name.trim()
+                                    }
+                                    onClick={() => {
+                                        setPortalLink(null)
+                                        setPortalEmailStatus(null)
+                                        setPortalAction({
+                                            rh: editTarget,
+                                            type: hasPortalAccess(editTarget) ? "login" : "invite",
+                                        })
+                                    }}
+                                >
+                                    {hasPortalAccess(editTarget) ? <KeyRound className="mr-2 h-4 w-4" /> : <Mail className="mr-2 h-4 w-4" />}
+                                    {hasPortalAccess(editTarget)
+                                        ? "Send nyt loginlink"
+                                        : editTarget.invite_sent_at ? "Send ny invitation" : "Send invitation"}
+                                </Button>
+                                {portalAction?.rh.id === editTarget.id && portalLink && (
+                                    <p className="break-all rounded-md bg-muted px-3 py-2 text-xs">{portalLink}</p>
+                                )}
+                            </section>
+                        )}
                         <div className="space-y-1"><Label>Adresse</Label><Input value={editForm.address} onChange={e => setEditForm(f => ({ ...f, address: e.target.value }))} /></div>
                         <div className="grid gap-3 sm:grid-cols-2">
                             <div className="space-y-1"><Label>CPR-nr.</Label><Input value={editForm.cpr_no} onChange={e => setEditForm(f => ({ ...f, cpr_no: e.target.value }))} /></div>

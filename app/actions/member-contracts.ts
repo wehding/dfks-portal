@@ -493,7 +493,20 @@ export async function linkContractToWork(
     .eq("rights_holder_id", rh.id);
 
   if (error) return { success: false, error: error.message };
+  if (!workId) {
+    const { error: confirmationError } = await db
+      .from("contract_episode_confirmations")
+      .update({ invalidated_at: new Date().toISOString() })
+      .eq("contract_id", contractId)
+      .eq("rights_holder_id", rh.id)
+      .is("invalidated_at", null);
+    if (confirmationError) {
+      console.error("Kunne ikke ugyldiggøre kontraktens afsnitsbekræftelse", { contractId, error: confirmationError.message });
+      return { success: false, error: "Værktilknytningen blev fjernet, men afsnitsbekræftelsen kunne ikke ryddes. Prøv igen." };
+    }
+  }
   revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/portal/mine-vaerker");
   return { success: true };
 }
 

@@ -70,9 +70,12 @@ export async function confirmNoCoeditors(params: { rightsHolderId: string; workI
     othersByWork.set(assignment.work_id, set);
   }
   const now = new Date().toISOString();
-  for (const workId of workIds) {
+  const updates = workIds.map(workId => {
     const conflictCount = othersByWork.get(workId)?.size ?? 0;
-    const { error } = await db.from("member_work_collaboration_reviews").update({
+    return {
+      org_id: orgId,
+      rights_holder_id: holder.id,
+      work_id: workId,
       status: collaborationReviewStatusForSoloClaim(conflictCount),
       source: params.source,
       known_coeditor_count_at_response: conflictCount,
@@ -82,13 +85,28 @@ export async function confirmNoCoeditors(params: { rightsHolderId: string; workI
       resolved_by_user_id: null,
       resolved_at: null,
       updated_at: now,
-    }).eq("org_id", orgId).eq("rights_holder_id", holder.id).eq("work_id", workId);
-    if (error) return { success: false as const, error: error.message };
+    };
+  });
+  const { data: saved, error } = await db.from("member_work_collaboration_reviews")
+    .upsert(updates, { onConflict: "org_id,rights_holder_id,work_id" })
+    .select("work_id,status");
+  if (error) return { success: false as const, error: error.message };
+  if ((saved ?? []).length !== updates.length) {
+    return { success: false as const, error: "Ikke alle svar blev gemt. Prøv igen." };
   }
+  const results = (saved ?? []).map(row => ({
+    workId: row.work_id,
+    status: row.status as "solo_confirmed" | "disputed",
+  }));
   revalidatePath("/portal");
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
-  return { success: true as const, confirmed: workIds.length - [...othersByWork.keys()].length, disputed: [...othersByWork.keys()].length };
+  return {
+    success: true as const,
+    confirmed: results.filter(result => result.status === "solo_confirmed").length,
+    disputed: results.filter(result => result.status === "disputed").length,
+    results,
+  };
 }
 
 export async function fetchAdminCollaborationDisputes() {

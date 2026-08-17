@@ -9,8 +9,8 @@ import type { Assignment, BroadcasterLogo, OtherAssignment } from "./MineVaerker
 import { Button } from "@/components/ui/button";
 import { TableSkeleton } from "@/components/ui/data-skeletons";
 import { resolveBranding } from "@/lib/branding";
-
-type ContractWorkIdRow = { work_id: string | null };
+import { fetchMemberContractsList } from "@/app/actions/member-contracts";
+import type { Contract } from "../mine-kontrakter/MineKontrakterClient";
 
 export default function MineVaerkerPage() {
   const router = useRouter();
@@ -22,6 +22,7 @@ export default function MineVaerkerPage() {
     userName: string;
     dfiPersonId: number | null;
     contractedWorkIds: string[];
+    contracts: Contract[];
     organisationShortName: string;
   } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export default function MineVaerkerPage() {
           .maybeSingle();
 
         if (rhError) throw rhError;
-        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], organisationShortName: "DFKS" }); return; }
+        if (!rh) { setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS" }); return; }
 
         const { data: roleRow } = await supabase
           .from("user_org_roles")
@@ -73,14 +74,21 @@ export default function MineVaerkerPage() {
           overview.items as Parameters<typeof memberOverviewItemsToAssignments>[0]
         ) as Assignment[];
 
-        const { data: contractedWorkIds } = await supabase
-          .from("contracts")
-          .select("work_id")
-          .eq("rights_holder_id", rh.id)
-          .not("work_id", "is", null);
+        const contractResult = await fetchMemberContractsList();
+        if (!contractResult.success) throw new Error(contractResult.error ?? "Kontrakterne kunne ikke indlæses.");
+        const memberContracts = (contractResult.contracts ?? []).map(raw => {
+          const contract = raw as unknown as Contract & { works: Contract["works"] | Contract["works"][]; employers: Contract["employers"] | Contract["employers"][] };
+          return {
+            ...contract,
+            works: Array.isArray(contract.works) ? contract.works[0] ?? null : contract.works,
+            employers: Array.isArray(contract.employers) ? contract.employers[0] ?? null : contract.employers,
+            contract_attachments: [],
+            contract_comments: [],
+          } satisfies Contract;
+        });
 
         const contractedWorkIdSet = new Set(
-          ((contractedWorkIds ?? []) as ContractWorkIdRow[])
+          memberContracts
             .map(c => c.work_id)
             .filter((id): id is string => Boolean(id))
         );
@@ -93,6 +101,7 @@ export default function MineVaerkerPage() {
           userName: rh.full_name ?? "",
           dfiPersonId: rh.dfi_person_id ?? null,
           contractedWorkIds: [...contractedWorkIdSet],
+          contracts: memberContracts,
           organisationShortName,
         });
 
@@ -100,7 +109,7 @@ export default function MineVaerkerPage() {
       } catch (error) {
         console.error("Mine værker kunne ikke indlæses:", error);
         setLoadError(error instanceof Error ? error.message : "Mine værker kunne ikke indlæses.");
-        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], organisationShortName: "DFKS" });
+        setData({ assignments: [], allAssignments: [], broadcasters: [], rightsHolderId: null, userName: "", dfiPersonId: null, contractedWorkIds: [], contracts: [], organisationShortName: "DFKS" });
       }
     }
 
@@ -130,6 +139,7 @@ export default function MineVaerkerPage() {
       userName={data.userName}
       dfiPersonId={data.dfiPersonId}
       contractedWorkIds={data.contractedWorkIds}
+      contracts={data.contracts}
       organisationShortName={data.organisationShortName}
     />
   );

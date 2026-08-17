@@ -21,6 +21,7 @@ import { PortalPageHeader } from "@/components/portal/portal-page-header";
 import { ListResultSummary } from "@/components/list-result-summary";
 import { fetchMemberShareTaskTarget } from "@/app/actions/work-share-cases";
 import { confirmNoCoeditors, fetchMemberCollaborationReviews } from "@/app/actions/work-collaboration-reviews";
+import MineKontrakterClient, { type Contract } from "../mine-kontrakter/MineKontrakterClient";
 
 const TMDB_IMG     = "https://image.tmdb.org/t/p/w154";
 const TAG_CLASS = "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold leading-4";
@@ -274,7 +275,7 @@ function isSeriesType(type: string | null | undefined) {
 }
 
 export default function MineVaerkerClient({
-  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, organisationShortName,
+  initialAssignments, allAssignments: initialAllAssignments, broadcasters, rightsHolderId, contractedWorkIds, contracts, organisationShortName,
 }: {
   initialAssignments: Assignment[];
   allAssignments: OtherAssignment[];
@@ -283,6 +284,7 @@ export default function MineVaerkerClient({
   userName: string;
   dfiPersonId: number | null;
   contractedWorkIds: string[];
+  contracts: Contract[];
   organisationShortName: string;
 }) {
   const { locale, t } = useI18n();
@@ -325,6 +327,9 @@ export default function MineVaerkerClient({
   const [collaborationReviewMode, setCollaborationReviewMode] = useState(false);
   const [collaborationSelected, setCollaborationSelected] = useState<string[]>([]);
   const [collaborationSaving, setCollaborationSaving] = useState(false);
+  const [collaborationFeedback, setCollaborationFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [contractChoices, setContractChoices] = useState<Contract[]>([]);
+  const [editingContractId, setEditingContractId] = useState<string | null>(null);
 
   // Dialoger og modaler
   const [isAdding, setIsAdding]             = useState(false);
@@ -456,20 +461,26 @@ export default function MineVaerkerClient({
   const confirmSelectedAsSolo = async () => {
     if (!rightsHolderId || !collaborationSelected.length) return;
     setCollaborationSaving(true);
+    setCollaborationFeedback(null);
     try {
       const result = await confirmNoCoeditors({ rightsHolderId, workIds: collaborationSelected, source: "member_bulk" });
       if (!result.success) throw new Error(result.error);
-      setMsg({
+      const feedback = {
         type: "success",
         text: result.disputed
-          ? `${result.confirmed} svar er gemt. ${result.disputed} afventer DFKS, fordi andre klippere allerede er registreret.`
-          : `${result.confirmed} svar “Ingen medklipper” er gemt.`,
-      });
+          ? `${result.confirmed} værk${result.confirmed === 1 ? " er" : "er er"} registreret uden medklippere. ${result.disputed} kræver gennemgang hos DFKS, fordi andre klippere er registreret.`
+          : `${result.confirmed} værk${result.confirmed === 1 ? " er" : "er er"} registreret uden medklippere.`,
+      } as const;
+      setCollaborationFeedback(feedback);
+      const statusByWork = new Map(result.results.map(item => [item.workId, item.status]));
+      setCollaborationReviews(current => current.map(review => {
+        const status = statusByWork.get(review.work_id);
+        return status ? { ...review, status } : review;
+      }));
       setCollaborationSelected([]);
-      await loadCollaborationReviews();
       window.dispatchEvent(new CustomEvent("works-updated"));
     } catch (error) {
-      setMsg({ type: "error", text: error instanceof Error ? error.message : "Svarene kunne ikke gemmes." });
+      setCollaborationFeedback({ type: "error", text: error instanceof Error ? error.message : "Svarene kunne ikke gemmes." });
     } finally {
       setCollaborationSaving(false);
     }
@@ -484,6 +495,24 @@ export default function MineVaerkerClient({
     const ids = selectionIdsFor(assignment);
     const allSelected = ids.length > 0 && ids.every(id => selected.includes(id));
     setSelected(prev => allSelected ? prev.filter(id => !ids.includes(id)) : [...new Set([...prev, ...ids])]);
+  };
+
+  const contractsForWork = (work: Work) => {
+    const workIds = new Set([work.id, ...(work.child_work_ids ?? [])]);
+    return contracts.filter(contract => contract.work_id && workIds.has(contract.work_id));
+  };
+
+  const openContractForWork = (work: Work) => {
+    const matches = contractsForWork(work);
+    if (matches.length === 0) {
+      router.push(`/portal/mine-kontrakter?upload=true&workId=${work.id}&workTitle=${encodeURIComponent(work.title)}`);
+      return;
+    }
+    if (matches.length === 1) {
+      setEditingContractId(matches[0].id);
+      return;
+    }
+    setContractChoices(matches);
   };
 
   const renderSeriesEpisodes = (work: Work, children: Assignment[], isLoadingChildren: boolean, className = "px-14") => (
@@ -518,8 +547,8 @@ export default function MineVaerkerClient({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium text-foreground">{ep.title}</span>
-                  <span className="mt-1 block">{collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
-                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role)} · Medklippere: {coEditors.length ? coEditors.join(", ") : "–"}</span>
+                  <span className="mt-1 block text-xs">Rolle: {displayRole(assignment.role)}</span>
+                  <span className="mt-1 flex flex-wrap items-center gap-2 text-xs">Medklippere: {coEditors.length ? coEditors.join(", ") : "–"} {collaborationStatusBadge(collaborationReviewByWork.get(ep.id))}</span>
                   <span className="mt-0.5 block text-xs">{(ep.overview_contract_count ?? 0) > 0 || contractedWorkIds.includes(ep.id) ? "Kontrakt tilknyttet" : "Mangler kontrakt"}</span>
                 </span>
                 <span className="text-xs font-medium text-foreground">Rediger</span>
@@ -815,6 +844,12 @@ export default function MineVaerkerClient({
         </section>
       )}
 
+      {collaborationFeedback && (
+        <div className={`rounded-md px-3 py-2 text-sm ${collaborationFeedback.type === "success" ? "bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-200" : "bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-200"}`}>
+          {collaborationFeedback.text}
+        </div>
+      )}
+
       {collaborationReviewMode && openCollaborationReviews.length > 0 && (
         <section className="rounded-lg border bg-card p-4">
           <div className="flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1039,9 +1074,6 @@ export default function MineVaerkerClient({
                   <div className="flex flex-wrap items-center gap-2">
                     <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
                     {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
-                    {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
-                    {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
-                    {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1079,14 +1111,17 @@ export default function MineVaerkerClient({
                   "–"
                 )}
               </div>
-              <div className="text-xs text-muted-foreground truncate" title={(coEditorMap[w.id] ?? []).join(", ")}>
-                {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
+              <div className="flex min-w-0 flex-col items-start gap-1 text-xs text-muted-foreground" title={(coEditorMap[w.id] ?? []).join(", ")}>
+                <span className="truncate">{(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}</span>
+                {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
+                {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
+                {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
               </div>
 
               {/* Kontrakt-badge */}
               <div
                 className="flex justify-end"
-                onClick={e => { e.stopPropagation(); router.push(isSeriesParent || hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                onClick={e => { e.stopPropagation(); openContractForWork(w); }}
               >
                 {hasAllContracts ? (
                   <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
@@ -1127,9 +1162,6 @@ export default function MineVaerkerClient({
                         )}
                         <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
                         {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
-                        {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
-                        {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
-                        {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1147,7 +1179,7 @@ export default function MineVaerkerClient({
                     </div>
                     <div
                       className="shrink-0"
-                      onClick={e => { e.stopPropagation(); router.push(isSeriesParent || hasContract ? `/portal/mine-kontrakter` : `/portal/mine-kontrakter?upload=true&workId=${w.id}&workTitle=${encodeURIComponent(w.title)}`); }}
+                      onClick={e => { e.stopPropagation(); openContractForWork(w); }}
                     >
                       {hasAllContracts ? (
                         <span className={`${TAG_CLASS} cursor-pointer`} style={{ backgroundColor: "#dcfce7", color: "#166534" }}>{t("works.contractOk")}</span>
@@ -1189,6 +1221,11 @@ export default function MineVaerkerClient({
                     <p className="mt-0.5 text-xs text-gray-700 line-clamp-2">
                       {(coEditorMap[w.id] ?? []).length > 0 ? coEditorMap[w.id].join(", ") : "–"}
                     </p>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {!isSeriesParent && collaborationStatusBadge(directCollaborationReview)}
+                      {isSeriesParent && seasonPendingReviews > 0 && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{seasonPendingReviews} afsnit mangler gennemgang</Badge>}
+                      {isSeriesParent && seasonDisputedReviews > 0 && <Badge variant="outline" className="border-orange-400 bg-orange-50 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200">{seasonDisputedReviews} indsigelse afventer DFKS</Badge>}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1212,6 +1249,43 @@ export default function MineVaerkerClient({
           {Math.min(filtered.length, pageSize)} {t("works.of")} {filtered.length} {t("works.worksLower")}
         </div>
       </div>
+
+      <Dialog open={contractChoices.length > 0} onOpenChange={open => { if (!open) setContractChoices([]); }}>
+        <DialogContent className="w-[min(480px,calc(100vw-2rem))]">
+          <DialogHeader>
+            <DialogTitle>Vælg kontrakt</DialogTitle>
+            <DialogDescription>Der er flere kontrakter tilknyttet værket. Vælg den, du vil redigere.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {contractChoices.map(contract => (
+              <button
+                type="button"
+                key={contract.id}
+                className="w-full rounded-lg border px-3 py-3 text-left hover:bg-muted"
+                onClick={() => { setContractChoices([]); setEditingContractId(contract.id); }}
+              >
+                <span className="block font-medium">{contract.working_title || contract.works?.title || "Kontrakt"}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {contract.season_number ? `Sæson ${contract.season_number}` : ""}
+                  {contract.episode_numbers?.length ? `${contract.season_number ? " · " : ""}Afsnit ${contract.episode_numbers.join(", ")}` : ""}
+                  {(contract.season_number || contract.episode_numbers?.length) ? " · " : ""}{contract.status}
+                </span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {editingContractId && rightsHolderId && (
+        <MineKontrakterClient
+          initialContracts={contracts}
+          rightsHolderId={rightsHolderId}
+          myWorks={assignments.flatMap(assignment => assignment.works ? [{ id: assignment.works.id, title: assignment.works.title, year: assignment.works.year, type: assignment.works.type }] : [])}
+          initialOpenContractId={editingContractId}
+          editorOnly
+          onEditorClose={() => setEditingContractId(null)}
+        />
+      )}
 
       {/* ── Tilføj-panel ──────────────────────────────────────────── */}
       <AddWorkModal
