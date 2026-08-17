@@ -1402,6 +1402,187 @@ function OverenskomsterTab() {
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [ruleSaving, setRuleSaving] = useState(false)
 
+    // ── AI-udtræk af satser ────────────────────────────────────
+    type SatsKandidat = {
+        _id: string
+        type: "wage" | "pension"
+        checked: boolean
+        // løn
+        profession_role: string
+        wage_group: string
+        employment_form: string
+        rate_kind: string
+        amount: string
+        unit: string
+        pension_included: boolean
+        // pension
+        employer_percent: string
+        employee_percent: string
+        basis: string
+        scheme_kind: string
+        // fælles
+        valid_from: string
+        section_reference: string
+        citation: string
+        confidence: "høj" | "lav"
+        // kilde (sættes fra dialog)
+        source_title: string
+        source_url: string
+        source_checked_at: string
+    }
+    const [satserUdtraekAgreementId, setSatserUdtraekAgreementId] = useState<string | null>(null)
+    const [satserPhase, setSatserPhase] = useState<"input" | "kandidater">("input")
+    const [satserInputMode, setSatserInputMode] = useState<"upload" | "bilag">("upload")
+    const [satserFil, setSatserFil] = useState<File | null>(null)
+    const [satserKildeTitel, setSatserKildeTitel] = useState("")
+    const [satserKildeUrl, setSatserKildeUrl] = useState("")
+    const [satserKildeCheckedAt, setSatserKildeCheckedAt] = useState(new Date().toISOString().slice(0, 10))
+    const [satserBilagValg, setSatserBilagValg] = useState("")
+    const [tilgaengeligeBilag, setTilgaengeligeBilag] = useState<{ overenskomst: string; gyldigFra: string; bilagType: string; label: string }[]>([])
+    const [satserUdtraekker, setSatserUdtraekker] = useState(false)
+    const [satserKandidater, setSatserKandidater] = useState<SatsKandidat[]>([])
+    const [satserOpretter, setSatserOpretter] = useState(false)
+
+    const åbnSatserUdtraek = async (agreementId: string) => {
+        setSatserUdtraekAgreementId(agreementId)
+        setSatserPhase("input")
+        setSatserInputMode("upload")
+        setSatserFil(null)
+        setSatserKildeTitel("")
+        setSatserKildeUrl("")
+        setSatserBilagValg("")
+        setSatserKandidater([])
+        // Hent eksisterende lønskema-bilag for denne overenskomst
+        try {
+            const r = await fetch(`/api/admin/overenskomst/satser-udtraek?agreementId=${agreementId}`)
+            const d = await r.json()
+            setTilgaengeligeBilag(d.bilag ?? [])
+        } catch { setTilgaengeligeBilag([]) }
+    }
+
+    const udtraekSatser = async (agreementId: string) => {
+        setSatserUdtraekker(true)
+        try {
+            const body: Record<string, unknown> = {
+                agreementId,
+                kildeTitel: satserKildeTitel,
+                kildeUrl: satserKildeUrl,
+            }
+            if (satserInputMode === "upload" && satserFil) {
+                const buf = await satserFil.arrayBuffer()
+                const bytes = new Uint8Array(buf)
+                let binary = ""
+                for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+                body.pdfBase64 = btoa(binary)
+                body.filnavn = satserFil.name
+                if (!satserKildeTitel) body.kildeTitel = satserFil.name
+            } else if (satserInputMode === "bilag" && satserBilagValg) {
+                const ref = JSON.parse(satserBilagValg)
+                body.bilagOverenskomst = ref.overenskomst
+                body.bilagGyldigFra = ref.gyldigFra
+                body.bilagType = ref.bilagType
+                if (!satserKildeTitel) body.kildeTitel = ref.label
+            } else {
+                toast.error("Vælg en fil eller et eksisterende bilag")
+                return
+            }
+            const res = await fetch("/api/admin/overenskomst/satser-udtraek", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            })
+            if (!res.ok) { toast.error((await res.json()).error ?? "Udtræk fejlede"); return }
+            const data = await res.json()
+            const now = new Date().toISOString().slice(0, 10)
+            const kildenavn = (body.kildeTitel as string) || (data.kildeTitel ?? "")
+            const kildelink = (body.kildeUrl as string) || (data.kildeUrl ?? "")
+            const mapped: SatsKandidat[] = (data.kandidater ?? []).map((k: Record<string, unknown>, i: number) => ({
+                _id: `k-${i}`,
+                type: k.type ?? "wage",
+                checked: k.confidence === "høj",
+                profession_role: String(k.profession_role ?? ""),
+                wage_group: String(k.wage_group ?? ""),
+                employment_form: String(k.employment_form ?? "a-løn"),
+                rate_kind: String(k.rate_kind ?? "normalløn"),
+                amount: k.amount != null ? String(k.amount) : "",
+                unit: String(k.unit ?? "uge"),
+                pension_included: !!k.pension_included,
+                employer_percent: k.employer_percent != null ? String(k.employer_percent) : "",
+                employee_percent: k.employee_percent != null ? String(k.employee_percent) : "0",
+                basis: String(k.basis ?? "normalløn"),
+                scheme_kind: String(k.scheme_kind ?? "occupational_pension"),
+                valid_from: String(k.valid_from ?? ""),
+                section_reference: String(k.section_reference ?? ""),
+                citation: String(k.citation ?? ""),
+                confidence: (k.confidence === "høj" ? "høj" : "lav") as "høj" | "lav",
+                source_title: kildenavn,
+                source_url: kildelink,
+                source_checked_at: now,
+            }))
+            setSatserKandidater(mapped)
+            setSatserPhase("kandidater")
+        } catch (e: unknown) { toast.error(errorMessage(e)) }
+        finally { setSatserUdtraekker(false) }
+    }
+
+    const opretValgte = async (agreementId: string) => {
+        const valgte = satserKandidater.filter(k => k.checked)
+        if (valgte.length === 0) { toast.error("Ingen kandidater valgt"); return }
+        setSatserOpretter(true)
+        let ok = 0; let fejl = 0
+        const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
+        for (const k of valgte) {
+            try {
+                const body = k.type === "wage"
+                    ? {
+                        wageRule: {
+                            agreementId,
+                            rate_key: `${slugify(k.profession_role || "regel")}-${slugify(k.employment_form)}-${k.valid_from || "ukendt"}`,
+                            profession_role: k.profession_role,
+                            wage_group: k.wage_group || null,
+                            employment_form: k.employment_form,
+                            rate_kind: k.rate_kind,
+                            amount: k.amount !== "" ? Number(k.amount) : null,
+                            unit: k.unit || null,
+                            pension_included: k.pension_included,
+                            valid_from: k.valid_from || new Date().toISOString().slice(0, 10),
+                            source_title: k.source_title,
+                            source_url: k.source_url,
+                            source_section: k.section_reference,
+                            source_checked_at: k.source_checked_at,
+                            source_note: k.citation || null,
+                        },
+                    }
+                    : {
+                        pensionRule: {
+                            agreementId,
+                            employment_form: k.employment_form,
+                            employer_percent: Number(k.employer_percent),
+                            employee_percent: Number(k.employee_percent),
+                            basis: k.basis,
+                            scheme_kind: k.scheme_kind,
+                            valid_from: k.valid_from || new Date().toISOString().slice(0, 10),
+                            section_reference: k.section_reference,
+                            source_note: k.citation || null,
+                        },
+                    }
+                const res = await fetch("/api/admin/agreements", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                })
+                if (res.ok) { ok++ } else { fejl++ }
+            } catch { fejl++ }
+        }
+        setSatserOpretter(false)
+        if (ok > 0) toast.success(`${ok} regel${ok > 1 ? "r" : ""} oprettet som kladde`)
+        if (fejl > 0) toast.error(`${fejl} regel${fejl > 1 ? "r" : ""} fejlede (duplikat rate_key?)`)
+        if (ok > 0) {
+            setSatserUdtraekAgreementId(null)
+            refreshAktive()
+        }
+    }
+
     const refreshAktive = () => {
         fetch("/api/admin/overenskomst")
             .then(r => r.json())
@@ -1917,9 +2098,14 @@ function OverenskomsterTab() {
                                                         )}
                                                     </div>
                                                 ))}
-                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => { setNewWageAgreementId(agreement.id); setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" })) }}>
-                                                <Plus className="h-3.5 w-3.5" />Tilføj lønregel
-                                            </Button>
+                                            <div className="flex gap-1.5 mt-1">
+                                                <Button size="sm" variant="outline" className="flex-1 h-7 text-xs gap-1" onClick={() => { setNewWageAgreementId(agreement.id); setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" })) }}>
+                                                    <Plus className="h-3.5 w-3.5" />Tilføj lønregel
+                                                </Button>
+                                                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-muted-foreground" onClick={() => åbnSatserUdtraek(agreement.id)}>
+                                                    <Wand2 className="h-3.5 w-3.5" />AI-udtræk
+                                                </Button>
+                                            </div>
                                         </div>
                                     </details>
 
@@ -1977,6 +2163,176 @@ function OverenskomsterTab() {
                                             <DialogFooter>
                                                 <Button variant="outline" size="sm" onClick={() => setNewWageAgreementId(null)}>Annuller</Button>
                                                 <Button size="sm" disabled={ruleSaving} onClick={opretWageRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Dialog: AI-udtræk af satser ── */}
+                                    <Dialog open={satserUdtraekAgreementId === agreement.id} onOpenChange={open => { if (!open) setSatserUdtraekAgreementId(null) }}>
+                                        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+                                            <DialogHeader>
+                                                <DialogTitle className="text-sm flex items-center gap-2">
+                                                    <Wand2 className="h-4 w-4" />
+                                                    AI-udtræk af satser — {agreement.title}
+                                                </DialogTitle>
+                                            </DialogHeader>
+
+                                            {satserPhase === "input" ? (
+                                                <div className="space-y-4 overflow-y-auto flex-1">
+                                                    {/* Inputkilde */}
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" variant={satserInputMode === "upload" ? "default" : "outline"} className="text-xs h-7" onClick={() => setSatserInputMode("upload")}>Upload fil</Button>
+                                                        <Button size="sm" variant={satserInputMode === "bilag" ? "default" : "outline"} className="text-xs h-7" disabled={tilgaengeligeBilag.length === 0} onClick={() => setSatserInputMode("bilag")}>
+                                                            Eksisterende bilag {tilgaengeligeBilag.length === 0 && "(ingen)"}
+                                                        </Button>
+                                                    </div>
+
+                                                    {satserInputMode === "upload" ? (
+                                                        <div
+                                                            className="rounded border-2 border-dashed p-4 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
+                                                            onClick={() => document.getElementById(`satser-fil-${agreement.id}`)?.click()}
+                                                        >
+                                                            <input id={`satser-fil-${agreement.id}`} type="file" accept=".pdf,.docx,.doc" className="hidden" onChange={e => setSatserFil(e.target.files?.[0] ?? null)} />
+                                                            {satserFil ? (
+                                                                <p className="text-xs font-medium">{satserFil.name}</p>
+                                                            ) : (
+                                                                <>
+                                                                    <FileUp className="mx-auto h-5 w-5 text-muted-foreground/50 mb-1" />
+                                                                    <p className="text-xs text-muted-foreground">Klik for at vælge lønskema/bilag (PDF, DOCX, DOC)</p>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <Select value={satserBilagValg} onValueChange={setSatserBilagValg}>
+                                                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg indekseret bilag…" /></SelectTrigger>
+                                                            <SelectContent>
+                                                                {tilgaengeligeBilag.map(b => (
+                                                                    <SelectItem key={`${b.gyldigFra}-${b.bilagType}`} value={JSON.stringify(b)}>{b.label}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    )}
+
+                                                    {/* Kildeinfo (bruges som source_title/url på de oprettede regler) */}
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kilde-titel (til reglernes kildefelt)</Label>
+                                                        <Input className="h-7 text-xs" placeholder="fx Lønoversigt De4 2022" value={satserKildeTitel} onChange={e => setSatserKildeTitel(e.target.value)} />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kilde-URL</Label>
+                                                        <Input className="h-7 text-xs" placeholder="https://pro-f.dk/…" value={satserKildeUrl} onChange={e => setSatserKildeUrl(e.target.value)} />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kontrolleret dato</Label>
+                                                        <Input type="date" className="h-7 text-xs" value={satserKildeCheckedAt} onChange={e => setSatserKildeCheckedAt(e.target.value)} />
+                                                    </div>
+                                                    <p className="text-[10px] text-muted-foreground">AI-udtræk opretter kandidater som <strong>kladder</strong> — kræver juridisk godkendelse inden de bruges.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {satserKandidater.length} kandidater fundet. Markerede oprettes som kladder. Ret felter direkte inden oprettelse.
+                                                    </p>
+
+                                                    {/* Lønkandidater */}
+                                                    {satserKandidater.filter(k => k.type === "wage").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Lønsatser ({satserKandidater.filter(k => k.type === "wage").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "wage").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Funktion</Label><Input className="h-5 text-[10px]" value={k.profession_role} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, profession_role: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Løngruppe</Label><Input className="h-5 text-[10px]" value={k.wage_group} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, wage_group: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Beløb (DKK)</Label><Input type="number" className="h-5 text-[10px]" value={k.amount} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, amount: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Enhed</Label>
+                                                                                    <Select value={k.unit} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, unit: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Ansættelsesform</Label>
+                                                                                    <Select value={k.employment_form} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employment_form: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Freelance</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                            {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Pensionskandidater */}
+                                                    {satserKandidater.filter(k => k.type === "pension").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Pensionssatser ({satserKandidater.filter(k => k.type === "pension").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "pension").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Ansættelsesform</Label>
+                                                                                    <Select value={k.employment_form} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employment_form: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Freelance</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Grundlag</Label>
+                                                                                    <Select value={k.basis} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem><SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem><SelectItem value="honorar">Honorar</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Arbejdsgiver %</Label><Input type="number" step="0.001" className="h-5 text-[10px]" value={k.employer_percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employer_percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Medarbejder %</Label><Input type="number" step="0.001" className="h-5 text-[10px]" value={k.employee_percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employee_percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Paragraf</Label><Input className="h-5 text-[10px]" value={k.section_reference} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, section_reference: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {satserKandidater.length === 0 && (
+                                                        <p className="text-xs text-muted-foreground py-4 text-center">AI fandt ingen satser i dokumentet.</p>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <DialogFooter className="pt-2 border-t gap-2 flex-wrap">
+                                                {satserPhase === "kandidater" && (
+                                                    <Button size="sm" variant="outline" className="text-xs" onClick={() => setSatserPhase("input")}>
+                                                        ← Tilbage
+                                                    </Button>
+                                                )}
+                                                <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSatserUdtraekAgreementId(null)}>Luk</Button>
+                                                {satserPhase === "input" ? (
+                                                    <Button size="sm" className="text-xs gap-1" disabled={satserUdtraekker || (satserInputMode === "upload" ? !satserFil : !satserBilagValg)} onClick={() => udtraekSatser(agreement.id)}>
+                                                        {satserUdtraekker ? <><Loader2 className="h-3 w-3 animate-spin" />Udtrækker…</> : <><Wand2 className="h-3 w-3" />Udtræk satser</>}
+                                                    </Button>
+                                                ) : (
+                                                    <Button size="sm" className="text-xs gap-1" disabled={satserOpretter || satserKandidater.filter(k => k.checked).length === 0} onClick={() => opretValgte(agreement.id)}>
+                                                        {satserOpretter ? <><Loader2 className="h-3 w-3 animate-spin" />Opretter…</> : `Opret valgte (${satserKandidater.filter(k => k.checked).length})`}
+                                                    </Button>
+                                                )}
                                             </DialogFooter>
                                         </DialogContent>
                                     </Dialog>
