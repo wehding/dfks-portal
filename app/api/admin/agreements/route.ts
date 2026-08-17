@@ -64,3 +64,56 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
 }
+
+// PATCH /api/admin/agreements — redigér stamdata eller kilde-felter på løn/pensionsregler
+// Body shapes:
+//   { agreementId, title?, parties?, valid_from?, valid_to?, notes?, source_url?, content_url? }
+//   { wageRuleId, source_title?, source_url?, source_note?, source_checked_at? }
+//   { pensionRuleId, source_note? }
+export async function PATCH(req: NextRequest) {
+    try {
+        const auth = await requireAdminApi()
+        if (!auth.ok) return auth.response
+
+        const body = await req.json()
+        const supabase = sb()
+
+        if (body.agreementId) {
+            const allowed = ["title", "parties", "valid_from", "valid_to", "notes", "source_url", "content_url"]
+            const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+            for (const key of allowed) {
+                if (key in body) patch[key] = body[key] === "" ? null : body[key]
+            }
+            // parties kan komme som streng (comma-sep) eller array
+            if (typeof patch.parties === "string") {
+                patch.parties = (patch.parties as string).split(",").map((s: string) => s.trim()).filter(Boolean)
+            }
+            const { error } = await supabase.from("agreements").update(patch).eq("id", body.agreementId)
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            return NextResponse.json({ ok: true })
+        }
+
+        if (body.wageRuleId) {
+            const allowed = ["source_title", "source_url", "source_note", "source_checked_at"]
+            const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+            for (const key of allowed) {
+                if (key in body) patch[key] = body[key] === "" ? null : body[key]
+            }
+            const { error } = await supabase.from("agreement_wage_rules").update(patch).eq("id", body.wageRuleId)
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            return NextResponse.json({ ok: true })
+        }
+
+        if (body.pensionRuleId) {
+            const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+            if ("source_note" in body) patch.source_note = body.source_note === "" ? null : body.source_note
+            const { error } = await supabase.from("agreement_pension_rules").update(patch).eq("id", body.pensionRuleId)
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            return NextResponse.json({ ok: true })
+        }
+
+        return NextResponse.json({ error: "agreementId, wageRuleId eller pensionRuleId er påkrævet" }, { status: 400 })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
+    }
+}

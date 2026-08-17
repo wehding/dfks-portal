@@ -128,8 +128,20 @@ export async function PUT(req: NextRequest) {
 
         const supabase = sb()
 
-        // Deaktivér gamle chunks for denne overenskomst
-        await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("overenskomst", overenskomst)
+        // Slå agreement_id op via overenskomst-kode (agreement.code = overenskomst)
+        const { data: agreementRow } = await supabase
+            .from("agreements")
+            .select("id")
+            .eq("code", overenskomst)
+            .maybeSingle()
+        const agreement_id: string | null = agreementRow?.id ?? null
+
+        // Deaktivér gamle chunks for denne overenskomst (via agreement_id hvis tilgængeligt, ellers overenskomst-streng)
+        if (agreement_id) {
+            await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("agreement_id", agreement_id)
+        } else {
+            await supabase.from("knowledge_chunks").update({ aktiv: false }).eq("overenskomst", overenskomst)
+        }
 
         let indekseret = 0
         const fejl: string[] = []
@@ -149,6 +161,7 @@ export async function PUT(req: NextRequest) {
                     metadata: { sats: sektion.sats ?? null, overenskomst, gyldig_fra: gyldigFra },
                     embedding,
                     overenskomst: overenskomst.toLowerCase(),
+                    agreement_id,
                     kategori: sektion.kategori,
                     gyldig_fra: gyldigFra,
                     aktiv: true,
@@ -184,6 +197,7 @@ export async function PUT(req: NextRequest) {
                         metadata: { overenskomst, gyldig_fra: gyldigFra, chunk_nr: i },
                         embedding,
                         overenskomst: overenskomst.toLowerCase(),
+                        agreement_id,
                         kategori: "fuldt-dokument",
                         gyldig_fra: gyldigFra,
                         aktiv: true,

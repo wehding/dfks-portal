@@ -1283,6 +1283,21 @@ function OverenskomsterTab() {
     const [opretLoading, setOpretLoading] = useState(false)
     const [nyOverenskomst, setNyOverenskomst] = useState("")
 
+    // Stamdata-redigering: agreement.id → form state
+    type StamdataForm = { title: string; parties: string; valid_from: string; valid_to: string; notes: string; source_url: string; content_url: string }
+    const [editStamdata, setEditStamdata] = useState<string | null>(null) // agreement.id
+    const [stamdataForm, setStamdataForm] = useState<StamdataForm>({ title: "", parties: "", valid_from: "", valid_to: "", notes: "", source_url: "", content_url: "" })
+    const [stamdataSaving, setStamdataSaving] = useState(false)
+
+    // Kilde-redigering på løn/pensionsregler: rule.id → form state
+    type WageSourceForm = { source_title: string; source_url: string; source_note: string; source_checked_at: string }
+    type PensionSourceForm = { source_note: string }
+    const [editWageRule, setEditWageRule] = useState<string | null>(null)
+    const [wageSourceForm, setWageSourceForm] = useState<WageSourceForm>({ source_title: "", source_url: "", source_note: "", source_checked_at: "" })
+    const [editPensionRule, setEditPensionRule] = useState<string | null>(null)
+    const [pensionSourceForm, setPensionSourceForm] = useState<PensionSourceForm>({ source_note: "" })
+    const [ruleSaving, setRuleSaving] = useState(false)
+
     const refreshAktive = () => {
         fetch("/api/admin/overenskomst")
             .then(r => r.json())
@@ -1466,6 +1481,48 @@ function OverenskomsterTab() {
             : i))
     }
 
+    const gemStamdata = async (agreementId: string) => {
+        setStamdataSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agreementId, ...stamdataForm }),
+        })
+        setStamdataSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Stamdata gemt")
+        setEditStamdata(null)
+        refreshAktive()
+    }
+
+    const gemWageSource = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId, ...wageSourceForm }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Kildeinfo gemt")
+        setEditWageRule(null)
+        refreshAktive()
+    }
+
+    const gemPensionSource = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId, ...pensionSourceForm }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Kildeinfo gemt")
+        setEditPensionRule(null)
+        refreshAktive()
+    }
+
     const afventende = kø.filter(i => i.status === "afventer").length
     const klarTilIndeksering = kø.filter(i => i.status === "klar")
 
@@ -1504,20 +1561,75 @@ function OverenskomsterTab() {
                         const isUploadOpen = uploadTarget === agreement.id
                         return (
                             <div key={agreement.id} className="rounded-md border p-3 space-y-3">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <p className="text-sm font-medium">{agreement.title}</p>
-                                            <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
+                                {/* Stamdata-redigeringsform — fuld bredde når åben */}
+                                {editStamdata === agreement.id ? (
+                                    <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                                        <p className="text-xs font-medium">Redigér stamdata</p>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Titel</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.title} onChange={e => setStamdataForm(f => ({ ...f, title: e.target.value }))} />
                                         </div>
-                                        <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
-                                        <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{agreement.code}</p>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Parter (kommasepareret)</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.parties} onChange={e => setStamdataForm(f => ({ ...f, parties: e.target.value }))} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Gyldig fra</Label>
+                                                <Input type="date" className="h-7 text-xs" value={stamdataForm.valid_from} onChange={e => setStamdataForm(f => ({ ...f, valid_from: e.target.value }))} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Gyldig til</Label>
+                                                <Input type="date" className="h-7 text-xs" value={stamdataForm.valid_to} onChange={e => setStamdataForm(f => ({ ...f, valid_to: e.target.value }))} />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Officiel kildeside (URL)</Label>
+                                            <Input className="h-7 text-xs" placeholder="https://..." value={stamdataForm.source_url} onChange={e => setStamdataForm(f => ({ ...f, source_url: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Aftaletekst (URL)</Label>
+                                            <Input className="h-7 text-xs" placeholder="https://..." value={stamdataForm.content_url} onChange={e => setStamdataForm(f => ({ ...f, content_url: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Bemærkning</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.notes} onChange={e => setStamdataForm(f => ({ ...f, notes: e.target.value }))} />
+                                        </div>
+                                        <div className="flex gap-2 pt-1">
+                                            <Button size="sm" className="flex-1" disabled={stamdataSaving} onClick={() => gemStamdata(agreement.id)}>
+                                                {stamdataSaving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}Gem
+                                            </Button>
+                                            <Button size="sm" variant="ghost" onClick={() => setEditStamdata(null)}>Annullér</Button>
+                                        </div>
                                     </div>
-                                    <div className="flex gap-2">
-                                        {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
-                                        {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
+                                ) : (
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                        <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <p className="text-sm font-medium">{agreement.title}</p>
+                                                <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
+                                            </div>
+                                            <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
+                                            <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{agreement.code}</p>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => {
+                                                setEditStamdata(agreement.id)
+                                                setStamdataForm({
+                                                    title: agreement.title,
+                                                    parties: agreement.parties.join(", "),
+                                                    valid_from: agreement.valid_from ?? "",
+                                                    valid_to: agreement.valid_to ?? "",
+                                                    notes: agreement.notes ?? "",
+                                                    source_url: agreement.source_url ?? "",
+                                                    content_url: agreement.content_url ?? "",
+                                                })
+                                            }}>Redigér</Button>
+                                            {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
+                                            {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
+                                        </div>
                                     </div>
-                                </div>
+                                )}
                                 <div className="space-y-2">
                                     <details className="group rounded-md border bg-background" open>
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
@@ -1530,7 +1642,7 @@ function OverenskomsterTab() {
                                                 .slice()
                                                 .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
                                                 .map(rule => (
-                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs space-y-1">
                                                         {rule.amount !== null && rule.unit ? (
                                                             <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
                                                         ) : (
@@ -1540,7 +1652,26 @@ function OverenskomsterTab() {
                                                             {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
                                                             {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
                                                         </p>
-                                                        {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                        {editWageRule === rule.id ? (
+                                                            <div className="space-y-1.5 pt-1 border-t mt-1">
+                                                                <Input className="h-6 text-xs" placeholder="Kilde-titel" value={wageSourceForm.source_title} onChange={e => setWageSourceForm(f => ({ ...f, source_title: e.target.value }))} />
+                                                                <Input className="h-6 text-xs" placeholder="Kilde-URL" value={wageSourceForm.source_url} onChange={e => setWageSourceForm(f => ({ ...f, source_url: e.target.value }))} />
+                                                                <Input type="date" className="h-6 text-xs" placeholder="Kontrolleret dato" value={wageSourceForm.source_checked_at} onChange={e => setWageSourceForm(f => ({ ...f, source_checked_at: e.target.value }))} />
+                                                                <Input className="h-6 text-xs" placeholder="Note" value={wageSourceForm.source_note} onChange={e => setWageSourceForm(f => ({ ...f, source_note: e.target.value }))} />
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemWageSource(rule.id)}>Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditWageRule(null)}>✕</Button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-2">
+                                                                {rule.source_note && <span className="text-muted-foreground">{rule.source_note}</span>}
+                                                                <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
+                                                                    setEditWageRule(rule.id)
+                                                                    setWageSourceForm({ source_title: rule.source_title ?? "", source_url: rule.source_url ?? "", source_note: rule.source_note ?? "", source_checked_at: rule.source_checked_at ?? "" })
+                                                                }}>redigér kilde</button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))}
                                         </div>
@@ -1557,10 +1688,26 @@ function OverenskomsterTab() {
                                                 .slice()
                                                 .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
                                                 .map(rule => (
-                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
+                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs space-y-1">
                                                         <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
                                                         <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
-                                                        {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
+                                                        {editPensionRule === rule.id ? (
+                                                            <div className="space-y-1.5 pt-1 border-t mt-1">
+                                                                <Input className="h-6 text-xs" placeholder="Note til kilden" value={pensionSourceForm.source_note} onChange={e => setPensionSourceForm({ source_note: e.target.value })} />
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemPensionSource(rule.id)}>Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditPensionRule(null)}>✕</Button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-2">
+                                                                {rule.source_note && <span className="text-muted-foreground">{rule.source_note}</span>}
+                                                                <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
+                                                                    setEditPensionRule(rule.id)
+                                                                    setPensionSourceForm({ source_note: rule.source_note ?? "" })
+                                                                }}>redigér note</button>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))}
                                         </div>
