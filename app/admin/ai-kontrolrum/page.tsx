@@ -1308,6 +1308,25 @@ type WageRuleItem = {
     status: "draft" | "approved" | "archived"
 }
 
+type PercentageRuleItem = {
+    id: string
+    label: string
+    percent: number
+    basis: string
+    trigger_condition: string
+    category: string
+    profession_role: string | null
+    employment_form: string | null
+    section_reference: string | null
+    source_title: string | null
+    source_url: string | null
+    source_checked_at: string | null
+    source_note: string | null
+    valid_from: string
+    valid_to: string | null
+    status: "draft" | "approved" | "archived"
+}
+
 type AgreementRegistryItem = {
     id: string
     code: string
@@ -1324,6 +1343,7 @@ type AgreementRegistryItem = {
     notes: string | null
     agreement_pension_rules: PensionRuleItem[]
     agreement_wage_rules: WageRuleItem[]
+    agreement_percentage_rules: PercentageRuleItem[]
 }
 
 type PensionPreviewItem = {
@@ -1400,12 +1420,14 @@ function OverenskomsterTab() {
     const [newWageForm, setNewWageForm] = useState<WageRuleForm & { rate_key: string }>(Object.assign(emptyWageForm(), { rate_key: "" }))
     const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
+    const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
+    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "" })
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
     type SatsKandidat = {
         _id: string
-        type: "wage" | "pension"
+        type: "wage" | "pension" | "percentage"
         checked: boolean
         // løn
         profession_role: string
@@ -1420,6 +1442,11 @@ function OverenskomsterTab() {
         employee_percent: string
         basis: string
         scheme_kind: string
+        // procent
+        label: string
+        percent: string
+        trigger_condition: string
+        category: string
         // fælles
         valid_from: string
         section_reference: string
@@ -1503,7 +1530,7 @@ function OverenskomsterTab() {
             const kildelink = (body.kildeUrl as string) || (data.kildeUrl ?? "")
             const mapped: SatsKandidat[] = (data.kandidater ?? []).map((k: Record<string, unknown>, i: number) => ({
                 _id: `k-${i}`,
-                type: k.type ?? "wage",
+                type: (["wage","pension","percentage"].includes(k.type as string) ? k.type : "wage") as "wage"|"pension"|"percentage",
                 checked: k.confidence === "høj",
                 profession_role: String(k.profession_role ?? ""),
                 wage_group: String(k.wage_group ?? ""),
@@ -1516,6 +1543,10 @@ function OverenskomsterTab() {
                 employee_percent: k.employee_percent != null ? String(k.employee_percent) : "0",
                 basis: String(k.basis ?? "normalløn"),
                 scheme_kind: String(k.scheme_kind ?? "occupational_pension"),
+                label: String(k.label ?? ""),
+                percent: k.percent != null ? String(k.percent) : "",
+                trigger_condition: String(k.trigger_condition ?? ""),
+                category: String(k.category ?? "andet"),
                 valid_from: String(k.valid_from ?? ""),
                 section_reference: String(k.section_reference ?? ""),
                 citation: String(k.citation ?? ""),
@@ -1538,6 +1569,7 @@ function OverenskomsterTab() {
         const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
         for (const k of valgte) {
             try {
+                const today = new Date().toISOString().slice(0, 10)
                 const body = k.type === "wage"
                     ? {
                         wageRule: {
@@ -1550,7 +1582,7 @@ function OverenskomsterTab() {
                             amount: k.amount !== "" ? Number(k.amount) : null,
                             unit: k.unit || null,
                             pension_included: k.pension_included,
-                            valid_from: k.valid_from || new Date().toISOString().slice(0, 10),
+                            valid_from: k.valid_from || today,
                             source_title: k.source_title,
                             source_url: k.source_url,
                             source_section: k.section_reference,
@@ -1558,7 +1590,8 @@ function OverenskomsterTab() {
                             source_note: k.citation || null,
                         },
                     }
-                    : {
+                    : k.type === "pension"
+                    ? {
                         pensionRule: {
                             agreementId,
                             employment_form: k.employment_form,
@@ -1566,9 +1599,27 @@ function OverenskomsterTab() {
                             employee_percent: Number(k.employee_percent),
                             basis: k.basis,
                             scheme_kind: k.scheme_kind,
-                            valid_from: k.valid_from || new Date().toISOString().slice(0, 10),
+                            valid_from: k.valid_from || today,
                             section_reference: k.section_reference,
                             source_note: k.citation || null,
+                        },
+                    }
+                    : {
+                        percentageRule: {
+                            agreementId,
+                            rate_key: `${slugify(k.label || "regel")}-${k.valid_from || "ukendt"}`,
+                            label: k.label,
+                            percent: Number(k.percent),
+                            basis: k.basis,
+                            trigger_condition: k.trigger_condition,
+                            category: k.category,
+                            employment_form: k.employment_form || null,
+                            section_reference: k.section_reference || null,
+                            source_title: k.source_title || null,
+                            source_url: k.source_url || null,
+                            source_checked_at: k.source_checked_at || null,
+                            source_note: k.citation || null,
+                            valid_from: k.valid_from || today,
                         },
                     }
                 const res = await fetch("/api/admin/agreements", {
@@ -2314,6 +2365,35 @@ function OverenskomsterTab() {
                                                         </div>
                                                     )}
 
+                                                    {/* Procentkandidater */}
+                                                    {satserKandidater.filter(k => k.type === "percentage").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Procentsatser og tillæg ({satserKandidater.filter(k => k.type === "percentage").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "percentage").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                <Badge variant="outline" className="text-[9px] px-1.5 py-0">{k.category}</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Procent</Label><Input type="number" step="0.01" className="h-5 text-[10px]" value={k.percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                            {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
                                                     {satserKandidater.length === 0 && (
                                                         <p className="text-xs text-muted-foreground py-4 text-center">AI fandt ingen satser i dokumentet.</p>
                                                     )}
@@ -2475,6 +2555,105 @@ function OverenskomsterTab() {
                                             <DialogFooter>
                                                 <Button variant="outline" size="sm" onClick={() => setNewPensionAgreementId(null)}>Annuller</Button>
                                                 <Button size="sm" disabled={ruleSaving} onClick={opretPensionRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Procentsatser og tillæg ── */}
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Procentsatser og tillæg</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {(agreement.agreement_percentage_rules ?? []).length === 0 && <p className="text-xs text-muted-foreground">Ingen procentsatser registreret endnu.</p>}
+                                            {(agreement.agreement_percentage_rules ?? [])
+                                                .slice()
+                                                .sort((a, b) => a.category.localeCompare(b.category) || a.label.localeCompare(b.label))
+                                                .map(rule => (
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-0.5 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                <p className="font-medium">{rule.label}: {Number(rule.percent).toLocaleString("da-DK")}%</p>
+                                                                <p className="text-muted-foreground">Af {rule.basis} · {rule.trigger_condition}</p>
+                                                                <p className="text-muted-foreground">{rule.section_reference && `${rule.section_reference} · `}fra {rule.valid_from}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
+                                                            </div>
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && (
+                                                                    <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={async () => {
+                                                                        setRuleSaving(true)
+                                                                        await fetch("/api/admin/agreements", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ percentageRuleId: rule.id, status: "approved" }) })
+                                                                        setRuleSaving(false)
+                                                                        refreshAktive()
+                                                                    }}>godkend</button>
+                                                                )}
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={async () => {
+                                                                    setRuleSaving(true)
+                                                                    await fetch("/api/admin/agreements", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ percentageRuleId: rule.id }) })
+                                                                    setRuleSaving(false)
+                                                                    refreshAktive()
+                                                                }}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => setNewPctAgreementId(agreement.id)}>
+                                                <Plus className="h-3.5 w-3.5" />Tilføj procentregel
+                                            </Button>
+                                        </div>
+                                    </details>
+
+                                    {/* ── Dialog: ny procentregel ── */}
+                                    <Dialog open={newPctAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewPctAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny procentregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Procent *</Label><Input type="number" step="0.01" className="h-7 text-xs" placeholder="25" value={newPctForm.percent} onChange={e => setNewPctForm(f => ({ ...f, percent: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Kategori *</Label>
+                                                        <Select value={newPctForm.category} onValueChange={v => setNewPctForm(f => ({ ...f, category: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="overarbejde">Overarbejde</SelectItem>
+                                                                <SelectItem value="weekend-helligdag">Weekend/helligdag</SelectItem>
+                                                                <SelectItem value="royalty">Royalty</SelectItem>
+                                                                <SelectItem value="fond">Fond</SelectItem>
+                                                                <SelectItem value="kort-engagement">Kort engagement</SelectItem>
+                                                                <SelectItem value="lønregulering">Lønregulering</SelectItem>
+                                                                <SelectItem value="erstatning">Erstatning</SelectItem>
+                                                                <SelectItem value="andet">Andet</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Beregningsgrundlag *</Label><Input className="h-7 text-xs" placeholder="fx normaltimeløn, ferieberettiget løn" value={newPctForm.basis} onChange={e => setNewPctForm(f => ({ ...f, basis: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Hvornår gælder den *</Label><Input className="h-7 text-xs" placeholder="fx varslet overarbejde, 1. time" value={newPctForm.trigger_condition} onChange={e => setNewPctForm(f => ({ ...f, trigger_condition: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newPctForm.valid_from} onChange={e => setNewPctForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Paragraf</Label><Input className="h-7 text-xs" placeholder="§ 4, stk. 2" value={newPctForm.section_reference} onChange={e => setNewPctForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-7 text-xs" value={newPctForm.source_title} onChange={e => setNewPctForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                            </div>
+                                            <DialogFooter className="pt-2 gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setNewPctAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={async () => {
+                                                    if (!newPctForm.label || !newPctForm.percent || !newPctForm.basis || !newPctForm.trigger_condition || !newPctForm.valid_from) {
+                                                        toast.error("Udfyld alle obligatoriske felter"); return
+                                                    }
+                                                    setRuleSaving(true)
+                                                    const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
+                                                    const res = await fetch("/api/admin/agreements", {
+                                                        method: "POST",
+                                                        headers: { "Content-Type": "application/json" },
+                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent) } }),
+                                                    })
+                                                    setRuleSaving(false)
+                                                    if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }
+                                                    else { toast.error((await res.json()).error ?? "Fejl") }
+                                                }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
                                             </DialogFooter>
                                         </DialogContent>
                                     </Dialog>

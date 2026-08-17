@@ -112,10 +112,11 @@ export async function POST(req: NextRequest) {
             model: runtime.model,
             maxTokens: 8000,
             responseJson: true,
-            system: `Du er ekspert i danske overenskomster. Udtræk ALLE satser fra det givne dokument.
+            system: `Du er ekspert i danske overenskomster. Udtræk ALLE satser fra det givne dokument — tre typer:
 
-For lønsatser: Identificér hver distinkt funktion/løngruppe med beløb.
-For pensionssatser: Identificér procentsatser og beregningsgrundlag.
+**type: "wage"** — faste beløb pr. tidsenhed (løngrupper, minimalløn, normalløn)
+**type: "pension"** — pensionsbidragsprocenter med beregningsgrundlag
+**type: "percentage"** — ALLE andre procentbaserede bestemmelser: overarbejdstillæg, weekend/helligdagstillæg, royalty, fondsbidrag, enkeltdagstillæg, ferietillæg, erstatningsprocenter, lønregulering osv. Denne type dækker ENHVER betinget procentsats i dokumentet — ikke kun royalty.
 
 Returner KUN valid JSON — ingen markdown:
 {
@@ -145,16 +146,52 @@ Returner KUN valid JSON — ingen markdown:
       "section_reference": "§ 3, stk. 4",
       "citation": "Pension: 9,5 % af normallønnen",
       "confidence": "høj"
+    },
+    {
+      "type": "percentage",
+      "label": "Tillæg for enkeltdagsengagement under en uge",
+      "percent": 10,
+      "basis": "omregnet ugeløn",
+      "trigger_condition": "enkeltdagsengagementer under en uges varighed",
+      "category": "kort-engagement",
+      "employment_form": "a-løn",
+      "valid_from": "2022-02-07",
+      "section_reference": "§ 3, stk. 10",
+      "citation": "betales dags-/timeløn... med et tillæg på 10%",
+      "confidence": "høj"
+    },
+    {
+      "type": "percentage",
+      "label": "Overarbejdstillæg, 1. time (varslet)",
+      "percent": 25,
+      "basis": "normaltimeløn",
+      "trigger_condition": "varslet overarbejde, 1. time",
+      "category": "overarbejde",
+      "employment_form": "a-løn",
+      "valid_from": "2022-02-07",
+      "section_reference": "§ 4, stk. 2",
+      "citation": "1. time overarbejde: 25% tillæg",
+      "confidence": "høj"
     }
   ]
 }
 
-Regler:
+Regler for type "wage":
 - employment_form: KUN "a-løn" eller "lønmodtager-freelance"
 - rate_kind: KUN "normalløn", "minimum", "source_requires_review" eller "individual_or_classified"
 - unit: KUN "time", "dag", "uge" eller "måned"
-- basis (pension): KUN "normalløn", "minimumsløn", "grundløn", "alle-løndele" eller "honorar"
-- scheme_kind (pension): KUN "occupational_pension" eller "pension_savings"
+
+Regler for type "pension":
+- basis: KUN "normalløn", "minimumsløn", "grundløn", "alle-løndele" eller "honorar"
+- scheme_kind: KUN "occupational_pension" eller "pension_savings"
+
+Regler for type "percentage":
+- category: KUN én af: "overarbejde", "weekend-helligdag", "royalty", "fond", "kort-engagement", "lønregulering", "erstatning", "andet"
+- label: kort præcis beskrivelse (maks 80 tegn)
+- basis: fritekst — hvad procenten beregnes af
+- trigger_condition: fritekst — hvornår bestemmelsen gælder
+
+Fælles regler:
 - valid_from: ISO dato (YYYY-MM-DD) fra dokumentets ikrafttrædelsesdato — null hvis ikke angivet
 - confidence: "høj" hvis sats er eksplicit og tydelig, "lav" hvis den er uklar eller implicit
 - citation: kort tekstuddrag (maks 80 tegn) fra dokumentet som begrundelse

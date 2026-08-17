@@ -88,6 +88,42 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ ok: true, id: data.id })
         }
 
+        // Opret ny procentregel
+        if (body.percentageRule) {
+            const r = body.percentageRule as Record<string, unknown>
+            if (!r.agreementId || !r.rate_key || !r.label || r.percent == null || !r.basis || !r.trigger_condition || !r.category || !r.valid_from) {
+                return NextResponse.json({ error: "agreementId, rate_key, label, percent, basis, trigger_condition, category og valid_from er påkrævet" }, { status: 400 })
+            }
+            const { data, error } = await supabase
+                .from("agreement_percentage_rules")
+                .insert({
+                    agreement_id: r.agreementId,
+                    rate_key: r.rate_key,
+                    label: r.label,
+                    percent: Number(r.percent),
+                    basis: r.basis,
+                    trigger_condition: r.trigger_condition,
+                    category: r.category,
+                    profession_role: r.profession_role ?? null,
+                    employment_form: r.employment_form ?? null,
+                    section_reference: r.section_reference ?? null,
+                    source_title: r.source_title ?? null,
+                    source_url: r.source_url ?? null,
+                    source_checked_at: r.source_checked_at ?? null,
+                    source_note: r.source_note ?? null,
+                    valid_from: r.valid_from,
+                    valid_to: r.valid_to ?? null,
+                    status: "draft",
+                })
+                .select("id")
+                .single()
+            if (error) {
+                if (error.code === "23505") return NextResponse.json({ error: "En procentregel med dette rate_key og valid_from findes allerede" }, { status: 409 })
+                return NextResponse.json({ error: error.message }, { status: 500 })
+            }
+            return NextResponse.json({ ok: true, id: data.id })
+        }
+
         // Opret nyt overenskomst-registerkort
         const { code, title, parties, valid_from } = body as {
             code?: string; title?: string; parties?: string[]; valid_from?: string
@@ -193,7 +229,30 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ ok: true })
         }
 
-        return NextResponse.json({ error: "agreementId, wageRuleId eller pensionRuleId er påkrævet" }, { status: 400 })
+        if (body.percentageRuleId) {
+            const allowed = [
+                "label", "percent", "basis", "trigger_condition", "category",
+                "profession_role", "employment_form", "section_reference",
+                "source_title", "source_url", "source_checked_at", "source_note",
+                "valid_from", "valid_to", "status",
+            ]
+            const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+            for (const key of allowed) {
+                if (key in body) patch[key] = body[key] === "" ? null : body[key]
+            }
+            if (patch.status === "approved") {
+                patch.approved_by = auth.userId
+                patch.approved_at = new Date().toISOString()
+            } else if (patch.status === "draft" || patch.status === "archived") {
+                patch.approved_by = null
+                patch.approved_at = null
+            }
+            const { error } = await supabase.from("agreement_percentage_rules").update(patch).eq("id", body.percentageRuleId)
+            if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            return NextResponse.json({ ok: true })
+        }
+
+        return NextResponse.json({ error: "agreementId, wageRuleId, pensionRuleId eller percentageRuleId er påkrævet" }, { status: 400 })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
@@ -247,7 +306,26 @@ export async function DELETE(req: NextRequest) {
             return NextResponse.json({ ok: true })
         }
 
-        return NextResponse.json({ error: "wageRuleId eller pensionRuleId er påkrævet" }, { status: 400 })
+        if (body.percentageRuleId) {
+            const { data: rule } = await supabase
+                .from("agreement_percentage_rules")
+                .select("id,status")
+                .eq("id", body.percentageRuleId)
+                .maybeSingle()
+            if (!rule) return NextResponse.json({ error: "Reglen blev ikke fundet" }, { status: 404 })
+            if (rule.status === "draft" || rule.status === "archived") {
+                const { error } = await supabase.from("agreement_percentage_rules").delete().eq("id", body.percentageRuleId)
+                if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            } else {
+                const { error } = await supabase.from("agreement_percentage_rules")
+                    .update({ status: "archived", updated_at: new Date().toISOString() })
+                    .eq("id", body.percentageRuleId)
+                if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+            }
+            return NextResponse.json({ ok: true })
+        }
+
+        return NextResponse.json({ error: "wageRuleId, pensionRuleId eller percentageRuleId er påkrævet" }, { status: 400 })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }

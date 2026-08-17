@@ -101,18 +101,25 @@ export async function getAgreementSatserForContext(
 ): Promise<Array<{ beskrivelse: string; vaerdi: number; enhed: string }>> {
   const db = createServiceClient();
 
-  const [wageRules, { data: pensionRows }] = await Promise.all([
+  const [wageRules, { data: pensionRows }, { data: pctRows }] = await Promise.all([
     getApprovedAgreementWageRules(agreementCode),
     db
       .from("agreement_pension_rules")
       .select("employer_percent,employee_percent,basis,employment_form,agreements!inner(code)")
       .eq("status", "approved")
       .eq("agreements.code", agreementCode),
+    db
+      .from("agreement_percentage_rules")
+      .select("label,percent,basis,trigger_condition,category,section_reference,agreements!inner(code)")
+      .eq("status", "approved")
+      .eq("agreements.code", agreementCode)
+      .order("category")
+      .order("label"),
   ]);
 
   const satser = wageRulesToSatser(wageRules);
 
-  // Tilføj pensionssatser (én pr. ansættelsesform — brug første godkendte match)
+  // Pensionssatser
   const seen = new Set<string>();
   for (const row of pensionRows ?? []) {
     const key = `${row.employment_form}-${row.basis}`;
@@ -122,6 +129,15 @@ export async function getAgreementSatserForContext(
     if (Number(row.employee_percent) > 0) {
       satser.push({ beskrivelse: "pension (medarbejder)", vaerdi: Number(row.employee_percent), enhed: "%" });
     }
+  }
+
+  // Procentbaserede tillæg og bidrag
+  for (const row of pctRows ?? []) {
+    satser.push({
+      beskrivelse: `${row.label}${row.section_reference ? ` (${row.section_reference})` : ""} — gælder ved: ${row.trigger_condition}`,
+      vaerdi: Number(row.percent),
+      enhed: `% af ${row.basis}`,
+    });
   }
 
   return satser;
