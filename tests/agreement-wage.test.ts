@@ -110,7 +110,7 @@ test("wageRulesToSatser: konverterer godkendte regler til tekstformat", () => {
   ];
   const satser = wageRulesToSatser(rules);
   assert.equal(satser.length, 2); // draft-reglen filtreres fra
-  assert.equal(satser[0].beskrivelse, "normalløn");
+  assert.equal(satser[0].beskrivelse, "normalløn: Klipper (Løngruppe 2)");
   assert.equal(satser[0].vaerdi, 21500);
   assert.equal(satser[0].enhed, "DKK/uge");
 });
