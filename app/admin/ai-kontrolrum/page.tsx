@@ -1163,16 +1163,6 @@ const BILAG_TYPER = [
 ]
 
 
-const KATEGORIER = [
-    { id: "helligdagsbetaling", label: "Helligdagsbetaling" },
-    { id: "beta-fond", label: "BETA-fond" },
-    { id: "copydan-forbehold", label: "Copydan-forbehold" },
-    { id: "streaming-forbehold", label: "Streaming-forbehold" },
-    { id: "royalty", label: "Royalty" },
-    { id: "pension", label: "Pension" },
-    { id: "opsigelse", label: "Opsigelse" },
-    { id: "andet", label: "Andet" },
-]
 
 type Sektion = {
     titel: string
@@ -1271,6 +1261,7 @@ function OverenskomsterTab() {
     const [versioner, setVersioner] = useState<Record<string, OkVersion[]>>({})
     const [agreementRegistry, setAgreementRegistry] = useState<AgreementRegistryItem[]>([])
     const [registryError, setRegistryError] = useState<string | null>(null)
+    const [kategorier, setKategorier] = useState<string[]>([])
     const [pensionPreview, setPensionPreview] = useState<PensionPreviewItem[] | null>(null)
     const [pensionPreviewLoading, setPensionPreviewLoading] = useState(false)
 
@@ -1305,6 +1296,7 @@ function OverenskomsterTab() {
                 setVersioner(d.versioner ?? {})
                 setAgreementRegistry(d.agreementRegistry ?? [])
                 setRegistryError(d.registryError ?? null)
+                setKategorier(d.kategorier ?? [])
             })
             .catch(() => {})
     }
@@ -1937,12 +1929,15 @@ function OverenskomsterTab() {
                                                     <p className="text-xs text-muted-foreground line-clamp-2">{s.tekst}</p>
                                                     <div className="flex items-center gap-2">
                                                         <Label className="text-xs shrink-0">Kategori:</Label>
-                                                        <Select value={s.kategori} onValueChange={v => opdaterSektion(item.id, i, { kategori: v })}>
-                                                            <SelectTrigger className="h-6 text-xs flex-1"><SelectValue /></SelectTrigger>
-                                                            <SelectContent>
-                                                                {KATEGORIER.map(k => <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>)}
-                                                            </SelectContent>
-                                                        </Select>
+                                                        <Input
+                                                            list="ok-kategorier-list"
+                                                            className="h-6 text-xs flex-1"
+                                                            value={s.kategori}
+                                                            onChange={e => opdaterSektion(item.id, i, { kategori: e.target.value })}
+                                                        />
+                                                        <datalist id="ok-kategorier-list">
+                                                            {kategorier.map(k => <option key={k} value={k} />)}
+                                                        </datalist>
                                                     </div>
                                                 </div>
                                             ))}

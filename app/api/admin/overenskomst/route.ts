@@ -42,39 +42,52 @@ export async function POST(req: NextRequest) {
         const apiKey = process.env.ANTHROPIC_API_KEY
         if (!apiKey) return NextResponse.json({ error: "ANTHROPIC_API_KEY mangler" }, { status: 500 })
 
+        // Hent eksisterende kategorinavne fra DB — bruges som vejledning til AI'en
+        const supabaseForKategorier = sb()
+        let tidligereKategorier: string[] = []
+        try {
+            const { data: katRows } = await supabaseForKategorier
+                .from("knowledge_chunks")
+                .select("kategori")
+                .not("kategori", "is", null)
+                .neq("kategori", "fuldt-dokument")
+            tidligereKategorier = [...new Set((katRows ?? []).map(r => r.kategori as string))].sort()
+        } catch { /* ingen kategorier tilgængelige */ }
+
+        const kategorikontekst = tidligereKategorier.length > 0
+            ? `\n\nAllerede brugte kategorinavne på tværs af indekserede overenskomster: ${tidligereKategorier.map(k => `"${k}"`).join(", ")}. Brug et af disse navne hvis afsnittet reelt svarer til en allerede brugt kategori; ellers foreslå et nyt præcist dansk navn.`
+            : ""
+
         const response = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
             body: JSON.stringify({
                 model: "claude-opus-4-5",
                 max_tokens: 4000,
-                system: `Du er ekspert i danske filmoverenskomster.
-Analyser det uploadede dokument og find disse specifikke sektioner:
-- Helligdagsbetaling (sats i % eller kr)
-- BETA-fond (bidragssats)
-- Copydan-forbehold (tekst om rettigheder)
-- Streaming-forbehold / SVOD (tekst om streamingrettigheder og Create Denmark)
-- Royalty (sats og beregningsgrundlag)
-- Pension (bidragssats)
-- Opsigelse (varsler for begge parter)
+                system: `Du er ekspert i danske overenskomster (film, TV, medie og lignende brancher).
 
-For hver sektion: udtræk den præcise tekst fra dokumentet og angiv din tillid (høj/lav).
-Høj tillid: sektionen er eksplicit og tydelig. Lav tillid: sektionen er uklar, mangler eller er implicit.
+Analyser det uploadede dokument og identificer de reelt betydningsfulde, indholdsmæssigt afgrænsede afsnit. Du bestemmer selv hvilke afsnit der er relevante — begræns dig ikke til en fast liste. Fokuser på afsnit med konkrete rettigheder, pligter, satser eller frister. Udelad rent administrative afsnit som "ikrafttræden", "underskrifter" og lignende, medmindre de indeholder noget indholdsmæssigt væsentligt.
+
+Typiske typer af indhold der ofte er relevante: løn/honorar, pension, arbejdstid/overarbejde, ferie/orlov/barsel, ophavsrettigheder/rettigheder, opsigelse/varsler, fonde og bidragspuljer, tvistløsning — men dokumentet kan indeholde andet, og du skal finde hvad der faktisk er der.
+
+For hvert afsnit:
+- Udtræk den præcise tekst fra dokumentet
+- Giv afsnittet en kort, præcis dansk kategori-betegnelse der beskriver hvad det handler om (fx "pension", "barsel", "arbejdstid", "ophavsret", "opsigelse")
+- Angiv din tillid: høj hvis afsnittet er eksplicit og tydelig, lav hvis uklart eller implicit
+- Angiv eventuelt en sats hvis der er en konkret procentsats eller beløb${kategorikontekst}
 
 Returner KUN valid JSON uden markdown:
 {
   "sektioner": [
     {
-      "titel": "Helligdagsbetaling",
+      "titel": "Afsnittets overskrift fra dokumentet",
       "tekst": "præcis tekst fra dokumentet",
-      "kategori": "helligdagsbetaling",
+      "kategori": "pension",
       "tillid": "høj",
-      "sats": "1%"
+      "sats": "9 %"
     }
   ]
-}
-
-Kategorier: helligdagsbetaling, beta-fond, copydan-forbehold, streaming-forbehold, royalty, pension, opsigelse, andet`,
+}`,
                 messages: [{
                     role: "user",
                     content: [
@@ -82,7 +95,7 @@ Kategorier: helligdagsbetaling, beta-fond, copydan-forbehold, streaming-forbehol
                             type: "document",
                             source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
                         },
-                        { type: "text", text: `Analysér denne ${overenskomst}-overenskomst gyldig fra ${gyldigFra} og find alle relevante sektioner.` },
+                        { type: "text", text: `Analysér denne overenskomst (${overenskomst}, gyldig fra ${gyldigFra}) og identificer alle indholdsmæssigt relevante afsnit.` },
                     ],
                 }],
             }),
@@ -372,5 +385,12 @@ export async function GET() {
         }
     }
 
-    return NextResponse.json({ versioner, agreementRegistry: registryError ? [] : agreementRegistry ?? [], registryError: registryError?.message ?? null })
+    // Saml alle unikke kategorinavne (til autocomplete i UI)
+    const alleKategorier = [...new Set(
+        (chunks ?? [])
+            .map(c => c.kategori)
+            .filter((k): k is string => !!k && k !== "fuldt-dokument" && !BILAG_KATEGORIER.includes(k))
+    )].sort()
+
+    return NextResponse.json({ versioner, agreementRegistry: registryError ? [] : agreementRegistry ?? [], registryError: registryError?.message ?? null, kategorier: alleKategorier })
 }
