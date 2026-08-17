@@ -58,9 +58,9 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             model: config.model,
             maxTokens: 256,
             system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
-{"overenskomst": "<de4|faf|faf-dok|ingen|ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
+{"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
 
-overenskomst: "de4" hvis De4/Fiktionsoverenskomsten nævnes. "faf" hvis FAF-spillefilm. "faf-dok" hvis FAF-dokumentar. "ingen" hvis ingen overenskomst. "ukendt" hvis uklart.
+overenskomst: Returner overenskomstens nøjagtige id som det hedder i videnbasen. Kendte id'er: "de4-fiktion" (De4/Fiktionsoverenskomsten), "faf" (FAF spillefilm), "faf-dokumentar" (FAF dokumentar). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis det er uklart. Hvis du ser en ANDEN overenskomst navngivet i kontrakten, returner dens navn med bindestreg i stedet for mellemrum (fx "de5-fiktion").
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,

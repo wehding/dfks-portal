@@ -66,7 +66,7 @@ Returner KUN JSON — ingen forklaringstekst.
 
   "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
   "copydan": "true ved Copydan, aftalelicens, privatkopiering, kollektivt forvaltningsselskab, §§ 13, 13a, 17, 30a, 35, 39-46a, 50 stk. 2 eller lignende vederlagsforbehold. (boolean)",
-  "royalty": "true hvis kontrakten eksplicit aftaler individuel royaltybetaling i procent eller kr. til medarbejderen personligt, ELLER hvis kontrakten inkorporerer en overenskomst (fx De4-fiktion) der indeholder royalty-bestemmelser. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
+  "royalty": "true hvis kontrakten eksplicit aftaler individuel royaltybetaling til medarbejderen, ELLER hvis kontrakten inkorporerer en overenskomst der indeholder royalty-bestemmelser — herunder formuleringer som 'afregner royalties til [overenskomst] jf. overenskomst' eller 'leverandøren vil være berettiget til en andel af disse royalties efter nærmere aftale'. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
   "royaltyPercent": "royaltyprocent som tal (number | null). Udled satsen fra overenskomstkonteksten hvis kontrakten refererer til gældende overenskomst og ikke angiver en eksplicit sats — fx 1,0% for De4-fiktion (spillefilm), 1,5% for FAF-dokumentar.",
   "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
   "futureRightsReservation": "har kontrakten forbehold for fremtidige udnyttelsesformer/data/AI-rettigheder der ikke er erhvervet af producenten? (boolean)",

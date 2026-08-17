@@ -360,16 +360,11 @@ function AdminValideringPageInner() {
             setBrugerRedigerede(new Set(redigerede))
             const ed = validation?.extracted_data as any
             if (!ed) return
-            // SVOD: kun true hvis AI eksplicit fandt SVOD — aldrig automatisk fra overenskomst alene
+            // SVOD: kun true hvis AI eksplicit fandt — aldrig automatisk
             const impliedBySvod    = !!ed.svod
-            // Copydan: inkluderet i De4-fiktion og FAF-overenskomsterne
-            const impliedByCopydan = ["de4-fiktion", "faf", "faf-dokumentar"].includes(ed.overenskomst ?? "") || !!ed.copydan
-            // Royalty: spillefilm + dokumentar har royalty via De4 — tv-serier ALDRIG automatisk
-            const isTvSeries = ["tvSeries", "docSeries"].includes(ed.productionType ?? "")
-            const isFilmOrDoc = ["feature", "documentary", "short"].includes(ed.productionType ?? "")
-            const impliedByRoyalty = isTvSeries
-                ? false
-                : (isFilmOrDoc && ["de4-fiktion", "faf", "faf-dokumentar"].includes(ed.overenskomst ?? "")) || !!ed.royalty
+            // Copydan og royalty: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
+            const impliedByCopydan = !!ed.copydan
+            const impliedByRoyalty = !!ed.royalty
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -630,10 +625,9 @@ function AdminValideringPageInner() {
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
             prolongationNote:              ed.prolongationNote ?? "",
-            // SVOD: kun fra AI — aldrig automatisk fra overenskomst (kun gyldig ved direkte streaming-produktion)
+            // SVOD og Copydan: kun fra AI-udtræk — ingen hardcoded overenskomst-lister
             svod:                          !!ed.svod,
-            // Copydan: inkluderet i De4 og FAF uanset distributionskanal
-            copydan:                       ["de4-fiktion", "faf", "faf-dokumentar"].includes(overenskomst) || !!ed.copydan,
+            copydan:                       !!ed.copydan,
             royalty:                       !!ed.royalty,
             royaltyPercent:                ed.royaltyPercent ?? "",
             aiDataMiningClause:            !!ed.aiDataMiningClause,
