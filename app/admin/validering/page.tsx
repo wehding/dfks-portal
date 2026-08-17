@@ -875,13 +875,14 @@ setActiveField(fieldId)
         const rightsPageSource: Record<string, string> = {
             svod:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
             copydan: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
-            royalty: ["royalt", royaltySrc].filter(Boolean).join("||"),
+            // Royalty: har kontrakten en dedikeret royalty-klausul bruges den, ellers overenskomst-referencen
+            royalty: royaltyMeta.anker ? ["royalt", royaltySrc].filter(Boolean).join("||") : [royaltySrc].filter(Boolean).join("||"),
             agreement: [ca, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
         const rightsHighlightSource: Record<string, string> = {
             svod:    ["SVOD", "Create Denmark", "streaming", "SVOD platforme", svodSrc].filter(Boolean).join("||"),
             copydan: ["Copydan", "privatkopiering", "Copy-dan", "vederlagsret", "§§ 13", "§§ 35", "Ophavsretslovens §", copydanSrc].filter(Boolean).join("||"),
-            royalty: ["royalt", royaltySrc ? royaltySrc.slice(0, 30) : null].filter(Boolean).join("||"),
+            royalty: royaltyMeta.anker ? ["royalt", royaltySrc ? royaltySrc.slice(0, 30) : null].filter(Boolean).join("||") : [royaltySrc].filter(Boolean).join("||"),
             agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
         const resolvedActiveHighlight = activeField
