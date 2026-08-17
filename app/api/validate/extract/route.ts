@@ -53,17 +53,17 @@ export async function POST(req: NextRequest) {
         let storagePath = auth.internal ? pdfPath : null
         let orgId: string | null = null
         if (contractId) {
-            let contractQuery = admin.from("contracts").select("pdf_url,org_id").eq("id", contractId)
+            let contractQuery = admin.from("contracts").select("pdf_url,processed_pdf_url,org_id").eq("id", contractId)
             if (!auth.internal) contractQuery = contractQuery.eq("org_id", auth.orgId)
             const { data: contract } = await contractQuery.maybeSingle()
             if (!contract) return NextResponse.json({ error: "Kontrakten blev ikke fundet i den aktive organisation" }, { status: 404 })
-            storagePath = contract?.pdf_url
+            storagePath = contract?.processed_pdf_url ?? contract?.pdf_url
             orgId = contract?.org_id ?? null
         }
         if (!storagePath) return NextResponse.json({ error: "Ingen PDF-sti fundet" }, { status: 404 })
 
         const { data: fileData, error: dlErr } = await admin.storage.from("kontrakter").download(storagePath)
-        if (dlErr || !fileData) return NextResponse.json({ error: `Kunne ikke hente PDF: ${dlErr?.message}` }, { status: 500 })
+        if (dlErr || !fileData) return NextResponse.json({ error: "Kontraktdokumentet kunne ikke hentes" }, { status: 500 })
         const buffer = Buffer.from(await fileData.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
@@ -84,6 +84,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })
     } catch (err: unknown) {
         console.error("[validate/extract]", err)
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: "Kontrakten kunne ikke analyseres" }, { status: 500 })
     }
 }

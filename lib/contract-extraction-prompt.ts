@@ -42,6 +42,8 @@ Returner KUN JSON — ingen forklaringstekst.
   "startDate": "ansættelsens startdato ISO 8601 (string | null)",
   "endDate": "ansættelsens slutdato ISO 8601 (string | null)",
   "productionType": "én af: feature, tvSeries, documentary, docSeries, short, tvEntertainment, reality, other. Hvis kontrakten nævner afsnit/episode/sæson → tvSeries eller docSeries.",
+  "seasonNumber": "sæsonnummer som positivt heltal, kun hvis det fremgår af kontrakten eller værktitlen; ellers null",
+  "episodeNumbers": "sorteret liste af afsnitsnumre, kun når konkrete afsnit udtrykkeligt nævnes; ellers null. Listen er kun et AI-forslag og er ikke medlemsbekræftelse.",
   "workingDays": "antal arbejdsdage/klippedage som tal. Hvis kun uger fremgår, brug uger * 5. Hvis uklart, null. (number | null)",
   "workingWeeks": "antal arbejdsuger som tal. Dage divideres med 5, måneder multipliceres med 4,33. (number | null)",
   "prolongationWeeks": "antal optionsuger/prolongationsuger som tal, hvis det fremgår eksplicit (number | null). Eksempel: 'op til 2 ugers prolongation' → 2.",

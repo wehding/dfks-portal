@@ -39,7 +39,10 @@ export async function GET() {
 
     // Hent alle auth-brugere
     const { data: authData, error: authErr } = await admin.auth.admin.listUsers({ perPage: 1000 })
-    if (authErr) return NextResponse.json({ error: authErr.message }, { status: 500 })
+    if (authErr) {
+        console.error("[admin-users] auth list failed", authErr.status)
+        return NextResponse.json({ error: "Brugerne kunne ikke hentes." }, { status: 500 })
+    }
 
     const authMap = new Map(authData.users.map(u => [u.id, u]))
 
@@ -112,13 +115,14 @@ export async function GET() {
             admin.from("rettighedshavere").select("id, user_id").in("user_id", userIds),
         ])
         if (allUserRoleError || allUserHolderError) {
-            return NextResponse.json({ error: allUserRoleError?.message ?? allUserHolderError?.message }, { status: 500 })
+            console.error("[admin-users] cross-org membership lookup failed", allUserRoleError?.code ?? allUserHolderError?.code)
+            return NextResponse.json({ error: "Organisationstilknytningerne kunne ikke hentes." }, { status: 500 })
         }
         const holderIds = (allUserHolders ?? []).map(holder => holder.id)
         const { data: allHolderAffiliations, error: allHolderAffiliationError } = holderIds.length
             ? await admin.from("org_affiliations").select("rights_holder_id, org_id").in("rights_holder_id", holderIds)
             : { data: [], error: null }
-        if (allHolderAffiliationError) return NextResponse.json({ error: allHolderAffiliationError.message }, { status: 500 })
+        if (allHolderAffiliationError) return NextResponse.json({ error: "Organisationstilknytningerne kunne ikke hentes." }, { status: 500 })
 
         const holderUserIds = new Map((allUserHolders ?? []).map(holder => [holder.id, holder.user_id]))
         const membershipRows = [
@@ -132,7 +136,7 @@ export async function GET() {
         const { data: organisationRows, error: organisationError } = organisationIds.length
             ? await admin.from("organisations").select("id, name").in("id", organisationIds)
             : { data: [], error: null }
-        if (organisationError) return NextResponse.json({ error: organisationError.message }, { status: 500 })
+        if (organisationError) return NextResponse.json({ error: "Organisationerne kunne ikke hentes." }, { status: 500 })
         const organisationNames = new Map((organisationRows ?? []).map(org => [org.id, org.name]))
         for (const membership of membershipRows) {
             const organisations = organisationsByUser.get(membership.userId) ?? new Map<string, string>()
@@ -260,7 +264,7 @@ export async function PATCH(req: NextRequest) {
                 return NextResponse.json({ error: "Brugeren har fået en tilknytning og kan ikke længere slettes herfra" }, { status: 409 })
             }
             const { error } = await admin.auth.admin.deleteUser(recordId)
-            if (error) return NextResponse.json({ error: `Loginbrugeren kunne ikke slettes: ${error.message}` }, { status: 409 })
+            if (error) return NextResponse.json({ error: "Loginbrugeren kunne ikke slettes." }, { status: 409 })
             return NextResponse.json({ ok: true, deletedUser: true })
         }
 
@@ -269,7 +273,7 @@ export async function PATCH(req: NextRequest) {
             .select("id, user_id")
             .eq("id", recordId)
             .maybeSingle()
-        if (holderError) return NextResponse.json({ error: holderError.message }, { status: 500 })
+        if (holderError) return NextResponse.json({ error: "Rettighedshaveren kunne ikke hentes." }, { status: 500 })
         if (!holder) return NextResponse.json({ error: "Rettighedshaveren findes ikke" }, { status: 404 })
         const { count: affiliations } = await admin
             .from("org_affiliations")
@@ -280,11 +284,11 @@ export async function PATCH(req: NextRequest) {
         }
 
         const { error: contractError } = await admin.from("contracts").update({ rights_holder_id: null }).eq("rights_holder_id", recordId)
-        if (contractError) return NextResponse.json({ error: contractError.message }, { status: 500 })
+        if (contractError) return NextResponse.json({ error: "Kontrakttilknytningerne kunne ikke frigives." }, { status: 500 })
         const { error: assignmentError } = await admin.from("work_assignments").delete().eq("rights_holder_id", recordId)
-        if (assignmentError) return NextResponse.json({ error: assignmentError.message }, { status: 500 })
+        if (assignmentError) return NextResponse.json({ error: "Værkstilknytningerne kunne ikke fjernes." }, { status: 500 })
         const { error: deleteHolderError } = await admin.from("rettighedshavere").delete().eq("id", recordId)
-        if (deleteHolderError) return NextResponse.json({ error: deleteHolderError.message }, { status: 500 })
+        if (deleteHolderError) return NextResponse.json({ error: "Rettighedshaveren kunne ikke slettes." }, { status: 500 })
 
         let deletedUser = false
         let warning: string | null = null
@@ -295,7 +299,7 @@ export async function PATCH(req: NextRequest) {
             ])
             if ((roles ?? 0) === 0 && (profiles ?? 0) === 0) {
                 const { error: authError } = await admin.auth.admin.deleteUser(holder.user_id)
-                if (authError) warning = `Rettighedshaveren blev slettet, men loginbrugeren kunne ikke slettes: ${authError.message}`
+                if (authError) warning = "Rettighedshaveren blev slettet, men loginbrugeren kunne ikke slettes."
                 else deletedUser = true
             }
         }
@@ -366,7 +370,7 @@ export async function PATCH(req: NextRequest) {
                 ? juristOrganisationIds.map(targetOrgId => ({ user_id: userId, org_id: targetOrgId, role: "jurist" }))
                 : []
             const { error: insertErr } = await admin.from("user_org_roles").insert([...scopedRows, ...juristRows])
-            if (insertErr) return NextResponse.json({ error: insertErr.message }, { status: 500 })
+            if (insertErr) return NextResponse.json({ error: "Rollerne kunne ikke gemmes." }, { status: 500 })
         }
 
         // Opdater user_metadata.role til den højeste rolle (bruges af admin layout)
@@ -441,7 +445,7 @@ export async function PATCH(req: NextRequest) {
         const { error } = await admin.auth.admin.updateUserById(userId, {
             ban_duration: "876000h", // ~100 år
         })
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        if (error) return NextResponse.json({ error: "Juristadgangen kunne ikke opdateres." }, { status: 500 })
         return NextResponse.json({ ok: true })
     }
 
@@ -457,7 +461,7 @@ export async function PATCH(req: NextRequest) {
         const { error } = await admin.auth.admin.updateUserById(userId, {
             ban_duration: "none",
         })
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        if (error) return NextResponse.json({ error: "Rollen kunne ikke opdateres." }, { status: 500 })
         return NextResponse.json({ ok: true })
     }
 
@@ -476,7 +480,7 @@ export async function PATCH(req: NextRequest) {
                 gender: gender || undefined,
             },
         })
-        if (authErr) return NextResponse.json({ error: authErr.message }, { status: 500 })
+        if (authErr) return NextResponse.json({ error: "Brugeroplysningerne kunne ikke opdateres." }, { status: 500 })
 
         await admin.from("rettighedshavere").update({
             full_name: fullName?.trim() || undefined,
@@ -497,7 +501,7 @@ export async function PATCH(req: NextRequest) {
         if (targetError) return targetError
 
         const { error: pwErr } = await admin.auth.admin.updateUserById(userId, { password })
-        if (pwErr) return NextResponse.json({ error: pwErr.message }, { status: 500 })
+        if (pwErr) return NextResponse.json({ error: "Adgangskoden kunne ikke opdateres." }, { status: 500 })
 
         return NextResponse.json({ ok: true })
     }
@@ -509,7 +513,7 @@ export async function PATCH(req: NextRequest) {
         const { error } = await admin.auth.admin.updateUserById(body.userId, {
             user_metadata: { role: body.role }
         })
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        if (error) return NextResponse.json({ error: "Brugeren kunne ikke opdateres." }, { status: 500 })
         return NextResponse.json({ ok: true })
     }
 

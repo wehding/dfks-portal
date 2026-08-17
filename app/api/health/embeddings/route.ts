@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 
 async function checkGoogle(): Promise<{ ok: boolean; ms: number }> {
     const start = Date.now()
@@ -42,6 +43,8 @@ async function checkSyv(): Promise<{ ok: boolean; ms: number }> {
 }
 
 export async function GET() {
+    const auth = await requireStaffModuleApi("organisation", "read")
+    if (!auth.ok) return auth.response
     const [google, syv] = await Promise.all([checkGoogle(), checkSyv()])
     return NextResponse.json({
         google,

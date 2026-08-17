@@ -23,7 +23,7 @@ export async function GET() {
         .select("*")
         .order("name")
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: "Organisationerne kunne ikke hentes." }, { status: 500 })
 
     // Hent brugerantal per org
     const { data: roleCounts } = await admin
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         .select()
         .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: "Organisationen kunne ikke oprettes." }, { status: 500 })
     return NextResponse.json(data, { status: 201 })
 }
 

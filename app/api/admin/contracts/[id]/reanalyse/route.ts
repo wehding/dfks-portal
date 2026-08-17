@@ -1,132 +1,114 @@
-import { errorMessage } from "@/lib/error-message";
-import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
-import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { analyserKontrakt } from "@/lib/analyse"
+import { after, NextRequest, NextResponse } from "next/server";
+import { requireStaffModuleApi } from "@/lib/api-auth";
+import { assertContractReviewInOrg } from "@/lib/authz";
+import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
+import { createServiceClient } from "@/lib/supabase/service";
+
+const MAX_BYTES = 25 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = [".pdf", ".doc", ".docx"];
+
+function isAllowedFileName(fileName: string) {
+  return ALLOWED_EXTENSIONS.some(extension => fileName.toLowerCase().endsWith(extension));
+}
 
 // POST /api/admin/contracts/[id]/reanalyse
-//
-// To tilstande:
-//   A) Ingen body / JSON body → henter fil fra storage (storage_path skal eksistere)
-//   B) multipart/form-data med "file" felt → bruger den uploadede fil direkte
-//      (bruges til sager der mangler storage_path)
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-    const { id } = await params
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
+// Genstarter samme sikre koeflow som den automatiske Gmail-/portalimport.
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireStaffModuleApi("contract_reviews", "write");
+  if (!auth.ok) return auth.response;
 
-    const adminSupabase = createAdminClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-    )
+  const { id } = await params;
+  const db = createServiceClient({
+    audit: { actorUserId: auth.userId, actorOrgId: auth.orgId, actorRole: auth.role, source: "admin" },
+  });
 
-    const { data: review } = await adminSupabase
-        .from("contract_reviews")
-        .select("*")
-        .eq("id", id)
-        .single()
+  let review: Awaited<ReturnType<typeof assertContractReviewInOrg>>;
+  try {
+    review = await assertContractReviewInOrg(db, id, auth.orgId);
+  } catch {
+    return NextResponse.json({ error: "Ikke fundet" }, { status: 404 });
+  }
 
-    if (!review) return NextResponse.json({ error: "Ikke fundet" }, { status: 404 })
+  let uploadedStoragePath: string | null = null;
+  const updates: Record<string, unknown> = {
+    ai_status: "analyserer",
+    intake_status: "queued",
+  };
 
-    const contentType = req.headers.get("content-type") ?? ""
-    const hasUpload = contentType.includes("multipart/form-data")
-
-    let fileBuffer: Buffer
-    let fileName: string
-
-    if (hasUpload) {
-        const uploadForm = await req.formData()
-        const uploaded = uploadForm.get("file") as File | null
-        if (!uploaded) {
-            return NextResponse.json({ error: "Ingen fil i upload" }, { status: 400 })
-        }
-        fileBuffer = Buffer.from(await uploaded.arrayBuffer())
-        fileName = uploaded.name
-    } else {
-        if (!review.storage_path) {
-            return NextResponse.json({
-                error: "Filen er ikke gemt i systemet. Brug knappen 'Upload fil til re-analyse'.",
-                missing_file: true,
-            }, { status: 400 })
-        }
-        const { data: fileData, error: downloadError } = await adminSupabase.storage
-            .from("contract-reviews")
-            .download(review.storage_path)
-        if (downloadError || !fileData) {
-            return NextResponse.json({ error: "Kunne ikke hente fil fra storage" }, { status: 500 })
-        }
-        fileBuffer = Buffer.from(await fileData.arrayBuffer())
-        fileName = review.file_name ?? "kontrakt.pdf"
+  if ((request.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+    const form = await request.formData().catch(() => null);
+    const file = form?.get("file");
+    if (!(file instanceof File)) {
+      return NextResponse.json({ error: "Ingen fil i upload" }, { status: 400 });
+    }
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json({ error: "Filen er for stor. Maksimum er 25 MB." }, { status: 413 });
+    }
+    if (!isAllowedFileName(file.name)) {
+      return NextResponse.json({ error: "Brug PDF, DOC eller DOCX." }, { status: 400 });
     }
 
-    // Kald analyserKontrakt direkte — al analyselogik ligger i lib/analyse.ts
-    let analysisResult
-    try {
-        analysisResult = await analyserKontrakt({
-            fileBuffer,
-            fileName,
-            memberName:           review.member_name    ?? undefined,
-            contractType:         review.contract_type  ?? undefined,
-            productionType:       review.production_type ?? undefined,
-            distributionChannels: review.distribution_channels ?? undefined,
-            producerName:         review.producer_name  ?? undefined,
-            producerOverenskomst: review.producer_overenskomst_bound === true  ? "true"
-                                : review.producer_overenskomst_bound === false ? "false"
-                                : undefined,
-            focusAreas:           review.focus_areas    ?? undefined,
-            notes:                review.notes          ?? undefined,
-            orgId:                review.org_id,
-            memberId:             review.member_id      ?? undefined,
-            memberEmail:          review.member_email   ?? undefined,
-            entityId:             id,
-            actorUserId:          user.id,
-            source:               "admin",
-        })
-    } catch (err: unknown) {
-        return NextResponse.json({ error: errorMessage(err) ?? "Analyse fejlede" }, { status: 500 })
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    uploadedStoragePath = `${auth.orgId}/${crypto.randomUUID()}/${safeName}`;
+    const upload = await db.storage.from("contract-reviews").upload(
+      uploadedStoragePath,
+      Buffer.from(await file.arrayBuffer()),
+      { contentType: file.type || "application/octet-stream", upsert: false },
+    );
+    if (upload.error) {
+      return NextResponse.json({ error: "Filen kunne ikke gemmes sikkert." }, { status: 500 });
     }
+    updates.storage_path = uploadedStoragePath;
+    updates.file_name = file.name;
+    updates.file_size_bytes = file.size;
+  } else if (!review.storage_path) {
+    return NextResponse.json({
+      error: "Filen er ikke gemt i systemet. Upload filen for at starte analysen igen.",
+      missing_file: true,
+    }, { status: 400 });
+  }
 
-    const { result: parsed, contractText, klassifikation, risk_level: riskLevel, should_escalate: shouldEscalate } = analysisResult
+  const { error: reviewError } = await db.from("contract_reviews")
+    .update(updates)
+    .eq("id", id)
+    .eq("org_id", auth.orgId);
+  if (reviewError) {
+    if (uploadedStoragePath) await db.storage.from("contract-reviews").remove([uploadedStoragePath]);
+    return NextResponse.json({ error: "Kontraktgennemgangen kunne ikke sættes i kø." }, { status: 500 });
+  }
 
-    // Gem ny fil i storage ved upload-tilstand
-    let newStoragePath: string | null = null
-    if (hasUpload) {
-        try {
-            const ts = Date.now()
-            const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_")
-            newStoragePath = `${review.org_id}/${ts}_${safeName}`
-            const { error: storageErr } = await adminSupabase.storage
-                .from("contract-reviews")
-                .upload(newStoragePath, fileBuffer, {
-                    contentType: "application/octet-stream",
-                    upsert: false,
-                })
-            if (storageErr) {
-                console.warn("[reanalyse] Storage upload fejlede (ikke kritisk):", storageErr.message)
-                newStoragePath = null
-            }
-        } catch (storageEx) {
-            console.warn("[reanalyse] Storage upload exception (ikke kritisk):", storageEx)
-        }
+  const { data: jobs, error: jobsError } = await db.from("contract_review_jobs")
+    .select("id,status,attempts")
+    .eq("review_id", id)
+    .eq("org_id", auth.orgId)
+    .order("created_at", { ascending: false });
+  if (jobsError) {
+    return NextResponse.json({ error: "Analysejobbet kunne ikke læses." }, { status: 500 });
+  }
+
+  const activeJob = (jobs ?? []).find(job => job.status === "queued" || job.status === "processing");
+  const jobPayload = {
+      status: "queued",
+      attempts: 0,
+      next_attempt_at: new Date().toISOString(),
+      error_message: null,
+      locked_at: null,
+      locked_by: null,
+      updated_at: new Date().toISOString(),
+  };
+  if (activeJob?.status === "queued") {
+    const { error } = await db.from("contract_review_jobs").update(jobPayload).eq("id", activeJob.id).eq("org_id", auth.orgId);
+    if (error) return NextResponse.json({ error: "Analysejobbet kunne ikke sættes i kø." }, { status: 500 });
+  } else if (!activeJob) {
+    const reusableJob = jobs?.[0];
+    const jobResult = reusableJob
+      ? await db.from("contract_review_jobs").update(jobPayload).eq("id", reusableJob.id).eq("org_id", auth.orgId)
+      : await db.from("contract_review_jobs").insert({ review_id: id, org_id: auth.orgId, ...jobPayload });
+    if (jobResult.error) {
+      return NextResponse.json({ error: "Analysejobbet kunne ikke sættes i kø." }, { status: 500 });
     }
+  }
 
-    const { data, error } = await adminSupabase
-        .from("contract_reviews")
-        .update({
-            ai_result:       parsed,
-            ai_run_at:       new Date().toISOString(),
-            ai_language:     klassifikation?.kontraktsprog ?? null,
-            risk_level:      riskLevel,
-            should_escalate: shouldEscalate,
-            ai_status:       "klar",
-            ...(newStoragePath ? { storage_path: newStoragePath } : {}),
-        })
-        .eq("id", id)
-        .select()
-        .single()
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-    return NextResponse.json({ data, contractText })
+  after(triggerContractReviewWorker(request.nextUrl.origin));
+  return NextResponse.json({ accepted: true, analysisStatus: activeJob?.status ?? "queued" }, { status: 202 });
 }

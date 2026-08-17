@@ -1974,6 +1974,7 @@ export async function searchRightsHoldersForMember(query: string) {
 export async function fetchMemberSeriesEpisodeOptions(params: {
   rightsHolderId: string;
   workId: string;
+  seasonNumber?: number;
 }) {
   const db = createServiceClient();
   const { user } = await ensureOwnRightsHolder(db, params.rightsHolderId);
@@ -1987,7 +1988,7 @@ export async function fetchMemberSeriesEpisodeOptions(params: {
   if (!current) return { success: false, error: "Værket findes ikke.", options: [] };
 
   const parentId = current.parent_work_id ?? current.id;
-  const seasonNumber = current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
+  const seasonNumber = params.seasonNumber ?? current.season_number ?? parseLocalEpisodeCode(current.title)?.seasonNumber ?? 1;
   const { data: parentWork } = await db
     .from("works")
     .select("*")

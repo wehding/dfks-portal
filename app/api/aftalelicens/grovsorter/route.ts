@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { callAi } from "@/lib/ai-client"
 import { AI_CONFIG_DEFAULTS } from "@/lib/ai-providers"
 import { requireAdminApi } from "@/lib/api-auth"
+import { consumeRateLimit } from "@/lib/server/rate-limit"
 
 const SYSTEM = `Du er ekspert i dansk TV-produktion og aftalelicens. Du hjælper Dansk Filmklipperselskab (DFKS) med at grovsortera TV-titler fra Copydan-data.
 
@@ -167,14 +168,37 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
     try {
-        const { items, examples = [], provider, model } = await req.json()
+        const contentLength = Number(req.headers.get("content-length") ?? 0)
+        if (contentLength > 1_000_000) return NextResponse.json({ error: "Forespørgslen er for stor." }, { status: 413 })
+        const rateLimit = await consumeRateLimit({
+            bucket: "aftalelicens-grovsorter",
+            identifier: auth.userId,
+            limit: 20,
+            windowMs: 60 * 60 * 1000,
+        })
+        if (!rateLimit.allowed) {
+            return NextResponse.json({ error: "For mange AI-kørsler. Prøv igen senere." }, {
+                status: 429,
+                headers: { "Retry-After": String(rateLimit.retryAfterSeconds) },
+            })
+        }
+        const { items, examples = [] } = await req.json()
 
-        if (!Array.isArray(items) || items.length === 0) {
+        if (!Array.isArray(items) || items.length === 0 || items.length > 500) {
+            if (Array.isArray(items) && items.length > 500) return NextResponse.json({ error: "Vælg højst 500 titler ad gangen." }, { status: 400 })
             return NextResponse.json({ error: "Ingen titler modtaget" }, { status: 400 })
         }
+        if (!items.every(item => item && typeof item.id === "string" && item.id.length <= 100 && typeof item.rawTitle === "string" && item.rawTitle.length <= 300)) {
+            return NextResponse.json({ error: "Titellisten indeholder ugyldige data." }, { status: 400 })
+        }
+        if (!Array.isArray(examples) || examples.length > 100) {
+            return NextResponse.json({ error: "Der kan højst medsendes 100 eksempler." }, { status: 400 })
+        }
 
-        const aiProvider = provider ?? AI_CONFIG_DEFAULTS.grovsorter.provider
-        const aiModel    = model    ?? AI_CONFIG_DEFAULTS.grovsorter.model
+        // Modellen vælges server-side. Klienter må ikke kunne sende vilkårlige
+        // modelnavne eller skifte til en dyrere udbyder.
+        const aiProvider = AI_CONFIG_DEFAULTS.grovsorter.provider
+        const aiModel = AI_CONFIG_DEFAULTS.grovsorter.model
 
         // Trin 1: Præ-filter — sortér åbenlyse tilfælde fra uden AI
         const preResults = new Map<string, { status: string; type?: string; reason: string }>()
@@ -247,8 +271,7 @@ Returner et JSON-array med ét objekt per titel:
 
         return NextResponse.json({ results })
     } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Ukendt serverfejl"
-        console.error("[grovsorter] Caught error:", message)
-        return NextResponse.json({ error: message }, { status: 500 })
+        console.error("[grovsorter] request failed", err instanceof Error ? err.name : "unknown")
+        return NextResponse.json({ error: "Sorteringen kunne ikke gennemføres." }, { status: 500 })
     }
 }

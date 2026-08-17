@@ -10,6 +10,8 @@ import { getApiKey } from "@/lib/ai-key-store"
 import { recordAiUsage, type AiTokenUsage, type AiUsageContext } from "@/lib/ai-usage"
 import { normalizeAnthropicUsage, normalizeGoogleUsage } from "@/lib/ai-cost"
 
+const AI_REQUEST_TIMEOUT_MS = 240_000
+
 export interface AiCallOptions {
     provider: string
     model: string
@@ -18,10 +20,66 @@ export interface AiCallOptions {
     maxTokens?: number
     enableWebSearch?: boolean
     responseJson?: boolean
+    responseSchema?: Record<string, unknown>
     promptCaching?: boolean
     usageContext?: AiUsageContext
     anthropicContent?: unknown[]
     googleParts?: unknown[]
+}
+
+export class AiProviderHttpError extends Error {
+    readonly provider: string
+    readonly status: number
+    readonly code: string
+    readonly retryAfterMs: number | null
+    readonly failureClass: "configuration" | "billing" | "rate_limit" | "transient" | "input"
+
+    constructor(input: {
+        provider: string
+        status: number
+        code?: string | null
+        retryAfterMs?: number | null
+        failureClass: "configuration" | "billing" | "rate_limit" | "transient" | "input"
+    }) {
+        super(`${input.provider} API fejl: ${input.status}`)
+        this.name = "AiProviderHttpError"
+        this.provider = input.provider
+        this.status = input.status
+        this.code = input.code?.slice(0, 100) || `http_${input.status}`
+        this.retryAfterMs = input.retryAfterMs ?? null
+        this.failureClass = input.failureClass
+    }
+}
+
+function retryAfterMs(headers: Headers) {
+    const value = headers.get("retry-after")
+    if (!value) return null
+    const seconds = Number(value)
+    if (Number.isFinite(seconds)) return Math.max(1_000, seconds * 1_000)
+    const date = Date.parse(value)
+    return Number.isFinite(date) ? Math.max(1_000, date - Date.now()) : null
+}
+
+async function providerError(provider: string, response: Response) {
+    const payload = await response.json().catch(() => null) as { error?: { type?: string; code?: string; message?: string } } | null
+    const providerCode = payload?.error?.type ?? payload?.error?.code ?? `http_${response.status}`
+    const providerMessage = String(payload?.error?.message ?? "").toLocaleLowerCase("en")
+    const failureClass = response.status === 401 || response.status === 403
+        ? "configuration"
+        : response.status === 402 || /credit|billing|payment/.test(providerMessage)
+            ? "billing"
+            : response.status === 429
+                ? "rate_limit"
+                : response.status >= 500
+                    ? "transient"
+                    : "input"
+    return new AiProviderHttpError({
+        provider,
+        status: response.status,
+        code: providerCode,
+        retryAfterMs: retryAfterMs(response.headers),
+        failureClass,
+    })
 }
 
 export async function callAi(opts: AiCallOptions): Promise<string> {
@@ -87,12 +145,16 @@ async function callAnthropic(model: string, system: string, userMessage: string,
                 : system,
             messages,
             ...(tools ? { tools } : {}),
+            ...(opts?.responseJson && opts.responseSchema ? {
+                output_config: { format: { type: "json_schema", schema: opts.responseSchema } },
+            } : {}),
         }
 
         const res = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers,
             body: JSON.stringify(body),
+            signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
         })
 
         providerRequestId = res.headers.get("request-id") ?? res.headers.get("x-request-id")
@@ -107,7 +169,7 @@ async function callAnthropic(model: string, system: string, userMessage: string,
                 status: "failed",
                 errorCode: `http_${res.status}`,
             })
-            throw new Error(`Anthropic API fejl: ${res.status}`)
+            throw await providerError("anthropic", res)
         }
         const data = await res.json()
         const currentUsage = normalizeAnthropicUsage(data.usage)
@@ -157,8 +219,7 @@ async function callAnthropic(model: string, system: string, userMessage: string,
 
 // ── OpenAI ────────────────────────────────────────────────────
 
-async function callOpenAi(model: string, system: string, userMessage: string, maxTokens: number, _opts?: AiCallOptions): Promise<AiCallResult> {
-    void _opts
+async function callOpenAi(model: string, system: string, userMessage: string, maxTokens: number, opts?: AiCallOptions): Promise<AiCallResult> {
     const apiKey = getApiKey("openai")
     if (!apiKey) throw new Error("OpenAI API-nøgle mangler — sæt den i Stamdata → Indstillinger → API-nøgler")
 
@@ -178,10 +239,12 @@ async function callOpenAi(model: string, system: string, userMessage: string, ma
                 { role: "system", content: system },
                 { role: "user", content: userMessage },
             ],
+            ...(opts?.responseJson ? { response_format: { type: "json_object" } } : {}),
         }),
+        signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
     })
 
-    if (!res.ok) throw new Error(`OpenAI API fejl: ${res.status}`)
+    if (!res.ok) throw await providerError("openai", res)
     const data = await res.json()
     return {
         text: data.choices?.[0]?.message?.content ?? "",
@@ -210,15 +273,19 @@ async function callGoogle(model: string, system: string, userMessage: string, ma
             contents: [{ role: "user", parts: opts?.googleParts ?? [{ text: userMessage }] }],
             generationConfig: {
                 maxOutputTokens: maxTokens,
-                ...(opts?.responseJson ? { responseMimeType: "application/json" } : {}),
+                ...(opts?.responseJson ? {
+                    responseMimeType: "application/json",
+                    ...(opts.responseSchema ? { responseJsonSchema: opts.responseSchema } : {}),
+                } : {}),
             },
         }),
+        signal: AbortSignal.timeout(AI_REQUEST_TIMEOUT_MS),
     })
 
     const providerRequestId = res.headers.get("x-request-id") ?? res.headers.get("x-guploader-uploadid")
     if (!res.ok) {
         await recordAiUsage({ context: opts?.usageContext, provider: "google", model: safeModel, inputChars: system.length + userMessage.length, latencyMs: Date.now() - startedAt, providerRequestId, status: "failed", errorCode: `http_${res.status}` })
-        throw new Error(`Google AI API fejl: ${res.status}`)
+        throw await providerError("google", res)
     }
     const data = await res.json()
     const text = (data.candidates?.[0]?.content?.parts ?? []).map((part: { text?: string }) => part.text ?? "").join("")

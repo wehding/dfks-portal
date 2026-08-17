@@ -75,9 +75,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ result: parsed })
     } catch (err: unknown) {
         logWarn("screen", "Screening fejlede", { error: errorMessage(err) })
-        return NextResponse.json(
-            { error: errorMessage(err, "Ukendt serverfejl") },
-            { status: 500 }
-        )
+        return NextResponse.json({ error: "Kontrakten kunne ikke analyseres. Prøv igen senere." }, { status: 502 })
     }
 }

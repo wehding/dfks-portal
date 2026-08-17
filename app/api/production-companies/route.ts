@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSessionApi } from "@/lib/api-auth";
+import { requireAdminApi, requireSessionApi } from "@/lib/api-auth";
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
 import { createServiceClient } from "@/lib/supabase/service";
 import { formatApiCvrAddress, lookupApiCvr } from "@/lib/api-cvr-mcp";
 import {
@@ -140,7 +141,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireSessionApi();
+  const auth = await requireAdminApi(USER_ADMIN_ROLES);
   if (!auth.ok) return auth.response;
   const body = await req.json().catch(() => null) as {
     action?: "canonical" | "legal_entity" | "cvr_company";
@@ -233,7 +234,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ data: saved, existing: false }, { status: 201 });
     } catch (error) {
       console.error("[production-companies] CVR-oprettelse fejlede", error);
-      return NextResponse.json({ error: error instanceof Error ? error.message : "CVR-opslaget fejlede." }, { status: 502 });
+      console.error("[production-companies] CVR lookup failed", error instanceof Error ? error.name : "unknown");
+      return NextResponse.json({ error: "CVR-opslaget fejlede." }, { status: 502 });
     }
   }
 

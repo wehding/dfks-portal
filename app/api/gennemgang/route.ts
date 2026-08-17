@@ -7,7 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireStaffModuleApi } from "@/lib/api-auth";
 import { analyseExistingContractReview } from "@/lib/contract-review-analysis";
 import { createContractReviewIntake } from "@/lib/contract-review-intake";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -31,7 +31,7 @@ function optionalString(value: FormDataEntryValue | null, maxLength: number): st
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAdminApi();
+  const auth = await requireStaffModuleApi("contract_reviews", "write");
   if (!auth.ok) return auth.response;
 
   try {
@@ -178,6 +178,6 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     logWarn("gennemgang", "Adminindsendelse fejlede", { error: errorMessage(error) });
-    return NextResponse.json({ error: errorMessage(error, "Ukendt serverfejl") }, { status: 500 });
+    return NextResponse.json({ error: "Indsendelsen kunne ikke gemmes." }, { status: 500 });
   }
 }

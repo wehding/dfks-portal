@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSessionApi } from "@/lib/api-auth";
 import { apiCvrNameMatchScore, formatApiCvrAddress, fuzzySearchApiCvr, lookupApiCvr } from "@/lib/api-cvr-mcp";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
 
 export async function GET(req: NextRequest) {
   const auth = await requireSessionApi();
@@ -8,6 +9,9 @@ export async function GET(req: NextRequest) {
 
   const cvr = req.nextUrl.searchParams.get("cvr")?.replace(/\D/g, "") ?? "";
   const query = req.nextUrl.searchParams.get("q")?.trim() ?? "";
+  if (query.length > 120) return NextResponse.json({ error: "Søgeteksten må højst være 120 tegn" }, { status: 400 });
+  const rateLimit = await consumeRateLimit({ bucket: "cvr-lookup", identifier: auth.userId, limit: 120, windowMs: 60 * 60 * 1000 });
+  if (!rateLimit.allowed) return NextResponse.json({ error: "For mange opslag. Prøv igen senere." }, { status: 429 });
   try {
     if (cvr) {
       if (!/^\d{7,8}$/.test(cvr)) {
@@ -56,6 +60,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     console.error("[apiCVR] Opslag fejlede", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "CVR-opslag fejlede" }, { status: 502 });
+    console.error("[cvr] lookup failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "CVR-opslag fejlede" }, { status: 502 });
   }
 }

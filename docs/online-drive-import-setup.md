@@ -17,9 +17,20 @@ GOOGLE_DRIVE_ADMIN_CLIENT_ID=<client-id fra dfks-portal-drive-admin>
 GOOGLE_DRIVE_ADMIN_CLIENT_SECRET=<client-secret fra dfks-portal-drive-admin>
 GOOGLE_DRIVE_MEMBER_CLIENT_ID=<client-id fra dfks-portal-drive-medlemmer>
 GOOGLE_DRIVE_MEMBER_CLIENT_SECRET=<client-secret fra dfks-portal-drive-medlemmer>
+GOOGLE_PICKER_API_KEY=<browsernøgle begrænset til portalens domæner og Picker API>
+GOOGLE_CLOUD_PROJECT_NUMBER=<Google Cloud-projektets numeriske id>
 DRIVE_IMPORT_JOB_SECRET=<unik intern nøgle til Drive-import>
 NEXT_PUBLIC_SITE_URL=https://dfks-portal-hazel.vercel.app
 ```
+
+Ved lokal udvikling bruger OAuth-flowet automatisk
+`http://localhost:3000/api/admin/import-connections/google_drive/callback`, også
+hvis den lokale app åbnes via en Tailscale-adresse. Google-godkendelsen skal
+derfor afsluttes i en browser på den Mac, hvor udviklingsserveren kører.
+
+Hvis den lokale server bruger en anden fast callback-adresse, kan den
+serverbeskyttede variabel `IMPORT_OAUTH_CALLBACK_ORIGIN` sættes til den
+registrerede origin. Variablen må ikke have `NEXT_PUBLIC_`-prefix.
 
 Client secrets og krypteringsnøglen må aldrig have `NEXT_PUBLIC_`-prefix. De må ikke committes, logges eller sendes til browseren. Skiftes `INTEGRATION_ENCRYPTION_KEY`, skal alle drevkonti forbindes igen.
 
@@ -28,13 +39,19 @@ Client secrets og krypteringsnøglen må aldrig have `NEXT_PUBLIC_`-prefix. De m
 I begge Google Cloud-projekter:
 
 1. Aktivér **Google Drive API**.
-2. Åbn **Google Auth Platform → Data Access**.
-3. Tilføj kun `https://www.googleapis.com/auth/drive.readonly`.
-4. Opret en **OAuth client ID → Web application**.
-5. Tilføj disse redirect URI'er:
+2. Aktivér **Google Picker API** i adminprojektet.
+3. Åbn **Google Auth Platform → Data Access**.
+4. Tilføj kun `https://www.googleapis.com/auth/drive.readonly`.
+5. Opret en **OAuth client ID → Web application**.
+6. Tilføj disse redirect URI'er:
    - `http://localhost:3000/api/admin/import-connections/google_drive/callback`
    - `https://dfks-portal-hazel.vercel.app/api/admin/import-connections/google_drive/callback`
-6. Når portalen får eget domæne, tilføjes den samme callback-sti på det nye domæne, før `NEXT_PUBLIC_SITE_URL` ændres. Den gamle URI beholdes under overgangen.
+7. Når portalen får eget domæne, tilføjes den samme callback-sti på det nye domæne, før `NEXT_PUBLIC_SITE_URL` ændres. Den gamle URI beholdes under overgangen.
+
+I adminprojektet oprettes desuden en browser-API-nøgle. Begræns den til portalens
+HTTPS-domæne og `http://localhost:3000` under lokal test, og begræns API-adgangen
+til Google Picker API. Projektets numeriske **Project number** bruges som
+`GOOGLE_CLOUD_PROJECT_NUMBER`; det er ikke det tekstbaserede project-id.
 
 ## Adminprojektet
 

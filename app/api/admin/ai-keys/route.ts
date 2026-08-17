@@ -2,17 +2,18 @@
  * app/api/admin/ai-keys/route.ts
  *
  * GET  — returnerer nøgle-status (konfigureret/mangler, kilde, maskeret)
- * POST — gemmer én eller flere nøgler i config/ai-keys.json
+ * POST — afvises; hemmeligheder administreres kun i servermiljøet.
  */
 
-import { NextRequest, NextResponse } from "next/server"
-import { getKeyStatus, writeKeyStore } from "@/lib/ai-key-store"
+import { NextResponse } from "next/server"
+import { getKeyStatus } from "@/lib/ai-key-store"
 import { requireAdminApi } from "@/lib/api-auth"
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles"
 
 const PROVIDERS = ["anthropic", "openai", "google"] as const
 
 export async function GET() {
-    const auth = await requireAdminApi()
+    const auth = await requireAdminApi(USER_ADMIN_ROLES)
     if (!auth.ok) return auth.response
     const status = Object.fromEntries(
         PROVIDERS.map(p => [p, getKeyStatus(p)])
@@ -20,24 +21,11 @@ export async function GET() {
     return NextResponse.json(status)
 }
 
-export async function POST(req: NextRequest) {
-    const auth = await requireAdminApi()
+export async function POST() {
+    const auth = await requireAdminApi(USER_ADMIN_ROLES)
     if (!auth.ok) return auth.response
-    try {
-        const body = await req.json() as Partial<Record<typeof PROVIDERS[number], string>>
-
-        const updates: Record<string, string> = {}
-        for (const p of PROVIDERS) {
-            const val = body[p]
-            if (typeof val === "string") {
-                updates[p] = val.trim()
-            }
-        }
-
-        writeKeyStore(updates)
-        return NextResponse.json({ ok: true })
-    } catch (err) {
-        console.error("[ai-keys] POST fejl:", err)
-        return NextResponse.json({ error: "Kunne ikke gemme nøgler" }, { status: 500 })
-    }
+    return NextResponse.json({
+        error: "AI-nøgler administreres som serverhemmeligheder i .env.local og Vercel Environment Variables.",
+        code: "ENV_MANAGED_SECRETS",
+    }, { status: 409 })
 }

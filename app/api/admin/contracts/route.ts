@@ -5,6 +5,8 @@ import { assertAdminRole } from "@/lib/supabase/assert-admin"
 import { ADMIN_ROLES, USER_ADMIN_ROLES } from "@/lib/admin-roles"
 import { parseContractReviewDeleteIds } from "@/lib/contract-review-delete"
 import { drainContractReviewStorageDeletionQueue } from "@/lib/contract-review-retention"
+import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
+import { postgrestIlikePattern } from "@/lib/postgrest-search"
 
 // GET /api/admin/contracts
 // Query params: queue=mine|all, status=afventer,behandling, productionType=..., search=..., page=1, limit=20
@@ -25,8 +27,8 @@ export async function GET(req: NextRequest) {
     const statusParam = url.searchParams.get("status")
     const productionTypeParam = url.searchParams.get("productionType")
     const search = url.searchParams.get("search")?.trim()
-    const page = parseInt(url.searchParams.get("page") ?? "1")
-    const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20"), 100)
+    const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1") || 1)
+    const limit = Math.max(1, Math.min(Number.parseInt(url.searchParams.get("limit") ?? "20") || 20, 100))
     const offset = (page - 1) * limit
 
     let query = supabase
@@ -54,16 +56,66 @@ export async function GET(req: NextRequest) {
     }
 
     if (search) {
-        query = query.or(
-            `member_name.ilike.%${search}%,file_name.ilike.%${search}%,producer_name.ilike.%${search}%`
-        )
+        const pattern = postgrestIlikePattern(search)
+        if (pattern) query = query.or(`member_name.ilike.${pattern},file_name.ilike.${pattern},producer_name.ilike.${pattern}`)
     }
 
     const { data, error, count } = await query
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+        console.error("[admin-contract-reviews] list failed", error.code)
+        return NextResponse.json({ error: "Kontraktgennemgangen kunne ikke hentes." }, { status: 500 })
+    }
 
-    return NextResponse.json({ data: data ?? [], count: count ?? 0, page, limit })
+    const reviews = data ?? []
+    const reviewIds = reviews.map(review => review.id)
+    const assigneeIds = [...new Set(reviews.map(review => review.assigned_to).filter((id): id is string => Boolean(id)))]
+    const [{ data: jobs }, authUsers] = await Promise.all([
+        reviewIds.length
+            ? supabase.from("contract_review_jobs")
+                .select("review_id,status,attempts,next_attempt_at,error_message,created_at")
+                .in("review_id", reviewIds)
+                .order("created_at", { ascending: false })
+            : Promise.resolve({ data: [] }),
+        assigneeIds.length ? supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }) : Promise.resolve({ data: { users: [] } }),
+    ])
+    const latestJobByReview = new Map<string, ContractReviewJobSnapshot>()
+    for (const job of jobs ?? []) {
+        if (!latestJobByReview.has(job.review_id)) {
+            latestJobByReview.set(job.review_id, {
+                status: job.status,
+                attempts: job.attempts,
+                next_attempt_at: job.next_attempt_at,
+                error_message: job.error_message,
+            } as ContractReviewJobSnapshot)
+        }
+    }
+    const assigneeLabels = new Map((authUsers.data?.users ?? [])
+        .filter(user => assigneeIds.includes(user.id))
+        .map(user => [user.id, typeof user.user_metadata?.full_name === "string" && user.user_metadata.full_name.trim()
+            ? user.user_metadata.full_name.trim()
+            : user.email ?? user.id]))
+
+    const normalized = reviews.map(review => {
+        const analysisJob = latestJobByReview.get(review.id) ?? null
+        return {
+            ...review,
+            assigned_to_name: review.assigned_to ? assigneeLabels.get(review.assigned_to) ?? "Tildelt medarbejder" : null,
+            analysis_job: analysisJob ? {
+                status: analysisJob.status,
+                attempts: analysisJob.attempts,
+                next_attempt_at: analysisJob.next_attempt_at,
+                error: analysisJob.error_message ? "Kontraktanalysen kunne ikke gennemføres." : null,
+            } : null,
+            analysis_status: normalizeContractReviewAnalysisStatus({
+                aiStatus: review.ai_status,
+                intakeStatus: review.intake_status,
+                job: analysisJob,
+            }),
+        }
+    })
+
+    return NextResponse.json({ data: normalized, count: count ?? 0, page, limit })
 }
 
 // DELETE /api/admin/contracts
@@ -88,7 +140,7 @@ export async function DELETE(req: NextRequest) {
         .select("id, storage_path")
         .eq("org_id", caller.orgId)
         .in("id", parsed.ids)
-    if (rowsError) return NextResponse.json({ error: rowsError.message }, { status: 500 })
+    if (rowsError) return NextResponse.json({ error: "Kontraktgennemgangene kunne ikke kontrolleres." }, { status: 500 })
 
     const rowById = new Map((rows ?? []).map(row => [row.id, row]))
     const results = await Promise.all(parsed.ids.map(async id => {
@@ -101,7 +153,7 @@ export async function DELETE(req: NextRequest) {
             actor_id: caller.userId,
             deletion_origin: "admin_manual",
         })
-        if (deleteError) return { id, error: deleteError.message }
+        if (deleteError) return { id, error: "Kontraktgennemgangen kunne ikke slettes." }
         if (!deleted) return { id, error: "Kontraktgennemgangen kunne ikke slettes. Kontrollér eventuelt juridisk hold." }
         return { id, error: null }
     }))

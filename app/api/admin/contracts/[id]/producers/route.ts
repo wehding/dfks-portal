@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireAdminApi();
+  const auth = await requireStaffModuleApi("contracts", "read");
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const db = createServiceClient();
@@ -31,4 +31,3 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   });
   return NextResponse.json({ data: selections });
 }
-

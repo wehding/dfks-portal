@@ -9,7 +9,7 @@ import { findTMDBMatch, searchTMDBPerson, getTMDBPersonCombinedCredits, getTMDBE
 import { enrichFromWikidata } from "@/app/actions/wikidata";
 import { cleanDfiTitle, extractDfiDirectors, extractDfiPersonPortraitUrl, extractDfiPersonPortraitUrls, extractDfiPosterUrl, extractDfiPremiereYear, mapDfiWorkType, parseDfiEpisodeCount, parseDfiEpisodeTitleInfo, parseSeasonNumberFromTitle, type DfiMetadata } from "@/lib/dfi-metadata";
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log";
-import { buildCompleteEpisodeOptions, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
+import { buildCompleteEpisodeOptions, buildDfiEpisodeOptions, parseLocalEpisodeCode, seriesLookupTitleVariants } from "@/lib/series-episodes";
 import { onboardingSeriesParentIds } from "@/lib/onboarding-series-data";
 import { resolveWorkIdentity } from "@/lib/server/work-identity-resolver";
 import { storeWorkExternalIdentity } from "@/lib/server/work-identity-storage";
@@ -932,9 +932,14 @@ export async function normalizeDfiSeriesResults(credits: DfiCredit[]) {
       episodeOptions.push({ number: parsedChild.episodeNumber, title: parsedChild.subtitle || credit.Title || `Afsnit ${parsedChild.episodeNumber}` });
     }
 
-    current.__episode_options = Array.from(
+    const mergedEpisodeOptions = Array.from(
       new Map([...(current.__episode_options ?? []), ...episodeOptions].map(option => [option.number, option])).values()
     ).sort((a, b) => a.number - b.number);
+    current.__episode_options = buildDfiEpisodeOptions({
+      titles: [credit.Title, ...children.map(child => child.Title)],
+      existingOptions: mergedEpisodeOptions,
+      seasonNumber: parseSeasonNumberFromTitle(current.Title ?? current.DanishTitle) ?? 1,
+    });
     current.__suggested_episodes = Array.from(new Set([
       ...(current.__suggested_episodes ?? []),
       ...(parsedChild?.episodeNumber ? [parsedChild.episodeNumber] : []),
@@ -1316,6 +1321,53 @@ export async function searchOnboardingCredits(
     sourceErrors: {
       dfi: creditSourceAttempts.dfi.failures > 0 && creditSourceAttempts.dfi.successes === 0,
       tmdb: creditSourceAttempts.tmdb.failures > 0 && creditSourceAttempts.tmdb.successes === 0,
+    },
+  };
+}
+
+export async function searchOnboardingCreditsForCurrentUser() {
+  let context: Awaited<ReturnType<typeof currentRightsHolderAndOrg>>;
+  try {
+    context = await currentRightsHolderAndOrg();
+  } catch (error: unknown) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Du skal være logget ind for at søge.",
+      credits: [] as OnboardingCredit[],
+      dfiPersonId: null,
+      tmdbPersonId: null,
+    };
+  }
+
+  const [{ data: holder, error }, { data: savedIdentities }] = await Promise.all([
+    context.db
+    .from("rettighedshavere")
+    .select("full_name,alternative_names")
+    .eq("id", context.rightsHolderId)
+    .single(),
+    context.db
+      .from("rights_holder_external_identities")
+      .select("source")
+      .eq("rights_holder_id", context.rightsHolderId)
+      .in("source", ["dfi", "tmdb"]),
+  ]);
+  if (error || !holder) return { success: false, error: error?.message ?? "Profilen blev ikke fundet.", credits: [] as OnboardingCredit[], dfiPersonId: null, tmdbPersonId: null };
+
+  const candidateNames = Array.from(new Set([holder.full_name, ...(holder.alternative_names ?? [])].map(name => String(name).trim()).filter(Boolean)));
+  // Et bekræftet personmatch er autoritativt. Kør kun én søgning, så samme
+  // eksterne profil ikke hentes igen for hver navnevariant.
+  const names = savedIdentities?.length ? candidateNames.slice(0, 1) : candidateNames;
+  const results = await Promise.all(names.map(name => searchOnboardingCredits(undefined, undefined, name)));
+  const credits = Array.from(new Map(results.flatMap(result => result.credits ?? []).map(credit => [credit.id, credit])).values());
+  const firstSuccessful = results.find(result => result.success);
+  return {
+    success: credits.length > 0,
+    credits,
+    dfiPersonId: firstSuccessful?.dfiPersonId ?? null,
+    tmdbPersonId: firstSuccessful?.tmdbPersonId ?? null,
+    sourceErrors: {
+      dfi: results.length > 0 && results.every(result => result.sourceErrors?.dfi),
+      tmdb: results.length > 0 && results.every(result => result.sourceErrors?.tmdb),
     },
   };
 }

@@ -14,22 +14,26 @@ export function AdminDashboard({ metrics }: { metrics: AdminDashboardMetrics }) 
   const shortcuts = [
     { id: "contracts", href: "/admin/kontrakter?tab=valideringskoe", icon: CheckCircle, label: t("admin.dashboard.validateContracts"), description: t("admin.dashboard.validateContractsDescription"), tasks: metrics.tasks.contractValidationsPending, messages: metrics.messages.contracts, secondary: t("admin.dashboard.validatedContracts"), secondaryValue: metrics.validatedContracts },
     { id: "reviews", href: "/admin/kontraktgennemgang?status=afventer,behandling", icon: Scale, label: t("nav.contractReview"), description: t("admin.dashboard.contractReviewDescription"), tasks: metrics.tasks.contractReviews, messages: 0 },
-    { id: "works", href: "/admin/vaerker?status=pending", icon: FileText, label: t("nav.works"), description: t("admin.dashboard.worksDescription"), tasks: metrics.tasks.workRequests, messages: metrics.messages.works },
+    { id: "works", href: "/admin/vaerker?status=pending", messageHref: "/admin/vaerker?status=beskeder", icon: FileText, label: t("nav.works"), description: t("admin.dashboard.worksDescription"), tasks: metrics.tasks.workRequests, messages: metrics.messages.works },
     { id: "screenings", href: "/admin/aftalelicens?status=pending", icon: FileText, label: t("nav.visningsadmin"), description: t("admin.dashboard.screeningsDescription"), tasks: metrics.tasks.screeningClaims, messages: metrics.messages.screenings },
-  ];
+  ].filter(item => process.env.NODE_ENV !== "production" || item.id !== "screenings");
   return <div className="max-w-5xl space-y-8">
     <PageHeader title={t("admin.dashboard.title")} subtitle={t("admin.dashboard.subtitle")} />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {shortcuts.map(item => <Link key={item.id} href={item.href} className={`group flex min-h-44 flex-col rounded-lg border p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${item.tasks ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20" : ""}`}>
-        <div className="flex items-start justify-between gap-3"><item.icon className={`h-5 w-5 ${item.tasks ? "text-amber-600" : "text-muted-foreground"}`} /><ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div>
-        <p className="mt-3 text-sm font-semibold">{item.label}</p>
-        <p className="mt-1 flex items-end gap-2"><span className="text-3xl font-bold tabular-nums">{item.tasks}</span><span className="pb-1 text-xs text-muted-foreground">{t("admin.dashboard.pendingTasks")}</span></p>
-        <p className="mt-1 text-xs text-muted-foreground">{item.description}</p>
+      {shortcuts.map(item => <div key={item.id} className={`group flex min-h-44 flex-col rounded-lg border p-4 transition-colors hover:bg-muted/40 ${item.tasks ? "border-amber-300 bg-amber-50/60 dark:bg-amber-950/20" : ""}`}>
+        <Link href={item.href} className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <div className="flex items-start justify-between gap-3"><item.icon className={`h-5 w-5 ${item.tasks ? "text-amber-600" : "text-muted-foreground"}`} /><ArrowRight className="h-4 w-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" /></div>
+          <p className="mt-3 text-sm font-semibold">{item.label}</p>
+          <p className="mt-1 flex items-end gap-2"><span className="text-3xl font-bold tabular-nums">{item.tasks}</span><span className="pb-1 text-xs text-muted-foreground">{t("admin.dashboard.pendingTasks")}</span></p>
+          <p className="mt-1 text-xs text-muted-foreground">{item.description}</p>
+        </Link>
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-          {item.messages > 0 && <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">{item.messages} {t("admin.dashboard.unreadMessages").toLocaleLowerCase(locale)}</Badge>}
+          {item.messages > 0 && ("messageHref" in item && item.messageHref
+            ? <Link href={item.messageHref} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">{item.messages} {t("admin.dashboard.unreadMessages").toLocaleLowerCase(locale)}</Badge></Link>
+            : <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">{item.messages} {t("admin.dashboard.unreadMessages").toLocaleLowerCase(locale)}</Badge>)}
           {item.secondary && <Badge variant="outline">{item.secondaryValue} {item.secondary.toLocaleLowerCase(locale)}</Badge>}
         </div>
-      </Link>)}
+      </div>)}
     </div>
 
     <section className="space-y-3" aria-labelledby="response-time-title">

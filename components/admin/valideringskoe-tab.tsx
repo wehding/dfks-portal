@@ -1,7 +1,7 @@
 "use client"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, Eye } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -78,14 +78,14 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const [activeTab, setActiveTab] = useState<"afventer" | "gennemgaede">("afventer")
     const [importFilter, setImportFilter] = useState<string>("all")
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        const supabase = createClient()
-
-        const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
-        const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
-        const orgId = context?.orgId
-        if (!orgId) { setLoading(false); return }
+    useEffect(() => {
+        let cancelled = false
+        void (async () => {
+            const supabase = createClient()
+            const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
+            const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
+            const orgId = context?.orgId
+            if (!orgId) { if (!cancelled) setLoading(false); return }
 
         const { data, error } = await supabase
             .from("contracts")

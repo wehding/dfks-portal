@@ -45,6 +45,18 @@ export function normalizeMatchText(value: unknown) {
     .trim();
 }
 
+export function contractProductionTypeToWorkType(value: unknown) {
+  const normalized = normalizeMatchText(value).replaceAll(" ", "");
+  if (!normalized) return null;
+  if (["docseries", "documentaryseries", "dokumentarserie"].includes(normalized)) return "dokumentar-serie";
+  if (normalized.includes("dokumentar") && normalized.includes("serie")) return "dokumentar-serie";
+  if (["documentary", "documentaryfilm", "dokumentar", "dokumentarfilm", "dokudrama"].includes(normalized)) return "dokumentarfilm";
+  if (["tvseries", "series", "serie", "tvserie", "tventertainment", "reality", "sport"].includes(normalized)) return "tv-serie";
+  if (["short", "shortfilm", "kort", "kortfilm"].includes(normalized)) return "kortfilm";
+  if (["feature", "featurefilm", "movie", "film", "spillefilm"].includes(normalized)) return "spillefilm";
+  return null;
+}
+
 export function levenshteinSimilarity(leftValue: unknown, rightValue: unknown) {
   const left = normalizeMatchText(leftValue);
   const right = normalizeMatchText(rightValue);
@@ -85,6 +97,20 @@ export function premiereWindowScore(contractYear: number | null, premiereYear: n
   return 0;
 }
 
+export function hasImplausibleFilmTiming(
+  contractDate: string | null | undefined,
+  workYear: number | null | undefined,
+  workType: string | null | undefined,
+) {
+  if (!contractDate || !workYear) return false;
+  const normalizedType = normalizeMatchText(workType);
+  if (normalizedType.includes("serie")) return false;
+  const match = contractDate.match(/\b(19|20)\d{2}\b/);
+  if (!match) return false;
+  const contractYear = Number(match[0]);
+  return workYear < contractYear || workYear > contractYear + 4;
+}
+
 export function selectAutomaticMatch<T>(
   candidates: ScoredCandidate<T>[],
   minimumScore: number,
@@ -96,4 +122,3 @@ export function selectAutomaticMatch<T>(
   if (ranked[1] && first.score - ranked[1].score < minimumMargin) return null;
   return first;
 }
-

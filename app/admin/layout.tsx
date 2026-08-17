@@ -92,6 +92,8 @@ const USER_NAV_ITEMS = [
 ]
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
+const PRODUCTION_PROTOTYPE_KEYS = new Set(["aftalelicens", "indbetalinger", "udbetalinger", "streaming", "stamdata", "gennemsigtighed"])
+const isProductionPortal = process.env.NODE_ENV === "production"
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
 // amber = afventer godkendelse.
@@ -241,11 +243,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const allowedKeys = userRole ? (ROLE_MODULES[userRole] ?? []) : []
 
     const adminItems = ADMIN_NAV_ITEMS
-        .filter(item => allowedKeys.includes(item.key))
+        .filter(item => allowedKeys.includes(item.key) && (!isProductionPortal || !PRODUCTION_PROTOTYPE_KEYS.has(item.key)))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
     const rettighedsItems = RETTIGHEDS_NAV_ITEMS
-        .filter(item => allowedKeys.includes(item.key))
+        .filter(item => allowedKeys.includes(item.key) && (!isProductionPortal || !PRODUCTION_PROTOTYPE_KEYS.has(item.key)))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
     const setupItems = SETUP_NAV_ITEMS
@@ -396,8 +398,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <AppShellTopBar>
                     <SidebarTrigger className="-ml-1" />
                     <Separator orientation="vertical" className="hidden h-4 sm:block" />
-                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground sm:hidden">{currentPageTitle}</h1>
-                    <span className="hidden min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground sm:block">{brand.short_name} administration</span>
+                    <h1 className="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{currentPageTitle}</h1>
                     <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1">
                         <AdminCommandMenu inline />
                         {organisations.length > 1 && (

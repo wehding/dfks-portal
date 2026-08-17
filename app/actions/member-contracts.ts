@@ -306,17 +306,28 @@ export async function saveUploadedContract(params: {
   }
 
   if (!params.deferAiJob) {
-    const { error: jobError } = await db.from("contract_ai_jobs").insert({
-      contract_id: saved.id,
-      org_id: orgId,
-      status: "queued",
-      priority: 0,
-    });
+    const isPdf = params.filePath.toLowerCase().endsWith(".pdf");
+    const result = isPdf
+      ? await db.from("contract_document_jobs").insert({
+        contract_id: saved.id,
+        org_id: orgId,
+        created_by: user.id,
+        original_storage_path: params.filePath,
+        output_storage_path: `${orgId}/processed/${saved.id}/normalised.pdf`,
+        status: "queued",
+        priority: 100,
+      })
+      : await db.from("contract_ai_jobs").insert({
+        contract_id: saved.id,
+        org_id: orgId,
+        status: "queued",
+        priority: 0,
+      });
 
-    if (jobError) {
-      console.error("Kunne ikke oprette AI-job for uploadet kontrakt:", jobError);
-    } else {
-      triggerContractAiJobProcessing();
+    if (result.error) {
+      console.error("Kunne ikke oprette behandlingsjob for uploadet kontrakt:", result.error);
+    } else if (!isPdf) {
+      triggerContractAiJobProcessing(orgId);
     }
   }
 
@@ -334,18 +345,36 @@ export async function queueUploadedContractAiJob(contractId: string) {
   const orgId = await requireOrgId(db, user.id);
   const { data: contract } = await db
     .from("contracts")
-    .select("id")
+    .select("id,pdf_url")
     .eq("id", contractId)
     .eq("org_id", orgId)
     .eq("rights_holder_id", rh.id)
     .maybeSingle();
   if (!contract) return { success: false, error: "Kontrakten blev ikke fundet" };
 
+  if (contract.pdf_url?.toLowerCase().endsWith(".pdf")) {
+    const { data: existingDocumentJob } = await db.from("contract_document_jobs")
+      .select("id").eq("contract_id", contractId).in("status", ["queued", "processing", "failed"]).lt("attempts", 5).limit(1).maybeSingle();
+    if (existingDocumentJob) return { success: true, alreadyQueued: true };
+    const { error } = await db.from("contract_document_jobs").insert({
+      contract_id: contractId,
+      org_id: orgId,
+      created_by: user.id,
+      original_storage_path: contract.pdf_url,
+      output_storage_path: `${orgId}/processed/${contractId}/normalised.pdf`,
+      status: "queued",
+      priority: 100,
+    });
+    if (error) return { success: false, error: error.message };
+    await db.from("contracts").update({ document_processing_status: "pending", document_processing_error_code: null }).eq("id", contractId).eq("org_id", orgId);
+    return { success: true, alreadyQueued: false };
+  }
+
   const { data: existing } = await db
     .from("contract_ai_jobs")
     .select("id")
     .eq("contract_id", contractId)
-    .in("status", ["queued", "processing"])
+    .in("status", ["queued", "processing", "retry_wait", "blocked", "error"])
     .limit(1)
     .maybeSingle();
   if (existing) return { success: true, alreadyQueued: true };
@@ -357,17 +386,17 @@ export async function queueUploadedContractAiJob(contractId: string) {
     priority: 0,
   });
   if (error) return { success: false, error: error.message };
-  triggerContractAiJobProcessing();
+  triggerContractAiJobProcessing(orgId);
   return { success: true, alreadyQueued: false };
 }
 
 // Udløs jobkøen med det samme, så auto-kobling af kontrakt→værk ikke venter på
 // det daglige cron-job. Kører direkte i baggrunden via after().
-function triggerContractAiJobProcessing() {
+function triggerContractAiJobProcessing(orgId: string) {
   after(async () => {
     try {
-      const { processPendingContractJobs } = await import("@/app/api/contracts/jobs/process/route");
-      await processPendingContractJobs();
+      const { processPendingContractJobs } = await import("@/lib/server/contract-import-processor");
+      await processPendingContractJobs(orgId);
     } catch (e) {
       console.error("[contract-job] Baggrundsaflæsning fejlede:", e);
     }
@@ -464,7 +493,20 @@ export async function linkContractToWork(
     .eq("rights_holder_id", rh.id);
 
   if (error) return { success: false, error: error.message };
+  if (!workId) {
+    const { error: confirmationError } = await db
+      .from("contract_episode_confirmations")
+      .update({ invalidated_at: new Date().toISOString() })
+      .eq("contract_id", contractId)
+      .eq("rights_holder_id", rh.id)
+      .is("invalidated_at", null);
+    if (confirmationError) {
+      console.error("Kunne ikke ugyldiggøre kontraktens afsnitsbekræftelse", { contractId, error: confirmationError.message });
+      return { success: false, error: "Værktilknytningen blev fjernet, men afsnitsbekræftelsen kunne ikke ryddes. Prøv igen." };
+    }
+  }
   revalidatePath("/portal/mine-kontrakter");
+  revalidatePath("/portal/mine-vaerker");
   return { success: true };
 }
 
@@ -556,8 +598,8 @@ export async function deleteMemberContract(contractId: string) {
   if (!contract) return { success: false, error: "Kontrakt ikke fundet" };
   if (contract.rights_holder_id !== rh.id) return { success: false, error: "Ikke autoriseret" };
 
-  // Ryd op i storage: både selve kontrakten og evt. vedhæftede allonger/bilag,
-  // så filer ikke bliver forældreløse når DB-rækkerne cascade-slettes.
+  // Slet altid databaserækken først. Hvis storage slettes først og database-
+  // sletningen fejler, står brugeren ellers med en kontrakt uden dokument.
   const { data: attachments } = await db
     .from("contract_attachments")
     .select("pdf_url")
@@ -566,14 +608,22 @@ export async function deleteMemberContract(contractId: string) {
     contract.pdf_url,
     ...((attachments ?? []).map(a => a.pdf_url)),
   ].filter((p): p is string => Boolean(p));
+  const { error: deleteError } = await db.from("contracts").delete().eq("id", contractId);
+  if (deleteError) {
+    console.error("[member-contracts] contract delete failed", deleteError.code);
+    return { success: false, error: "Kontrakten kunne ikke slettes." };
+  }
+  let cleanupWarning: string | undefined;
   if (storagePaths.length > 0) {
-    await db.storage.from(BUCKET).remove(storagePaths);
+    const { error: storageError } = await db.storage.from(BUCKET).remove(storagePaths);
+    if (storageError) {
+      console.error("[member-contracts] post-delete storage cleanup failed", storageError.name);
+      cleanupWarning = "Kontrakten er slettet, men en fil afventer teknisk oprydning.";
+    }
   }
 
-  await db.from("contracts").delete().eq("id", contractId);
-
   revalidatePath("/portal/mine-kontrakter");
-  return { success: true };
+  return { success: true, warning: cleanupWarning };
 }
 
 export async function getContractValidation(contractId: string, includeEpisodes = true) {
@@ -941,6 +991,14 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
 
   const found = rows ?? [];
   if (found.length === 0) return { success: false, error: "Ingen af kontrakterne blev fundet" };
+  const { data: attachmentRows, error: attachmentFetchError } = await db
+    .from("contract_attachments")
+    .select("pdf_url")
+    .in("contract_id", found.map(row => row.id));
+  if (attachmentFetchError) {
+    console.error("[member-contracts] attachment paths could not be loaded", attachmentFetchError.code);
+    return { success: false, error: "Kontraktfilerne kunne ikke klargøres til sletning." };
+  }
 
   // Admin skal have rettigheder i hver org kontrakterne tilhører
   const orgIds = [...new Set(found.map(row => row.org_id))];
@@ -969,19 +1027,28 @@ export async function deleteAdminContractsPermanently(contractIds: string[]) {
     }
   }
 
-  const pdfs = found.map(row => row.pdf_url).filter((url): url is string => Boolean(url));
-  if (pdfs.length > 0) await writeDb.storage.from(BUCKET).remove(pdfs);
-
-  // Slet i batches så store cascade-sletninger ikke rammer statement-timeout
   const foundIds = found.map(row => row.id);
-  for (let i = 0; i < foundIds.length; i += 50) {
-    const chunk = foundIds.slice(i, i + 50);
-    const { error } = await writeDb.from("contracts").delete().in("id", chunk);
-    if (error) return { success: false, error: error.message };
+  const { data: deletedCount, error: deleteError } = await writeDb.rpc("delete_contracts_atomic", { p_ids: foundIds });
+  if (deleteError || Number(deletedCount) !== foundIds.length) {
+    console.error("[member-contracts] atomic contract delete failed", deleteError?.code ?? "count_mismatch");
+    return { success: false, error: "Kontrakterne kunne ikke slettes samlet." };
+  }
+
+  const pdfs = [...new Set([
+    ...found.map(row => row.pdf_url),
+    ...(attachmentRows ?? []).map(row => row.pdf_url),
+  ].filter((url): url is string => Boolean(url)))];
+  let cleanupWarning: string | undefined;
+  if (pdfs.length > 0) {
+    const { error: storageError } = await writeDb.storage.from(BUCKET).remove(pdfs);
+    if (storageError) {
+      console.error("[member-contracts] bulk post-delete storage cleanup failed", storageError.name);
+      cleanupWarning = "Kontrakterne er slettet, men enkelte filer afventer teknisk oprydning.";
+    }
   }
 
   revalidatePath("/admin/kontrakter");
-  return { success: true, deletedCount: foundIds.length };
+  return { success: true, deletedCount: foundIds.length, warning: cleanupWarning };
 }
 
 export async function addMemberContractComment(contractId: string, message: string) {
@@ -1356,7 +1423,12 @@ export async function createAdminEmployer(params: { name: string; cvr?: string |
 
 export async function checkRightsHolderName(name: string) {
   try {
-    const res = await tjekNavn(name);
+    const user = await currentUser();
+    if (!user) return { success: false, error: "Ikke logget ind" };
+    const db = createServiceClient();
+    const orgId = await requireOrgId(db, user.id);
+    if (!(await assertAdminForOrg(db, user.id, orgId))) return { success: false, error: "Ikke autoriseret" };
+    const res = await tjekNavn(name, undefined, orgId);
     return { success: true, result: res };
   } catch (err: unknown) {
     return { success: false, error: err instanceof Error ? err.message : "Navnetjek fejlede" };

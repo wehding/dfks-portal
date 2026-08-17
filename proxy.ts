@@ -1,33 +1,36 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createServerClient } from "@supabase/ssr"
-import { INVITE_COOKIE } from "@/lib/auth/invite-gate"
+import { INVITE_COOKIE, getInviteGateCode } from "@/lib/auth/invite-gate"
 import { mustCompleteOnboarding, resolveOnboardingStatus } from "@/lib/auth/onboarding-state"
-
-// Stier der altid er tilgængelige uden session
-const PUBLIC_PATHS = [
-    "/invite",
-    "/api/auth/invite",
-    "/api/auth/callback",
-    "/api/integrations/gmail/contracts/push",
-    "/auth/confirm",
-    "/auth/opret-adgang",
-    "/_next",
-    "/favicon",
-]
+import { isPublicPath } from "@/lib/auth/public-paths"
 
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
 
+    // Cookie-autentificerede mutationer må kun komme fra appens egen origin.
+    // Server-til-server jobs og webhooks sender normalt ingen Origin-header og
+    // godkendes fortsat af deres egne secrets/signaturer i de enkelte ruter.
+    if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const origin = req.headers.get("origin")
+        if (origin) {
+            let allowed = false
+            try { allowed = new URL(origin).origin === req.nextUrl.origin } catch { allowed = false }
+            if (!allowed) return NextResponse.json({ error: "Ugyldig forespørgselskilde" }, { status: 403 })
+        }
+    }
+
     // Altid tilgængelige stier
-    if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+    if (isPublicPath(pathname)) {
         return NextResponse.next()
     }
 
     // ── Invite-kode gate ──────────────────────────────────────
-    // Kun aktiv når INVITE_CODE env var er sat (produktion/test)
-    if (process.env.INVITE_CODE) {
+    // Testgaten kræver eksplicit opt-in. En gammel INVITE_CODE må ikke blokere
+    // den almindelige login-side for nye browsere.
+    const inviteCode = getInviteGateCode()
+    if (inviteCode) {
         const token = req.cookies.get(INVITE_COOKIE)?.value
-        if (token !== process.env.INVITE_CODE) {
+        if (token !== inviteCode) {
             const url = req.nextUrl.clone()
             url.pathname = "/invite"
             url.searchParams.set("from", pathname)
@@ -100,6 +103,41 @@ export async function proxy(req: NextRequest) {
                 url.search = ""
                 return NextResponse.redirect(url)
             }
+        }
+    }
+
+    // Adminflader må aldrig beskyttes alene af den klient-renderede menu.
+    // En server-side rolleforespørgsel afviser medlemmer, før adminlayoutet køres.
+    if (pathname.startsWith("/admin") && user) {
+        const { data: staffRole } = await supabase
+            .from("user_org_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .in("role", ["superadmin", "admin", "org-admin", "jurist", "viewer"])
+            .limit(1)
+            .maybeSingle()
+        if (!staffRole) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/portal"
+            url.search = ""
+            return NextResponse.redirect(url)
+        }
+        const prototypePrefixes = [
+            "/admin/aftalelicens",
+            "/admin/indbetalinger",
+            "/admin/udbetalinger",
+            "/admin/streaming",
+            "/admin/stamdata",
+            "/admin/gennemsigtighed",
+            "/admin/barselspulje",
+            "/admin/helligdagsfond",
+        ]
+        if (process.env.VERCEL_ENV === "production" && prototypePrefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/admin"
+            url.search = ""
+            url.searchParams.set("notice", "module-not-ready")
+            return NextResponse.redirect(url)
         }
     }
 

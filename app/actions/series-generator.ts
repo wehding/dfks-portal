@@ -291,8 +291,43 @@ export async function generateEpisodesForSeries(params: {
     }
   }
 
+  // Eksterne kilder kan indeholde en ufuldstændig sæson (fx kun S01E01),
+  // selv om et godkendt medlem-/admininput fastslår et højere antal. Bevar de
+  // fundne metadata og supplér resten med neutrale afsnit.
+  if (requestedTotalEpisodes) {
+    const representedNumbers = new Set([
+      ...existingEpisodeNumbers,
+      ...episodesToInsert.map(episode => episode.episode_number),
+    ]);
+    for (let episodeNumber = 1; episodeNumber <= requestedTotalEpisodes; episodeNumber++) {
+      if (representedNumbers.has(episodeNumber)) continue;
+      const eStr = String(episodeNumber).padStart(2, "0");
+      episodesToInsert.push({
+        org_id: parentWork.org_id,
+        parent_work_id: parentWork.id,
+        season_number: seasonNumber,
+        episode_number: episodeNumber,
+        title: `${parentWork.title} - S${sStr}E${eStr}`,
+        type: parentWork.type,
+        year: parentWork.year,
+        duration_minutes: parentWork.duration_minutes,
+        genre: parentWork.genre,
+        director: parentWork.director,
+        description: parentWork.description,
+        poster_url: parentWork.poster_url,
+        status: parentWork.status,
+      });
+    }
+  }
+
+  // En godkendt rettelse med et eksplicit antal må ikke utilsigtet oprette
+  // flere afsnit, blot fordi den eksterne kilde indeholder en længere sæson.
+  const boundedEpisodes = requestedTotalEpisodes
+    ? episodesToInsert.filter(episode => episode.episode_number <= requestedTotalEpisodes)
+    : episodesToInsert;
+
   // 5. Gem kun de afsnit, som mangler i databasen
-  const missingEpisodesToInsert = episodesToInsert.filter(episode => !existingEpisodeNumbers.has(episode.episode_number));
+  const missingEpisodesToInsert = boundedEpisodes.filter(episode => !existingEpisodeNumbers.has(episode.episode_number));
   if (missingEpisodesToInsert.length === 0) {
     return { success: true, count: existingEpisodeNumbers.size, existing: true };
   }

@@ -11,6 +11,7 @@ export type PdfSignatureDetection = {
   status: "yes" | "unknown";
   method: PdfSignatureMethod;
   page: number | null;
+  date: string | null;
   evidence: string | null;
 };
 
@@ -20,6 +21,7 @@ export function classifyPdfSignatureIndicators(indicators: PdfSignatureIndicator
       status: "yes",
       method: "digital",
       page: indicators.digitalSignatureTextPage,
+      date: null,
       evidence: "Digital underskrift registreret lokalt i PDF'en.",
     };
   }
@@ -28,10 +30,21 @@ export function classifyPdfSignatureIndicators(indicators: PdfSignatureIndicator
       status: "yes",
       method: "handwritten",
       page: indicators.handwrittenPathPage,
+      date: null,
       evidence: `Håndskrevet underskrift registreret lokalt på side ${indicators.handwrittenPathPage}.`,
     };
   }
-  return { status: "unknown", method: "unknown", page: null, evidence: null };
+  return { status: "unknown", method: "unknown", page: null, date: null, evidence: null };
+}
+
+function signatureDateFromPageText(text: string) {
+  if (!/(underskrift|signatur|underskrevet|dato|date)/i.test(text)) return null;
+  const match = text.match(/(?:dato|date|den)?\s*[:.]?\s*(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})/i);
+  if (!match) return null;
+  const day = Number(match[1]); const month = Number(match[2]);
+  const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
+  if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > new Date().getFullYear() + 1) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 function numericArrays(value: unknown): number[][] {
@@ -56,6 +69,8 @@ function likelyHandwrittenPath(args: unknown, pageWidth: number, pageHeight: num
 }
 
 export async function detectPdfSignature(buffer: Buffer): Promise<PdfSignatureDetection> {
+  const worker = await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  (globalThis as typeof globalThis & { pdfjsWorker?: typeof worker }).pdfjsWorker = worker;
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
   const indicators: PdfSignatureIndicators = {
@@ -64,6 +79,7 @@ export async function detectPdfSignature(buffer: Buffer): Promise<PdfSignatureDe
     digitalSignatureTextPage: null,
     handwrittenPathPage: null,
   };
+  let detectedDate: string | null = null;
 
   const firstPage = Math.max(1, document.numPages - 1);
   for (let pageNumber = firstPage; pageNumber <= document.numPages; pageNumber += 1) {
@@ -78,6 +94,7 @@ export async function detectPdfSignature(buffer: Buffer): Promise<PdfSignatureDe
       .map(item => "str" in item ? item.str : "")
       .join(" ")
       .toLocaleLowerCase("da");
+    detectedDate ??= signatureDateFromPageText(pageText);
     if (/(digitalt|elektronisk)\s+(underskrevet|signeret)|penneo|docusign|adobe sign|signeret med mitid/.test(pageText)) {
       indicators.digitalSignatureTextPage = pageNumber;
     }
@@ -94,5 +111,6 @@ export async function detectPdfSignature(buffer: Buffer): Promise<PdfSignatureDe
     }
   }
 
-  return classifyPdfSignatureIndicators(indicators);
+  const result = classifyPdfSignatureIndicators(indicators);
+  return { ...result, date: result.status === "yes" ? detectedDate : null };
 }

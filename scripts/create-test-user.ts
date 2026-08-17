@@ -4,8 +4,8 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
-const EMAIL = "test@dfks.dk";
-const PASSWORD = "test1234";
+const EMAIL = process.env.DEV_TEST_USER_EMAIL?.trim().toLowerCase();
+const PASSWORD = process.env.DEV_TEST_USER_PASSWORD;
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -14,6 +14,12 @@ const supabase = createClient(
 );
 
 async function main() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Testbrugerscriptet må ikke køres i production.");
+  }
+  if (!EMAIL || !PASSWORD || PASSWORD.length < 12) {
+    throw new Error("Sæt DEV_TEST_USER_EMAIL og DEV_TEST_USER_PASSWORD (mindst 12 tegn) i .env.local.");
+  }
   // Opret bruger (eller ignorer hvis allerede findes)
   const { data: existing } = await supabase
     .from("rettighedshavere")
@@ -24,7 +30,6 @@ async function main() {
   if (existing?.user_id) {
     console.log(`✅ Test-bruger eksisterer allerede`);
     console.log(`   Email:    ${EMAIL}`);
-    console.log(`   Password: ${PASSWORD}`);
     console.log(`   Onboarding gennemført: ${existing.onboarding_completed}`);
 
     if (existing.onboarding_completed) {
@@ -52,7 +57,6 @@ async function main() {
 
   console.log(`✅ Test-bruger oprettet`);
   console.log(`   Email:    ${EMAIL}`);
-  console.log(`   Password: ${PASSWORD}`);
   console.log(`   User ID:  ${data.user.id}`);
   console.log(`\n→ Gå til http://localhost:3000 og log ind`);
 }

@@ -8,14 +8,18 @@ type TokenResponse = { access_token?: string; refresh_token?: string; expires_in
 
 export async function GET(request: NextRequest, context: { params: Promise<{ provider: string }> }) {
   const rawProvider = (await context.params).provider;
-  const fallback = new URL("/portal/min-profil", request.nextUrl.origin);
-  if (rawProvider !== "google_drive") return NextResponse.redirect(fallback);
+  if (rawProvider !== "google_drive") {
+    return NextResponse.redirect(new URL("/portal/min-profil", request.nextUrl.origin));
+  }
   const provider = rawProvider as ImportProvider;
+  const callbackUrl = canonicalImportCallback(request.nextUrl.origin, provider);
+  const redirectOrigin = new URL(callbackUrl).origin;
+  const fallback = new URL("/portal/min-profil", redirectOrigin);
   const session = await createClient();
   const { data: { user } } = await session.auth.getUser();
   if (!user) { fallback.searchParams.set("import_connection", "invalid"); return NextResponse.redirect(fallback); }
   const attempt = await consumeImportOAuthAttempt(request.nextUrl.searchParams.get("state") ?? "", provider, user.id);
-  const redirect = new URL(attempt?.returnPath ?? "/portal/min-profil", request.nextUrl.origin);
+  const redirect = new URL(attempt?.returnPath ?? "/portal/min-profil", redirectOrigin);
   const code = request.nextUrl.searchParams.get("code");
   if (!attempt || !code) { redirect.searchParams.set("import_connection", "invalid"); return NextResponse.redirect(redirect); }
 
@@ -27,7 +31,6 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
   }
 
   try {
-    const callbackUrl = canonicalImportCallback(request.nextUrl.origin, provider);
     const config = providerOAuthConfig(provider, callbackUrl, attempt.connectionKind);
     const body = new URLSearchParams({ code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: callbackUrl, grant_type: "authorization_code", code_verifier: attempt.codeVerifier });
     const response = await fetch(config.tokenUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body, cache: "no-store" });

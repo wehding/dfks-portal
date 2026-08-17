@@ -547,6 +547,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       const result = await deleteAdminContractsPermanently([contractId]);
       if (!result.success) throw new Error(result.error ?? "Kontrakten kunne ikke slettes");
       toast.success("Kontrakten er slettet permanent");
+      if (result.warning) toast.warning(result.warning);
       window.dispatchEvent(new Event("contracts-updated"));
       onSaved?.();
       onClose();
@@ -612,7 +613,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
       <FormSection title="Produktion og parter">
         <div className="grid min-w-0 gap-4 lg:grid-cols-2">
           <div className="min-w-0 space-y-1.5"><Label>Rettighedshaver</Label><RightsHolderAutocomplete options={payload.rightsHolders} value={form.rightsHolderId} onChange={value => update("rightsHolderId", value)} /></div>
-          <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Producent" /></div>
+          <div className="min-w-0 space-y-1.5"><ProductionCompanyPicker value={producers} onChange={setProducers} label="Producent" canManageRegistry /></div>
         </div>
       </FormSection>
       <FormSection title="Forbind med værk">
@@ -630,7 +631,7 @@ export function SharedContractEditor({ contractId, onClose, onSaved }: { contrac
             </Button>
           </div>
           {manualMode && <div className="rounded-lg border bg-muted/20 p-3 sm:col-span-2">
-            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" />
+            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" canManageProducerRegistry />
           </div>}
           <div className="space-y-1.5"><Label>Sæson</Label><Input inputMode="numeric" value={form.seasonNumber} onChange={event => update("seasonNumber", event.target.value)} /></div>
           <div className="space-y-1.5"><Label>Afsnit</Label><Input value={form.episodeNumbers} onChange={event => update("episodeNumbers", event.target.value)} placeholder="Fx 1, 2, 5" /></div>

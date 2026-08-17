@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -42,6 +42,7 @@ import {
   deleteAdminWorksPermanently,
   fetchAdminBroadcasters,
   fetchAdminWorkDetail,
+  fetchAdminWorkRequestDetail,
   fetchAdminSeasonEpisodes,
   fetchAdminRightsHolders,
   addAdminWorkRequestComment,
@@ -63,6 +64,7 @@ import { extractDfiDirectors, extractDfiPosterUrl, extractDfiPremiereYear, type 
 import { useActiveRightsHolder } from "@/lib/use-active-rights-holder";
 import { ResetFiltersButton } from "@/components/filters/reset-filters-button";
 import { clearAdminMessageThread, deleteAdminMessage } from "@/app/actions/admin-messages";
+import { fetchAdminWorkInbox } from "@/app/actions/member-inbox";
 import { SeriesEpisodeSelector } from "@/components/works/series-episode-selector";
 import { SeasonStepper } from "@/components/works/season-stepper";
 import { WORK_TYPES, workTypeLabel } from "@/lib/work-types";
@@ -739,6 +741,16 @@ function distributionPayload(items: DistributionDraft[]) {
 }
 
 export default function VaerksadministrationPage() {
+  return (
+    <Suspense fallback={<TableSkeleton columns={7} rows={7} />}>
+      <VaerksadministrationContent />
+    </Suspense>
+  );
+}
+
+function VaerksadministrationContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [works, setWorks] = useState<WorkRow[]>([]);
   const [rightsHolders, setRightsHolders] = useState<RightsHolder[]>([]);
   const [broadcasterOptions, setBroadcasterOptions] = useState<BroadcasterOption[]>(FALLBACK_BROADCASTER_OPTIONS);
@@ -815,20 +827,13 @@ export default function VaerksadministrationPage() {
 
   useEffect(() => {
     async function fetchBeskedCount() {
-      const contextRes = await fetch("/api/admin/context", { cache: "no-store" });
-      const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null;
-      if (!context?.orgId) return;
-      const { createClient } = await import("@/lib/supabase/client");
-      const supabase = createClient();
-      const { count } = await supabase
-        .from("work_change_request_comments")
-        .select("id, work_change_requests!inner(org_id)", { count: "exact", head: true })
-        .eq("author_role", "member")
-        .is("admin_read_at", null)
-        .eq("work_change_requests.org_id", context.orgId);
-      setBeskedCount(count ?? 0);
+      const result = await fetchAdminWorkInbox();
+      if (result.success) setBeskedCount((result.threads ?? []).reduce((sum, thread) => sum + thread.unreadCount, 0));
     }
     void fetchBeskedCount();
+    const reload = () => void fetchBeskedCount();
+    window.addEventListener("works-updated", reload);
+    return () => window.removeEventListener("works-updated", reload);
   }, []);
 
   const load = async () => {
@@ -918,27 +923,50 @@ export default function VaerksadministrationPage() {
     load();
   }, []);
 
-  const editParamHandled = useRef(false);
-  const rhParamHandled = useRef(false);
-  // Deep-link: ?edit=<id> eller ?id=<id> åbner Rediger værk automatisk (fx fra rettighedshaver-siden eller beskeder-tab)
   useEffect(() => {
-    if (editParamHandled.current || works.length === 0) return;
-    const params = new URLSearchParams(window.location.search);
-    const editId = params.get("edit") ?? params.get("id");
-    if (!editId) return;
-    const work = works.find(w => w.id === editId);
-    editParamHandled.current = true;
-    if (work) {
-      openEdit(work);
-      window.history.replaceState(null, "", "/admin/vaerker");
+    const requestedStatus = searchParams.get("status");
+    if (requestedStatus === "pending") setFilterStatus("til_godkendelse");
+    else if (requestedStatus === "beskeder") {
+      setFilterStatus("beskeder");
+      setActiveTab("beskeder");
+    }
+  }, [searchParams]);
+
+  const lastDeepLink = useRef<string | null>(null);
+  const rhParamHandled = useRef(false);
+  // Deep-link: den konkrete request prioriteres, så samme side kan åbne flere
+  // forskellige beskeder efter hinanden uden en fuld genindlæsning.
+  useEffect(() => {
+    const requestId = searchParams.get("request");
+    const editId = searchParams.get("edit") ?? searchParams.get("id");
+    const deepLinkKey = requestId ? `request:${requestId}` : editId ? `work:${editId}` : null;
+    if (!deepLinkKey) {
+      lastDeepLink.current = null;
       return;
     }
-    void fetchAdminWorkDetail(editId).then(result => {
-      if (result.success && result.work) openEdit(result.work as WorkRow);
-      else setNotice(result.error ?? "Værket blev ikke fundet.");
-      window.history.replaceState(null, "", "/admin/vaerker");
-    });
-  }, [works]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (lastDeepLink.current === deepLinkKey) return;
+    lastDeepLink.current = deepLinkKey;
+    let cancelled = false;
+    void (async () => {
+      const result = requestId
+        ? await fetchAdminWorkRequestDetail(requestId)
+        : await fetchAdminWorkDetail(editId!);
+      if (cancelled) return;
+      if (result.success && result.work) {
+        setActiveTab("oversigt");
+        await openEdit(result.work as WorkRow, requestId ?? undefined);
+        const next = new URLSearchParams(searchParams.toString());
+        next.delete("request");
+        next.delete("edit");
+        next.delete("id");
+        router.replace(next.size ? `/admin/vaerker?${next}` : "/admin/vaerker", { scroll: false });
+      } else {
+        setNotice(result.error ?? "Værket eller beskedtråden blev ikke fundet.");
+        lastDeepLink.current = null;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [router, searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (rhParamHandled.current || rightsHolders.length === 0) return;
@@ -1143,11 +1171,17 @@ export default function VaerksadministrationPage() {
 
   const sortMark = (key: SortKey) => sortKey === key ? (sortDir === "asc" ? "↑" : "↓") : "";
 
-  const markWorkMessagesRead = async (work: WorkRow) => {
+  const markWorkMessagesRead = async (work: WorkRow, onlyRequestIds?: string[]) => {
     const unreadRequestIds = (work.work_change_requests ?? [])
+      .filter(request => !onlyRequestIds || onlyRequestIds.includes(request.id))
       .filter(request => (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at))
       .map(request => request.id);
     if (unreadRequestIds.length === 0) return;
+    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
+    if (results.some(result => !result.success)) {
+      setNotice(results.find(result => !result.success)?.error ?? "Beskeden kunne ikke markeres som læst.");
+      return;
+    }
     const now = new Date().toISOString();
     const patch = (w: WorkRow): WorkRow => ({
       ...w,
@@ -1164,8 +1198,8 @@ export default function VaerksadministrationPage() {
     });
     setWorks(prev => prev.map(w => (w.id === work.id ? patch(w) : w)));
     setEditing(prev => (prev && prev.id === work.id ? patch(prev) : prev));
-    const results = await Promise.all(unreadRequestIds.map(id => markWorkRequestCommentsRead(id, "admin")));
-    if (results.some(r => r.success)) notifyWorksUpdated();
+    notifyWorksUpdated();
+    router.refresh();
   };
 
   const resolveProducerSelections = async (names: string[] | null | undefined, externalCompanies: ExternalProductionCompany[] = []) => {
@@ -1200,7 +1234,7 @@ export default function VaerksadministrationPage() {
     return resolved.filter((selection): selection is ProductionCompanySelection => selection !== null);
   };
 
-  const openEdit = async (work: WorkRow) => {
+  const openEdit = async (work: WorkRow, preferredRequestId?: string) => {
     setEditingSeasonGroup(null);
     setEditingSeasonEpisodes([]);
     setSeasonCreditDrafts({});
@@ -1209,7 +1243,6 @@ export default function VaerksadministrationPage() {
     const requestWithUnread = (work.work_change_requests ?? []).find(request =>
       (request.work_change_request_comments ?? []).some(c => c.author_role === "member" && !c.admin_read_at)
     ) ?? null;
-    void markWorkMessagesRead(work);
     setEditing(work);
     setEditForm(toForm(work));
     void resolveProducerSelections(work.production_companies).then(setEditProducerSelections);
@@ -1224,7 +1257,7 @@ export default function VaerksadministrationPage() {
       },
     ])));
     setNewAssignment({ rightsHolderId: "", role: "Klipper", sharePercent: "" });
-    setActiveRequestId(requestWithUnread?.id ?? null);
+    setActiveRequestId(preferredRequestId ?? requestWithUnread?.id ?? null);
     setAdminComment("");
     setImportPreview(null);
     setEditLookupQuery(work.title ?? "");
@@ -1249,9 +1282,22 @@ export default function VaerksadministrationPage() {
         sharePercent: assignment.share_percent === null || assignment.share_percent === undefined ? "" : String(assignment.share_percent),
       },
     ])));
-    setActiveRequestId(detailedRequestWithUnread?.id ?? requestWithUnread?.id ?? null);
+    const requestedThread = preferredRequestId
+      ? (detailedWork.work_change_requests ?? []).find(request => request.id === preferredRequestId)
+      : null;
+    setActiveRequestId(requestedThread?.id ?? detailedRequestWithUnread?.id ?? requestWithUnread?.id ?? null);
     setEditLookupQuery(detailedWork.title ?? "");
   };
+
+  useEffect(() => {
+    if (!editing || !activeRequestId) return;
+    const request = (editing.work_change_requests ?? []).find(item => item.id === activeRequestId);
+    if (!request?.work_change_request_comments?.some(comment => comment.author_role === "member" && !comment.admin_read_at)) return;
+    const frame = window.requestAnimationFrame(() => {
+      void markWorkMessagesRead(editing, [activeRequestId]);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeRequestId, editing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const findContractsToLink = async () => {
     setContractLinkLoading(true);
@@ -1946,7 +1992,7 @@ export default function VaerksadministrationPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Værksadministration"
+        title="Værksarkiv"
         subtitle={`${filtered.length} af ${works.length} værker`}
         actions={
             <Button className="gap-2" onClick={() => setAddOpen(true)}>
@@ -2152,9 +2198,7 @@ export default function VaerksadministrationPage() {
             <div key={work.id} className="space-y-2">
             <MobileDataCard className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
               <div className="flex gap-3">
-                <div onClick={event => event.stopPropagation()} className="pt-1">
-                  <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
-                </div>
+                <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="mt-1 h-4 w-4" aria-label={`Vælg ${work.title}`} />
                 {isSeason && <ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleAdminSeason(work)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} className="mt-1" />}
                 <button type="button" onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
                   <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
@@ -2593,7 +2637,7 @@ export default function VaerksadministrationPage() {
                       <Field label="Produktionslande"><Input value={editForm.production_countries} onChange={e => setEditForm({ ...editForm, production_countries: e.target.value })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.production_companies}>
-                      <div className="md:col-span-2"><ProductionCompanyPicker value={editProducerSelections} suggestedName={editForm.production_companies} onChange={selections => { setEditProducerSelections(selections); setEditForm({ ...editForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
+                      <div className="md:col-span-2"><ProductionCompanyPicker value={editProducerSelections} suggestedName={editForm.production_companies} onChange={selections => { setEditProducerSelections(selections); setEditForm({ ...editForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} canManageRegistry /></div>
                     </DiffField>
                     <DiffField diff={activeDiffMap.dfi_id}>
                       <Field label="DFI-id"><Input value={editForm.dfi_id} onChange={e => setEditForm({ ...editForm, dfi_id: e.target.value })} /></Field>
@@ -3130,7 +3174,7 @@ export default function VaerksadministrationPage() {
                   <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
                   <Field label="Produktionslande"><Input value={addForm.production_countries} onChange={e => setAddForm({ ...addForm, production_countries: e.target.value })} /></Field>
-                  <div className="md:col-span-2"><ProductionCompanyPicker value={addProducerSelections} suggestedName={addForm.production_companies} onChange={selections => { setAddProducerSelections(selections); setAddForm({ ...addForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
+                  <div className="md:col-span-2"><ProductionCompanyPicker value={addProducerSelections} suggestedName={addForm.production_companies} onChange={selections => { setAddProducerSelections(selections); setAddForm({ ...addForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} canManageRegistry /></div>
                   <div className="md:col-span-2"><Field label="Beskrivelse"><Textarea value={addForm.description} onChange={e => setAddForm({ ...addForm, description: e.target.value })} /></Field></div>
                   <Field label="DFI ID"><Input value={addForm.dfi_id} onChange={e => setAddForm({ ...addForm, dfi_id: e.target.value })} /></Field>
                   <Field label="TMDB ID"><Input value={addForm.tmdb_id} onChange={e => setAddForm({ ...addForm, tmdb_id: e.target.value })} /></Field>

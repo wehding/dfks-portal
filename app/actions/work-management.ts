@@ -25,6 +25,8 @@ import { identityLevel } from "@/lib/work-identity";
 import { resolveStaffAccess } from "@/lib/staff-access";
 import { assertRightsHolderInOrg } from "@/lib/authz";
 import { canLinkContractWork } from "@/lib/contract-link-access";
+import { generateEpisodesForSeries } from "@/app/actions/series-generator";
+import type { DbWork } from "@/lib/db/types";
 
 import { requireOrgId } from "@/lib/org";
 
@@ -108,11 +110,6 @@ type WorkRequestPayload = Partial<WorkCorrectionData> & {
   targetSeasonNumber?: number;
 };
 
-type ExistingEpisodeRow = {
-  id: string;
-  episode_number: number | null;
-};
-
 const BROADCAST_STREAM_NUMBER = "broadcast/stream";
 
 const CORRECTABLE_KEYS: (keyof WorkCorrectionData)[] = [
@@ -172,6 +169,15 @@ function cleanTextList(value: string[] | null | undefined) {
     cleaned.push(text);
   }
   return cleaned;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function cleanWorkType(value: string) {
@@ -556,6 +562,33 @@ export async function submitWorkDataCorrection(params: {
   if (!hasChanges) throw new Error("Der er ingen ændringer at sende til admin.");
 
   const orgId = await currentOrgId(db, user.id);
+  const proposedData = {
+    kind: "correction" as const,
+    ...proposedChanges,
+    coEditors,
+    myEpisodes: params.myEpisodes || [],
+    editScope: params.editScope ?? "work",
+    ...(params.seasonNumber ? { targetSeasonNumber: params.seasonNumber } : {}),
+    ...((seasonScope && memberRole) || roleChanged ? { memberRole } : {}),
+  };
+
+  // Returnér den eksisterende anmodning ved dobbeltklik/genindsendelse. Databasens
+  // partielle unikke indeks lukker det samtidige race mellem to serverkald.
+  const { data: pendingRequests, error: pendingError } = await db
+    .from("work_change_requests")
+    .select("id,proposed_data")
+    .eq("work_id", work.id)
+    .eq("requested_by_user_id", user.id)
+    .eq("status", "pending");
+  if (pendingError) throw new Error(pendingError.message);
+  const proposedFingerprint = canonicalJson(proposedData);
+  const existingRequest = (pendingRequests ?? []).find(item =>
+    canonicalJson(item.proposed_data) === proposedFingerprint
+  );
+  if (existingRequest) {
+    return { success: true, requestId: existingRequest.id as string, existing: true };
+  }
+
   const { data: request, error: requestError } = await db
     .from("work_change_requests")
     .insert({
@@ -565,21 +598,31 @@ export async function submitWorkDataCorrection(params: {
       requested_by_rights_holder_id: rightsHolder.id,
       source: "Mine værker",
       old_data: work,
-      proposed_data: {
-        kind: "correction",
-        ...proposedChanges,
-        coEditors,
-        myEpisodes: params.myEpisodes || [],
-        editScope: params.editScope ?? "work",
-        ...(params.seasonNumber ? { targetSeasonNumber: params.seasonNumber } : {}),
-        ...((seasonScope && memberRole) || roleChanged ? { memberRole } : {}),
-      },
+      proposed_data: proposedData,
       status: "pending",
     })
     .select("id")
     .single();
 
-  if (requestError || !request?.id) throw new Error(requestError?.message ?? "Kunne ikke oprette ændringsanmodning.");
+  if (requestError || !request?.id) {
+    // Et parallelt identisk kald kan have vundet det unikke indeks. Hent det
+    // resultat i stedet for at vise en fejl eller oprette endnu en request.
+    if (requestError?.code === "23505") {
+      const { data: concurrentRequests } = await db
+        .from("work_change_requests")
+        .select("id,proposed_data")
+        .eq("work_id", work.id)
+        .eq("requested_by_user_id", user.id)
+        .eq("status", "pending");
+      const concurrentRequest = (concurrentRequests ?? []).find(item =>
+        canonicalJson(item.proposed_data) === proposedFingerprint
+      );
+      if (concurrentRequest) {
+        return { success: true, requestId: concurrentRequest.id as string, existing: true };
+      }
+    }
+    throw new Error(requestError?.message ?? "Kunne ikke oprette ændringsanmodning.");
+  }
 
   const { error: commentError } = await db.from("work_change_request_comments").insert({
     request_id: request.id,
@@ -874,6 +917,23 @@ export async function fetchAdminWorkDetail(workId: string) {
   if (error) return { success: false, error: error.message };
   if (!data) return { success: false, error: "Værket blev ikke fundet." };
   return { success: true, work: data };
+}
+
+export async function fetchAdminWorkRequestDetail(requestId: string) {
+  const { supabase, user } = await currentUser();
+  const admin = await assertAdminRole(supabase, ADMIN_ROLES);
+  if (!admin) return { success: false, error: "Mangler adminrettigheder." };
+  const db = createServiceClient();
+  const orgId = await currentOrgId(db, user.id);
+  const { data: request, error } = await db.from("work_change_requests")
+    .select("id,work_id")
+    .eq("id", requestId)
+    .eq("org_id", orgId)
+    .maybeSingle();
+  if (error) return { success: false, error: error.message };
+  if (!request) return { success: false, error: "Beskedtråden blev ikke fundet." };
+  const detail = await fetchAdminWorkDetail(request.work_id);
+  return detail.success ? { ...detail, requestId: request.id } : detail;
 }
 
 export async function deleteAdminWorkPermanently(params: { workId: string }) {
@@ -1705,7 +1765,12 @@ export async function reviewWorkDataCorrection(params: {
 
   if (requestError || !request) throw new Error(requestError?.message ?? "Anmodningen findes ikke.");
   if (params.decision === "rejected" && request.status === "approved") throw new Error("Godkendte anmodninger kan ikke afvises.");
-  if (params.decision === "approved" && request.status === "approved") throw new Error("Anmodningen er allerede godkendt.");
+  if (params.decision === "approved" && request.status === "approved") {
+    return { success: true, existing: true };
+  }
+  if (params.decision === "rejected" && request.status === "rejected") {
+    return { success: true, existing: true };
+  }
 
   const proposed = request.proposed_data as WorkRequestPayload;
   if (params.decision === "approved") {
@@ -1723,6 +1788,30 @@ export async function reviewWorkDataCorrection(params: {
     };
     const { error } = await db.from("works").update(workUpdates).eq("id", request.work_id);
     if (error) throw new Error(error.message);
+
+    // Opdatér det eksisterende værk in-place og generér manglende afsnit, før
+    // krediteringer synkroniseres. Det bevarer værkets id og alle relationer.
+    const oldWork = (request.old_data ?? {}) as Partial<CreateWorkData>;
+    const isSeries = workUpdates.type === "tv-serie" || workUpdates.type === "dokumentar-serie" || oldWork?.type === "tv-serie" || oldWork?.type === "dokumentar-serie";
+    const epCount = params.episodeCountOverride != null && params.episodeCountOverride > 0
+      ? params.episodeCountOverride
+      : (workUpdates.episode_count ? Number(workUpdates.episode_count) : (oldWork?.episode_count ? Number(oldWork.episode_count) : 0));
+
+    if (isSeries && epCount > 0) {
+      const { data: updatedParent, error: parentError } = await db
+        .from("works")
+        .select("*")
+        .eq("id", request.work_id)
+        .single();
+      if (parentError || !updatedParent) throw new Error(parentError?.message ?? "Kunne ikke hente den opdaterede serie.");
+      const generation = await generateEpisodesForSeries({
+        parentWork: updatedParent as DbWork,
+        seasonNumber: targetSeasonNumber,
+        totalEpisodes: epCount,
+      });
+      if (!generation.success) throw new Error(generation.error ?? "Kunne ikke oprette seriens afsnit.");
+    }
+
     if (seasonScope) {
       await applySeasonCoEditorChanges({
         db,
@@ -1745,13 +1834,6 @@ export async function reviewWorkDataCorrection(params: {
       if (roleError) throw new Error(roleError.message);
     }
 
-    // Automatisk generering og tildeling af afsnit
-    const oldWork = (request.old_data ?? {}) as Partial<CreateWorkData>;
-    const isSeries = workUpdates.type === "tv-serie" || workUpdates.type === "dokumentar-serie" || oldWork?.type === "tv-serie" || oldWork?.type === "dokumentar-serie";
-    const epCount = params.episodeCountOverride != null && params.episodeCountOverride > 0
-      ? params.episodeCountOverride
-      : (workUpdates.episode_count ? Number(workUpdates.episode_count) : (oldWork?.episode_count ? Number(oldWork.episode_count) : 0));
-
     if (isSeries && epCount > 0 && seasonScope && request.requested_by_rights_holder_id) {
       await syncSeasonAssignmentsForHolder({
         db,
@@ -1762,80 +1844,6 @@ export async function reviewWorkDataCorrection(params: {
         role: proposed.memberRole ?? "Klipper",
         selectedEpisodes: (params.myEpisodesOverride?.length ? params.myEpisodesOverride : proposed.myEpisodes ?? []) as number[],
       });
-    } else if (isSeries && epCount > 0) {
-      const { data: existingEpisodes } = await db
-        .from("works")
-        .select("id, episode_number")
-        .eq("parent_work_id", request.work_id);
-
-      const existingMap = new Map<number, string>();
-      if (existingEpisodes) {
-        (existingEpisodes as ExistingEpisodeRow[]).forEach(e => {
-          if (e.episode_number != null) existingMap.set(Number(e.episode_number), e.id);
-        });
-      }
-
-      const { data: myAssignment } = await db
-        .from("work_assignments")
-        .select("role")
-        .eq("work_id", request.work_id)
-        .eq("rights_holder_id", request.requested_by_rights_holder_id)
-        .maybeSingle();
-
-      const memberRole = myAssignment?.role || "Klipper";
-      const myEpisodes = (params.myEpisodesOverride && params.myEpisodesOverride.length > 0
-        ? params.myEpisodesOverride
-        : (proposed.myEpisodes || [])) as number[];
-
-      for (let i = 1; i <= epCount; i++) {
-        let epWorkId = existingMap.get(i);
-
-        if (!epWorkId) {
-          const eStr = String(i).padStart(2, "0");
-          const sStr = "01";
-          const epTitle = `${workUpdates.title || oldWork?.title || "Ukendt"} - S${sStr}E${eStr}`;
-
-          const { data: newEp, error: epErr } = await db
-            .from("works")
-            .insert({
-              org_id: request.org_id,
-              parent_work_id: request.work_id,
-              season_number: 1,
-              episode_number: i,
-              title: epTitle,
-              type: workUpdates.type || oldWork?.type || "tv-serie",
-              year: workUpdates.year || oldWork?.year,
-              duration_minutes: workUpdates.duration_minutes || oldWork?.duration_minutes,
-              genre: workUpdates.genre || oldWork?.genre,
-              director: workUpdates.director || oldWork?.director,
-              description: workUpdates.description || oldWork?.description,
-              poster_url: oldWork?.poster_url || null,
-              status: "godkendt",
-            })
-            .select("id")
-            .single();
-
-          if (epErr) {
-            console.error(`Fejl ved automatisk oprettelse af afsnit ${i}:`, epErr);
-          } else {
-            epWorkId = newEp.id;
-          }
-        }
-
-        if (epWorkId && myEpisodes.includes(i)) {
-          await db
-            .from("work_assignments")
-            .upsert(
-              {
-                work_id: epWorkId,
-                org_id: request.org_id,
-                rights_holder_id: request.requested_by_rights_holder_id,
-                role: memberRole,
-              },
-              { onConflict: "work_id,rights_holder_id,role" }
-            );
-        }
-      }
     }
   }
 
@@ -1920,6 +1928,7 @@ export async function markWorkRequestCommentsRead(requestId: string, viewerRole:
 
   revalidatePath("/portal/mine-vaerker");
   revalidatePath("/admin/vaerker");
+  revalidatePath("/admin");
   return { success: true };
 }
 

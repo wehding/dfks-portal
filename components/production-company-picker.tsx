@@ -30,9 +30,10 @@ type Props = {
   suggestedName?: string;
   suggestedNames?: string[];
   autoSelectHighConfidence?: boolean;
+  canManageRegistry?: boolean;
 };
 
-export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", suggestedNames = [], autoSelectHighConfidence = false }: Props) {
+export function ProductionCompanyPicker({ value, onChange, disabled = false, label, suggestedName = "", suggestedNames = [], autoSelectHighConfidence = false, canManageRegistry = false }: Props) {
   const { locale } = useI18n();
   const da = locale === "da";
   const [query, setQuery] = useState(suggestedName);
@@ -88,7 +89,7 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
         if (!localResponse.ok) throw new Error(localJson.error);
         const localOptions = (localJson.data ?? []) as ProductionCompanyOption[];
         setOptions(localOptions);
-        if (localOptions.length > 0 || trimmed.length < 2) {
+        if (!canManageRegistry || localOptions.length > 0 || trimmed.length < 2) {
           setCvrOptions([]);
           return;
         }
@@ -115,7 +116,7 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
       }
     }, 350);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [query]);
+  }, [canManageRegistry, query]);
 
   const selected = useMemo(() => new Set(value.map(selectionKey)), [value]);
 
@@ -225,7 +226,9 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
         <span className="block text-xs text-muted-foreground">{item.sourceName}{item.option.matchScore != null ? ` · ${Math.min(100, item.option.matchScore)}% match` : ""}</span>
       </button> : <button key={item.sourceName} type="button" disabled={disabled} onClick={() => setQuery(item.sourceName)} className="block w-full rounded px-2 py-2 text-left text-sm hover:bg-muted disabled:opacity-50">
         <span className="block font-medium">{item.sourceName}</span>
-        <span className="block text-xs text-muted-foreground">{da ? "Ikke fundet — søg eller opret" : "Not found — search or create"}</span>
+        <span className="block text-xs text-muted-foreground">{canManageRegistry
+          ? (da ? "Ikke fundet — søg eller opret" : "Not found — search or create")
+          : (da ? "Ikke fundet — kontakt en administrator for at få producenten oprettet" : "Not found — contact an administrator to add the producer")}</span>
       </button>)}
     </div>}
 
@@ -245,15 +248,18 @@ export function ProductionCompanyPicker({ value, onChange, disabled = false, lab
           {entity.legalName}{entity.registrationNumber ? ` · CVR ${entity.registrationNumber}` : ""}
         </button>)}
       </div>)}
-      {!loading && cvrOptions.map(result => <button key={result.cvrNumber} type="button" disabled={savingCvr !== null} onClick={() => void selectCvrCompany(result)} className="block w-full min-w-0 rounded-md border border-dashed px-3 py-2.5 text-left hover:bg-muted disabled:opacity-60">
+      {!loading && canManageRegistry && cvrOptions.map(result => <button key={result.cvrNumber} type="button" disabled={savingCvr !== null} onClick={() => void selectCvrCompany(result)} className="block w-full min-w-0 rounded-md border border-dashed px-3 py-2.5 text-left hover:bg-muted disabled:opacity-60">
         <span className="flex items-center gap-2 font-medium">{savingCvr === result.cvrNumber && <Loader2 className="h-4 w-4 animate-spin" />}{result.name}</span>
         <span className="block text-xs text-muted-foreground">CVR {result.cvrNumber}{result.industryDescription ? ` · ${result.industryDescription}` : ""}</span>
         <span className="block text-xs text-muted-foreground">{da ? "Fundet i CVR-registeret" : "Found in the company register"}</span>
       </button>)}
-      {!loading && query.trim() && options.length === 0 && cvrOptions.length === 0 && <Button type="button" variant="ghost" className="h-auto w-full min-w-0 justify-start whitespace-normal py-2 text-left" disabled={creatingCanonical} onClick={createCanonical}>
+      {!loading && canManageRegistry && query.trim() && options.length === 0 && cvrOptions.length === 0 && <Button type="button" variant="ghost" className="h-auto w-full min-w-0 justify-start whitespace-normal py-2 text-left" disabled={creatingCanonical} onClick={createCanonical}>
         {creatingCanonical ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
         {da ? `Opret ny producent “${query.trim()}”` : `Create producer “${query.trim()}”`}
       </Button>}
+      {!loading && !canManageRegistry && query.trim() && options.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">
+        {da ? "Producenten findes ikke i registret. En administrator skal oprette den, før den kan vælges." : "The producer is not in the registry. An administrator must add it before it can be selected."}
+      </p>}
     </div>}
   </div>;
 }

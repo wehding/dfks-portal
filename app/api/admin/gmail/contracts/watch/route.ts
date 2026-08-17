@@ -1,6 +1,13 @@
 import { after, NextRequest, NextResponse } from "next/server";
 import { requireCronOrAdminApi } from "@/lib/api-auth";
-import { configureGmailContractWatch, syncGmailContractMailbox } from "@/lib/gmail-contract-import";
+import {
+  configureGmailContractWatch,
+  getGmailContractConfigurationStatus,
+  getGmailContractImportStatus,
+  getSafeGmailContractImportError,
+  reconcileRecentGmailContractMessages,
+  syncGmailContractMailbox,
+} from "@/lib/gmail-contract-import";
 import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
 
 export const dynamic = "force-dynamic";
@@ -8,14 +15,25 @@ export const dynamic = "force-dynamic";
 async function run(req: NextRequest) {
   const auth = await requireCronOrAdminApi(req, ["superadmin"]);
   if (!auth.ok) return auth.response;
+  const configuration = getGmailContractConfigurationStatus();
   try {
     const watch = await configureGmailContractWatch();
     const sync = await syncGmailContractMailbox();
-    if (sync.imported > 0) after(triggerContractReviewWorker(req.nextUrl.origin));
-    return NextResponse.json({ ok: true, watch, sync });
+    const reconciliation = sync.mode === "reconciliation"
+      ? null
+      : await reconcileRecentGmailContractMessages();
+    // Start også workeren, når Gmail-synkroniseringen kun fandt dubletter.
+    // Der kan ligge ældre køjob fra et tidligere afbrudt webhook-kald.
+    after(triggerContractReviewWorker(req.nextUrl.origin));
+    const status = await getGmailContractImportStatus();
+    return NextResponse.json({ ok: true, configuration, watch, sync, reconciliation, status });
   } catch (error) {
-    console.error("[gmail-contract-watch] Opsætning fejlede", error instanceof Error ? error.message : "Ukendt fejl");
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Gmail-overvågningen fejlede" }, { status: 500 });
+    console.error("[gmail-contract-watch] Opsætning fejlede", getSafeGmailContractImportError(error));
+    return NextResponse.json({
+      ok: false,
+      configuration,
+      error: "Gmail-overvågningen kunne ikke opdateres.",
+    }, { status: 500 });
   }
 }
 

@@ -23,6 +23,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     ".claire/**",
     ".claude/**",
+    ".codex-tmp/**",
+    ".worktrees/**",
     "public/**",
     "scripts/**",
   ]),
