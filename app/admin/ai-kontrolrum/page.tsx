@@ -1280,6 +1280,7 @@ type PensionRuleItem = {
     employer_percent: number
     employee_percent: number
     basis: string
+    scheme_kind: string
     valid_from: string
     valid_to: string | null
     section_reference: string
@@ -1369,13 +1370,36 @@ function OverenskomsterTab() {
     const [stamdataForm, setStamdataForm] = useState<StamdataForm>({ title: "", parties: "", valid_from: "", valid_to: "", notes: "", source_url: "", content_url: "" })
     const [stamdataSaving, setStamdataSaving] = useState(false)
 
-    // Kilde-redigering på løn/pensionsregler: rule.id → form state
-    type WageSourceForm = { source_title: string; source_url: string; source_note: string; source_checked_at: string }
-    type PensionSourceForm = { source_note: string }
+    // Løn- og pensionsregel-redigering / oprettelse
+    type WageRuleForm = {
+        profession_role: string; wage_group: string; employment_form: string
+        rate_kind: string; amount: string; unit: string; pension_included: boolean
+        valid_from: string; valid_to: string
+        source_title: string; source_url: string; source_section: string; source_checked_at: string; source_note: string
+    }
+    type PensionRuleForm = {
+        employment_form: string; employer_percent: string; employee_percent: string
+        basis: string; scheme_kind: string; valid_from: string; valid_to: string
+        section_reference: string; source_note: string
+    }
+    const emptyWageForm = (): WageRuleForm => ({
+        profession_role: "", wage_group: "", employment_form: "a-løn", rate_kind: "normalløn",
+        amount: "", unit: "uge", pension_included: false, valid_from: "", valid_to: "",
+        source_title: "", source_url: "", source_section: "", source_checked_at: new Date().toISOString().slice(0, 10), source_note: "",
+    })
+    const emptyPensionForm = (): PensionRuleForm => ({
+        employment_form: "a-løn", employer_percent: "", employee_percent: "0",
+        basis: "normalløn", scheme_kind: "occupational_pension", valid_from: "", valid_to: "",
+        section_reference: "", source_note: "",
+    })
     const [editWageRule, setEditWageRule] = useState<string | null>(null)
-    const [wageSourceForm, setWageSourceForm] = useState<WageSourceForm>({ source_title: "", source_url: "", source_note: "", source_checked_at: "" })
+    const [wageRuleForm, setWageRuleForm] = useState<WageRuleForm>(emptyWageForm())
     const [editPensionRule, setEditPensionRule] = useState<string | null>(null)
-    const [pensionSourceForm, setPensionSourceForm] = useState<PensionSourceForm>({ source_note: "" })
+    const [pensionRuleForm, setPensionRuleForm] = useState<PensionRuleForm>(emptyPensionForm())
+    const [newWageAgreementId, setNewWageAgreementId] = useState<string | null>(null)
+    const [newWageForm, setNewWageForm] = useState<WageRuleForm & { rate_key: string }>(Object.assign(emptyWageForm(), { rate_key: "" }))
+    const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
+    const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [ruleSaving, setRuleSaving] = useState(false)
 
     const refreshAktive = () => {
@@ -1576,31 +1600,115 @@ function OverenskomsterTab() {
         refreshAktive()
     }
 
-    const gemWageSource = async (wageRuleId: string) => {
+    const gemWageRule = async (wageRuleId: string) => {
         setRuleSaving(true)
         const res = await fetch("/api/admin/agreements", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ wageRuleId, ...wageSourceForm }),
+            body: JSON.stringify({ wageRuleId, ...wageRuleForm }),
         })
         setRuleSaving(false)
         if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
-        toast.success("Kildeinfo gemt")
+        toast.success("Lønregel gemt")
         setEditWageRule(null)
         refreshAktive()
     }
 
-    const gemPensionSource = async (pensionRuleId: string) => {
+    const gemPensionRule = async (pensionRuleId: string) => {
         setRuleSaving(true)
         const res = await fetch("/api/admin/agreements", {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pensionRuleId, ...pensionSourceForm }),
+            body: JSON.stringify({ pensionRuleId, ...pensionRuleForm }),
         })
         setRuleSaving(false)
         if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
-        toast.success("Kildeinfo gemt")
+        toast.success("Pensionsregel gemt")
         setEditPensionRule(null)
+        refreshAktive()
+    }
+
+    const opretWageRule = async () => {
+        if (!newWageAgreementId) return
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRule: { agreementId: newWageAgreementId, ...newWageForm } }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke oprette")
+        toast.success("Lønregel oprettet som kladde")
+        setNewWageAgreementId(null)
+        setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" }))
+        refreshAktive()
+    }
+
+    const opretPensionRule = async () => {
+        if (!newPensionAgreementId) return
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRule: { agreementId: newPensionAgreementId, ...newPensionForm } }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke oprette")
+        toast.success("Pensionsregel oprettet som kladde")
+        setNewPensionAgreementId(null)
+        setNewPensionForm(emptyPensionForm())
+        refreshAktive()
+    }
+
+    const sletWageRule = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke slette")
+        toast.success("Lønregel slettet/arkiveret")
+        refreshAktive()
+    }
+
+    const sletPensionRule = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke slette")
+        toast.success("Pensionsregel slettet/arkiveret")
+        refreshAktive()
+    }
+
+    const godkendWageRule = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId, status: "approved" }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke godkende")
+        toast.success("Lønregel godkendt juridisk")
+        refreshAktive()
+    }
+
+    const godkendPensionRule = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId, status: "approved" }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke godkende")
+        toast.success("Pensionsregel godkendt juridisk")
         refreshAktive()
     }
 
@@ -1712,6 +1820,7 @@ function OverenskomsterTab() {
                                     </div>
                                 )}
                                 <div className="space-y-2">
+                                    {/* ── Lønregler ── */}
                                     <details className="group rounded-md border bg-background" open>
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
                                             <span>Aktuel minimumsløn</span>
@@ -1723,41 +1832,156 @@ function OverenskomsterTab() {
                                                 .slice()
                                                 .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
                                                 .map(rule => (
-                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs space-y-1">
-                                                        {rule.amount !== null && rule.unit ? (
-                                                            <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
-                                                        ) : (
-                                                            <p className="font-medium">Ingen verificeret aktuel sats</p>
-                                                        )}
-                                                        <p className="text-muted-foreground">
-                                                            {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
-                                                            {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
-                                                        </p>
-                                                        {editWageRule === rule.id ? (
-                                                            <div className="space-y-1.5 pt-1 border-t mt-1">
-                                                                <Input className="h-6 text-xs" placeholder="Kilde-titel" value={wageSourceForm.source_title} onChange={e => setWageSourceForm(f => ({ ...f, source_title: e.target.value }))} />
-                                                                <Input className="h-6 text-xs" placeholder="Kilde-URL" value={wageSourceForm.source_url} onChange={e => setWageSourceForm(f => ({ ...f, source_url: e.target.value }))} />
-                                                                <Input type="date" className="h-6 text-xs" placeholder="Kontrolleret dato" value={wageSourceForm.source_checked_at} onChange={e => setWageSourceForm(f => ({ ...f, source_checked_at: e.target.value }))} />
-                                                                <Input className="h-6 text-xs" placeholder="Note" value={wageSourceForm.source_note} onChange={e => setWageSourceForm(f => ({ ...f, source_note: e.target.value }))} />
-                                                                <div className="flex gap-1.5">
-                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemWageSource(rule.id)}>Gem</Button>
-                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditWageRule(null)}>✕</Button>
-                                                                </div>
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-1 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                {rule.amount !== null && rule.unit ? (
+                                                                    <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
+                                                                ) : (
+                                                                    <p className="font-medium">{rule.profession_role} — {rule.rate_kind}</p>
+                                                                )}
+                                                                <p className="text-muted-foreground">
+                                                                    {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
+                                                                    {rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}
+                                                                </p>
                                                             </div>
-                                                        ) : (
-                                                            <div className="flex items-center gap-2">
-                                                                {rule.source_note && <span className="text-muted-foreground">{rule.source_note}</span>}
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={() => godkendWageRule(rule.id)}>godkend</button>}
                                                                 <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
                                                                     setEditWageRule(rule.id)
-                                                                    setWageSourceForm({ source_title: rule.source_title ?? "", source_url: rule.source_url ?? "", source_note: rule.source_note ?? "", source_checked_at: rule.source_checked_at ?? "" })
-                                                                }}>redigér kilde</button>
+                                                                    setWageRuleForm({
+                                                                        profession_role: rule.profession_role, wage_group: rule.wage_group ?? "",
+                                                                        employment_form: rule.employment_form, rate_kind: rule.rate_kind,
+                                                                        amount: rule.amount != null ? String(rule.amount) : "", unit: rule.unit ?? "uge",
+                                                                        pension_included: rule.pension_included, valid_from: rule.valid_from, valid_to: rule.valid_to ?? "",
+                                                                        source_title: rule.source_title ?? "", source_url: rule.source_url ?? "",
+                                                                        source_section: rule.source_section ?? "", source_checked_at: rule.source_checked_at ?? "",
+                                                                        source_note: rule.source_note ?? "",
+                                                                    })
+                                                                }}>redigér</button>
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={() => sletWageRule(rule.id)}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {editWageRule === rule.id && (
+                                                            <div className="space-y-1.5 pt-2 border-t mt-1">
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Funktion</Label><Input className="h-6 text-xs" value={wageRuleForm.profession_role} onChange={e => setWageRuleForm(f => ({ ...f, profession_role: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Løngruppe</Label><Input className="h-6 text-xs" value={wageRuleForm.wage_group} onChange={e => setWageRuleForm(f => ({ ...f, wage_group: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Ansættelsesform</Label>
+                                                                        <Select value={wageRuleForm.employment_form} onValueChange={v => setWageRuleForm(f => ({ ...f, employment_form: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Satstype</Label>
+                                                                        <Select value={wageRuleForm.rate_kind} onValueChange={v => setWageRuleForm(f => ({ ...f, rate_kind: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent>
+                                                                                <SelectItem value="normalløn">Normalløn</SelectItem>
+                                                                                <SelectItem value="minimum">Minimum</SelectItem>
+                                                                                <SelectItem value="source_requires_review">Kræver juridisk review</SelectItem>
+                                                                                <SelectItem value="individual_or_classified">Individuel/klassificeret</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Beløb (DKK)</Label><Input type="number" className="h-6 text-xs" value={wageRuleForm.amount} onChange={e => setWageRuleForm(f => ({ ...f, amount: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Enhed</Label>
+                                                                        <Select value={wageRuleForm.unit} onValueChange={v => setWageRuleForm(f => ({ ...f, unit: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Gyldig fra</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.valid_from} onChange={e => setWageRuleForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.valid_to} onChange={e => setWageRuleForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-6 text-xs" value={wageRuleForm.source_title} onChange={e => setWageRuleForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                                <div><Label className="text-[10px]">Kilde-URL</Label><Input className="h-6 text-xs" value={wageRuleForm.source_url} onChange={e => setWageRuleForm(f => ({ ...f, source_url: e.target.value }))} /></div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Afsnit/paragraf</Label><Input className="h-6 text-xs" value={wageRuleForm.source_section} onChange={e => setWageRuleForm(f => ({ ...f, source_section: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Kontrolleret dato</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.source_checked_at} onChange={e => setWageRuleForm(f => ({ ...f, source_checked_at: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Note</Label><Input className="h-6 text-xs" value={wageRuleForm.source_note} onChange={e => setWageRuleForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemWageRule(rule.id)}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditWageRule(null)}>✕</Button>
+                                                                </div>
                                                             </div>
                                                         )}
                                                     </div>
                                                 ))}
+                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => { setNewWageAgreementId(agreement.id); setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" })) }}>
+                                                <Plus className="h-3.5 w-3.5" />Tilføj lønregel
+                                            </Button>
                                         </div>
                                     </details>
 
+                                    {/* ── Dialog: ny lønregel ── */}
+                                    <Dialog open={newWageAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewWageAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny lønregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div><Label className="text-[10px]">Rate key (unikt ID, fx "editor-normallon-2026")</Label><Input className="h-7 text-xs" value={newWageForm.rate_key} onChange={e => setNewWageForm(f => ({ ...f, rate_key: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Funktion *</Label><Input className="h-7 text-xs" value={newWageForm.profession_role} onChange={e => setNewWageForm(f => ({ ...f, profession_role: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Løngruppe</Label><Input className="h-7 text-xs" value={newWageForm.wage_group} onChange={e => setNewWageForm(f => ({ ...f, wage_group: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Ansættelsesform *</Label>
+                                                        <Select value={newWageForm.employment_form} onValueChange={v => setNewWageForm(f => ({ ...f, employment_form: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Satstype *</Label>
+                                                        <Select value={newWageForm.rate_kind} onValueChange={v => setNewWageForm(f => ({ ...f, rate_kind: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="normalløn">Normalløn</SelectItem>
+                                                                <SelectItem value="minimum">Minimum</SelectItem>
+                                                                <SelectItem value="source_requires_review">Kræver juridisk review</SelectItem>
+                                                                <SelectItem value="individual_or_classified">Individuel/klassificeret</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Beløb (DKK)</Label><Input type="number" className="h-7 text-xs" value={newWageForm.amount} onChange={e => setNewWageForm(f => ({ ...f, amount: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Enhed</Label>
+                                                        <Select value={newWageForm.unit} onValueChange={v => setNewWageForm(f => ({ ...f, unit: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newWageForm.valid_from} onChange={e => setNewWageForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-7 text-xs" value={newWageForm.valid_to} onChange={e => setNewWageForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Kilde-titel *</Label><Input className="h-7 text-xs" value={newWageForm.source_title} onChange={e => setNewWageForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Kilde-URL *</Label><Input className="h-7 text-xs" value={newWageForm.source_url} onChange={e => setNewWageForm(f => ({ ...f, source_url: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Afsnit/paragraf</Label><Input className="h-7 text-xs" value={newWageForm.source_section} onChange={e => setNewWageForm(f => ({ ...f, source_section: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Kontrolleret dato *</Label><Input type="date" className="h-7 text-xs" value={newWageForm.source_checked_at} onChange={e => setNewWageForm(f => ({ ...f, source_checked_at: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Note</Label><Input className="h-7 text-xs" value={newWageForm.source_note} onChange={e => setNewWageForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                <p className="text-muted-foreground text-[10px]">Oprettes som kladde — kræver juridisk godkendelse inden AI anvender satsen.</p>
+                                            </div>
+                                            <DialogFooter>
+                                                <Button variant="outline" size="sm" onClick={() => setNewWageAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={opretWageRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Pensionsregler ── */}
                                     <details className="group rounded-md border bg-background">
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
                                             <span>Pension</span>
@@ -1769,30 +1993,132 @@ function OverenskomsterTab() {
                                                 .slice()
                                                 .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
                                                 .map(rule => (
-                                                    <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs space-y-1">
-                                                        <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
-                                                        <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
-                                                        {editPensionRule === rule.id ? (
-                                                            <div className="space-y-1.5 pt-1 border-t mt-1">
-                                                                <Input className="h-6 text-xs" placeholder="Note til kilden" value={pensionSourceForm.source_note} onChange={e => setPensionSourceForm({ source_note: e.target.value })} />
-                                                                <div className="flex gap-1.5">
-                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemPensionSource(rule.id)}>Gem</Button>
-                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditPensionRule(null)}>✕</Button>
-                                                                </div>
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-1 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
+                                                                <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
                                                             </div>
-                                                        ) : (
-                                                            <div className="flex items-center gap-2">
-                                                                {rule.source_note && <span className="text-muted-foreground">{rule.source_note}</span>}
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={() => godkendPensionRule(rule.id)}>godkend</button>}
                                                                 <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
                                                                     setEditPensionRule(rule.id)
-                                                                    setPensionSourceForm({ source_note: rule.source_note ?? "" })
-                                                                }}>redigér note</button>
+                                                                    setPensionRuleForm({
+                                                                        employment_form: rule.employment_form,
+                                                                        employer_percent: String(rule.employer_percent),
+                                                                        employee_percent: String(rule.employee_percent),
+                                                                        basis: rule.basis, scheme_kind: rule.scheme_kind ?? "occupational_pension",
+                                                                        valid_from: rule.valid_from, valid_to: rule.valid_to ?? "",
+                                                                        section_reference: rule.section_reference,
+                                                                        source_note: rule.source_note ?? "",
+                                                                    })
+                                                                }}>redigér</button>
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={() => sletPensionRule(rule.id)}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {editPensionRule === rule.id && (
+                                                            <div className="space-y-1.5 pt-2 border-t mt-1">
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Ansættelsesform</Label>
+                                                                        <Select value={pensionRuleForm.employment_form} onValueChange={v => setPensionRuleForm(f => ({ ...f, employment_form: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Ordningstype</Label>
+                                                                        <Select value={pensionRuleForm.scheme_kind} onValueChange={v => setPensionRuleForm(f => ({ ...f, scheme_kind: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="occupational_pension">Erhvervspension</SelectItem><SelectItem value="pension_savings">Pensionsopsparing</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Arbejdsgiver %</Label><Input type="number" step="0.001" className="h-6 text-xs" value={pensionRuleForm.employer_percent} onChange={e => setPensionRuleForm(f => ({ ...f, employer_percent: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Medarbejder %</Label><Input type="number" step="0.001" className="h-6 text-xs" value={pensionRuleForm.employee_percent} onChange={e => setPensionRuleForm(f => ({ ...f, employee_percent: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Beregningsgrundlag</Label>
+                                                                        <Select value={pensionRuleForm.basis} onValueChange={v => setPensionRuleForm(f => ({ ...f, basis: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent>
+                                                                                <SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem>
+                                                                                <SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem>
+                                                                                <SelectItem value="honorar">Honorar</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Paragraf</Label><Input className="h-6 text-xs" value={pensionRuleForm.section_reference} onChange={e => setPensionRuleForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Gyldig fra</Label><Input type="date" className="h-6 text-xs" value={pensionRuleForm.valid_from} onChange={e => setPensionRuleForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-6 text-xs" value={pensionRuleForm.valid_to} onChange={e => setPensionRuleForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Note</Label><Input className="h-6 text-xs" value={pensionRuleForm.source_note} onChange={e => setPensionRuleForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemPensionRule(rule.id)}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditPensionRule(null)}>✕</Button>
+                                                                </div>
                                                             </div>
                                                         )}
                                                     </div>
                                                 ))}
+                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => { setNewPensionAgreementId(agreement.id); setNewPensionForm(emptyPensionForm()) }}>
+                                                <Plus className="h-3.5 w-3.5" />Tilføj pensionsregel
+                                            </Button>
                                         </div>
                                     </details>
+
+                                    {/* ── Dialog: ny pensionsregel ── */}
+                                    <Dialog open={newPensionAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewPensionAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny pensionsregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Ansættelsesform *</Label>
+                                                        <Select value={newPensionForm.employment_form} onValueChange={v => setNewPensionForm(f => ({ ...f, employment_form: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Ordningstype *</Label>
+                                                        <Select value={newPensionForm.scheme_kind} onValueChange={v => setNewPensionForm(f => ({ ...f, scheme_kind: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="occupational_pension">Erhvervspension</SelectItem><SelectItem value="pension_savings">Pensionsopsparing</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Arbejdsgiver % *</Label><Input type="number" step="0.001" className="h-7 text-xs" value={newPensionForm.employer_percent} onChange={e => setNewPensionForm(f => ({ ...f, employer_percent: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Medarbejder % *</Label><Input type="number" step="0.001" className="h-7 text-xs" value={newPensionForm.employee_percent} onChange={e => setNewPensionForm(f => ({ ...f, employee_percent: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Beregningsgrundlag *</Label>
+                                                        <Select value={newPensionForm.basis} onValueChange={v => setNewPensionForm(f => ({ ...f, basis: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem>
+                                                                <SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem>
+                                                                <SelectItem value="honorar">Honorar</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Paragraf *</Label><Input className="h-7 text-xs" value={newPensionForm.section_reference} onChange={e => setNewPensionForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newPensionForm.valid_from} onChange={e => setNewPensionForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-7 text-xs" value={newPensionForm.valid_to} onChange={e => setNewPensionForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Note</Label><Input className="h-7 text-xs" value={newPensionForm.source_note} onChange={e => setNewPensionForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                <p className="text-muted-foreground text-[10px]">Oprettes som kladde — kræver juridisk godkendelse.</p>
+                                            </div>
+                                            <DialogFooter>
+                                                <Button variant="outline" size="sm" onClick={() => setNewPensionAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={opretPensionRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
 
                                     <details className="group rounded-md border bg-background">
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
