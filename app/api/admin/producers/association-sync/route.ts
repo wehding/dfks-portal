@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import {
   buildAssociationPreview,
@@ -46,7 +46,7 @@ async function producerOptions(db: ReturnType<typeof createServiceClient>) {
 }
 
 export async function GET() {
-  const auth = await requireAdminApi(["superadmin", "admin", "org-admin"]);
+  const auth = await requireStaffModuleApi("producers", "write");
   if (!auth.ok) return auth.response;
   const db = createServiceClient();
   const { data, error } = await db.from("producer_association_sync_runs")
@@ -60,7 +60,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdminApi(["superadmin", "admin", "org-admin"]);
+  const auth = await requireStaffModuleApi("producers", "write");
   if (!auth.ok) return auth.response;
   const body = await req.json().catch(() => null) as { action?: string; runId?: string; decisions?: ApplyDecision[] } | null;
   if (body?.action === "preview") return previewSync(auth.userId);
@@ -104,7 +104,8 @@ async function previewSync(userId: string) {
     return NextResponse.json({ runId: run.id, verifiedOn, items, summary });
   } catch (error) {
     console.error("[producentforeningen] preview failed", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Medlemslisten kunne ikke hentes." }, { status: 502 });
+    console.error("[producer-association] fetch failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Medlemslisten kunne ikke hentes." }, { status: 502 });
   }
 }
 
@@ -217,6 +218,7 @@ async function applySync(userId: string, runId?: string, decisionsInput?: ApplyD
   } catch (error) {
     console.error("[producentforeningen] apply failed", error);
     await db.from("producer_association_sync_runs").update({ status: "failed", error_message: error instanceof Error ? error.message : "Ukendt fejl" }).eq("id", runId);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Synkroniseringen fejlede." }, { status: 409 });
+    console.error("[producer-association] sync failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Synkroniseringen fejlede." }, { status: 409 });
   }
 }

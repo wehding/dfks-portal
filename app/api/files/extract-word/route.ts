@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ text });
   } catch (error) {
     console.error("[extract-word] Word-udtræk fejlede", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Word-filen kunne ikke læses" }, { status: 422 });
+    console.error("[extract-word] failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Word-filen kunne ikke læses" }, { status: 422 });
   }
 }

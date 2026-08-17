@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { requireSessionApi } from "@/lib/api-auth"
+import { getSupabaseServiceKey } from "@/lib/env"
+import { postgrestIlikePattern } from "@/lib/postgrest-search"
 
 // GET /api/producers/search?q=<query>
 // Søger i det kanoniske producentregister. Kun ordinære, aktive
@@ -14,8 +16,11 @@ export async function GET(req: NextRequest) {
 
     const supabase = createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        getSupabaseServiceKey()
     )
+
+    const pattern = postgrestIlikePattern(q)
+    if (!pattern) return NextResponse.json({ results: [] })
 
     const { data } = await supabase
         .from("employers")
@@ -24,7 +29,7 @@ export async function GET(req: NextRequest) {
             name,
             employer_producer_types!left(source,membership_type,is_active)
         `)
-        .ilike("name", `%${q}%`)
+        .ilike("name", pattern)
         .order("name")
         .limit(8)
 

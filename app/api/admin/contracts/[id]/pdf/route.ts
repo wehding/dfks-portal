@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { requireAdminApi } from "@/lib/api-auth"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
 import { createServiceClient } from "@/lib/supabase/service"
 import { recordAuditEvent } from "@/lib/audit-log-server"
@@ -16,7 +16,7 @@ export async function GET(
 ) {
     const { id } = await params
 
-    const auth = await requireAdminApi()
+    const auth = await requireStaffModuleApi("contract_reviews", "read")
     if (!auth.ok) return auth.response
 
     const auditContext = {

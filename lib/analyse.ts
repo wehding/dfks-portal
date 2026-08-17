@@ -13,6 +13,7 @@ import { callAiDetailed } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiUsageContext } from "@/lib/ai-usage"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
+import { getSupabaseServiceKey } from "@/lib/env"
 import { hentKontekst } from "@/lib/retrieval"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
@@ -527,7 +528,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     // ── Hent reference docs (brug admin-klient — ingen cookie-kontekst nødvendig) ──
     const supabaseAdmin = createAdminClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        getSupabaseServiceKey()
     )
     const { data: refDocs } = await supabaseAdmin
         .from("reference_docs")
@@ -555,7 +556,7 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     try {
         const admin = createAdminClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+            getSupabaseServiceKey()
         )
         const overenskomstNavn = klassifikation?.overenskomst_navn ?? "de4-fiktion"
         const normaliserNavn = (n: string) => {
@@ -884,7 +885,7 @@ anbefalinger og juridiske referencer — leveres på engelsk.
 
     if (rightsHolderName) {
         try {
-            const navneTjek = await tjekNavn(rightsHolderName, contractText || undefined)
+            const navneTjek = await tjekNavn(rightsHolderName, contractText || undefined, orgId)
             if (navneTjek.feedbackpunkt && navneTjek.status !== "match") {
                 parsed.feedbackpunkter = [
                     ...(parsed.feedbackpunkter ?? []),

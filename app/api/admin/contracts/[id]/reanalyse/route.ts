@@ -1,5 +1,5 @@
 import { after, NextRequest, NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireStaffModuleApi } from "@/lib/api-auth";
 import { assertContractReviewInOrg } from "@/lib/authz";
 import { triggerContractReviewWorker } from "@/lib/contract-review-intake";
 import { createServiceClient } from "@/lib/supabase/service";
@@ -14,7 +14,7 @@ function isAllowedFileName(fileName: string) {
 // POST /api/admin/contracts/[id]/reanalyse
 // Genstarter samme sikre koeflow som den automatiske Gmail-/portalimport.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireAdminApi();
+  const auth = await requireStaffModuleApi("contract_reviews", "write");
   if (!auth.ok) return auth.response;
 
   const { id } = await params;

@@ -1045,13 +1045,16 @@ export default function MineVaerkerClient({
           return (
             <React.Fragment key={a.id}>
             <div
-              onClick={() => { if (!isSeriesParent) void openEdit(a); }}
               className="hidden items-center px-5 py-3 border-b hover:bg-muted/50 transition-colors lg:grid"
               style={{ gridTemplateColumns: "36px 2.5fr 0.5fr 1fr 0.7fr 0.7fr 1.5fr 0.5fr" }}
             >
-              <div onClick={e => { e.stopPropagation(); toggleAssignmentSelection(a); }}>
-                <input type="checkbox" checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))} onChange={() => {}} className="cursor-pointer w-4 h-4" />
-              </div>
+              <input
+                type="checkbox"
+                checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))}
+                onChange={() => toggleAssignmentSelection(a)}
+                className="h-4 w-4 cursor-pointer"
+                aria-label={`Vælg ${w.title}`}
+              />
 
               {/* Poster + titel */}
               <div className="flex items-center gap-3">
@@ -1060,7 +1063,7 @@ export default function MineVaerkerClient({
                 ) : (
                   <span className="w-4 shrink-0" />
                 )}
-                <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="w-8 shrink-0 flex items-center justify-center" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : undefined}>
+                <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="flex w-8 shrink-0 items-center justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : `Rediger ${w.title}`}>
                   {posterSrc ? (
                     <div className="w-8 h-11 rounded overflow-hidden shrink-0">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1072,7 +1075,7 @@ export default function MineVaerkerClient({
                 </button>
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
+                    <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="rounded text-left text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{w.title}{w.season_number != null ? ` - S${String(w.season_number).padStart(2, "0")}` : ""}</button>
                     {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                     {broadcasterLogo && (
                       <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>
@@ -1134,14 +1137,11 @@ export default function MineVaerkerClient({
             </div>
             <div
               key={`${a.id}-mobile`}
-              onClick={() => { if (!isSeriesParent) void openEdit(a); }}
               className="border-b px-4 py-4 transition-colors active:bg-muted/50 lg:hidden"
             >
               <div className="flex gap-3">
-                <div onClick={e => { e.stopPropagation(); toggleAssignmentSelection(a); }} className="pt-1">
-                  <input type="checkbox" checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))} onChange={() => {}} className="cursor-pointer w-4 h-4" />
-                </div>
-                <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="w-10 shrink-0 flex items-start justify-center" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : undefined}>
+                <input type="checkbox" checked={selectionIdsFor(a).length > 0 && selectionIdsFor(a).every(id => selected.includes(id))} onChange={() => toggleAssignmentSelection(a)} className="mt-1 h-4 w-4 cursor-pointer" aria-label={`Vælg ${w.title}`} />
+                <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="flex w-10 shrink-0 items-start justify-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={isSeriesParent ? `Rediger ${w.title} sæson ${w.season_number}` : `Rediger ${w.title}`}>
                   {posterSrc ? (
                     <div className="h-14 w-10 overflow-hidden rounded">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1160,7 +1160,7 @@ export default function MineVaerkerClient({
                         {isSeriesParent && (
                           <span onClick={event => event.stopPropagation()}><ExpandableListTrigger expanded={isExpanded} onToggle={() => void toggleSeries(w)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} /></span>
                         )}
-                        <button type="button" onClick={event => { if (isSeriesParent) { event.stopPropagation(); void openSeasonEdit(w); } }} className="text-left font-semibold text-sm text-foreground leading-snug hover:underline">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
+                        <button type="button" onClick={() => { if (isSeriesParent) void openSeasonEdit(w); else void openEdit(a); }} className="rounded text-left text-sm font-semibold leading-snug text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{w.title}{isSeriesParent && w.season_number != null ? ` · Sæson ${w.season_number}` : ""}</button>
                         {needsEpisodeSelection && <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{t("works.missingEpisodeSelection")}</Badge>}
                         {broadcasterLogo && (
                           <span className="inline-flex h-6 max-w-20 items-center rounded border bg-background px-1.5 py-0.5" title={broadcaster ?? undefined}>

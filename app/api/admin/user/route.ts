@@ -336,6 +336,7 @@ export async function POST(req: NextRequest) {
 
     } catch (err: unknown) {
         console.error("[admin/user]", err)
-        return NextResponse.json({ error: err instanceof Error ? err.message : "Ukendt fejl" }, { status: 500 })
+        console.error("[admin-user] request failed", err instanceof Error ? err.name : "unknown")
+        return NextResponse.json({ error: "Brugeren kunne ikke opdateres." }, { status: 500 })
     }
 }

@@ -43,10 +43,16 @@ export async function fetchMemberShareTask(params: {
   const targetIds = seasonNumber
     ? targetWorks.map(row => row.id)
     : [workId];
-  const assignmentIds = targetIds.length ? targetIds : [workId];
+  // A season can be represented either by assignments on its individual
+  // episodes or by one assignment on the parent series. Include both, and do
+  // not reveal participants/cases until the caller's own assignment is proven.
+  const assignmentIds = [...new Set([workId, ...(targetIds.length ? targetIds : [workId])])];
   const { data: knownAssignments } = await db.from("work_assignments")
     .select("rights_holder_id,role").eq("org_id", orgId).in("work_id", assignmentIds).not("rights_holder_id", "is", null);
   const knownHolderIds = [...new Set((knownAssignments ?? []).map(row => row.rights_holder_id).filter(Boolean))];
+  if (!knownHolderIds.includes(holder.id)) {
+    return { success: false as const, error: "Værket er ikke tilknyttet din profil." };
+  }
   if (!shareCase && knownHolderIds.length > 1) {
     shareCase = await ensureWorkShareCase(db, {
       orgId, workId, seasonNumber, episodeNumber: params.episodeNumber,
@@ -174,6 +180,9 @@ export async function matchShareParticipant(params: { participantId: string; rig
   const db = createServiceClient();
   const { data: participant } = await db.from("work_share_participants").select("id,case_id,proposed_name,role").eq("id", params.participantId).eq("org_id", admin.orgId).maybeSingle();
   if (!participant) throw new Error("Deltageren findes ikke.");
+  const { data: affiliation } = await db.from("org_affiliations").select("rights_holder_id")
+    .eq("org_id", admin.orgId).eq("rights_holder_id", params.rightsHolderId).maybeSingle();
+  if (!affiliation) throw new Error("Rettighedshaveren er ikke tilknyttet organisationen.");
   const { error } = await db.from("work_share_participants").update({ rights_holder_id: params.rightsHolderId, relationship_status: "pending", updated_at: new Date().toISOString() }).eq("id", participant.id);
   if (error) throw new Error(error.message);
   await import("@/lib/member-notifications").then(({ sendMemberNotification }) => sendMemberNotification({

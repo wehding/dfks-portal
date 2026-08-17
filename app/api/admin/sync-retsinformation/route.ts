@@ -1,4 +1,3 @@
-import { errorMessage } from "@/lib/error-message";
 /**
  * POST /api/admin/sync-retsinformation
  *
@@ -7,8 +6,8 @@ import { errorMessage } from "@/lib/error-message";
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
 import { syncRetsinformation } from "@/scripts/sync-retsinformation"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 
 export async function POST(req: NextRequest) {
     // Tillad cron-kald fra Vercel (Authorization header) og autentificerede admins
@@ -16,9 +15,8 @@ export async function POST(req: NextRequest) {
     const isCron = authHeader === `Bearer ${process.env.CRON_SECRET}`
 
     if (!isCron) {
-        const supabase = await createClient()
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) return NextResponse.json({ error: "Ikke autoriseret" }, { status: 401 })
+        const auth = await requireStaffModuleApi("organisation", "write")
+        if (!auth.ok) return auth.response
     }
 
     try {
@@ -26,7 +24,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(result)
     } catch (err: unknown) {
         console.error("[sync-retsinformation]", err)
-        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: "Synkroniseringen kunne ikke gennemføres." }, { status: 502 })
     }
 }
 
@@ -39,7 +37,7 @@ export async function GET(req: NextRequest) {
     try {
         const result = await syncRetsinformation()
         return NextResponse.json(result)
-    } catch (err: unknown) {
-        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
+    } catch {
+        return NextResponse.json({ error: "Synkroniseringen kunne ikke gennemføres." }, { status: 502 })
     }
 }

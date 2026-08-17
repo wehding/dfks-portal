@@ -90,48 +90,21 @@ export async function completeOnboarding(formData: FormData) {
     if (!allowedRegion) return { success: false, error: "Det valgte arbejdsområde er ikke tilgængeligt." };
   }
 
-  let { error } = await supabase
-    .from("rettighedshavere")
-    .update({
-      email: loginEmail,
-      phone: phone || null,
-      address,
-      cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
-      bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
-      gender: (formData.get("gender") as string) || null,
-    })
-    .eq("user_id", user.id);
-
-  if (error && error.message.includes("gender")) {
-    console.warn("Gender column not found in database schema, retrying without gender field...");
-    const retry = await supabase
-      .from("rettighedshavere")
-      .update({
-        email: loginEmail,
-        phone: phone || null,
-        address,
-        cpr_no: encryptValue(cpr ? normalizeCpr(cpr) : null),
-        bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null),
-      })
-      .eq("user_id", user.id);
-    
-    error = retry.error;
-  }
-
-  if (error) {
-    console.error("Onboarding fejl:", error);
-    return { success: false, error: `Kunne ikke gemme onboarding-data: ${error.message} (${error.code})` };
-  }
-
   if (!holderContext?.id || !orgId) {
     return { success: false, error: "Din organisationstilknytning blev ikke fundet." };
   }
-  const { data: statisticsSaved, error: statisticsError } = await service.rpc(
-    "update_member_statistics_profile",
+  const { data: onboardingSaved, error: onboardingError } = await service.rpc(
+    "complete_member_onboarding",
     {
+      actor_user_id: user.id,
       target_rights_holder_id: holderContext.id,
       target_org_id: orgId,
-      actor_user_id: user.id,
+      login_email: loginEmail,
+      phone_value: phone,
+      address_value: address ?? "",
+      encrypted_cpr: encryptValue(cpr ? normalizeCpr(cpr) : null) ?? "",
+      encrypted_bank_account: encryptValue(bankAccount ? normalizeBankAccount(bankAccount) : null) ?? "",
+      gender_value: String(formData.get("gender") ?? ""),
       participates: statisticsParticipation,
       start_year: config.professional_start_year && Number.isInteger(startYear) ? startYear : null,
       primary_profession_id: primaryProfessionTypeId,
@@ -140,21 +113,10 @@ export async function completeOnboarding(formData: FormData) {
       work_region_code: workRegionCode,
     },
   );
-  if (statisticsError || !statisticsSaved) {
-    console.error("Onboarding: statistikprofilen kunne ikke gemmes", statisticsError);
-    return { success: false, error: "Statistikprofilen kunne ikke gemmes. Prøv igen." };
+  if (onboardingError || !onboardingSaved) {
+    console.error("Onboarding: den atomiske profilopdatering fejlede", { code: onboardingError?.code ?? "rejected" });
+    return { success: false, error: "Onboarding kunne ikke gemmes samlet. Ingen ændringer er gennemført. Prøv igen." };
   }
-
-  const completedAt = new Date().toISOString();
-  const { error: completionError } = await supabase
-    .from("rettighedshavere")
-    .update({
-      onboarding_completed: true,
-      onboarding_completed_at: completedAt,
-      onboarding_required_at: null,
-    })
-    .eq("user_id", user.id);
-  if (completionError) return { success: false as const, error: "Onboarding blev gemt, men kunne ikke markeres som færdig. Prøv igen." };
 
   try {
     await recordAuditEvent({

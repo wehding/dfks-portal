@@ -1,9 +1,8 @@
 "use client"
 
 import { useState, useRef, useEffect } from "react"
-import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Save, Loader2 } from "lucide-react"
+import { Plus, Pencil, Trash2, Check, X, GripVertical, Link2, Unlink2, Save } from "lucide-react"
 import type { FilterRule, VaerkType, VaerkVaegt, AftalelicensVaegtExtra } from "@/lib/streaming-types"
-import { AI_PROVIDERS, AI_CONFIG_DEFAULTS, loadAiConfig, saveAiConfig, getProviderDef, type AiUseCase, type AiConfig, type AiProvider } from "@/lib/ai-providers"
 import { useI18n } from "@/lib/i18n"
 import { useMasterData } from "@/lib/hooks"
 import { PageHeader } from "@/components/page-header"
@@ -936,74 +935,9 @@ function VaegteTab() {
     )
 }
 
-// ── AI-udbyder indstillinger ──────────────────────────────────
+// ── AI-indstillinger ──────────────────────────────────────────
 
-function AiProviderPicker({ useCase, title, description }: { useCase: AiUseCase; title: string; description: string }) {
-    const [config, setConfig] = useState<AiConfig>(AI_CONFIG_DEFAULTS[useCase])
-
-    useEffect(() => {
-        setConfig(loadAiConfig(useCase))
-    }, [useCase])
-
-    const handleProviderChange = (provider: AiProvider) => {
-        const firstModel = getProviderDef(provider).models[0].id
-        const newConfig = { provider, model: firstModel }
-        setConfig(newConfig)
-        saveAiConfig(useCase, newConfig)
-        toast.success("AI-udbyder gemt")
-    }
-
-    const handleModelChange = (model: string) => {
-        const newConfig = { ...config, model }
-        setConfig(newConfig)
-        saveAiConfig(useCase, newConfig)
-        toast.success("AI-model gemt")
-    }
-
-    const currentProvider = getProviderDef(config.provider)
-
-    return (
-        <div className="rounded-lg border p-5 space-y-4">
-            <div>
-                <h3 className="text-sm font-medium">{title}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Udbyder</Label>
-                    <Select value={config.provider} onValueChange={v => handleProviderChange(v as AiProvider)}>
-                        <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {AI_PROVIDERS.map(p => (
-                                <SelectItem key={p.id} value={p.id} className="text-xs">{p.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="space-y-1.5">
-                    <Label className="text-xs text-muted-foreground">Model</Label>
-                    <Select value={config.model} onValueChange={handleModelChange}>
-                        <SelectTrigger className="h-8 text-xs">
-                            <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {currentProvider.models.map(m => (
-                                <SelectItem key={m.id} value={m.id} className="text-xs">{m.label}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-            </div>
-            <p className="text-xs text-muted-foreground">
-                {currentProvider.models.find(m => m.id === config.model)?.description}
-            </p>
-        </div>
-    )
-}
-
-type KeyStatus = { configured: boolean; source: "env" | "stored" | "missing"; masked?: string }
+type KeyStatus = { configured: boolean; source: "env" | "missing" }
 type AllKeyStatus = Record<"anthropic" | "openai" | "google", KeyStatus>
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -1014,8 +948,6 @@ const PROVIDER_LABELS: Record<string, string> = {
 
 function AiKeySettings() {
     const [status, setStatus] = useState<AllKeyStatus | null>(null)
-    const [editing, setEditing] = useState<Record<string, string>>({})
-    const [saving, setSaving] = useState(false)
 
     useEffect(() => {
         fetch("/api/admin/ai-keys")
@@ -1024,33 +956,13 @@ function AiKeySettings() {
             .catch(() => null)
     }, [])
 
-    const handleSave = async () => {
-        setSaving(true)
-        try {
-            await fetch("/api/admin/ai-keys", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(editing),
-            })
-            // Genindlæs status
-            const updated = await fetch("/api/admin/ai-keys").then(r => r.json())
-            setStatus(updated)
-            setEditing({})
-            toast.success("API-nøgler gemt")
-        } catch {
-            toast.error("Kunne ikke gemme nøgler")
-        } finally {
-            setSaving(false)
-        }
-    }
-
     return (
         <div className="rounded-lg border p-5 space-y-4">
             <div>
                 <h3 className="text-sm font-medium">API-nøgler</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                    Nøgler sat via miljøvariabler (.env) har altid prioritet og kan ikke overskrives herfra.
-                    Nøgler gemt her gemmes i <code className="text-[10px] bg-muted px-1 rounded">config/ai-keys.json</code> på serveren.
+                    Hemmeligheder gemmes kun som serverbeskyttede miljøvariabler i Vercel og <code className="text-[10px] bg-muted px-1 rounded">.env.local</code>.
+                    De kan ikke vises eller ændres i appen.
                 </p>
             </div>
             <div className="space-y-3">
@@ -1060,39 +972,14 @@ function AiKeySettings() {
                         <div key={provider} className="space-y-1.5">
                             <div className="flex items-center justify-between">
                                 <Label className="text-xs">{PROVIDER_LABELS[provider]}</Label>
-                                {s && (
-                                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                                        s.source === "env"     ? "bg-blue-50 text-blue-700"    :
-                                        s.source === "stored"  ? "bg-green-50 text-green-700"  :
-                                        "bg-muted text-muted-foreground"
-                                    }`}>
-                                        {s.source === "env" ? "Fra .env" : s.source === "stored" ? "Gemt" : "Ikke sat"}
-                                    </span>
-                                )}
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${s?.configured ? "bg-green-50 text-green-700" : "bg-muted text-muted-foreground"}`}>
+                                    {s?.configured ? "Konfigureret" : "Ikke konfigureret"}
+                                </span>
                             </div>
-                            {s?.source === "env" ? (
-                                <div className="h-8 flex items-center rounded-md border bg-muted/50 px-3 text-xs font-mono text-muted-foreground cursor-not-allowed">
-                                    {s.masked}
-                                </div>
-                            ) : (
-                                <Input
-                                    type="password"
-                                    className="h-8 text-xs font-mono"
-                                    placeholder={s?.masked ? `Nuværende: ${s.masked}` : "Indsæt API-nøgle…"}
-                                    value={editing[provider] ?? ""}
-                                    onChange={e => setEditing(prev => ({ ...prev, [provider]: e.target.value }))}
-                                    autoComplete="off"
-                                />
-                            )}
                         </div>
                     )
                 })}
             </div>
-            {Object.keys(editing).some(k => editing[k]) && (
-                <Button size="sm" onClick={handleSave} disabled={saving} className="w-full">
-                    {saving ? <><Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> Gemmer…</> : <><Save className="h-3 w-3 mr-1.5" /> Gem nøgler</>}
-                </Button>
-            )}
         </div>
     )
 }
@@ -1101,20 +988,10 @@ function AiModelSettings() {
     return (
         <div className="space-y-4">
             <AiKeySettings />
-            <AiProviderPicker
-                useCase="soeg"
-                title="AI-søgning (sorteringsmodul)"
-                description="Bruges ved flag-dialog til at vurdere enkelttitler. Præcision er vigtig."
-            />
-            <AiProviderPicker
-                useCase="grovsorter"
-                title="Grovsortering (batch)"
-                description="Bruges til at klassificere hundredvis af titler ad gangen. Hastighed og pris er vigtig."
-            />
             <div className="rounded-lg border p-5 space-y-3">
                 <div>
-                    <h3 className="text-sm font-medium">Kontraktanalyse & validering</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Kontraktmodeller gemmes permanent og styres nu i AI-kontrolrummet.</p>
+                    <h3 className="text-sm font-medium">Modeller og forbrug</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">Permanente modelvalg for kontraktaflæsning, rådgivning og statistik styres centralt i AI-kontrolrummet. Sorteringsmodulets modeller vælges server-side.</p>
                 </div>
                 <Button asChild size="sm" variant="outline"><NextLink href="/admin/ai-kontrolrum">Åbn forbrug & modeller</NextLink></Button>
             </div>

@@ -78,7 +78,8 @@ export async function GET() {
     });
     return NextResponse.json({ candidates });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Forhåndsvisning fejlede" }, { status: 500 });
+    console.error("[pension-preview] preview failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Forhåndsvisning fejlede" }, { status: 500 });
   }
 }
 
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, updated, skipped });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Opdateringen fejlede" }, { status: 500 });
+    console.error("[pension-preview] update failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Opdateringen fejlede" }, { status: 500 });
   }
 }

@@ -31,9 +31,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Google Drive-mappen kunne ikke læses";
-    if (message.includes("godkendes igen")) {
-      await db.from("import_connections").update({ status: "reauthorization_required", last_error: message }).eq("id", connection.id);
+    const requiresReauthorization = message.includes("godkendes igen")
+    if (requiresReauthorization) {
+      await db.from("import_connections").update({ status: "reauthorization_required", last_error: "Google Drive-forbindelsen skal godkendes igen." }).eq("id", connection.id);
     }
-    return NextResponse.json({ error: message }, { status: 502 });
+    console.error("[admin-drive-folders] provider lookup failed", error instanceof Error ? error.name : "unknown")
+    return NextResponse.json({ error: requiresReauthorization ? "Google Drive-forbindelsen skal godkendes igen." : "Google Drive-mappen kunne ikke læses" }, { status: 502 });
   }
 }

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient as createAdminClient } from "@supabase/supabase-js"
-import { requireAdminApi } from "@/lib/api-auth"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 import { assertContractReviewInOrg } from "@/lib/authz"
 import { normalizeContractReviewAnalysisStatus, type ContractReviewJobSnapshot } from "@/lib/contract-review-job-status"
 
 // GET /api/admin/contracts/[id]
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
-    const auth = await requireAdminApi()
+    const auth = await requireStaffModuleApi("contract_reviews", "read")
     if (!auth.ok) return auth.response
 
     const admin = createAdminClient(
@@ -95,7 +95,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 // Body: { status?: string, assignedTo?: string }
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const { id } = await params
-    const auth = await requireAdminApi()
+    const auth = await requireStaffModuleApi("contract_reviews", "write")
     if (!auth.ok) return auth.response
 
     const admin = createAdminClient(
@@ -184,7 +184,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .select()
         .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+        console.error("[admin-contract] update failed", error.code)
+        return NextResponse.json({ error: "Kontrakten kunne ikke opdateres." }, { status: 500 })
+    }
 
     return NextResponse.json({ data })
 }

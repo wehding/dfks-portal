@@ -16,6 +16,9 @@ export function isInviteGateEnabled(
 export function getInviteGateCode(
   environment: InviteGateEnvironment = process.env
 ) {
+  // The real production portal must never be hidden behind the temporary
+  // test gate. Preview and local environments can still opt in explicitly.
+  if (environment.VERCEL_ENV === "production") return null;
   if (environment.ENABLE_INVITE_GATE !== "true") return null;
   return environment.INVITE_CODE?.trim() || null;
 }

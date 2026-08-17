@@ -24,10 +24,8 @@ async function run(request: NextRequest, method: "GET" | "POST") {
       after(triggerContractReviewWorker(request.nextUrl.origin));
     }
     return NextResponse.json(result);
-  } catch (error) {
-    console.error("[contract-review-worker] Køen kunne ikke behandles", {
-      error: error instanceof Error ? error.message : "ukendt fejl",
-    });
+  } catch {
+    console.error("[contract-review-worker] queue processing failed");
     return NextResponse.json({ error: "Kontraktgennemgangskøen kunne ikke behandles." }, { status: 500 });
   }
 }

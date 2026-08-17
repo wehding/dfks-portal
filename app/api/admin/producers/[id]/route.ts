@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { validateRegistrationNumber } from "@/lib/production-companies";
 
 type LegalEntityInput = { id?: string; legalName?: string; registrationNumber?: string; address?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationStatus?: string; industryCode?: string; industryDescription?: string; companyType?: string; isPrimary?: boolean };
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireAdminApi();
+  const auth = await requireStaffModuleApi("producers", "read");
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const type = new URL(req.url).searchParams.get("type");
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireAdminApi(["superadmin", "admin", "org-admin"]);
+  const auth = await requireStaffModuleApi("producers", "write");
   if (!auth.ok) return auth.response;
   const { id } = await params;
   const body = await req.json().catch(() => null) as {
@@ -75,7 +75,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     broadcaster_id: body?.broadcasterId || null,
     updated_at: new Date().toISOString(),
   }).eq("id", id).is("merged_into_id", null);
-  if (employerUpdate.error) return NextResponse.json({ error: employerUpdate.error.message }, { status: 409 });
+  if (employerUpdate.error) return NextResponse.json({ error: "Producenten kunne ikke opdateres." }, { status: 409 });
 
   if (deletedLegalEntityIds.length > 0) {
     const archiveResult = await db.from("employer_legal_entities").update({
@@ -83,12 +83,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       is_primary: false,
       updated_at: new Date().toISOString(),
     }).eq("employer_id", id).is("archived_at", null).in("id", deletedLegalEntityIds);
-    if (archiveResult.error) return NextResponse.json({ error: archiveResult.error.message }, { status: 409 });
+    if (archiveResult.error) return NextResponse.json({ error: "Den juridiske enhed kunne ikke arkiveres." }, { status: 409 });
   }
 
   if (preparedEntities.some(prepared => prepared.entity.isPrimary)) {
     const clearPrimary = await db.from("employer_legal_entities").update({ is_primary: false }).eq("employer_id", id).is("archived_at", null);
-    if (clearPrimary.error) return NextResponse.json({ error: clearPrimary.error.message }, { status: 409 });
+    if (clearPrimary.error) return NextResponse.json({ error: "Den primære juridiske enhed kunne ikke ændres." }, { status: 409 });
   }
 
   for (const prepared of preparedEntities) {
@@ -120,7 +120,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .eq("registration_number", prepared.registrationNumber)
         .not("archived_at", "is", null)
         .maybeSingle();
-      if (archivedMatch.error) return NextResponse.json({ error: archivedMatch.error.message }, { status: 409 });
+      if (archivedMatch.error) return NextResponse.json({ error: "Den juridiske enhed kunne ikke gendannes." }, { status: 409 });
       restoredEntityId = archivedMatch.data?.id ?? null;
     }
     if (prepared.entity.id && restoredEntityId && prepared.entity.id !== restoredEntityId) {
@@ -129,13 +129,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         is_primary: false,
         updated_at: new Date().toISOString(),
       }).eq("id", prepared.entity.id).eq("employer_id", id).is("archived_at", null);
-      if (archivePlaceholder.error) return NextResponse.json({ error: archivePlaceholder.error.message }, { status: 409 });
+      if (archivePlaceholder.error) return NextResponse.json({ error: "Den tidligere juridiske enhed kunne ikke arkiveres." }, { status: 409 });
     }
     const entityId = restoredEntityId ?? prepared.entity.id;
     const result = entityId
       ? await db.from("employer_legal_entities").update({ ...payload, archived_at: null }).eq("id", entityId).eq("employer_id", id)
       : await db.from("employer_legal_entities").insert({ ...payload, created_by: auth.userId });
-    if (result.error) return NextResponse.json({ error: result.error.message }, { status: 409 });
+    if (result.error) return NextResponse.json({ error: "Den juridiske enhed kunne ikke gemmes." }, { status: 409 });
   }
   const producerTypeIds = [...new Set((body?.producerTypeIds ?? []).filter(value => /^[0-9a-f-]{36}$/i.test(value)))];
   const typeResult = await db.rpc("replace_employer_manual_producer_types", {

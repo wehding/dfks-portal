@@ -7,6 +7,18 @@ import { isPublicPath } from "@/lib/auth/public-paths"
 export async function proxy(req: NextRequest) {
     const { pathname } = req.nextUrl
 
+    // Cookie-autentificerede mutationer må kun komme fra appens egen origin.
+    // Server-til-server jobs og webhooks sender normalt ingen Origin-header og
+    // godkendes fortsat af deres egne secrets/signaturer i de enkelte ruter.
+    if (pathname.startsWith("/api/") && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+        const origin = req.headers.get("origin")
+        if (origin) {
+            let allowed = false
+            try { allowed = new URL(origin).origin === req.nextUrl.origin } catch { allowed = false }
+            if (!allowed) return NextResponse.json({ error: "Ugyldig forespørgselskilde" }, { status: 403 })
+        }
+    }
+
     // Altid tilgængelige stier
     if (isPublicPath(pathname)) {
         return NextResponse.next()
@@ -91,6 +103,41 @@ export async function proxy(req: NextRequest) {
                 url.search = ""
                 return NextResponse.redirect(url)
             }
+        }
+    }
+
+    // Adminflader må aldrig beskyttes alene af den klient-renderede menu.
+    // En server-side rolleforespørgsel afviser medlemmer, før adminlayoutet køres.
+    if (pathname.startsWith("/admin") && user) {
+        const { data: staffRole } = await supabase
+            .from("user_org_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .in("role", ["superadmin", "admin", "org-admin", "jurist", "viewer"])
+            .limit(1)
+            .maybeSingle()
+        if (!staffRole) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/portal"
+            url.search = ""
+            return NextResponse.redirect(url)
+        }
+        const prototypePrefixes = [
+            "/admin/aftalelicens",
+            "/admin/indbetalinger",
+            "/admin/udbetalinger",
+            "/admin/streaming",
+            "/admin/stamdata",
+            "/admin/gennemsigtighed",
+            "/admin/barselspulje",
+            "/admin/helligdagsfond",
+        ]
+        if (process.env.VERCEL_ENV === "production" && prototypePrefixes.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+            const url = req.nextUrl.clone()
+            url.pathname = "/admin"
+            url.search = ""
+            url.searchParams.set("notice", "module-not-ready")
+            return NextResponse.redirect(url)
         }
     }
 

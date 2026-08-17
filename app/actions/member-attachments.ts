@@ -130,11 +130,20 @@ export async function deleteMemberAttachment(attachmentId: string) {
     return { success: false, error: "Ikke tilladt" };
   }
 
-  if (attachment.pdf_url) {
-    await db.storage.from(BUCKET).remove([attachment.pdf_url]);
+  const { error: deleteError } = await db.from("contract_attachments").delete().eq("id", attachmentId);
+  if (deleteError) {
+    console.error("[member-attachments] attachment delete failed", deleteError.code);
+    return { success: false, error: "Bilaget kunne ikke slettes." };
   }
-  await db.from("contract_attachments").delete().eq("id", attachmentId);
+  let cleanupWarning: string | undefined;
+  if (attachment.pdf_url) {
+    const { error: storageError } = await db.storage.from(BUCKET).remove([attachment.pdf_url]);
+    if (storageError) {
+      console.error("[member-attachments] post-delete storage cleanup failed", storageError.name);
+      cleanupWarning = "Bilaget er slettet, men filen afventer teknisk oprydning.";
+    }
+  }
 
   revalidatePath("/portal/mine-kontrakter");
-  return { success: true };
+  return { success: true, warning: cleanupWarning };
 }

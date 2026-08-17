@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAdminApi } from "@/lib/api-auth";
+import { requireAdminApi, requireStaffModuleApi } from "@/lib/api-auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { resolveProducerStatus, type ProducerStatus } from "@/lib/admin-producers";
 import { normalizeCompanyName, validateRegistrationNumber } from "@/lib/production-companies";
@@ -62,7 +62,7 @@ async function getDeletionPreview(db: ReturnType<typeof createServiceClient>, id
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAdminApi();
+  const auth = await requireStaffModuleApi("producers", "read");
   if (!auth.ok) return auth.response;
   const db = createServiceClient();
   const { searchParams } = new URL(req.url);
@@ -229,7 +229,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAdminApi(["superadmin", "admin", "org-admin"]);
+  const auth = await requireStaffModuleApi("producers", "write");
   if (!auth.ok) return auth.response;
   const body = await req.json().catch(() => null) as {
     name?: string;
@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
     is_verified: Boolean(parsedDfiId),
     broadcaster_id: body?.broadcasterId || null,
   }).select("id").single();
-  if (error || !employer) return NextResponse.json({ error: error?.message ?? "Producenten kunne ikke oprettes" }, { status: 409 });
+  if (error || !employer) return NextResponse.json({ error: error?.code === "23505" ? "Producenten findes allerede." : "Producenten kunne ikke oprettes" }, { status: error?.code === "23505" ? 409 : 500 });
 
   if (preparedEntities.length) {
     const selectedPrimary = Math.max(0, preparedEntities.findIndex(item => item.entity.isPrimary));
@@ -290,7 +290,7 @@ export async function POST(req: NextRequest) {
     })));
     if (entityResult.error) {
       await db.from("employers").delete().eq("id", employer.id);
-      return NextResponse.json({ error: entityResult.error.message }, { status: 409 });
+      return NextResponse.json({ error: "Den juridiske enhed kunne ikke oprettes." }, { status: 409 });
     }
   }
   const producerTypeIds = [...new Set((body?.producerTypeIds ?? []).filter(value => /^[0-9a-f-]{36}$/i.test(value)))];
@@ -317,7 +317,10 @@ export async function DELETE(req: NextRequest) {
   const db = createServiceClient();
   let preview;
   try { preview = await getDeletionPreview(db, ids); }
-  catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "Tilknytningerne kunne ikke kontrolleres." }, { status: 500 }); }
+  catch (error) {
+    console.error("[admin-producers] relation check failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Tilknytningerne kunne ikke kontrolleres." }, { status: 500 });
+  }
   if (preview.length !== ids.length) return NextResponse.json({ error: "En eller flere producenter blev ikke fundet.", preview }, { status: 404 });
   if (body?.preview === true) return NextResponse.json({ preview });
   if (body?.confirmation !== "SLET") return NextResponse.json({ error: "Skriv SLET for at bekræfte permanent sletning.", preview }, { status: 400 });

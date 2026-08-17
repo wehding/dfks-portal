@@ -19,9 +19,10 @@ type Props = {
   onChange: (value: ManualWorkFormValue) => void;
   locale: string;
   autoSelectProducer?: boolean;
+  canManageProducerRegistry?: boolean;
 };
 
-export function ManualWorkFormFields({ value, onChange, locale, autoSelectProducer = false }: Props) {
+export function ManualWorkFormFields({ value, onChange, locale, autoSelectProducer = false, canManageProducerRegistry = false }: Props) {
   const { t } = useI18n();
   const premiereYearHelpId = useId();
   const isSeries = isManualSeries(value);
@@ -71,6 +72,7 @@ export function ManualWorkFormFields({ value, onChange, locale, autoSelectProduc
             value={value.production_companies}
             suggestedName={value.production_company}
             autoSelectHighConfidence={autoSelectProducer}
+            canManageRegistry={canManageProducerRegistry}
             onChange={companies => onChange({
               ...value,
               production_companies: companies,
