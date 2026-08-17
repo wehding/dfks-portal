@@ -1576,11 +1576,9 @@ function OverenskomsterTab() {
         }
         setSatserOpretter(false)
         if (ok > 0) toast.success(`${ok} regel${ok > 1 ? "r" : ""} oprettet som kladde`)
-        if (fejl > 0) toast.error(`${fejl} regel${fejl > 1 ? "r" : ""} fejlede (duplikat rate_key?)`)
-        if (ok > 0) {
-            setSatserUdtraekAgreementId(null)
-            refreshAktive()
-        }
+        if (fejl > 0) toast.error(`${fejl} regel${fejl > 1 ? "r" : ""} fejlede (duplikat eller manglende felter)`)
+        setSatserUdtraekAgreementId(null)
+        if (ok > 0) refreshAktive()
     }
 
     const refreshAktive = () => {
