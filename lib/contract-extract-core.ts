@@ -49,6 +49,30 @@ export async function runContractExtraction(maskedText: string, context: Contrac
         source: context.source,
     })
 
+    // Trin 0: Hent aktive overenskomst-IDs fra knowledge_chunks — bruges i klassifikatorens prompt
+    // så klassifikatoren altid kender præcis de overenskomster der er indekseret i RAG'en.
+    const supabaseForIds = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { auth: { autoRefreshToken: false, persistSession: false } }
+    )
+    let aktiveOverenskomstIds: string[] = []
+    try {
+        const { data: idRows } = await supabaseForIds
+            .from("knowledge_chunks")
+            .select("overenskomst")
+            .eq("kilde_type", "overenskomst")
+            .eq("aktiv", true)
+            .not("overenskomst", "is", null)
+            .neq("kategori", "fuldt-dokument")
+        aktiveOverenskomstIds = [...new Set((idRows ?? []).map(r => r.overenskomst as string))]
+    } catch {
+        // Fallback — klassifikatoren returnerer "ukendt" og alle chunks hentes
+    }
+    const overenskomstListe = aktiveOverenskomstIds.length > 0
+        ? `Tilgængelige overenskomst-id'er i videnbasen: ${aktiveOverenskomstIds.map(id => `"${id}"`).join(", ")}. Brug præcis ét af disse id'er.`
+        : `Returner overenskomstens navn som et kortform-id med bindestreg (fx "de4-fiktion", "faf", "faf-dokumentar").`
+
     // Trin 1: Hurtig klassifikation — find overenskomst og kontraktdato uden at kende reglerne endnu
     let detectedOverenskomst: string | null = null
     let detectedContractDate: string | null = null
@@ -60,7 +84,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
 {"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
 
-overenskomst: Brug præcis ét af disse id'er: "de4-fiktion" (De4/Fiktionsoverenskomsten), "faf" (FAF fiktion/spillefilm), "faf-dokumentar" (FAF dokumentar), "dj" (DJ/TV), "metal" (Metal/DR-Metal). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart.
+overenskomst: ${overenskomstListe} Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart eller ingen match.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,
@@ -79,11 +103,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
     // Trin 2: Hent reference docs + relevante overenskomst-chunks baseret på klassifikation
     let systemPrompt = buildContractExtractionPrompt()
     try {
-        const supabase = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-            { auth: { autoRefreshToken: false, persistSession: false } }
-        )
+        const supabase = supabaseForIds  // genbrug klienten fra Trin 0
 
         let overenskomstQuery = supabase
             .from("knowledge_chunks")

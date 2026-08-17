@@ -1110,7 +1110,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                     </DialogHeader>
                     <p className="text-sm text-muted-foreground">
                         Er du sikker? Dette fjerner alle <strong>{ver.antal} chunks</strong> for{" "}
-                        <strong>{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</strong> (gyldig fra {ver.gyldig_fra}).
+                        <strong>{OVERENSKOMST_LABELS[ok] ?? ok}</strong> (gyldig fra {ver.gyldig_fra}).
                         Handlingen kan ikke fortrydes.
                     </p>
                     <div className="flex gap-2 justify-end pt-2">
@@ -1162,15 +1162,6 @@ const BILAG_TYPER = [
     { id: "bilag", label: "Andet bilag" },
 ]
 
-// Kanoniske overenskomst-IDs — bruges i knowledge_chunks, overenskomst_satser og klassifikatoren.
-// Tilføj nye overenskomster her og re-upload PDF i upload-formularen.
-const OVERENSKOMST_TYPER = [
-    { id: "de4-fiktion",    label: "De4 Fiktionsoverenskomst" },
-    { id: "faf",            label: "FAF (fiktion/spillefilm)" },
-    { id: "faf-dokumentar", label: "FAF (dokumentar)" },
-    { id: "dj",             label: "DJ" },
-    { id: "metal",          label: "Metal" },
-]
 
 const KATEGORIER = [
     { id: "helligdagsbetaling", label: "Helligdagsbetaling" },
@@ -1590,13 +1581,20 @@ function OverenskomsterTab() {
                     </div>
                     <div className="grid gap-3 sm:grid-cols-2">
                         <div className="space-y-1">
-                            <Label className="text-xs">Overenskomst</Label>
-                            <Select value={nyOverenskomst} onValueChange={setNyOverenskomst}>
-                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
-                                <SelectContent>
-                                    {OVERENSKOMST_TYPER.map(o => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
+                            <Label className="text-xs">Overenskomst-id</Label>
+                            <Input
+                                list="ok-typer-list"
+                                className="h-8 text-xs"
+                                placeholder="fx de4-fiktion"
+                                value={nyOverenskomst}
+                                onChange={e => setNyOverenskomst(e.target.value.trim())}
+                            />
+                            <datalist id="ok-typer-list">
+                                {Object.keys(versioner).map(id => (
+                                    <option key={id} value={id} />
+                                ))}
+                            </datalist>
+                            <p className="text-[10px] text-muted-foreground">Vælg eksisterende eller skriv nyt id</p>
                         </div>
                         <div className="space-y-1">
                             <Label className="text-xs">Gyldig fra</Label>
@@ -1630,7 +1628,7 @@ function OverenskomsterTab() {
                                     <div className="min-w-0">
                                         <p className="text-sm font-medium truncate">{item.fil.name}</p>
                                         <p className="text-xs text-muted-foreground">
-                                            {OVERENSKOMST_TYPER.find(t => t.id === item.overenskomst)?.label} · {item.gyldigFra}
+                                            {OVERENSKOMST_LABELS[item.overenskomst] ?? item.overenskomst} · {item.gyldigFra}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
@@ -1735,7 +1733,7 @@ function OverenskomsterTab() {
                         {Object.entries(versioner).map(([ok, vers]) => (
                             <div key={ok} className="rounded-lg border">
                                 <div className="px-4 py-2.5 border-b bg-muted/30">
-                                    <p className="text-sm font-medium">{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</p>
+                                    <p className="text-sm font-medium">{OVERENSKOMST_LABELS[ok] ?? ok}</p>
                                 </div>
                                 <div className="divide-y">
                                     {vers.map(ver => (
