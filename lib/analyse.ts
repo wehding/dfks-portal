@@ -179,7 +179,11 @@ function byggAbsolutteRegler(
     const hent = (søgeord: string) =>
         satser.find(s => s.beskrivelse?.toLowerCase().includes(søgeord.toLowerCase()))
 
-    const normallon  = hent("normalløn") ?? hent("normallon")
+    // Alle normalløns-linjer listes eksplicit — undgår at én tilfældig funktion vælges
+    const normallonLinjer = satser.filter(s => {
+        const b = s.beskrivelse?.toLowerCase() ?? ""
+        return b.startsWith("normalløn") || b.startsWith("normallon") || b.startsWith("minimum")
+    })
     const pension    = hent("pension")
     const beta       = hent("beta")
     const helligdag  = hent("helligdag")
@@ -188,7 +192,7 @@ function byggAbsolutteRegler(
     const fornavn = klassifikation.membres_fornavn || "[fornavn ikke fundet i kontrakt]"
     const efternavn = klassifikation.membres_efternavn || ""
 
-    const satsLinje = (label: string, s: typeof normallon) =>
+    const satsLinje = (label: string, s: { vaerdi: number | string; enhed: string } | undefined) =>
         s ? `${label}: ${s.vaerdi} ${s.enhed}` : `${label}: [ikke tilgængelig — verificér mod overenskomst]`
 
     const loenInfo = klassifikation.aftalt_loen
@@ -260,7 +264,9 @@ Aftalt løn:          ${loenInfo}
 Producent:           ${klassifikation.producent_navn || "[ikke fundet]"}
 
 AKTUELLE SATSER FRA DATABASE — BRUG KUN DISSE TAL, ALDRIG EGNE:
-${satsLinje("Normalløn", normallon)}
+${normallonLinjer.length > 0
+    ? normallonLinjer.map(s => `${s.beskrivelse}: ${s.vaerdi} ${s.enhed}`).join("\n")
+    : "Normalløn: [ikke tilgængelig — verificér mod overenskomst]"}
 ${satsLinje("Pension", pension)}
 ${klassifikation.er_overenskomst && klassifikation.kontrakttype === "a-loen"
     ? satsLinje("BETA-fond", beta) + "\n" + satsLinje("Helligdagsbetaling", helligdag)

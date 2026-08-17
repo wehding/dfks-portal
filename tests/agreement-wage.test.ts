@@ -10,6 +10,8 @@ function rule(overrides: Partial<AgreementWageRule> = {}): AgreementWageRule {
     agreementStatus: "approved",
     productionTypes: ["feature", "tvSeries"],
     professionRoles: ["klipper"],
+    professionRole: "Klipper",
+    wageGroup: "Løngruppe 2",
     employmentForm: "a-løn",
     rateKind: "normalløn",
     amount: 21500,

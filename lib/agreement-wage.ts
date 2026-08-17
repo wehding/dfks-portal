@@ -5,6 +5,8 @@ export type AgreementWageRule = {
   agreementStatus: "draft" | "approved" | "archived";
   productionTypes: string[];
   professionRoles: string[];
+  professionRole: string;
+  wageGroup: string | null;
   employmentForm: "a-løn" | "lønmodtager-freelance" | "leverandør";
   rateKind: string;
   amount: number;
@@ -171,5 +173,9 @@ export function wageRulesToSatser(
 ): Array<{ beskrivelse: string; vaerdi: number; enhed: string }> {
   return rules
     .filter(r => r.status === "approved")
-    .map(r => ({ beskrivelse: r.rateKind, vaerdi: r.amount, enhed: `${r.currency}/${r.unit}` }))
+    .map(r => ({
+      beskrivelse: `${r.rateKind}: ${r.professionRole}${r.wageGroup ? ` (${r.wageGroup})` : ""}`,
+      vaerdi: r.amount,
+      enhed: `${r.currency}/${r.unit}`,
+    }))
 }

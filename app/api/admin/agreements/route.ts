@@ -111,6 +111,7 @@ export async function POST(req: NextRequest) {
                     source_url: r.source_url ?? null,
                     source_checked_at: r.source_checked_at ?? null,
                     source_note: r.source_note ?? null,
+                    label_key: r.label_key ?? null,
                     valid_from: r.valid_from,
                     valid_to: r.valid_to ?? null,
                     status: "draft",
@@ -231,7 +232,7 @@ export async function PATCH(req: NextRequest) {
 
         if (body.percentageRuleId) {
             const allowed = [
-                "label", "percent", "basis", "trigger_condition", "category",
+                "label", "label_key", "percent", "basis", "trigger_condition", "category",
                 "profession_role", "employment_form", "section_reference",
                 "source_title", "source_url", "source_checked_at", "source_note",
                 "valid_from", "valid_to", "status",

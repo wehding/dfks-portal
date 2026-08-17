@@ -68,6 +68,8 @@ export async function getApprovedAgreementWageRules(agreementCode?: string): Pro
       agreementStatus: agreement.status,
       productionTypes: agreement.production_types ?? [],
       professionRoles: agreement.profession_roles ?? [],
+      professionRole: row.profession_role,
+      wageGroup: row.wage_group ?? null,
       employmentForm: row.employment_form,
       rateKind: row.rate_kind,
       amount: Number(row.amount),
@@ -110,7 +112,7 @@ export async function getAgreementSatserForContext(
       .eq("agreements.code", agreementCode),
     db
       .from("agreement_percentage_rules")
-      .select("label,percent,basis,trigger_condition,category,section_reference,agreements!inner(code)")
+      .select("label,label_key,percent,basis,trigger_condition,category,section_reference,agreements!inner(code)")
       .eq("status", "approved")
       .eq("agreements.code", agreementCode)
       .order("category")
@@ -132,9 +134,16 @@ export async function getAgreementSatserForContext(
   }
 
   // Procentbaserede tillæg og bidrag
+  // label_key-map — garanterer at byggAbsolutteRegler()'s nøgleord altid er til stede
+  const labelKeyPrefix: Record<string, string> = {
+    beta_pulje: "beta",
+    helligdagsbetaling: "helligdag",
+    feriepenge: "feriepenge",
+  };
   for (const row of pctRows ?? []) {
+    const prefix = row.label_key ? `${labelKeyPrefix[row.label_key]}: ` : "";
     satser.push({
-      beskrivelse: `${row.label}${row.section_reference ? ` (${row.section_reference})` : ""} — gælder ved: ${row.trigger_condition}`,
+      beskrivelse: `${prefix}${row.label}${row.section_reference ? ` (${row.section_reference})` : ""} — gælder ved: ${row.trigger_condition}`,
       vaerdi: Number(row.percent),
       enhed: `% af ${row.basis}`,
     });

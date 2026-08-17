@@ -1421,7 +1421,7 @@ function OverenskomsterTab() {
     const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
-    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "" })
+    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "" })
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
@@ -2636,6 +2636,17 @@ function OverenskomsterTab() {
                                                     <div><Label className="text-[10px]">Paragraf</Label><Input className="h-7 text-xs" placeholder="§ 4, stk. 2" value={newPctForm.section_reference} onChange={e => setNewPctForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
                                                 </div>
                                                 <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-7 text-xs" value={newPctForm.source_title} onChange={e => setNewPctForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Kendt begreb (valgfrit — sikrer korrekt nøgleordsmatching)</Label>
+                                                    <Select value={newPctForm.label_key} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v }))}>
+                                                        <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (de fleste regler)" /></SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="">Ingen</SelectItem>
+                                                            <SelectItem value="beta_pulje">BETA-puljen</SelectItem>
+                                                            <SelectItem value="helligdagsbetaling">Helligdagsbetaling</SelectItem>
+                                                            <SelectItem value="feriepenge">Feriepenge/ferietillæg</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
                                             </div>
                                             <DialogFooter className="pt-2 gap-2">
                                                 <Button variant="outline" size="sm" onClick={() => setNewPctAgreementId(null)}>Annuller</Button>
@@ -2648,7 +2659,7 @@ function OverenskomsterTab() {
                                                     const res = await fetch("/api/admin/agreements", {
                                                         method: "POST",
                                                         headers: { "Content-Type": "application/json" },
-                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent) } }),
+                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null } }),
                                                     })
                                                     setRuleSaving(false)
                                                     if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }
