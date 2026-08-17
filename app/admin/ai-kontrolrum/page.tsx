@@ -1491,8 +1491,13 @@ function OverenskomsterTab() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             })
-            if (!res.ok) { toast.error((await res.json()).error ?? "Udtræk fejlede"); return }
-            const data = await res.json()
+            const raw = await res.json()
+            if (!res.ok) {
+                const msg = raw?.error ?? `Serverfejl ${res.status}`
+                toast.error(`Udtræk fejlede: ${msg}`)
+                return
+            }
+            const data = raw
             const now = new Date().toISOString().slice(0, 10)
             const kildenavn = (body.kildeTitel as string) || (data.kildeTitel ?? "")
             const kildelink = (body.kildeUrl as string) || (data.kildeUrl ?? "")
