@@ -60,7 +60,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
 {"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
 
-overenskomst: Returner overenskomstens nøjagtige id som det hedder i videnbasen. Kendte id'er: "de4-fiktion" (De4/Fiktionsoverenskomsten), "faf" (FAF spillefilm), "faf-dokumentar" (FAF dokumentar). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis det er uklart. Hvis du ser en ANDEN overenskomst navngivet i kontrakten, returner dens navn med bindestreg i stedet for mellemrum (fx "de5-fiktion").
+overenskomst: Kendte id'er — brug præcis disse: "de4" (De4/Fiktionsoverenskomsten), "faf" (FAF fiktion/spillefilm), "faf-dokumentar" (FAF dokumentar), "dj" (DJ), "metal" (Metal/DR-Metal). Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,
