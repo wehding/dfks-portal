@@ -1542,7 +1542,7 @@ function OverenskomsterTab() {
                     ? {
                         wageRule: {
                             agreementId,
-                            rate_key: `${slugify(k.profession_role || "regel")}-${slugify(k.employment_form)}-${k.valid_from || "ukendt"}`,
+                            rate_key: `${slugify(k.profession_role || "regel")}-${slugify(k.wage_group || k.rate_kind || "")}-${slugify(k.employment_form)}-${k.valid_from || "ukendt"}`,
                             profession_role: k.profession_role,
                             wage_group: k.wage_group || null,
                             employment_form: k.employment_form,
