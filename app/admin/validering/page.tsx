@@ -855,15 +855,17 @@ function AdminValideringPageInner() {
         const royaltyMeta = resolveWithMeta(sources.royalty)
         const caMeta = resolveWithMeta(sources.collectiveAgreement)
 
+        const prolongHl = resolve((sources as any).prolongation)
         const salaryHl = salaryMeta.anker ?? (formData.salary ? String(formData.salary) : undefined)
         const workTitleHl = resolve(sources.workTitle)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
         const supplementsHl = resolve(sources.supplements) ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
         const svodSrc = svodMeta.anker ?? null
-        const copydanSrc = copydanMeta.anker ?? null
-        const royaltySrc = royaltyMeta.anker ?? null
         const ca = caMeta.anker ?? null
+        // Copydan/royalty: brug specifik kilde hvis AI fandt én, ellers fald tilbage til overenskomst-referencen
+        const copydanSrc = copydanMeta.anker ?? ca
+        const royaltySrc = royaltyMeta.anker ?? ca
         // Each value is a ||‑separated list of candidates tried in order by findPageForQuote.
         // Source quote first (most specific), then generic fallbacks so navigation always finds something.
         // Specific clause terms go FIRST — svodSrc/copydanSrc may be an overenskomst
@@ -924,7 +926,7 @@ function AdminValideringPageInner() {
                         {/* Lokal DOCX-fil */}
                         {localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
                             <TextViewer text={contractText} loading={textLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -933,7 +935,7 @@ function AdminValideringPageInner() {
                             <TextViewer
                                 text={storedDocxText ?? ""}
                                 loading={storedDocxLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -941,7 +943,7 @@ function AdminValideringPageInner() {
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
@@ -1224,10 +1226,10 @@ function AdminValideringPageInner() {
                                     <Input type="number" value={String(formData.workingWeeks ?? "")} onChange={(e) => setField("workingWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                 </F>
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <F src={fieldSrc("prolongationWeeks")} label="Prolongationsuger">
+                                    <F src={fieldSrc("prolongationWeeks")} label={<>Prolongationsuger{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input type="number" value={String(formData.prolongationWeeks ?? "")} onChange={(e) => setField("prolongationWeeks", e.target.value)} placeholder="0" className="max-w-[120px]" />
                                     </F>
-                                    <F src={fieldSrc("prolongationNote")} label="Prolongation — vilkår">
+                                    <F src={fieldSrc("prolongationNote")} label={<>Prolongation — vilkår{prolongHl && <SourceBtn quote={prolongHl} active={activeField === "prolongation"} onClick={() => activateSource("prolongation", prolongHl)} />}</>}>
                                         <Input value={String(formData.prolongationNote ?? "")} onChange={(e) => setField("prolongationNote", e.target.value)} placeholder="fx juleferie 21.12–07.01" />
                                     </F>
                                 </div>
