@@ -24,8 +24,8 @@ export async function POST(req: NextRequest) {
         // Opret ny lønregel
         if (body.wageRule) {
             const r = body.wageRule as Record<string, unknown>
-            if (!r.agreementId || !r.rate_key || !r.profession_role || !r.employment_form || !r.rate_kind || !r.valid_from || !r.source_title || !r.source_url || !r.source_checked_at) {
-                return NextResponse.json({ error: "agreementId, rate_key, profession_role, employment_form, rate_kind, valid_from, source_title, source_url og source_checked_at er påkrævet" }, { status: 400 })
+            if (!r.agreementId || !r.rate_key || !r.profession_role || !r.employment_form || !r.rate_kind || !r.valid_from || !r.source_title) {
+                return NextResponse.json({ error: "agreementId, rate_key, profession_role, employment_form, rate_kind, valid_from og source_title er påkrævet" }, { status: 400 })
             }
             const { data, error } = await supabase
                 .from("agreement_wage_rules")
