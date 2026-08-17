@@ -49,7 +49,33 @@ export async function runContractExtraction(maskedText: string, context: Contrac
         source: context.source,
     })
 
-    // Hent overenskomsttekster som baggrundsviden til prompten
+    // Trin 1: Hurtig klassifikation — find overenskomst og kontraktdato uden at kende reglerne endnu
+    let detectedOverenskomst: string | null = null
+    let detectedContractDate: string | null = null
+    try {
+        const classifyResponse = await callAiDetailed({
+            provider: config.provider,
+            model: config.model,
+            maxTokens: 256,
+            system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
+{"overenskomst": "<de4|faf|faf-dok|ingen|ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
+
+overenskomst: "de4" hvis De4/Fiktionsoverenskomsten nævnes. "faf" hvis FAF-spillefilm. "faf-dok" hvis FAF-dokumentar. "ingen" hvis ingen overenskomst. "ukendt" hvis uklart.
+contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
+            userMessage: `---KONTRAKT (kun klassifikation)---\n${maskedText.slice(0, 3000)}`,
+            responseJson: true,
+        })
+        const classifyMatch = classifyResponse.text.match(/\{[\s\S]*\}/)
+        if (classifyMatch) {
+            const c = JSON.parse(classifyMatch[0]) as { overenskomst?: string; contractDate?: string }
+            detectedOverenskomst = c.overenskomst ?? null
+            detectedContractDate = c.contractDate ?? null
+        }
+    } catch (e) {
+        console.warn("[contract-extract] Klassifikation fejlede, fortsætter uden overenskomst-kontekst:", e)
+    }
+
+    // Trin 2: Hent reference docs + relevante overenskomst-chunks baseret på klassifikation
     let systemPrompt = buildContractExtractionPrompt()
     try {
         const supabase = createClient(
@@ -57,21 +83,36 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
             { auth: { autoRefreshToken: false, persistSession: false } }
         )
+
+        let overenskomstQuery = supabase
+            .from("knowledge_chunks")
+            .select("kilde_titel, tekst, overenskomst, kategori, gyldig_fra")
+            .eq("kilde_type", "overenskomst")
+            .neq("kategori", "fuldt-dokument")
+            .neq("kategori", "lønskema")
+
+        if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
+            // Kun chunks for den identificerede overenskomst
+            overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
+        } else if (detectedOverenskomst === "ingen") {
+            // Ingen overenskomst — spring overenskomst-chunks over
+            overenskomstQuery = overenskomstQuery.eq("overenskomst", "INGEN_MATCH")
+        }
+
+        if (detectedContractDate) {
+            // Kun versioner der var gyldig på kontraktdatoen — nyeste version per kategori
+            overenskomstQuery = overenskomstQuery.lte("gyldig_fra", detectedContractDate)
+        }
+
+        overenskomstQuery = overenskomstQuery.order("gyldig_fra", { ascending: false })
+
         const [{ data: refDocs }, { data: overenskomstChunks }] = await Promise.all([
             supabase
                 .from("reference_docs")
                 .select("title, doc_subtype, content_text")
                 .eq("archived", false)
                 .not("content_text", "is", null),
-            // Hent overenskomst-nøglechunks til baggrundsviden (ekskluder fulde dokumenter)
-            supabase
-                .from("knowledge_chunks")
-                .select("kilde_titel, tekst, overenskomst, kategori")
-                .eq("kilde_type", "overenskomst")
-                .neq("kategori", "fuldt-dokument")
-                .neq("kategori", "lønskema")
-                .order("overenskomst")
-                .order("gyldig_fra", { ascending: false }),
+            overenskomstQuery,
         ])
         systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
     } catch (e) {
