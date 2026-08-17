@@ -1877,8 +1877,9 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
             const candidates = [q.slice(0, 60), q.slice(0, 40), q.slice(0, 25)].filter(c => c.length >= 4)
 
             if (isActive) {
-                const results = candidates.map(n => ({ needle: n.slice(0, 30), idx: normText.indexOf(n) }))
-                console.log("[TextViewer] søger:", { quote: quote.slice(0, 50), normTextLen: normText.length, candidates: results })
+                candidates.forEach((n, i) => {
+                    console.log(`[TextViewer] kandidat ${i}: "${n.slice(0, 35)}" → idx=${normText.indexOf(n)}`)
+                })
             }
 
             for (const needle of candidates) {
