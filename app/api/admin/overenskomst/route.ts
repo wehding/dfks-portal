@@ -58,6 +58,15 @@ export async function POST(req: NextRequest) {
             ? `\n\nAllerede brugte kategorinavne på tværs af indekserede overenskomster: ${tidligereKategorier.map(k => `"${k}"`).join(", ")}. Brug et af disse navne hvis afsnittet reelt svarer til en allerede brugt kategori; ellers foreslå et nyt præcist dansk navn.`
             : ""
 
+        // Udtræk fuld PDF-tekst inden Claude-kaldet — bruges til at finde sektioners tekst server-side
+        // i stedet for at bede Claude om at returnere rå PDF-tekst i JSON (risiko for JSON-fejl ved
+        // specialtegn som anførselstegn og backslashes i PDF'ens indhold).
+        let pdfTekst = ""
+        try {
+            const buf = Buffer.from(pdfBase64, "base64")
+            pdfTekst = await extractPdfText(buf)
+        } catch { /* ingen fuldt-dokument chunking */ }
+
         const response = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
@@ -71,17 +80,20 @@ Analyser det uploadede dokument og identificer de reelt betydningsfulde, indhold
 Typiske typer af indhold der ofte er relevante: løn/honorar, pension, arbejdstid/overarbejde, ferie/orlov/barsel, ophavsrettigheder/rettigheder, opsigelse/varsler, fonde og bidragspuljer, tvistløsning — men dokumentet kan indeholde andet, og du skal finde hvad der faktisk er der.
 
 For hvert afsnit:
-- Udtræk den præcise tekst fra dokumentet
-- Giv afsnittet en kort, præcis dansk kategori-betegnelse der beskriver hvad det handler om (fx "pension", "barsel", "arbejdstid", "ophavsret", "opsigelse")
+- Angiv afsnittets overskrift præcis som den står i dokumentet
+- Angiv de første 60 tegn af afsnittet (start_marker) — bruges til at finde teksten i dokumentet
+- Giv afsnittet en kort, præcis dansk kategori-betegnelse (fx "pension", "barsel", "arbejdstid", "ophavsret", "opsigelse")
 - Angiv din tillid: høj hvis afsnittet er eksplicit og tydelig, lav hvis uklart eller implicit
 - Angiv eventuelt en sats hvis der er en konkret procentsats eller beløb${kategorikontekst}
+
+VIGTIGT: Inkluder IKKE den fulde tekst i JSON-svaret — kun titel, start_marker, kategori, tillid og sats.
 
 Returner KUN valid JSON uden markdown:
 {
   "sektioner": [
     {
       "titel": "Afsnittets overskrift fra dokumentet",
-      "tekst": "præcis tekst fra dokumentet",
+      "start_marker": "de første 60 tegn af afsnittet",
       "kategori": "pension",
       "tillid": "høj",
       "sats": "9 %"
@@ -106,13 +118,6 @@ Returner KUN valid JSON uden markdown:
             return NextResponse.json({ error: `Claude fejl: ${err}` }, { status: 500 })
         }
 
-        // Udtræk fuld PDF-tekst parallelt med Claude-svaret
-        let pdfTekst = ""
-        try {
-            const buf = Buffer.from(pdfBase64, "base64")
-            pdfTekst = await extractPdfText(buf)
-        } catch { /* ingen fuldt-dokument chunking */ }
-
         const data = await response.json()
         const rawText = data.content?.filter((b: any) => b.type === "text").map((b: any) => b.text).join("") ?? ""
         const firstBrace = rawText.indexOf("{")
@@ -120,9 +125,35 @@ Returner KUN valid JSON uden markdown:
         if (firstBrace === -1 || lastBrace === -1) {
             return NextResponse.json({ error: "Ugyldigt svar fra Claude" }, { status: 500 })
         }
-        const parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1))
-        // Returner sektioner + fuld tekst til klienten
-        return NextResponse.json({ ...parsed, pdfTekst })
+        // Fjern kontroltegn der kan ødelægge JSON (null-bytes, form feeds m.m.)
+        const cleanText = rawText.slice(firstBrace, lastBrace + 1).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
+        const parsed = JSON.parse(cleanText)
+
+        // Brug start_marker til at finde den fulde sektions-tekst i pdfTekst
+        // Normaliser til sammenligning: fjern overskydende mellemrum og linjeskift
+        const normPdf = pdfTekst.replace(/\s+/g, " ").trim()
+        type RawSektion = { titel: string; start_marker?: string; kategori: string; tillid?: string; sats?: string; tekst?: string }
+        const sektionerMedTekst = (parsed.sektioner as RawSektion[] ?? []).map((s, idx, arr) => {
+            if (s.tekst) return s  // Allerede udfyldt (fremtidssikring)
+            const marker = s.start_marker ?? s.titel
+            const normMarker = marker.replace(/\s+/g, " ").trim()
+            const startIdx = normPdf.indexOf(normMarker)
+            if (startIdx === -1) {
+                // Marker ikke fundet — brug titel som tekst
+                return { ...s, tekst: s.titel }
+            }
+            // Find slutningen: næste sektions start_marker eller titel, eller 4000 tegn
+            let endIdx = normPdf.length
+            for (let j = idx + 1; j < arr.length; j++) {
+                const nextMarker = (arr[j].start_marker ?? arr[j].titel).replace(/\s+/g, " ").trim()
+                const found = normPdf.indexOf(nextMarker, startIdx + normMarker.length)
+                if (found !== -1) { endIdx = found; break }
+            }
+            const tekst = normPdf.slice(startIdx, Math.min(endIdx, startIdx + 6000)).trim()
+            return { ...s, tekst }
+        })
+
+        return NextResponse.json({ sektioner: sektionerMedTekst, pdfTekst })
     } catch (e: unknown) {
         return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
     }
@@ -290,11 +321,13 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
         }
         const supabase = sb()
-        const { error } = await supabase
-            .from("knowledge_chunks")
-            .update({ aktiv })
-            .eq("overenskomst", overenskomst)
-            .eq("gyldig_fra", gyldigFra)
+        const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id = agr?.id ?? null
+
+        let q = supabase.from("knowledge_chunks").update({ aktiv }).eq("gyldig_fra", gyldigFra)
+        q = agreement_id ? q.eq("agreement_id", agreement_id) : q.eq("overenskomst", overenskomst)
+
+        const { error } = await q
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
         return NextResponse.json({ ok: true })
     } catch (e: unknown) {
@@ -313,12 +346,15 @@ export async function DELETE(req: NextRequest) {
             return NextResponse.json({ error: "overenskomst og gyldigFra er påkrævet" }, { status: 400 })
         }
         const supabase = sb()
+        const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id = agr?.id ?? null
+
+        const chunksQuery = agreement_id
+            ? supabase.from("knowledge_chunks").delete().eq("agreement_id", agreement_id).eq("gyldig_fra", gyldigFra)
+            : supabase.from("knowledge_chunks").delete().eq("overenskomst", overenskomst).eq("gyldig_fra", gyldigFra)
 
         const [chunksRes, uploadsRes] = await Promise.all([
-            supabase.from("knowledge_chunks")
-                .delete()
-                .eq("overenskomst", overenskomst)
-                .eq("gyldig_fra", gyldigFra),
+            chunksQuery,
             supabase.from("overenskomst_uploads")
                 .delete()
                 .eq("overenskomst", overenskomst)

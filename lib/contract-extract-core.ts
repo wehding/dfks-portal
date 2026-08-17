@@ -112,21 +112,20 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             .neq("kategori", "fuldt-dokument")
             .neq("kategori", "lønskema")
 
-        // Alias-map: kanonisk ID → alle ID-varianter der kan ligge i knowledge_chunks.
-        // Gamle uploads brugte kortere IDs — vi søger på alle varianter så ingen data går tabt.
-        const OVERENSKOMST_ALIASES: Record<string, string[]> = {
-            "de4-fiktion":   ["de4-fiktion", "de4", "de4-fiction-2022"],
-            "faf":           ["faf", "faf-fiction-2025"],
-            "faf-dokumentar":["faf-dokumentar", "faf-documentary", "dokumentar"],
-            "dj":            ["dj", "dj-tv-2024"],
-            "metal":         ["metal", "dr-metal-2025"],
-        }
-
         if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
-            const aliases = OVERENSKOMST_ALIASES[detectedOverenskomst] ?? [detectedOverenskomst]
-            overenskomstQuery = overenskomstQuery.in("overenskomst", aliases)
+            // Slå agreement_id op via agreements.code — dækker både nye og migrerede chunks
+            const { data: agrRow } = await supabaseForIds
+                .from("agreements")
+                .select("id")
+                .eq("code", detectedOverenskomst)
+                .maybeSingle()
+            if (agrRow?.id) {
+                overenskomstQuery = overenskomstQuery.eq("agreement_id", agrRow.id)
+            } else {
+                // Ingen agreements-række fundet — søg direkte på overenskomst-streng
+                overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
+            }
         } else if (detectedOverenskomst === "ingen") {
-            // Ingen overenskomst — spring overenskomst-chunks over
             overenskomstQuery = overenskomstQuery.eq("overenskomst", "INGEN_MATCH")
         }
 

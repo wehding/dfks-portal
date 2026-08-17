@@ -1022,14 +1022,43 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
     const [bilagFil, setBilagFil] = useState<File | null>(null)
     const [bilagType, setBilagType] = useState("")
     const [indekserer, setIndekserer] = useState(false)
-    const [, setIndekseredeBilag] = useState<{ type: string; antal: number; satser?: any }[]>([])
+    const [indekseredeBilag, setIndekseredeBilag] = useState<{ type: string; label: string; antal: number; satser?: any; chunks: { id: string; titel: string; tekst: string }[] }[]>([])
+    const [udvidetBilag, setUdvidetBilag] = useState<string | null>(null)
+    const [sletterBilag, setSletterBilag] = useState<string | null>(null)
+    const [visOkChunks, setVisOkChunks] = useState(false)
+    const [okChunks, setOkChunks] = useState<{ id: string; titel: string; tekst: string; kategori: string }[]>([])
+    const [henterOkChunks, setHenterOkChunks] = useState(false)
 
-    useEffect(() => {
-        fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
-            .then(r => r.json())
-            .then(d => setIndekseredeBilag(d.bilag ?? []))
-            .catch(() => {})
-    }, [ok, ver.gyldig_fra])
+    const hentOkChunks = async () => {
+        setHenterOkChunks(true)
+        try {
+            const r = await fetch(`/api/admin/overenskomst/chunks?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+            const d = await r.json()
+            setOkChunks(d.chunks ?? [])
+            setVisOkChunks(true)
+        } catch { toast.error("Kunne ikke hente chunks") }
+        finally { setHenterOkChunks(false) }
+    }
+
+    const hentBilag = async () => {
+        const r = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+        const d = await r.json()
+        setIndekseredeBilag(d.bilag ?? [])
+    }
+
+    useEffect(() => { hentBilag().catch(() => {}) }, [ok, ver.gyldig_fra])
+
+    const sletBilag = async (type: string) => {
+        setSletterBilag(type)
+        try {
+            const res = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}&type=${type}`, { method: "DELETE" })
+            if (!res.ok) throw new Error((await res.json()).error)
+            toast.success("Bilag slettet")
+            await hentBilag()
+            if (udvidetBilag === type) setUdvidetBilag(null)
+        } catch (e: unknown) { toast.error(errorMessage(e)) }
+        finally { setSletterBilag(null) }
+    }
 
     const indekser = async () => {
         if (!bilagFil || !bilagType) return
@@ -1052,6 +1081,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                     overenskomst: ok,
                     gyldigFra: ver.gyldig_fra,
                     bilagType,
+                    bilagLabel: BILAG_TYPER.find(b => b.id === bilagType)?.label,
                     filnavn: bilagFil.name,
                 }),
             })
@@ -1059,10 +1089,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
             const data = await res.json()
             toast.success(`${bilagFil.name}: ${data.indekseret} chunks indekseret`)
             setBilagFil(null); setBilagType("")
-            // Refresh bilag-liste
-            const refresh = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
-            const refreshData = await refresh.json()
-            setIndekseredeBilag(refreshData.bilag ?? [])
+            await hentBilag()
         } catch (e: unknown) { toast.error(errorMessage(e)) }
         finally { setIndekserer(false) }
     }
@@ -1073,13 +1100,75 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                 <div className="min-w-0">
                     <p className="text-xs font-medium">Gyldig fra {ver.gyldig_fra}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {ver.antal} sektioner · {ver.kategorier.join(" · ")}
+                        <button onClick={hentOkChunks} disabled={henterOkChunks}
+                            className="hover:underline disabled:opacity-50 shrink-0">
+                            {henterOkChunks ? "Henter…" : `${ver.antal} sektioner`}
+                        </button>
+                        {ver.kategorier.length > 0 && <span className="truncate"> · {ver.kategorier.join(" · ")}</span>}
                     </p>
-                    {(ver.bilag ?? []).length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            Bilag: {(ver.bilag ?? []).map(b => BILAG_TYPER.find(t => t.id === b)?.label ?? b).join(" · ")}
-                        </p>
+                    {indekseredeBilag.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                            {indekseredeBilag.filter(b => b.type !== "lønskema-satser").map(b => (
+                                <button key={b.type}
+                                    onClick={() => setUdvidetBilag(b.type)}
+                                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors">
+                                    {b.label}
+                                    <span className="ml-1 opacity-50">{b.antal}</span>
+                                </button>
+                            ))}
+                        </div>
                     )}
+                    {/* Bilag-dialog */}
+                    {(() => {
+                        const b = indekseredeBilag.find(x => x.type === udvidetBilag)
+                        return (
+                            <Dialog open={!!b} onOpenChange={open => { if (!open) setUdvidetBilag(null) }}>
+                                <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                                    <DialogHeader>
+                                        <DialogTitle className="text-sm flex items-center justify-between pr-6">
+                                            <span>{b?.label ?? b?.type} — {b?.antal} chunks</span>
+                                            <button
+                                                onClick={() => b && sletBilag(b.type)}
+                                                disabled={sletterBilag === b?.type}
+                                                className="text-xs text-destructive hover:underline disabled:opacity-50 font-normal">
+                                                {sletterBilag === b?.type ? "Sletter…" : "Slet bilag"}
+                                            </button>
+                                        </DialogTitle>
+                                    </DialogHeader>
+                                    <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                        {b?.chunks.map((c, i) => (
+                                            <div key={c.id} className="rounded border p-3 space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    <Badge variant="outline" className="text-[10px] font-normal px-1.5 shrink-0">Chunk {i + 1}</Badge>
+                                                    <span className="text-xs font-medium">{c.titel}</span>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{c.tekst}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </DialogContent>
+                            </Dialog>
+                        )
+                    })()}
+                    {/* Overenskomst-chunks-dialog */}
+                    <Dialog open={visOkChunks} onOpenChange={setVisOkChunks}>
+                        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                            <DialogHeader>
+                                <DialogTitle className="text-sm">{ok} — indekserede sektioner ({okChunks.length})</DialogTitle>
+                            </DialogHeader>
+                            <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                {okChunks.map((c, i) => (
+                                    <div key={c.id} className="rounded border p-3 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                            <Badge variant="outline" className="text-[10px] font-normal px-1.5 shrink-0">{c.kategori}</Badge>
+                                            <span className="text-xs font-medium">{c.titel}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{c.tekst}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </DialogContent>
+                    </Dialog>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                     <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
