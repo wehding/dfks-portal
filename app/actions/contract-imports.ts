@@ -51,6 +51,19 @@ export async function findOwnersForContracts(contractIds: string[]) {
   return { success: true, matched, unresolved, matches };
 }
 
+export async function getContractValidationData(contractId: string) {
+  const session = await createClient();
+  const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin", "jurist"]);
+  if (!caller) return { success: false as const, error: "Ikke autoriseret", data: null };
+  const db = createServiceClient();
+  const { data, error } = await db.from("contract_validations")
+    .select("*")
+    .eq("contract_id", contractId)
+    .maybeSingle();
+  if (error) return { success: false as const, error: error.message, data: null };
+  return { success: true as const, data };
+}
+
 export async function getContractImportStates(contractIds: string[]) {
   const session = await createClient();
   const caller = await assertAdminRole(session, ["superadmin", "admin", "org-admin", "jurist"]);

@@ -23,6 +23,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Separator } from "@/components/ui/separator"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { maskPersonalData } from "@/lib/mask-text"
+import { getContractValidationData } from "@/app/actions/contract-imports"
 import { normaliseSources } from "@/lib/ai-sources"
 import { resolveAnker } from "@/lib/resolveAnker"
 import { SourceBtn } from "@/components/source-btn"
@@ -354,11 +355,13 @@ function AdminValideringPageInner() {
         if (!reviewingId) return
         const c = contracts.find(x => x.id === reviewingId)
         if (!c) return
-        // Indlæs hvilke felter admin tidligere har redigeret manuelt
-        const redigerede = c.validation?.bruger_redigerede_felter ?? []
-        setBrugerRedigerede(new Set(redigerede))
-        const ed = c.validation?.extracted_data as any
-        if (ed) {
+
+        void getContractValidationData(reviewingId).then(res => {
+            const validation = res.success ? res.data : null
+            const redigerede = (validation?.bruger_redigerede_felter as string[] | null) ?? []
+            setBrugerRedigerede(new Set(redigerede))
+            const ed = validation?.extracted_data as any
+            if (!ed) return
             // Post-process: De4-fiktion inkluderer SVOD/Copydan/Royalty implicit via overenskomsten
             const impliedBySvod    = ed.overenskomst === "de4-fiktion" || !!ed.svod
             const impliedByCopydan = ed.overenskomst === "de4-fiktion" || !!ed.copydan
@@ -405,7 +408,7 @@ function AdminValideringPageInner() {
                 isFreelanceContract: ed.isFreelanceContract ?? false,
                 collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
             })
-        }
+        })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
     const unreviewedContracts = contracts.filter(c => c.status === "kladde")
