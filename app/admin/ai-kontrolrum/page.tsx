@@ -23,7 +23,7 @@ import {
 import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
-    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins, Wand2, RotateCcw,
+    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Wand2, RotateCcw,
     RefreshCw, ChevronRight,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -1199,7 +1199,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                     </DialogHeader>
                     <p className="text-sm text-muted-foreground">
                         Er du sikker? Dette fjerner alle <strong>{ver.antal} chunks</strong> for{" "}
-                        <strong>{OVERENSKOMST_LABELS[ok] ?? ok}</strong> (gyldig fra {ver.gyldig_fra}).
+                        <strong>{ok}</strong> (gyldig fra {ver.gyldig_fra}).
                         Handlingen kan ikke fortrydes.
                     </p>
                     <div className="flex gap-2 justify-end pt-2">
@@ -2092,227 +2092,6 @@ function OverenskomsterTab() {
 // Satser-fane
 // ─────────────────────────────────────────────────────────────
 
-type Sats = {
-    id: string
-    overenskomst: string
-    kategori: string
-    beskrivelse: string
-    vaerdi: number
-    enhed: string
-    gyldig_fra: string
-    gyldig_til: string | null
-}
-
-const OVERENSKOMST_LABELS: Record<string, string> = {
-    "de4-fiktion":    "De4 Fiktionsoverenskomst",
-    "faf":            "FAF (fiktion/spillefilm)",
-    "faf-dokumentar": "FAF (dokumentar)",
-    "dj":             "DJ",
-    "metal":          "Metal",
-}
-
-const ENHED_OPTIONS = ["kr/uge", "kr/dag", "kr/time", "%"]
-
-function SatserTab() {
-    const [valgtOverenskomst, setValgtOverenskomst] = useState("de4-fiktion")
-    const [satser, setSatser] = useState<Sats[]>([])
-    const [loading, setLoading] = useState(false)
-    const [visNyDialog, setVisNyDialog] = useState(false)
-    const [visRundeDialog, setVisRundeDialog] = useState(false)
-    const [nyForm, setNyForm] = useState({ beskrivelse: "", kategori: "", vaerdi: "", enhed: "kr/uge", gyldig_fra: new Date().toISOString().slice(0, 10) })
-    const [rundeGyldigFra, setRundeGyldigFra] = useState(new Date().toISOString().slice(0, 10))
-    const [rundeSatser, setRundeSatser] = useState<Omit<Sats, "id" | "overenskomst" | "gyldig_til">[]>([])
-    const [gemmer, setGemmer] = useState(false)
-
-    async function hentSatser(ov: string) {
-        setLoading(true)
-        try {
-            const res = await fetch(`/api/admin/satser?overenskomst=${ov}`)
-            const data = await res.json()
-            setSatser(Array.isArray(data) ? data : [])
-        } catch {
-            toast.error("Kunne ikke hente satser")
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    useEffect(() => { hentSatser(valgtOverenskomst) }, [valgtOverenskomst])
-
-    async function gemNySats() {
-        setGemmer(true)
-        try {
-            const res = await fetch("/api/admin/satser", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ overenskomst: valgtOverenskomst, ...nyForm, vaerdi: parseFloat(nyForm.vaerdi) }),
-            })
-            if (!res.ok) throw new Error((await res.json()).error)
-            toast.success("Sats tilføjet")
-            setVisNyDialog(false)
-            setNyForm({ beskrivelse: "", kategori: "", vaerdi: "", enhed: "kr/uge", gyldig_fra: new Date().toISOString().slice(0, 10) })
-            hentSatser(valgtOverenskomst)
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
-        } finally {
-            setGemmer(false)
-        }
-    }
-
-    async function gemNyRunde() {
-        setGemmer(true)
-        try {
-            const res = await fetch("/api/admin/satser", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ overenskomst: valgtOverenskomst, satser: rundeSatser, gyldig_fra: rundeGyldigFra }),
-            })
-            if (!res.ok) throw new Error((await res.json()).error)
-            toast.success("Ny overenskomstrunde gemt")
-            setVisRundeDialog(false)
-            hentSatser(valgtOverenskomst)
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
-        } finally {
-            setGemmer(false)
-        }
-    }
-
-    function åbnRundeDialog() {
-        // Forudfyld med aktuelle satser
-        setRundeSatser(satser.map(s => ({ overenskomst: s.overenskomst, kategori: s.kategori, beskrivelse: s.beskrivelse, vaerdi: s.vaerdi, enhed: s.enhed, gyldig_fra: rundeGyldigFra })))
-        setVisRundeDialog(true)
-    }
-
-    function formatSats(vaerdi: number, enhed: string) {
-        if (enhed === "%") return `${vaerdi.toLocaleString("da-DK", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} %`
-        return `${vaerdi.toLocaleString("da-DK")} ${enhed}`
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <Select value={valgtOverenskomst} onValueChange={setValgtOverenskomst}>
-                    <SelectTrigger className="w-64 h-8 text-xs">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {Object.entries(OVERENSKOMST_LABELS).map(([id, label]) => (
-                            <SelectItem key={id} value={id}>{label}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={åbnRundeDialog}>
-                        <Plus className="h-3.5 w-3.5 mr-1" />Ny overenskomstrunde
-                    </Button>
-                    <Button size="sm" className="text-xs h-7" onClick={() => setVisNyDialog(true)}>
-                        <Plus className="h-3.5 w-3.5 mr-1" />Tilføj sats
-                    </Button>
-                </div>
-            </div>
-
-            {loading ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
-                    <Loader2 className="h-4 w-4 animate-spin" />Henter satser...
-                </div>
-            ) : satser.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-4">Ingen satser fundet. Kør SQL-migration og seed i Supabase.</p>
-            ) : (
-                <div className="max-w-full overflow-x-auto rounded-md border">
-                    <table className="w-full text-xs">
-                        <thead>
-                            <tr className="border-b bg-muted/40">
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Beskrivelse</th>
-                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Sats</th>
-                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Gyldig fra</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {satser.map(s => (
-                                <tr key={s.id} className="border-b last:border-0 hover:bg-muted/20">
-                                    <td className="px-3 py-2">
-                                        <span className="font-medium">{s.beskrivelse}</span>
-                                        <span className="ml-2 text-muted-foreground">({s.kategori})</span>
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-mono tabular-nums">
-                                        {formatSats(s.vaerdi, s.enhed)}
-                                    </td>
-                                    <td className="px-3 py-2 text-right text-muted-foreground">
-                                        {new Date(s.gyldig_fra).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "numeric" })}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* Ny sats dialog */}
-            <Dialog open={visNyDialog} onOpenChange={setVisNyDialog}>
-                <DialogContent>
-                    <DialogHeader><DialogTitle className="text-sm">Tilføj ny sats</DialogTitle></DialogHeader>
-                    <div className="space-y-3">
-                        <div><Label className="text-xs">Beskrivelse</Label>
-                            <Input className="h-8 text-xs mt-1" value={nyForm.beskrivelse} onChange={e => setNyForm(f => ({ ...f, beskrivelse: e.target.value }))} /></div>
-                        <div><Label className="text-xs">Kategori (internt ID)</Label>
-                            <Input className="h-8 text-xs mt-1" placeholder="fx normallon, pension, royalty" value={nyForm.kategori} onChange={e => setNyForm(f => ({ ...f, kategori: e.target.value }))} /></div>
-                        <div className="flex gap-2">
-                            <div className="flex-1"><Label className="text-xs">Værdi</Label>
-                                <Input className="h-8 text-xs mt-1" type="number" value={nyForm.vaerdi} onChange={e => setNyForm(f => ({ ...f, vaerdi: e.target.value }))} /></div>
-                            <div><Label className="text-xs">Enhed</Label>
-                                <Select value={nyForm.enhed} onValueChange={v => setNyForm(f => ({ ...f, enhed: v }))}>
-                                    <SelectTrigger className="h-8 text-xs mt-1 w-28"><SelectValue /></SelectTrigger>
-                                    <SelectContent>{ENHED_OPTIONS.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}</SelectContent>
-                                </Select></div>
-                        </div>
-                        <div><Label className="text-xs">Gyldig fra</Label>
-                            <Input className="h-8 text-xs mt-1" type="date" value={nyForm.gyldig_fra} onChange={e => setNyForm(f => ({ ...f, gyldig_fra: e.target.value }))} /></div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" size="sm" onClick={() => setVisNyDialog(false)}>Annuller</Button>
-                        <Button size="sm" onClick={gemNySats} disabled={gemmer}>
-                            {gemmer && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Gem
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Ny overenskomstrunde dialog */}
-            <Dialog open={visRundeDialog} onOpenChange={setVisRundeDialog}>
-                <DialogContent className="max-w-xl">
-                    <DialogHeader>
-                        <DialogTitle className="text-sm">Ny overenskomstrunde — {OVERENSKOMST_LABELS[valgtOverenskomst]}</DialogTitle>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Alle aktuelle satser lukkes (gyldig_til = i dag) og nye oprettes med nedenståede værdier.
-                        </p>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                        <div><Label className="text-xs">Ny gyldig_fra</Label>
-                            <Input className="h-8 text-xs mt-1" type="date" value={rundeGyldigFra} onChange={e => setRundeGyldigFra(e.target.value)} /></div>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {rundeSatser.map((s, i) => (
-                                <div key={i} className="flex gap-2 items-center">
-                                    <span className="text-xs text-muted-foreground w-40 truncate">{s.beskrivelse}</span>
-                                    <Input className="h-7 text-xs w-24" type="number" value={s.vaerdi}
-                                        onChange={e => setRundeSatser(rs => rs.map((r, j) => j === i ? { ...r, vaerdi: parseFloat(e.target.value) } : r))} />
-                                    <span className="text-xs text-muted-foreground">{s.enhed}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" size="sm" onClick={() => setVisRundeDialog(false)}>Annuller</Button>
-                        <Button size="sm" onClick={gemNyRunde} disabled={gemmer}>
-                            {gemmer && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Gem ny runde
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </div>
-    )
-}
-
 // ─────────────────────────────────────────────────────────────
 // Hovedside
 // ─────────────────────────────────────────────────────────────
@@ -2333,9 +2112,6 @@ export default function AiKontrolrumPage() {
                     <TabsTrigger value="overenskomster" className="gap-1.5 text-xs whitespace-nowrap">
                         <ScrollText className="h-3.5 w-3.5 shrink-0" />Overenskomster
                     </TabsTrigger>
-                    <TabsTrigger value="satser" className="gap-1.5 text-xs whitespace-nowrap">
-                        <Coins className="h-3.5 w-3.5 shrink-0" />Satser
-                    </TabsTrigger>
                     <TabsTrigger value="videnbase" className="gap-1.5 text-xs whitespace-nowrap">
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />Videnbase
                     </TabsTrigger>
@@ -2352,7 +2128,6 @@ export default function AiKontrolrumPage() {
                 </div>
                 <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
-                <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>
