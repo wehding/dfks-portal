@@ -89,7 +89,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
         const { data, error } = await supabase
             .from("contracts")
-            .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name), contract_validations(id)")
+            .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name), contract_validations(id, extracted_data)")
             .eq("org_id", orgId)
             .order("created_at", { ascending: false })
 
@@ -101,6 +101,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
         const mapped: KøRow[] = data.map((c: any) => {
             const val = Array.isArray(c.contract_validations) ? c.contract_validations[0] : c.contract_validations
+            const hasAiData = val?.extracted_data != null && Object.keys(val.extracted_data).length > 0
             return {
                 id: c.id,
                 displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
@@ -109,7 +110,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                 contract_date: c.contract_date,
                 created_at: c.created_at,
                 status: c.status,
-                validation_id: val?.id ?? null,
+                validation_id: hasAiData ? val.id : null,
                 import_status: importStates[c.id] ?? null,
             }
         })
