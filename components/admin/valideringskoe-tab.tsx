@@ -37,6 +37,7 @@ const contractStatusClass: Record<string, string> = {
 // Import-matching-status
 const importLabel: Record<string, string> = {
     ready_for_review: "Klar",
+    no_ai_data: "Mangler AI-data",
     missing_owner: "Mangler ejer",
     missing_work: "Mangler værk",
     awaiting_episode_confirmation: "Afventer afsnit",
@@ -45,6 +46,7 @@ const importLabel: Record<string, string> = {
 }
 const importClass: Record<string, string> = {
     ready_for_review: "border-emerald-400 text-emerald-700 bg-emerald-50 dark:bg-emerald-950 dark:text-emerald-300",
+    no_ai_data: "border-muted-foreground text-muted-foreground bg-muted/40",
     missing_owner: "border-orange-400 text-orange-700 bg-orange-50 dark:bg-orange-950 dark:text-orange-300",
     missing_work: "border-orange-400 text-orange-700 bg-orange-50 dark:bg-orange-950 dark:text-orange-300",
     awaiting_episode_confirmation: "border-blue-400 text-blue-700 bg-blue-50 dark:bg-blue-950 dark:text-blue-300",
@@ -52,7 +54,7 @@ const importClass: Record<string, string> = {
     duplicate: "border-red-400 text-red-700 bg-red-50 dark:bg-red-950 dark:text-red-300",
 }
 
-// Sorteringsrækkefølge: klar øverst, derefter de øvrige
+// Sorteringsrækkefølge: klar øverst, ingen AI-data sidst i afventer
 const importSortOrder: Record<string, number> = {
     ready_for_review: 0,
     missing_owner: 1,
@@ -60,11 +62,13 @@ const importSortOrder: Record<string, number> = {
     awaiting_episode_confirmation: 3,
     possible_duplicate: 4,
     duplicate: 5,
+    no_ai_data: 6,
 }
 
 function effectiveImportStatus(row: KøRow): string {
-    // Ingen import-række = oprettet uden om importflow → behandl som klar
-    return row.import_status ?? "ready_for_review"
+    if (row.import_status) return row.import_status
+    // Ingen import-række: tjek om AI har produceret data
+    return row.validation_id ? "ready_for_review" : "no_ai_data"
 }
 
 export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: number) => void } = {}) {
@@ -179,6 +183,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                 <SelectItem value="missing_work">Mangler værk</SelectItem>
                                 <SelectItem value="awaiting_episode_confirmation">Afventer afsnit</SelectItem>
                                 <SelectItem value="possible_duplicate">Mulig dublet</SelectItem>
+                                <SelectItem value="no_ai_data">Mangler AI-data</SelectItem>
                             </SelectContent>
                         </Select>
                     </div>
