@@ -7,6 +7,7 @@ import { getTMDBPersonCombinedCredits, getTMDBPersonExternalIds, searchTMDBPerso
 import { searchWikidataPeople } from "@/app/actions/wikidata";
 import { personSearchVariants, scorePersonName } from "@/lib/person-name-match";
 import { sourceSearchFailed, type SourceAttemptStatus } from "@/lib/source-search-status";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
 
 export type PersonCandidate = {
   key: string;
@@ -44,11 +45,23 @@ function extensionFromContentType(contentType: string | null) {
 }
 
 async function downloadPortraitToStorage(userId: string, sourceUrl: string) {
-  const response = await fetch(sourceUrl, { headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/svg+xml,image/*,*/*" } });
+  const url = new URL(sourceUrl);
+  const allowedHosts = new Set(["image.tmdb.org", "www.dfi.dk", "dfi.dk", "api.dfi.dk", "data.dfi.dk"]);
+  if (url.protocol !== "https:" || !allowedHosts.has(url.hostname.toLowerCase())) {
+    throw new Error("Portrætkilden er ikke tilladt.");
+  }
+  const response = await fetch(url, {
+    headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/*" },
+    redirect: "error",
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!response.ok) throw new Error("Portrættet kunne ikke hentes fra kilden.");
   const contentType = response.headers.get("content-type") ?? "image/jpeg";
-  if (!contentType.startsWith("image/")) throw new Error("Portrætkilden returnerede ikke et billede.");
+  if (!/^image\/(jpeg|png|webp|avif)$/i.test(contentType.split(";")[0])) throw new Error("Portrætkilden returnerede ikke et understøttet billede.");
+  const contentLength = Number(response.headers.get("content-length") ?? 0);
+  if (contentLength > 5 * 1024 * 1024) throw new Error("Portrættet er for stort.");
   const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > 5 * 1024 * 1024) throw new Error("Portrættet er for stort.");
   const db = createServiceClient();
   const path = `${userId}/external-${Date.now()}.${extensionFromContentType(contentType)}`;
   const { error } = await db.storage.from("avatars").upload(path, buffer, {
@@ -60,9 +73,17 @@ async function downloadPortraitToStorage(userId: string, sourceUrl: string) {
 }
 
 export async function discoverPersonCandidates(fullName: string, alternativeNames: string[] = []) {
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
+  if (!user) return { success: false, error: "Ikke logget ind.", candidates: [] as PersonCandidate[] };
   const query = fullName.trim();
   if (!query) return { success: false, error: "Skriv dit navn.", candidates: [] as PersonCandidate[] };
-  const variants = personSearchVariants(query, alternativeNames);
+  if (query.length > 120 || alternativeNames.length > 20 || alternativeNames.some(name => name.length > 120)) {
+    return { success: false, error: "Navnet eller navnevarianterne er for lange.", candidates: [] as PersonCandidate[] };
+  }
+  const rateLimit = await consumeRateLimit({ bucket: "person-discovery", identifier: user.id, limit: 30, windowMs: 60 * 60 * 1000 });
+  if (!rateLimit.allowed) return { success: false, error: "For mange opslag. Prøv igen senere.", candidates: [] as PersonCandidate[] };
+  const variants = personSearchVariants(query, alternativeNames).slice(0, 12);
   const candidates = new Map<string, PersonCandidate>();
   const sourceAttempts: Record<"dfi" | "tmdb" | "wikidata", SourceAttemptStatus> = {
     dfi: { successes: 0, failures: 0 },
@@ -159,6 +180,11 @@ export async function discoverPersonCandidates(fullName: string, alternativeName
 }
 
 export async function enrichPersonCandidate(candidate: PersonCandidate) {
+  const session = await createClient();
+  const { data: { user } } = await session.auth.getUser();
+  if (!user) return candidate;
+  const rateLimit = await consumeRateLimit({ bucket: "person-enrichment", identifier: user.id, limit: 60, windowMs: 60 * 60 * 1000 });
+  if (!rateLimit.allowed || !/^[A-Za-z0-9_-]{1,80}$/.test(candidate.sourceId)) return candidate;
   if (candidate.source === "dfi") {
     const credits = await getDFIPersonCredits(Number(candidate.sourceId));
     return { ...candidate, knownFor: (credits.success ? credits.credits ?? [] : []).map((credit: Record<string, unknown>) => String(credit.Title ?? credit.DanishTitle ?? "")).filter(Boolean).slice(0, 5) };

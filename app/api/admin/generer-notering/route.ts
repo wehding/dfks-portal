@@ -1,9 +1,8 @@
-import { errorMessage } from "@/lib/error-message";
 import { NextResponse } from "next/server"
-import { requireAdminApi } from "@/lib/api-auth"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 
 export async function POST(request: Request) {
-    const auth = await requireAdminApi()
+    const auth = await requireStaffModuleApi("contract_reviews", "write")
     if (!auth.ok) return auth.response
     try {
         const { fritekst, prioritet } = await request.json()
@@ -88,6 +87,6 @@ Husk at inkludere standardklausuler på både dansk og engelsk hvis relevant.`,
 
     } catch (err: unknown) {
         console.error("[generer-notering] Fejl:", err)
-        return NextResponse.json({ error: errorMessage(err) ?? "Ukendt fejl" }, { status: 500 })
+        return NextResponse.json({ error: "Noteringen kunne ikke genereres." }, { status: 502 })
     }
 }

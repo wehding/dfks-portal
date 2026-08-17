@@ -92,6 +92,8 @@ const USER_NAV_ITEMS = [
 ]
 
 const ALL_KEYS = [...ADMIN_NAV_ITEMS, ...SETUP_NAV_ITEMS, ...RETTIGHEDS_NAV_ITEMS].map(i => i.key)
+const PRODUCTION_PROTOTYPE_KEYS = new Set(["aftalelicens", "indbetalinger", "udbetalinger", "streaming", "stamdata", "gennemsigtighed"])
+const isProductionPortal = process.env.NODE_ENV === "production"
 
 // Dæmpede, matchende menu-badges: blå = ulæste beskeder (samme blå som list-markeringen),
 // amber = afventer godkendelse.
@@ -241,11 +243,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     const allowedKeys = userRole ? (ROLE_MODULES[userRole] ?? []) : []
 
     const adminItems = ADMIN_NAV_ITEMS
-        .filter(item => allowedKeys.includes(item.key))
+        .filter(item => allowedKeys.includes(item.key) && (!isProductionPortal || !PRODUCTION_PROTOTYPE_KEYS.has(item.key)))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
     const rettighedsItems = RETTIGHEDS_NAV_ITEMS
-        .filter(item => allowedKeys.includes(item.key))
+        .filter(item => allowedKeys.includes(item.key) && (!isProductionPortal || !PRODUCTION_PROTOTYPE_KEYS.has(item.key)))
         .map(item => ({ ...item, label: t(item.labelKey as Parameters<typeof t>[0]) }))
 
     const setupItems = SETUP_NAV_ITEMS

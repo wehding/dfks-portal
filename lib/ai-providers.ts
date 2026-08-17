@@ -1,90 +1,14 @@
 /**
- * lib/ai-providers.ts
+ * Server-owned defaults for the legacy agreement-license assistants.
  *
- * Konfiguration af AI-udbydere og modeller.
- * Bruges i Stamdata → Indstillinger og sendes med i API-kald.
+ * These values are deliberately not configurable by the browser. Permanent
+ * model choices for contract extraction, advice and statistics live in
+ * `ai_runtime_settings` and are managed from AI-kontrolrummet.
  */
+export type AiProvider = "anthropic" | "openai" | "google";
+export type AftalelicensAiUseCase = "soeg" | "grovsorter";
 
-export type AiProvider = "anthropic" | "openai" | "google"
-
-export interface AiModel {
-    id: string
-    label: string
-    description: string
-}
-
-export interface AiProviderDef {
-    id: AiProvider
-    label: string
-    models: AiModel[]
-}
-
-export const AI_PROVIDERS: AiProviderDef[] = [
-    {
-        id: "anthropic",
-        label: "Anthropic (Claude)",
-        models: [
-            { id: "claude-haiku-4-5-20251001", label: "Claude Haiku",  description: "Hurtig og billig — god til batch-sortering" },
-            { id: "claude-sonnet-4-6",         label: "Claude Sonnet", description: "Præcis og nuanceret — anbefalet til enkelt-opslag" },
-            { id: "claude-opus-4-6",           label: "Claude Opus",   description: "Mest præcis — bedst til svære vurderinger" },
-        ],
-    },
-    {
-        id: "openai",
-        label: "OpenAI (GPT)",
-        models: [
-            { id: "gpt-4o-mini", label: "GPT-4o mini", description: "Hurtig og billig" },
-            { id: "gpt-4o",      label: "GPT-4o",      description: "Præcis og alsidig" },
-            { id: "o3-mini",     label: "o3 mini",     description: "Stærk ræsonnering" },
-        ],
-    },
-    {
-        id: "google",
-        label: "Google (Gemini)",
-        models: [
-            { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite", description: "Hurtig og billig til struktureret dokumentbehandling" },
-            { id: "gemini-3.6-flash",      label: "Gemini 3.6 Flash",      description: "Stærk reasoning til komplekse vurderinger" },
-            { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro",        description: "Præcis med langt kontekstvindue" },
-        ],
-    },
-]
-
-export interface AiConfig {
-    provider: AiProvider
-    model: string
-}
-
-// Standardkonfigurationer per use case
-export const AI_CONFIG_DEFAULTS: Record<AiUseCase, AiConfig> = {
-    soeg:        { provider: "anthropic", model: "claude-sonnet-4-6" },
-    grovsorter:  { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
-    kontrakt:    { provider: "anthropic", model: "claude-sonnet-4-6" },
-}
-
-export type AiUseCase = "soeg" | "grovsorter" | "kontrakt"
-
-const STORAGE_KEY = (useCase: AiUseCase) => `dfks-ai-config-${useCase}`
-
-export function loadAiConfig(useCase: AiUseCase): AiConfig {
-    if (typeof window === "undefined") return AI_CONFIG_DEFAULTS[useCase]
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY(useCase))
-        if (!raw) return AI_CONFIG_DEFAULTS[useCase]
-        const parsed = JSON.parse(raw) as AiConfig
-        // Valider at provider + model stadig eksisterer i kataloget
-        const providerDef = AI_PROVIDERS.find(p => p.id === parsed.provider)
-        if (!providerDef) return AI_CONFIG_DEFAULTS[useCase]
-        if (!providerDef.models.find(m => m.id === parsed.model)) return AI_CONFIG_DEFAULTS[useCase]
-        return parsed
-    } catch {
-        return AI_CONFIG_DEFAULTS[useCase]
-    }
-}
-
-export function saveAiConfig(useCase: AiUseCase, config: AiConfig): void {
-    localStorage.setItem(STORAGE_KEY(useCase), JSON.stringify(config))
-}
-
-export function getProviderDef(provider: AiProvider): AiProviderDef {
-    return AI_PROVIDERS.find(p => p.id === provider) ?? AI_PROVIDERS[0]
-}
+export const AI_CONFIG_DEFAULTS: Record<AftalelicensAiUseCase, { provider: AiProvider; model: string }> = {
+  soeg: { provider: "anthropic", model: "claude-sonnet-4-6" },
+  grovsorter: { provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+};

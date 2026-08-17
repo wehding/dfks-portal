@@ -1,7 +1,7 @@
 "use client"
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Loader2, Eye } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -36,38 +36,36 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const [loading, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<"afventer" | "gennemgaede">("afventer")
 
-    const load = useCallback(async () => {
-        setLoading(true)
-        const supabase = createClient()
+    useEffect(() => {
+        let cancelled = false
+        void (async () => {
+            const supabase = createClient()
+            const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
+            const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
+            const orgId = context?.orgId
+            if (!orgId) { if (!cancelled) setLoading(false); return }
 
-        const contextRes = await fetch("/api/admin/context", { cache: "no-store" })
-        const context = contextRes.ok ? await contextRes.json() as { orgId?: string } : null
-        const orgId = context?.orgId
-        if (!orgId) { setLoading(false); return }
-
-        const { data, error } = await supabase
-            .from("contracts")
-            .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name), contract_validations(id)")
-            .eq("org_id", orgId)
-            .order("created_at", { ascending: false })
-
-        if (error || !data) { setLoading(false); return }
-
-        const mapped: KøRow[] = data.map((c: any) => ({
-            id: c.id,
-            displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
-            displayMember: c.rettighedshavere?.full_name ?? "—",
-            displayEmployer: c.employers?.name ?? null,
-            contract_date: c.contract_date,
-            created_at: c.created_at,
-            status: c.status,
-            validation_id: c.contract_validations?.[0]?.id ?? null,
-        }))
-        setRows(mapped)
-        setLoading(false)
-    }, [onAfventerCount])
-
-    useEffect(() => { void load() }, [load])
+            const { data, error } = await supabase
+                .from("contracts")
+                .select("id, working_title, pdf_url, contract_date, created_at, status, rettighedshavere(id, full_name), employers(id, name), contract_validations(id)")
+                .eq("org_id", orgId)
+                .order("created_at", { ascending: false })
+            if (cancelled) return
+            if (error || !data) { setLoading(false); return }
+            setRows(data.map((c: any) => ({
+                id: c.id,
+                displayTitle: c.working_title || c.pdf_url?.split("/").pop() || "Uden titel",
+                displayMember: c.rettighedshavere?.full_name ?? "—",
+                displayEmployer: c.employers?.name ?? null,
+                contract_date: c.contract_date,
+                created_at: c.created_at,
+                status: c.status,
+                validation_id: c.contract_validations?.[0]?.id ?? null,
+            })))
+            setLoading(false)
+        })()
+        return () => { cancelled = true }
+    }, [])
 
     const afventer = rows.filter(r => r.status === "kladde")
     const gennemgaede = rows.filter(r => r.status !== "kladde")
@@ -138,7 +136,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                 <tr
                                     key={r.id}
                                     className="hover:bg-muted/30 cursor-pointer transition-colors"
-                                    onClick={() => router.push(`/admin/validering?id=${r.id}`)}
+                                    onClick={() => router.push(`/admin/kontrakter?contract=${encodeURIComponent(r.id)}`)}
                                 >
                                     <td className="px-4 py-3 font-medium">{r.displayTitle}</td>
                                     <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{r.displayEmployer ?? "—"}</td>
@@ -159,7 +157,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                             variant="ghost"
                                             size="sm"
                                             className="gap-1"
-                                            onClick={e => { e.stopPropagation(); router.push(`/admin/validering?id=${r.id}`) }}
+                                            onClick={e => { e.stopPropagation(); router.push(`/admin/kontrakter?contract=${encodeURIComponent(r.id)}`) }}
                                         >
                                             <Eye className="h-3.5 w-3.5" />
                                             Valider

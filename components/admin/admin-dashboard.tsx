@@ -16,7 +16,7 @@ export function AdminDashboard({ metrics }: { metrics: AdminDashboardMetrics }) 
     { id: "reviews", href: "/admin/kontraktgennemgang?status=afventer,behandling", icon: Scale, label: t("nav.contractReview"), description: t("admin.dashboard.contractReviewDescription"), tasks: metrics.tasks.contractReviews, messages: 0 },
     { id: "works", href: "/admin/vaerker?status=pending", messageHref: "/admin/vaerker?status=beskeder", icon: FileText, label: t("nav.works"), description: t("admin.dashboard.worksDescription"), tasks: metrics.tasks.workRequests, messages: metrics.messages.works },
     { id: "screenings", href: "/admin/aftalelicens?status=pending", icon: FileText, label: t("nav.visningsadmin"), description: t("admin.dashboard.screeningsDescription"), tasks: metrics.tasks.screeningClaims, messages: metrics.messages.screenings },
-  ];
+  ].filter(item => process.env.NODE_ENV !== "production" || item.id !== "screenings");
   return <div className="max-w-5xl space-y-8">
     <PageHeader title={t("admin.dashboard.title")} subtitle={t("admin.dashboard.subtitle")} />
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

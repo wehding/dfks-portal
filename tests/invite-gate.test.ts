@@ -20,3 +20,11 @@ test("kræver både eksplicit opt-in og en invite-kode", () => {
     false
   );
 });
+
+test("invite-gaten kan aldrig blokere Vercel Production", () => {
+  assert.equal(isInviteGateEnabled({
+    ENABLE_INVITE_GATE: "true",
+    INVITE_CODE: "hemmelig-kode",
+    VERCEL_ENV: "production",
+  }), false);
+});

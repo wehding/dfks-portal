@@ -2198,9 +2198,7 @@ function VaerksadministrationContent() {
             <div key={work.id} className="space-y-2">
             <MobileDataCard className={pendingCount ? "border-amber-200 bg-amber-50/35" : undefined}>
               <div className="flex gap-3">
-                <div onClick={event => event.stopPropagation()} className="pt-1">
-                  <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="h-4 w-4" aria-label={`Vælg ${work.title}`} />
-                </div>
+                <input type="checkbox" checked={isSelected} onChange={() => toggleWorkSelection(work)} className="mt-1 h-4 w-4" aria-label={`Vælg ${work.title}`} />
                 {isSeason && <ExpandableListTrigger expanded={isExpanded} onToggle={() => toggleAdminSeason(work)} label={isExpanded ? "Skjul afsnit" : "Vis afsnit"} className="mt-1" />}
                 <button type="button" onClick={() => isSeason ? openAdminSeasonEdit(work) : openEdit(work)} className="flex min-w-0 flex-1 gap-3 text-left">
                   <div className="flex h-16 w-11 shrink-0 items-center justify-center overflow-hidden rounded bg-muted">
@@ -2639,7 +2637,7 @@ function VaerksadministrationContent() {
                       <Field label="Produktionslande"><Input value={editForm.production_countries} onChange={e => setEditForm({ ...editForm, production_countries: e.target.value })} /></Field>
                     </DiffField>
                     <DiffField diff={activeDiffMap.production_companies}>
-                      <div className="md:col-span-2"><ProductionCompanyPicker value={editProducerSelections} suggestedName={editForm.production_companies} onChange={selections => { setEditProducerSelections(selections); setEditForm({ ...editForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
+                      <div className="md:col-span-2"><ProductionCompanyPicker value={editProducerSelections} suggestedName={editForm.production_companies} onChange={selections => { setEditProducerSelections(selections); setEditForm({ ...editForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} canManageRegistry /></div>
                     </DiffField>
                     <DiffField diff={activeDiffMap.dfi_id}>
                       <Field label="DFI-id"><Input value={editForm.dfi_id} onChange={e => setEditForm({ ...editForm, dfi_id: e.target.value })} /></Field>
@@ -3176,7 +3174,7 @@ function VaerksadministrationContent() {
                   <Field label="Instruktør"><Input value={addForm.director} onChange={e => setAddForm({ ...addForm, director: e.target.value })} /></Field>
                   <Field label="Alternative titler"><Input value={addForm.alternative_titles} onChange={e => setAddForm({ ...addForm, alternative_titles: e.target.value })} /></Field>
                   <Field label="Produktionslande"><Input value={addForm.production_countries} onChange={e => setAddForm({ ...addForm, production_countries: e.target.value })} /></Field>
-                  <div className="md:col-span-2"><ProductionCompanyPicker value={addProducerSelections} suggestedName={addForm.production_companies} onChange={selections => { setAddProducerSelections(selections); setAddForm({ ...addForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} /></div>
+                  <div className="md:col-span-2"><ProductionCompanyPicker value={addProducerSelections} suggestedName={addForm.production_companies} onChange={selections => { setAddProducerSelections(selections); setAddForm({ ...addForm, production_companies: selections.map(selection => selection.canonicalName).join(", ") }); }} canManageRegistry /></div>
                   <div className="md:col-span-2"><Field label="Beskrivelse"><Textarea value={addForm.description} onChange={e => setAddForm({ ...addForm, description: e.target.value })} /></Field></div>
                   <Field label="DFI ID"><Input value={addForm.dfi_id} onChange={e => setAddForm({ ...addForm, dfi_id: e.target.value })} /></Field>
                   <Field label="TMDB ID"><Input value={addForm.tmdb_id} onChange={e => setAddForm({ ...addForm, tmdb_id: e.target.value })} /></Field>

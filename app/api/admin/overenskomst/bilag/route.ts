@@ -1,10 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Legacy Supabase or external API payloads are normalized at this module boundary. */
-import { errorMessage } from "@/lib/error-message";
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
-import { requireAdminApi } from "@/lib/api-auth"
+import { requireStaffModuleApi } from "@/lib/api-auth"
 import { extractWordText } from "@/lib/word-text"
 
 function sb() {
@@ -25,6 +24,12 @@ function chunkDokument(tekst: string, opts: { størrelse: number; overlap: numbe
     }
     return chunks
 }
+
+const sourcePart = (value: unknown) => String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9æøå._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120)
 
 // ── POST — udtræk lønskema-satser med Claude ─────────────────
 
@@ -74,11 +79,14 @@ Udtræk ALLE satser fra lønskemaet og returner KUN valid JSON:
 
 export async function POST(req: NextRequest) {
     try {
-        const auth = await requireAdminApi()
+        const auth = await requireStaffModuleApi("contract_reviews", "write")
         if (!auth.ok) return auth.response
         const { pdfBase64, pdfTekst, overenskomst, gyldigFra, bilagType, filnavn } = await req.json()
         if (!pdfTekst || !overenskomst || !gyldigFra || !bilagType) {
             return NextResponse.json({ error: "pdfTekst, overenskomst, gyldigFra og bilagType er påkrævet" }, { status: 400 })
+        }
+        if ((typeof pdfBase64 === "string" && pdfBase64.length > 35_000_000) || String(pdfTekst).length > 500_000) {
+            return NextResponse.json({ error: "Bilaget er for stort." }, { status: 413 })
         }
 
         const supabase = sb()
@@ -116,10 +124,11 @@ export async function POST(req: NextRequest) {
         const chunks = chunkDokument(faktiskPdfTekst, { størrelse: 400, overlap: 40, prefix })
 
         for (let i = 0; i < chunks.length; i++) {
-            const kilde_id = `${overenskomst.toLowerCase()}-${bilagType}-${gyldigFra}-${i}`
+            const kilde_id = `${auth.orgId}:${sourcePart(overenskomst)}-${sourcePart(bilagType)}-${gyldigFra}-${i}`
             const embedding = await getEmbedding(chunks[i], true)
 
             await supabase.from("knowledge_chunks").upsert({
+                org_id: auth.orgId,
                 kilde_id,
                 kilde_type: "overenskomst-bilag",
                 kilde_titel: `${overenskomst} — ${BILAG_LABELS[bilagType] ?? bilagType} (${i + 1}/${chunks.length})`,
@@ -148,7 +157,8 @@ export async function POST(req: NextRequest) {
             const satsChunk = `${overenskomst} lønskema satser ${gyldigFra}: ${JSON.stringify(lønskemaSatser)}`
             const embedding = await getEmbedding(satsChunk, true)
             await supabase.from("knowledge_chunks").upsert({
-                kilde_id: `${overenskomst.toLowerCase()}-lønskema-satser-${gyldigFra}`,
+                org_id: auth.orgId,
+                kilde_id: `${auth.orgId}:${sourcePart(overenskomst)}-loenskema-satser-${gyldigFra}`,
                 kilde_type: "overenskomst-bilag",
                 kilde_titel: `${overenskomst} — Lønskema satser`,
                 tekst: satsChunk,
@@ -165,7 +175,8 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ ok: true, indekseret, lønskemaSatser })
     } catch (e: unknown) {
-        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
+        console.error("[overenskomst-bilag] indexing failed", e instanceof Error ? e.name : "unknown")
+        return NextResponse.json({ error: "Bilaget kunne ikke gemmes." }, { status: 500 })
     }
 }
 
@@ -179,7 +190,7 @@ const BILAG_LABELS: Record<string, string> = {
 // ── GET — hent bilag for en overenskomst ──────────────────────
 
 export async function GET(req: NextRequest) {
-    const auth = await requireAdminApi()
+    const auth = await requireStaffModuleApi("contract_reviews", "read")
     if (!auth.ok) return auth.response
     const { searchParams } = new URL(req.url)
     const overenskomst = searchParams.get("overenskomst")
@@ -187,13 +198,18 @@ export async function GET(req: NextRequest) {
     if (!overenskomst || !gyldigFra) return NextResponse.json({ bilag: [] })
 
     const supabase = sb()
-    const { data } = await supabase
+    const { data, error } = await supabase
         .from("knowledge_chunks")
         .select("kategori, kilde_id, metadata, aktiv")
+        .or(`org_id.is.null,org_id.eq.${auth.orgId}`)
         .eq("overenskomst", overenskomst)
         .eq("gyldig_fra", gyldigFra)
         .in("kategori", ["lønskema", "lønskema-satser", "standardkontrakt-aloen", "standardkontrakt-leverandoer", "bilag"])
         .order("kilde_id")
+    if (error) {
+        console.error("[overenskomst-bilag] read failed", error.code)
+        return NextResponse.json({ error: "Bilagene kunne ikke hentes." }, { status: 500 })
+    }
 
     // Gruppér per bilag-type
     const bilag: Record<string, { type: string; antal: number; satser?: any }> = {}

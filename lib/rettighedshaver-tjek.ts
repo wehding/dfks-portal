@@ -49,19 +49,27 @@ export function tjekAlleNavneforekomster(
 
 export async function tjekNavn(
     navnIKontrakt: string,
-    kontraktTekst?: string
+    kontraktTekst?: string,
+    orgId?: string | null,
 ): Promise<NavneTjekResultat> {
     if (!navnIKontrakt?.trim()) return { status: "ikke-fundet", navnIKontrakt }
+    if (!orgId) return { status: "ikke-fundet", navnIKontrakt }
 
-    // 1. Eksakt match på full_name ELLER alternative_names
-    const { data: eksakt } = await getSupabase()
+    // 1. Eksakt match uden at interpolere brugerinput i PostgREST-filtergrammatik.
+    const db = getSupabase()
+    const { data: exactName } = await db
         .from("rettighedshavere")
-        .select("id, full_name, alternative_names")
-        .or(
-            `full_name.ilike.${navnIKontrakt},` +
-            `alternative_names.cs.{${navnIKontrakt}}`
-        )
+        .select("id,full_name,alternative_names,org_affiliations!inner(org_id)")
+        .eq("org_affiliations.org_id", orgId)
+        .ilike("full_name", navnIKontrakt.trim())
         .limit(1)
+    const { data: exactAlias } = exactName?.length ? { data: [] } : await db
+        .from("rettighedshavere")
+        .select("id,full_name,alternative_names,org_affiliations!inner(org_id)")
+        .eq("org_affiliations.org_id", orgId)
+        .contains("alternative_names", [navnIKontrakt.trim()])
+        .limit(1)
+    const eksakt = exactName?.length ? exactName : exactAlias
 
     if (eksakt && eksakt.length > 0) {
         const registerNavn = eksakt[0].full_name
@@ -100,9 +108,10 @@ export async function tjekNavn(
     // 2. Fuzzy match — søg på hvert ord i navnet
     const ord = navnIKontrakt.split(/\s+/).filter(o => o.length > 2)
     for (const o of ord) {
-        const { data: fuzzy } = await getSupabase()
+        const { data: fuzzy } = await db
             .from("rettighedshavere")
-            .select("id, full_name")
+            .select("id,full_name,org_affiliations!inner(org_id)")
+            .eq("org_affiliations.org_id", orgId)
             .ilike("full_name", `%${o}%`)
             .limit(3)
 

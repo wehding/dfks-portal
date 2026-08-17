@@ -81,7 +81,7 @@ export function RightsHolderRelations({ rightsHolderId, workCount, contractCount
         {isOpen ? <ChevronDown className="mr-1 h-3.5 w-3.5" /> : <ChevronRight className="mr-1 h-3.5 w-3.5" />}
         {title}{loaded ? ` (${rows.length})` : knownCount !== undefined ? ` (${knownCount})` : ""}
       </Button>
-      {isOpen && <div className="mt-1 min-w-[280px] rounded-md border bg-background p-2 shadow-sm sm:min-w-[420px]">
+      {isOpen && <div className="mt-1 w-full min-w-0 rounded-md border bg-background p-2 shadow-sm sm:min-w-[420px]">
         {loading ? <div className="flex items-center gap-2 p-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{da ? "Indlæser…" : "Loading…"}</div> : relationList(rows, kind)}
       </div>}
     </div>;

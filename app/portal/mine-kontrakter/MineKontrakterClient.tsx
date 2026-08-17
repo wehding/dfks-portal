@@ -524,9 +524,12 @@ export default function MineKontrakterClient({
     setDeleteSelectedOpen(false);
     const results = await Promise.all(ids.map(id => deleteMemberContract(id)));
     const failedIds = ids.filter((_, index) => !results[index].success);
+    const cleanupWarnings = results.filter(result => result.success && result.warning).length;
     setContracts(prev => prev.filter(c => !ids.includes(c.id) || failedIds.includes(c.id)));
     setSelectedIds([]);
-    setMsg(failedIds.length ? { type: "error", text: `${failedIds.length} kontrakt(er) kunne ikke slettes.` } : { type: "success", text: "Valgte kontrakter slettet permanent." });
+    setMsg(failedIds.length
+      ? { type: "error", text: `${failedIds.length} kontrakt(er) kunne ikke slettes.` }
+      : { type: "success", text: cleanupWarnings ? "Kontrakterne er slettet, men enkelte dokumentfiler kræver senere oprydning." : "Valgte kontrakter slettet permanent." });
   }
 
   async function handleAddComment() {
@@ -562,7 +565,7 @@ export default function MineKontrakterClient({
     if (res.success) {
       setContracts(prev => prev.filter(c => c.id !== id));
       setSelectedContract(null);
-      setMsg({ type: "success", text: "Kontrakt slettet." });
+      setMsg({ type: "success", text: res.warning ? "Kontrakten er slettet, men dokumentfilen kræver senere oprydning." : "Kontrakt slettet." });
     } else {
       setMsg({ type: "error", text: res.error ?? "Kunne ikke slette" });
     }
@@ -999,13 +1002,10 @@ export default function MineKontrakterClient({
           return (
             <React.Fragment key={c.id}>
               <div
-                onClick={() => openContract(c)}
-                className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b cursor-pointer hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]"
+                className="grid grid-cols-[24px_1fr_auto] gap-3 px-4 py-4 border-b hover:bg-muted/50 transition-colors text-sm md:items-center md:px-5 md:py-3 md:[grid-template-columns:36px_2fr_1.1fr_1.1fr_1.2fr_1fr_1fr_0.9fr]"
               >
-                <div onClick={e => { e.stopPropagation(); toggleSelected(c.id); }}>
-                  <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => {}} className="h-4 w-4 cursor-pointer" />
-                </div>
-                <div className="min-w-0">
+                <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="h-4 w-4 cursor-pointer" aria-label={`Vælg ${title}`} />
+                <button type="button" onClick={() => openContract(c)} className="min-w-0 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <div className="font-semibold text-foreground flex items-center gap-2">
                     {title === "Afventer aflæsning..." && <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600 shrink-0" />}
                     <span className={title === "Afventer aflæsning..." ? "text-amber-900 italic font-medium" : ""}>{title}</span>
@@ -1020,7 +1020,7 @@ export default function MineKontrakterClient({
                     <span className="truncate">Producent: {c.employers?.name ?? "–"}</span>
                     <span>{overenskomstLabel(c.overenskomst)}</span>
                   </div>
-                </div>
+                </button>
                 <div className="hidden text-muted-foreground md:block">{c.contract_date ? c.contract_date.substring(0, 10) : "–"}</div>
                 <div className="hidden text-muted-foreground md:block">{c.created_at ? c.created_at.substring(0, 10) : "–"}</div>
                 <div className="hidden text-muted-foreground truncate md:block">{c.employers?.name ?? "–"}</div>

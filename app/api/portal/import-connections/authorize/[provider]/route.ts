@@ -21,6 +21,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ pro
     for (const [key, value] of Object.entries(config.authorizeParams)) url.searchParams.set(key, value);
     return NextResponse.redirect(url);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Forbindelsen kunne ikke startes" }, { status: 503 });
+    console.error("[portal-import-connection] authorize failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Forbindelsen kunne ikke startes" }, { status: 503 });
   }
 }

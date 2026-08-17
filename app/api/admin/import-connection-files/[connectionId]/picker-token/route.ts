@@ -25,6 +25,7 @@ export async function GET(_request: Request, context: { params: Promise<{ connec
     const accessToken = await providerAccessToken("google_drive", connection.credentials_encrypted, "organisation");
     return NextResponse.json({ accessToken, developerKey, appId }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Google Drive skal godkendes igen" }, { status: 502 });
+    console.error("[drive-picker] token failed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ error: "Google Drive skal godkendes igen" }, { status: 502 });
   }
 }

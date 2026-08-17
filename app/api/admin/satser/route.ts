@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
             .from("overenskomst_satser")
             .select("overenskomst")
             .is("gyldig_til", null)
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        if (error) return NextResponse.json({ error: "Satserne kunne ikke hentes." }, { status: 500 })
         const unikke = [...new Set((data ?? []).map(r => r.overenskomst))]
         return NextResponse.json(unikke)
     }
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
         .is("gyldig_til", null)
         .order("kategori")
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: "Satserne kunne ikke hentes." }, { status: 500 })
     return NextResponse.json(data ?? [])
 }
 
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         .select()
         .single()
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: "Satsen kunne ikke gemmes." }, { status: 500 })
     return NextResponse.json(data, { status: 201 })
 }
 
@@ -80,7 +80,7 @@ export async function PUT(request: NextRequest) {
         .eq("overenskomst", overenskomst)
         .is("gyldig_til", null)
 
-    if (lukError) return NextResponse.json({ error: lukError.message }, { status: 500 })
+    if (lukError) return NextResponse.json({ error: "De tidligere satser kunne ikke afsluttes." }, { status: 500 })
 
     // Opret nye satser
     const nye = satser.map((s: { kategori: string; beskrivelse: string; vaerdi: number; enhed: string }) => ({
@@ -97,7 +97,7 @@ export async function PUT(request: NextRequest) {
         .insert(nye)
         .select()
 
-    if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 })
+    if (insertError) return NextResponse.json({ error: "De nye satser kunne ikke gemmes." }, { status: 500 })
     return NextResponse.json(data)
 }
 
@@ -109,6 +109,6 @@ export async function DELETE(request: NextRequest) {
     if (!id) return NextResponse.json({ error: "Mangler id" }, { status: 400 })
 
     const { error } = await supabase.from("overenskomst_satser").delete().eq("id", id)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ error: "Satsen kunne ikke slettes." }, { status: 500 })
     return NextResponse.json({ ok: true })
 }

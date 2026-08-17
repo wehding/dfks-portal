@@ -5,6 +5,7 @@
  */
 
 import { createClient } from "@supabase/supabase-js"
+import { getSupabaseServiceKey } from "@/lib/env"
 import { tjekNavn } from "@/lib/rettighedshaver-tjek"
 import { normaliseSources } from "@/lib/ai-sources"
 import { buildContractExtractionPrompt } from "@/lib/contract-extraction-prompt"
@@ -85,7 +86,7 @@ async function loadContractPrompt() {
     try {
         const supabase = createClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+            getSupabaseServiceKey(),
             { auth: { autoRefreshToken: false, persistSession: false } }
         )
         const { data: refDocs } = await supabase
@@ -214,7 +215,7 @@ export async function runContractExtraction(maskedText: string, context: Contrac
 
     let navneTjek: unknown = null
     if (extracted.rightsHolderName) {
-        try { navneTjek = await tjekNavn(String(extracted.rightsHolderName)) }
+        try { navneTjek = await tjekNavn(String(extracted.rightsHolderName), undefined, context.orgId) }
         catch (error) { console.warn("[contract-extract] Navnetjek fejlede:", error instanceof Error ? error.message : "ukendt fejl") }
     }
 

@@ -4,6 +4,7 @@ import { getEmbedding, getEmbeddingWithFallback } from "./embedding-provider"
 import { estimateEmbeddingTokens } from "./ai-cost"
 import { recordAiUsage, type AiUsageContext } from "./ai-usage"
 import { detectAgreementReferences } from "./agreement-detection"
+import { getSupabaseServiceKey } from "./env"
 
 const MATCH_THRESHOLD = 0.65
 const MATCH_COUNT = 6
@@ -11,7 +12,7 @@ const MATCH_COUNT = 6
 function getSupabaseAdmin() {
     return createClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        getSupabaseServiceKey()
     )
 }
 
@@ -312,13 +313,14 @@ export async function hentKontekst(
             query_embedding: embedding,
             match_threshold: 0.65,
             match_count: 3,
+            p_org_id: orgId,
         }),
 
         // 4. Altid-noteringer
-        supabase.from("legal_notes").select("title, body").eq("priority", "altid").eq("active", true),
+        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "altid").eq("active", true),
 
         // 5. Baggrundsnoteringer
-        supabase.from("legal_notes").select("title, body").eq("priority", "baggrund").eq("active", true),
+        supabase.from("legal_notes").select("title, body").or(`org_id.is.null,org_id.eq.${orgId}`).eq("priority", "baggrund").eq("active", true),
 
         // 6. Godkendte, strukturerede aftale-, løn- og pensionskilder
         hentStruktureretAftalegrundlag(detekterede, kontraktdato),
@@ -387,10 +389,13 @@ export async function upsertKnowledgeChunk(params: {
         metadata: params.metadata ?? {},
         embedding,
     }, { onConflict: "kilde_id" })
-    if (error) console.error("[retrieval] upsertKnowledgeChunk fejl:", error)
+    if (error) throw new Error("Knowledge chunk kunne ikke gemmes")
 }
 
-export async function deleteKnowledgeChunk(kildeId: string): Promise<void> {
+export async function deleteKnowledgeChunk(kildeId: string, orgId: string | null): Promise<void> {
     const supabase = getSupabaseAdmin()
-    await supabase.from("knowledge_chunks").delete().eq("kilde_id", kildeId)
+    let query = supabase.from("knowledge_chunks").delete().eq("kilde_id", kildeId)
+    query = orgId ? query.eq("org_id", orgId) : query.is("org_id", null)
+    const { error } = await query
+    if (error) throw new Error("Knowledge chunk kunne ikke slettes")
 }

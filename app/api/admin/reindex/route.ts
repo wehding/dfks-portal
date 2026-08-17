@@ -12,7 +12,7 @@ function sb() {
 }
 
 export async function POST(req: NextRequest) {
-    const auth = await requireCronOrAdminApi(req)
+    const auth = await requireCronOrAdminApi(req, ["superadmin"])
     if (!auth.ok) return auth.response
     const supabase = sb()
 
@@ -21,7 +21,10 @@ export async function POST(req: NextRequest) {
         .select("kilde_id, tekst, metadata, sidst_opdateret")
         .order("kilde_id")
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+        console.error("[reindex] read failed", error.code)
+        return NextResponse.json({ error: "Dokumenterne kunne ikke genindekseres." }, { status: 500 })
+    }
     if (!chunks?.length) return NextResponse.json({ opdateret: 0, uændret: 0, fejl: 0 })
 
     let opdateret = 0, fejl = 0

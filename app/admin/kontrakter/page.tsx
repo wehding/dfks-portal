@@ -175,6 +175,12 @@ type Employer = { id: string; name: string; parent_id: string | null; dfi_compan
 type RightsHolder = { id: string; full_name: string }
 type WorkOption = { id: string; title: string; year: number | null; poster_url: string | null }
 type SortKey = "production" | "rightsHolder" | "employer" | "type" | "overenskomst" | "period" | "status"
+
+function chunkIds(ids: string[], size = 75) {
+    const chunks: string[][] = []
+    for (let index = 0; index < ids.length; index += size) chunks.push(ids.slice(index, index + size))
+    return chunks
+}
 type SortDir = "asc" | "desc"
 type NavneTjekResult = {
     status: "match" | "delvist-match" | "ikke-fundet"
@@ -712,39 +718,36 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                 if (contractsRes.data) {
                     const rawContracts = contractsRes.data as unknown as Array<{ id: string; type: string; overenskomst: string | null; status: string; pdf_url: string; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; superseded_by_contract_id?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }>
                     const commentsByContract: Record<string, ContractComment[]> = {}
-                    const attachmentsByContract: Record<string, NonNullable<ContractRow["contract_attachments"]>> = {}
                     const latestJobByContract: Record<string, { status: string; error_message: string | null; created_at: string }> = {}
                     if (rawContracts.length > 0) {
-                        const [commentsRes, jobsRes, attachmentsRes] = await Promise.all([
-                            supabase
+                        const idChunks = chunkIds(rawContracts.map(row => row.id))
+                        const [commentResults, jobResults] = await Promise.all([
+                            Promise.all(idChunks.map(ids => supabase
                                 .from("contract_comments")
                                 .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
-                                .in("contract_id", rawContracts.map(r => r.id))
+                                .in("contract_id", ids)
                                 .eq("author_role", "member")
                                 .is("admin_read_at", null)
-                                .order("created_at", { ascending: true }),
-                            supabase
+                                .order("created_at", { ascending: true }))),
+                            Promise.all(idChunks.map(ids => supabase
                                 .from("contract_ai_jobs")
                                 .select("contract_id, status, error_message, created_at")
-                                .in("contract_id", rawContracts.map(r => r.id))
+                                .in("contract_id", ids)
                                 .is("attachment_id", null)
-                                .order("created_at", { ascending: false }),
-                            supabase.from("contract_attachments").select("id,contract_id,title,ai_status,ai_result").in("contract_id", rawContracts.map(r => r.id)).order("created_at", { ascending: false }),
+                                .order("created_at", { ascending: false }))),
                         ])
-                        if (commentsRes.data) {
-                            for (const comment of commentsRes.data as unknown as Array<ContractComment & { contract_id: string }>) {
+                        for (const commentsRes of commentResults) {
+                            if (commentsRes.error) console.error("[admin-contracts] unread comments failed", commentsRes.error.code)
+                            for (const comment of (commentsRes.data ?? []) as unknown as Array<ContractComment & { contract_id: string }>) {
                                 if (!commentsByContract[comment.contract_id]) commentsByContract[comment.contract_id] = []
                                 commentsByContract[comment.contract_id].push(comment)
                             }
                         }
-                        if (jobsRes.data) {
-                            for (const job of jobsRes.data as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
+                        for (const jobsRes of jobResults) {
+                            if (jobsRes.error) console.error("[admin-contracts] AI job status failed", jobsRes.error.code)
+                            for (const job of (jobsRes.data ?? []) as Array<{ contract_id: string; status: string; error_message: string | null; created_at: string }>) {
                                 if (!latestJobByContract[job.contract_id]) latestJobByContract[job.contract_id] = job
                             }
-                        }
-                        if (attachmentsRes.data) for (const attachment of attachmentsRes.data as Array<NonNullable<ContractRow["contract_attachments"]>[number] & { contract_id: string }>) {
-                            if (!attachmentsByContract[attachment.contract_id]) attachmentsByContract[attachment.contract_id] = []
-                            attachmentsByContract[attachment.contract_id].push(attachment)
                         }
                     }
                     const importStates = await getContractImportStates(rawContracts.map(contract => contract.id))
@@ -780,7 +783,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                         season_number: r.season_number ?? null,
                         episode_numbers: r.episode_numbers ?? null,
                         contract_comments: commentsByContract[r.id] ?? [],
-                        contract_attachments: attachmentsByContract[r.id] ?? [],
+                        contract_attachments: [],
                         validation_data: null, // udskudt til loadContractDetail() ved åbning
                         validation_has_credit_clause: validation?.has_credit_clause ?? null,
                         validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
@@ -974,13 +977,19 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
 
     const handleDelete = async () => {
         if (!deleteId) return
-        const contract = contracts.find(c => c.id === deleteId)
-        const supabase = createClient()
-        if (contract?.pdf_url) await supabase.storage.from("kontrakter").remove([contract.pdf_url])
-        await supabase.from("contracts").delete().eq("id", deleteId)
-        setContracts(prev => prev.filter(c => c.id !== deleteId))
-        setDeleteId(null)
-        toast.success("Kontrakt slettet")
+        setSaving(true)
+        try {
+            const result = await deleteAdminContractsPermanently([deleteId])
+            if (!result.success) throw new Error(result.error)
+            setContracts(prev => prev.filter(c => c.id !== deleteId))
+            setDeleteId(null)
+            toast.success("Kontrakt slettet")
+            if (result.warning) toast.warning(result.warning)
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Kontrakten kunne ikke slettes")
+        } finally {
+            setSaving(false)
+        }
     }
 
     const handleMarkSelectedMessagesRead = async () => {
@@ -1060,6 +1069,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             if (!res.success) throw new Error(res.error ?? "Kunne ikke slette kontrakter")
             setContracts(prev => prev.filter(c => !idsToDelete.includes(c.id)))
             toast.success(`${res.deletedCount ?? idsToDelete.length} kontrakt(er) er slettet permanent`)
+            if (res.warning) toast.warning(res.warning)
             setSelectedIds([])
             setBatchDeleteOpen(false)
             setBulkDeleteStep(0)
@@ -1164,12 +1174,19 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             .select("id, contract_id, author_role, message, created_at, member_read_at, admin_read_at")
             .eq("contract_id", c.id)
             .order("created_at", { ascending: true })
-        const { data: jobs } = await supabase
-            .from("contract_ai_jobs")
-            .select("contract_id, status, error_message, created_at")
-            .eq("contract_id", c.id)
-            .order("created_at", { ascending: false })
-            .limit(1)
+        const [{ data: jobs }, { data: attachments }] = await Promise.all([
+            supabase
+                .from("contract_ai_jobs")
+                .select("contract_id, status, error_message, created_at")
+                .eq("contract_id", c.id)
+                .order("created_at", { ascending: false })
+                .limit(1),
+            supabase
+                .from("contract_attachments")
+                .select("id,title,ai_status,ai_result")
+                .eq("contract_id", c.id)
+                .order("created_at", { ascending: false }),
+        ])
 
         if (!data) return
         const row = data as unknown as { id: string; type: string; overenskomst: string | null; status: string; pdf_url: string | null; processed_pdf_url?: string | null; document_processing_status?: string; document_processing_error_code?: string | null; contract_date: string | null; start_date: string | null; end_date: string | null; created_at: string; employer_id?: string | null; employers?: { name?: string | null } | null; rights_holder_id?: string | null; rettighedshavere?: { full_name?: string | null } | null; working_title?: string | null; season_number?: number | null; episode_numbers?: number[] | null; works?: { id?: string | null; title?: string | null; type?: string | null; poster_url?: string | null } | null; contract_validations?: { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null }[] | { extracted_data?: Record<string, unknown> | null; has_credit_clause?: boolean | null; has_overenskomst_incorporation?: boolean | null } | null }
@@ -1200,6 +1217,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
             season_number: row.season_number ?? null,
             episode_numbers: row.episode_numbers ?? null,
             contract_comments: ((comments ?? []) as unknown as ContractComment[]),
+            contract_attachments: (attachments ?? []) as NonNullable<ContractRow["contract_attachments"]>,
             validation_data: validation?.extracted_data ?? null,
             validation_has_credit_clause: validation?.has_credit_clause ?? null,
             validation_has_overenskomst_incorporation: validation?.has_overenskomst_incorporation ?? null,
@@ -1601,16 +1619,15 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
         if (!editContract) return
         setDeleteEditOpen(false)
         const contract = editContract
-        const supabase = createClient()
         setEditSaving(true)
         try {
-            if (contract.pdf_url) await supabase.storage.from("kontrakter").remove([contract.pdf_url])
-            const { error } = await supabase.from("contracts").delete().eq("id", contract.id)
-            if (error) throw new Error(error.message)
+            const result = await deleteAdminContractsPermanently([contract.id])
+            if (!result.success) throw new Error(result.error)
             setContracts(prev => prev.filter(c => c.id !== contract.id))
             setEditContract(null)
             setEditForm(null)
             toast.success("Kontrakt slettet")
+            if (result.warning) toast.warning(result.warning)
         } catch (err: unknown) {
             toast.error(err instanceof Error ? err.message : "Kunne ikke slette kontrakt")
         } finally {
@@ -2026,9 +2043,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                     return (
                         <MobileDataCard key={c.id}>
                             <div className="flex gap-3">
-                                <div onClick={event => event.stopPropagation()} className="pt-1">
-                                    <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="h-4 w-4" aria-label={`Vælg ${c.work_title ?? c.working_title ?? "kontrakt"}`} />
-                                </div>
+                                <input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => toggleSelected(c.id)} className="mt-1 h-4 w-4" aria-label={`Vælg ${c.work_title ?? c.working_title ?? "kontrakt"}`} />
                                 <button type="button" onClick={() => openEdit(c)} className="flex min-w-0 flex-1 gap-3 text-left">
                                     {posterUrl(c.work_poster_url) && (
                                         // eslint-disable-next-line @next/next/no-img-element
@@ -2614,6 +2629,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                                             setEditForm(form => form && ({ ...form, employer_id: selections[0]?.employerId ?? "" }))
                                         }}
                                         label="Producent"
+                                        canManageRegistry
                                         suggestedNames={extractedProductionCompanyNames(editContract?.validation_data)}
                                     />
                                 </div>
@@ -2688,7 +2704,7 @@ function AdminKontrakterContent({ view = "archive" }: { view?: "archive" | "uplo
                                     </div>
                                     {manualWorkMode ? (
                                         <div className="rounded-lg border bg-muted/20 p-3">
-                                            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" autoSelectProducer />
+                                            <ManualWorkFormFields value={manualWork} onChange={setManualWork} locale="da" autoSelectProducer canManageProducerRegistry />
                                         </div>
                                     ) : editForm.work_id || pickedUnifiedResult ? (
                                         <div className="rounded-lg border bg-card p-3 text-card-foreground space-y-3">

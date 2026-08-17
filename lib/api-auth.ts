@@ -2,7 +2,10 @@ import "server-only";
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { assertAdminRole, ADMIN_ROLES } from "@/lib/supabase/assert-admin";
+import { assertAdminRole } from "@/lib/supabase/assert-admin";
+import { USER_ADMIN_ROLES } from "@/lib/admin-roles";
+import { readActiveOrgId } from "@/lib/active-org-context";
+import { resolveStaffAccess, type StaffModule, type StaffOperation } from "@/lib/staff-access";
 
 type ApiAuthResult =
   | { ok: true; userId: string }
@@ -21,7 +24,7 @@ export async function requireSessionApi(): Promise<ApiAuthResult> {
   return { ok: true, userId: user.id };
 }
 
-export async function requireAdminApi(roles: readonly string[] = ADMIN_ROLES): Promise<ApiAdminResult> {
+export async function requireAdminApi(roles: readonly string[] = USER_ADMIN_ROLES): Promise<ApiAdminResult> {
   const supabase = await createClient();
   const caller = await assertAdminRole(supabase, roles);
   if (!caller) {
@@ -30,9 +33,28 @@ export async function requireAdminApi(roles: readonly string[] = ADMIN_ROLES): P
   return { ok: true, userId: caller.userId, orgId: caller.orgId, role: caller.role };
 }
 
+export async function requireStaffModuleApi(
+  module: StaffModule,
+  operation: StaffOperation,
+): Promise<ApiAdminResult & { global?: boolean; allowedOrgIds?: string[] }> {
+  const supabase = await createClient();
+  const access = await resolveStaffAccess(supabase, await readActiveOrgId());
+  if (!access || !access.modules[module][operation]) {
+    return { ok: false, response: NextResponse.json({ error: "Ikke autoriseret" }, { status: 403 }) };
+  }
+  return {
+    ok: true,
+    userId: access.userId,
+    orgId: access.activeOrgId,
+    role: access.activeRole,
+    global: access.global,
+    allowedOrgIds: access.allowedOrgIds,
+  };
+}
+
 export async function requireCronOrAdminApi(
   req: NextRequest,
-  roles: readonly string[] = ADMIN_ROLES
+  roles: readonly string[] = USER_ADMIN_ROLES
 ): Promise<ApiAdminResult | { ok: true; isCron: true }> {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;

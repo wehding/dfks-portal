@@ -10,7 +10,6 @@ import {
 } from "lucide-react"
 import { saveFeedback, getTrainingExamples } from "@/lib/ai-feedback"
 import { recordDecision, findInHistory } from "@/lib/ai-history"
-import { loadAiConfig } from "@/lib/ai-providers"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -746,7 +745,6 @@ function SortTable({ vaerker, onUpdate }: {
                             productionYear: v.productionYear,
                         })),
                         examples: getTrainingExamples(20),
-                        ...loadAiConfig("grovsorter"),
                     }),
                 })
                 const data = await res.json()
@@ -1408,7 +1406,6 @@ function SortTable({ vaerker, onUpdate }: {
                                                 broadcastDate: noteEdit.broadcastDate,
                                                 duration: noteEdit.duration,
                                                 examples: getTrainingExamples(20),
-                                                ...loadAiConfig("soeg"),
                                             }),
                                         })
                                         const json = await res.json()
