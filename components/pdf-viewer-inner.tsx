@@ -114,7 +114,12 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     }) ?? activeCandidates[0] ?? null
     const normActive = resolvedActive ? norm(resolvedActive) : null
 
-    const allHighlights = [...highlights, ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim()))]
+    // Inkluder altid active-kandidater i allHighlights — ellers kan de aldrig markeres som isActive
+    const allHighlights = [
+        ...highlights,
+        ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim())),
+        ...activeCandidates.filter(c => c.length >= 2),
+    ]
 
     allHighlights.forEach((quote) => {
         if (!quote || quote.length < 2) return

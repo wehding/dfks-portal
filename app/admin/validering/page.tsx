@@ -360,15 +360,16 @@ function AdminValideringPageInner() {
             setBrugerRedigerede(new Set(redigerede))
             const ed = validation?.extracted_data as any
             if (!ed) return
-            // Post-process: De4-fiktion inkluderer SVOD/Copydan/Royalty implicit via overenskomsten
-            const impliedBySvod    = ed.overenskomst === "de4-fiktion" || !!ed.svod
-            const impliedByCopydan = ed.overenskomst === "de4-fiktion" || !!ed.copydan
-            // Royalty: spillefilm + dokumentar har royalty — tv-serier ALDRIG automatisk
+            // SVOD: kun true hvis AI eksplicit fandt SVOD — aldrig automatisk fra overenskomst alene
+            const impliedBySvod    = !!ed.svod
+            // Copydan: inkluderet i De4-fiktion og FAF-overenskomsterne
+            const impliedByCopydan = ["de4-fiktion", "faf", "faf-dokumentar"].includes(ed.overenskomst ?? "") || !!ed.copydan
+            // Royalty: spillefilm + dokumentar har royalty via De4 — tv-serier ALDRIG automatisk
             const isTvSeries = ["tvSeries", "docSeries"].includes(ed.productionType ?? "")
             const isFilmOrDoc = ["feature", "documentary", "short"].includes(ed.productionType ?? "")
             const impliedByRoyalty = isTvSeries
-                ? false  // TV-serier: aldrig royalty automatisk
-                : isFilmOrDoc || !!ed.royalty
+                ? false
+                : (isFilmOrDoc && ["de4-fiktion", "faf", "faf-dokumentar"].includes(ed.overenskomst ?? "")) || !!ed.royalty
 
             setFormData({
                 producerName: ed.producerName ?? ed.employerName ?? "",
@@ -629,9 +630,10 @@ function AdminValideringPageInner() {
             workingWeeks:                  ed.workingWeeks ?? "",
             prolongationWeeks:             ed.prolongationWeeks ?? "",
             prolongationNote:              ed.prolongationNote ?? "",
-            // SVOD og Copydan er inkluderet i De4-overenskomsten
-            svod:                          impliedDe4 ? true : !!ed.svod,
-            copydan:                       impliedDe4 ? true : !!ed.copydan,
+            // SVOD: kun fra AI — aldrig automatisk fra overenskomst (kun gyldig ved direkte streaming-produktion)
+            svod:                          !!ed.svod,
+            // Copydan: inkluderet i De4 og FAF uanset distributionskanal
+            copydan:                       ["de4-fiktion", "faf", "faf-dokumentar"].includes(overenskomst) || !!ed.copydan,
             royalty:                       !!ed.royalty,
             royaltyPercent:                ed.royaltyPercent ?? "",
             aiDataMiningClause:            !!ed.aiDataMiningClause,
@@ -1860,11 +1862,15 @@ function TextViewer({ text, loading = false, highlights, sectionHighlights = [],
         const ranges: Range[] = []
 
         const normQ = (s: string) => buildCharMap(s).normText
-        const allHighlights = [...highlights, ...sectionHighlights]
+        const activeCandidates = activeHighlight
+            ? activeHighlight.split("||").map(s => s.trim()).filter(Boolean)
+            : []
+        // Inkluder active-kandidater så de altid kan markeres — ellers matcher isActive aldrig
+        const allHighlights = [...new Set([...highlights, ...sectionHighlights, ...activeCandidates])]
 
         allHighlights.forEach((quote) => {
             if (!quote || quote.length < 3) return
-            const isActive = activeHighlight !== null && normQ(quote) === normQ(activeHighlight)
+            const isActive = activeCandidates.length > 0 && activeCandidates.some(c => normQ(quote) === normQ(c))
             const isSection = sectionHighlights.includes(quote)
             const q = normQ(quote)
             const candidates = [q.slice(0, 60), q.slice(0, 40), q.slice(0, 25)].filter(c => c.length >= 4)
