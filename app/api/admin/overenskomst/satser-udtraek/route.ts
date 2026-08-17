@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
-import { requireStaffModuleApi } from "@/lib/api-auth"
+import { requireAdminApi } from "@/lib/api-auth"
+import { ADMIN_ROLES } from "@/lib/admin-roles"
 import { callAi } from "@/lib/ai-client"
 import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { extractPdfText } from "@/lib/pdf-parse"
@@ -22,7 +23,7 @@ function sb() {
 
 export async function POST(req: NextRequest) {
     try {
-        const auth = await requireStaffModuleApi("contract_reviews", "write")
+        const auth = await requireAdminApi(ADMIN_ROLES)
         if (!auth.ok) return auth.response
 
         const body = await req.json()
@@ -180,8 +181,9 @@ ${maskPersonalData(kildetekst).slice(0, 150_000)}`,
             kildeUrl: kildeUrl ?? null,
         })
     } catch (e: unknown) {
-        console.error("[satser-udtraek] fejl:", e instanceof Error ? e.message : "unknown")
-        return NextResponse.json({ error: "Satser kunne ikke udtrækkes." }, { status: 500 })
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error("[satser-udtraek] fejl:", msg)
+        return NextResponse.json({ error: `Satser kunne ikke udtrækkes: ${msg}` }, { status: 500 })
     }
 }
 
@@ -189,7 +191,7 @@ ${maskPersonalData(kildetekst).slice(0, 150_000)}`,
 // Bruges til at populere dropdown i UI (vælg eksisterende bilag)
 
 export async function GET(req: NextRequest) {
-    const auth = await requireStaffModuleApi("contract_reviews", "read")
+    const auth = await requireAdminApi(ADMIN_ROLES)
     if (!auth.ok) return auth.response
 
     const { searchParams } = new URL(req.url)
