@@ -57,12 +57,23 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SERVICE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
             { auth: { autoRefreshToken: false, persistSession: false } }
         )
-        const { data: refDocs } = await supabase
-            .from("reference_docs")
-            .select("title, doc_subtype, content_text")
-            .eq("archived", false)
-            .not("content_text", "is", null)
-        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined)
+        const [{ data: refDocs }, { data: overenskomstChunks }] = await Promise.all([
+            supabase
+                .from("reference_docs")
+                .select("title, doc_subtype, content_text")
+                .eq("archived", false)
+                .not("content_text", "is", null),
+            // Hent overenskomst-nøglechunks til baggrundsviden (ekskluder fulde dokumenter)
+            supabase
+                .from("knowledge_chunks")
+                .select("kilde_titel, tekst, overenskomst, kategori")
+                .eq("kilde_type", "overenskomst")
+                .neq("kategori", "fuldt-dokument")
+                .neq("kategori", "lønskema")
+                .order("overenskomst")
+                .order("gyldig_fra", { ascending: false }),
+        ])
+        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
     } catch (e) {
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
     }

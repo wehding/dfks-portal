@@ -87,8 +87,12 @@ Returner KUN JSON — ingen forklaringstekst.
 ${SOURCES_SCHEMA_PROMPT}
 }`
 
-export function buildContractExtractionPrompt(referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>) {
+export function buildContractExtractionPrompt(
+    referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>,
+    overenskomstChunks?: Array<{ kilde_titel: string; tekst: string; overenskomst: string | null; kategori: string | null }>,
+) {
     let prompt = `${CONTRACT_EXTRACTION_SYSTEM_PROMPT}\n\n${CONTRACT_EXTRACTION_SCHEMA_PROMPT}`
+
     if (referenceDocs?.length) {
         prompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER — BRUG SOM BAGGRUNDSVIDEN:\n──────────────────────────────────────"
         for (const doc of referenceDocs) {
@@ -96,5 +100,24 @@ export function buildContractExtractionPrompt(referenceDocs?: Array<{ title: str
             prompt += `\n\n${doc.doc_subtype ?? doc.title}:\n${doc.content_text}`
         }
     }
+
+    if (overenskomstChunks?.length) {
+        prompt += "\n\n══════════════════════════════════════\nOVEREENSKOMSTER — BRUG NÅR KONTRAKTEN REFERERER TIL GÆLDENDE OVERENSKOMST:\n══════════════════════════════════════"
+        prompt += "\nNår en leverandørkontrakt inkorporerer overenskomstens vilkår ved reference, gælder følgende regler fra den relevante overenskomst:"
+        // Gruppér chunks per overenskomst
+        const grouped = new Map<string, typeof overenskomstChunks>()
+        for (const chunk of overenskomstChunks) {
+            const key = chunk.overenskomst ?? "ukendt"
+            if (!grouped.has(key)) grouped.set(key, [])
+            grouped.get(key)!.push(chunk)
+        }
+        for (const [ov, chunks] of grouped) {
+            prompt += `\n\n── ${ov.toUpperCase()} ──`
+            for (const chunk of chunks) {
+                prompt += `\n\n${chunk.kilde_titel}:\n${chunk.tekst}`
+            }
+        }
+    }
+
     return prompt
 }
