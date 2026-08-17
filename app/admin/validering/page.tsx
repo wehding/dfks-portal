@@ -406,6 +406,8 @@ function AdminValideringPageInner() {
                 isFreelanceContract: ed.isFreelanceContract ?? false,
                 collectiveAgreementByReference: ed.collectiveAgreementByReference ?? false,
             })
+            if (ed._sources) setSources(normaliseSources(ed._sources))
+            if (validation?.masked_text) setContractText(validation.masked_text as string)
         })
     }, [reviewingId]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -820,8 +822,9 @@ function AdminValideringPageInner() {
         // Pre-processér sources med resolveAnker() + gem metadata til UI-indikatorer
         const resolveWithMeta = (s: string | null | undefined) => {
             if (!s) return { anker: undefined, erBeløb: false, forGenerisk: false }
-            if (!contractText) return { anker: s, erBeløb: false, forGenerisk: false }
-            const r = resolveAnker(s, contractText)
+            const tekstGrundlag = contractText || storedDocxText || ""
+            if (!tekstGrundlag) return { anker: s, erBeløb: false, forGenerisk: false }
+            const r = resolveAnker(s, tekstGrundlag)
             return {
                 anker: r.fundet ? r.anker : s,
                 erBeløb: r.erBeløb,
