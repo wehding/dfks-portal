@@ -14,6 +14,7 @@ import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
+import { resolveAgreementsCode } from "@/lib/overenskomst-alias-map"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
@@ -188,11 +189,13 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             .neq("kategori", "lønskema")
 
         if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
-            // Slå agreement_id op via agreements.code — dækker både nye og migrerede chunks
+            // Oversæt kort kanonisk id (fx "de4-fiktion") til agreements.code (fx "de4-fiction-2022")
+            // via den autoritative alias-mapping — direkte strengmatch ville aldrig ramme pga. format-forskel.
+            const agreementsCode = resolveAgreementsCode(detectedOverenskomst) ?? detectedOverenskomst
             const { data: agrRow } = await supabaseForIds
                 .from("agreements")
                 .select("id")
-                .eq("code", detectedOverenskomst)
+                .eq("code", agreementsCode)
                 .maybeSingle()
             if (agrRow?.id) {
                 overenskomstQuery = overenskomstQuery.eq("agreement_id", agrRow.id)

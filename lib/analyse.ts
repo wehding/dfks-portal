@@ -20,6 +20,9 @@ import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 import { MAIL_FORMAT_PROMPT } from "@/lib/mail-format-prompt"
 import { findParentMember } from "@/lib/db/employers"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
+import { resolveAgreementsCode } from "@/lib/overenskomst-alias-map"
+import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
+import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 
 // ── Sensitiv data-maskning ────────────────────────────────────
 
@@ -93,7 +96,7 @@ Returnér JSON med disse felter:
 {
   "kontrakttype": "a-loen" ELLER "leverandoer" ELLER "hybrid",
   "er_overenskomst": true/false (er producenten sandsynligvis overenskomstdækket via Producentforeningen?),
-  "overenskomst_navn": "de4-fiktion" ELLER "faf-dok" ELLER null,
+  "overenskomst_navn": "de4-fiktion" ELLER "faf" ELLER "faf-dokumentar" ELLER "dj" ELLER "metal" ELLER null,
   "membres_fornavn": "fornavn på klipperen/medarbejderen",
   "membres_efternavn": "efternavn",
   "aftalt_loen": tal (kun nummeret, fx 17500) eller null,
@@ -554,23 +557,11 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
     // ── Hent DB-satser baseret på klassifikation ──────────────
     let dbSatser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> = []
     try {
-        const admin = createAdminClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            getSupabaseServiceKey()
-        )
         const overenskomstNavn = klassifikation?.overenskomst_navn ?? "de4-fiktion"
-        const normaliserNavn = (n: string) => {
-            if (n === "de4" || n === "de4-fiktion") return "de4-fiktion"
-            if (n === "faf-dokumentar" || n === "faf-dok") return "dokumentar"
-            return n
+        const agreementsCode = resolveAgreementsCode(overenskomstNavn)
+        if (agreementsCode) {
+            dbSatser = await getAgreementSatserForContext(agreementsCode)
         }
-        const { data: satser } = await admin
-            .from("overenskomst_satser")
-            .select()
-            .eq("overenskomst", normaliserNavn(overenskomstNavn))
-            .is("gyldig_til", null)
-            .order("kategori")
-        dbSatser = satser ?? []
     } catch (e) {
         logWarn("analyse", "Sats-hentning fejlede", { error: errorMessage(e) })
     }
