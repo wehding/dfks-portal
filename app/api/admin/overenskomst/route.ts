@@ -327,11 +327,11 @@ export async function GET() {
     if (!auth.ok) return auth.response
     const supabase = sb()
 
-    // Hent alle versioner (aktive + arkiverede)
+    // Hent alle versioner (aktive + arkiverede) — inkl. agreement_id for korrekt gruppering
     const [{ data: chunks }, { data: agreementRegistry, error: registryError }] = await Promise.all([
       supabase
         .from("knowledge_chunks")
-        .select("overenskomst, kategori, kilde_id, aktiv, gyldig_fra")
+        .select("overenskomst, agreement_id, kategori, kilde_id, aktiv, gyldig_fra")
         .not("overenskomst", "is", null)
         .neq("kategori", "fuldt-dokument")
         .order("gyldig_fra", { ascending: false }),
@@ -342,19 +342,25 @@ export async function GET() {
         .order("title"),
     ])
 
+    // Byg id → code-map fra agreements så vi kan nøgle versioner på agreement.code
+    const agreementCodeById = new Map<string, string>((agreementRegistry ?? []).map(a => [a.id, a.code]))
+
     const BILAG_KATEGORIER = ["lønskema", "lønskema-satser", "standardkontrakt-aloen", "standardkontrakt-leverandoer", "bilag"]
 
-    // Gruppér per overenskomst + gyldig_fra (en version = én kombination)
+    // Gruppér per agreement.code (foretrukket) eller overenskomst-streng (legacy) + gyldig_fra
     type Version = { kategorier: string[]; bilag: string[]; antal: number; aktiv: boolean; gyldig_fra: string }
     const versioner: Record<string, Version[]> = {}
 
     for (const c of chunks ?? []) {
-        if (!c.overenskomst || !c.gyldig_fra) continue
-        if (!versioner[c.overenskomst]) versioner[c.overenskomst] = []
-        let ver = versioner[c.overenskomst].find(v => v.gyldig_fra === c.gyldig_fra)
+        if (!c.gyldig_fra) continue
+        // Brug agreement.code hvis chunk er koblet, ellers falder tilbage til overenskomst-strengen
+        const nøgle = (c.agreement_id && agreementCodeById.get(c.agreement_id)) ?? c.overenskomst
+        if (!nøgle) continue
+        if (!versioner[nøgle]) versioner[nøgle] = []
+        let ver = versioner[nøgle].find(v => v.gyldig_fra === c.gyldig_fra)
         if (!ver) {
             ver = { kategorier: [], bilag: [], antal: 0, aktiv: !!c.aktiv, gyldig_fra: c.gyldig_fra }
-            versioner[c.overenskomst].push(ver)
+            versioner[nøgle].push(ver)
         }
         ver.antal++
         if (c.kategori) {
