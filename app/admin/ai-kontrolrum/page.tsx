@@ -2007,7 +2007,7 @@ function OverenskomsterTab() {
                                     {/* ── Lønregler ── */}
                                     <details className="group rounded-md border bg-background" open>
                                         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                            <span>Aktuel minimumsløn</span>
+                                            <span>Lønsatser</span>
                                             <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
                                         </summary>
                                         <div className="space-y-2 border-t p-3">
