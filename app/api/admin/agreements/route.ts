@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { createClient } from "@supabase/supabase-js"
 import { requireAdminApi } from "@/lib/api-auth"
 import { errorMessage } from "@/lib/error-message"
+import { ADMIN_ROLES } from "@/lib/admin-roles"
 
 function sb() {
     return createClient(
@@ -14,7 +15,7 @@ function sb() {
 // POST /api/admin/agreements — opret nyt registerkort ELLER løn/pensionsregel
 export async function POST(req: NextRequest) {
     try {
-        const auth = await requireAdminApi(["superadmin", "admin", "jurist"])
+        const auth = await requireAdminApi(ADMIN_ROLES)
         if (!auth.ok) return auth.response
 
         const body = await req.json()
@@ -126,7 +127,7 @@ export async function POST(req: NextRequest) {
 //   { pensionRuleId, employment_form?, employer_percent?, employee_percent?, basis?, scheme_kind?, valid_from?, valid_to?, section_reference?, source_note?, status? }
 export async function PATCH(req: NextRequest) {
     try {
-        const auth = await requireAdminApi()
+        const auth = await requireAdminApi(ADMIN_ROLES)
         if (!auth.ok) return auth.response
 
         const body = await req.json()
@@ -202,7 +203,7 @@ export async function PATCH(req: NextRequest) {
 // Draft-regler slettes hårdt; approved-regler arkiveres for sporbarhed
 export async function DELETE(req: NextRequest) {
     try {
-        const auth = await requireAdminApi()
+        const auth = await requireAdminApi(ADMIN_ROLES)
         if (!auth.ok) return auth.response
 
         const body = await req.json()
