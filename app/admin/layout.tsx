@@ -62,6 +62,7 @@ const ADMIN_NAV_ITEMS = [
     { key: "producenter",         href: "/admin/producenter",         icon: Building2,   labelKey: "nav.producers"        },
     { key: "kontraktgennemgang",  href: "/admin/kontraktgennemgang",  icon: Scale,       labelKey: "nav.contractReview"   },
     { key: "statistik",           href: "/admin/statistik",           icon: BarChart3,   labelKey: "nav.statistics"       },
+    { key: "raadgivningsstatistik", href: "/admin/statistik/kontraktraadgivning", icon: BrainCircuit, labelKey: "nav.adviceStatistics" },
     { key: "indbetalinger",       href: "/admin/indbetalinger",       icon: Receipt,     labelKey: "nav.producerPayments" },
 ]
 
@@ -105,7 +106,7 @@ const ROLE_MODULES: Record<string, string[]> = {
     superadmin:  ALL_KEYS,
     admin:       ALL_KEYS.filter(k => k !== "organisationer" && k !== "imdb-kontrol"),
     "org-admin": ALL_KEYS.filter(k => k !== "stamdata" && k !== "brugere" && k !== "organisationer" && k !== "imdb-kontrol"),
-    jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang"],
+    jurist:      ["overblik", "kontrakter", "rettighedshavere", "kontraktgennemgang", "raadgivningsstatistik"],
     viewer:      ["overblik", "kontrakter"],
 }
 

@@ -22,6 +22,10 @@ OUTPUT: KUN valid JSON — ingen tekst, ingen forklaring, ingen prosa.
 JSON-SKEMA:
 {
   "risk_level": "LAV" | "MELLEM" | "HØJ",
+  "document_stage": "draft" | "unsigned" | "signed" | "unknown",
+  "agreement_status": "present" | "missing" | "unclear" | "not_applicable" | "unknown",
+  "schema_version": "advice-v2",
+  "prompt_version": "contract-advice-2026-08-17",
   "should_escalate": true | false,
   "non_covered_pedagogical": true | false,
   "overenskomst_navn": "de4-fiktion" | "faf-dokumentar" | "dj" | "metal" | null,

@@ -3,6 +3,7 @@ import "server-only";
 import { analyserKontrakt } from "@/lib/analyse";
 import { maskPersonalData } from "@/lib/mask-text";
 import { createServiceClient } from "@/lib/supabase/service";
+import { normalizedAdviceCompliance } from "@/lib/contract-advice-facts";
 
 type ExistingReviewAnalysisInput = {
   reviewId: string;
@@ -76,10 +77,12 @@ export async function analyseExistingContractReview(input: ExistingReviewAnalysi
   const responseDraftSubject = typeof analysis.result?.feedbackmail?.emne === "string"
     ? analysis.result.feedbackmail.emne.trim().slice(0, 500)
     : null;
+  const complianceExtract = normalizedAdviceCompliance(analysis.result as Record<string, unknown>);
   const { data: updated, error: updateError } = await db
     .from("contract_reviews")
     .update({
       ai_result: analysis.result,
+      compliance_extract: complianceExtract,
       ai_run_at: new Date().toISOString(),
       ai_language: analysis.klassifikation?.kontraktsprog ?? null,
       risk_level: analysis.risk_level,

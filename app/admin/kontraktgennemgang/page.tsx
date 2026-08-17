@@ -56,6 +56,7 @@ import {
 
 interface FeedbackPoint {
     id: string
+    rule_code?: string
     type: "kritisk" | "advarsel" | "positiv" | "info"
     titel: string
     beskrivelse: string
@@ -684,6 +685,7 @@ function ManuelGennemgang() {
     const [dismissedPoints, setDismissedPoints] = useState<Set<number>>(new Set())
     const [orgId, setOrgId] = useState<string | null>(null)
     const [analyseId] = useState(() => crypto.randomUUID())
+    const [reviewId, setReviewId] = useState<string | null>(null)
     const [fundFeedback, setFundFeedback] = useState<Record<string, "good" | "bad">>({})
     const [fundKorrektioner, setFundKorrektioner] = useState<Record<string, string>>({})
     const [fundGemtFeedback, setFundGemtFeedback] = useState<Record<string, boolean>>({})
@@ -760,6 +762,7 @@ function ManuelGennemgang() {
             const data = await resp.json()
             if (data.error) throw new Error(data.error)
             setResult(data.result)
+            setReviewId(typeof data.reviewId === "string" ? data.reviewId : null)
             setContractText(data.contractText || "")
             setKlassifikation(data.klassifikation ?? null)
             toast.success("Gennemgang fuldført")
@@ -1142,8 +1145,8 @@ function ManuelGennemgang() {
                                                                     setFundKorrektioner(prev => { const n = { ...prev }; delete n[fp.id]; return n })
                                                                     const supabase = createClient()
                                                                     await supabase.from("analysis_feedback").upsert({
-                                                                        analyse_id: analyseId,
-                                                                        fund_id: fp.id,
+                                                                        analyse_id: reviewId ?? analyseId,
+                                                                        fund_id: fp.rule_code ?? fp.id,
                                                                         fund_titel: fp.titel,
                                                                         fund_svaerhedsgrad: fp.type,
                                                                         fund_beskrivelse: fp.beskrivelse,
@@ -1187,8 +1190,8 @@ function ManuelGennemgang() {
                                                                                 const ankerResultat = fp.citat && contractText ? resolveAnker(fp.citat, contractText) : null
                                                                                 const ankerPayload = ankerResultat ? bygFeedbackPayload(ankerResultat, false, fundKorrektioner[fp.id] ?? undefined) : {}
                                                                                 await supabase.from("analysis_feedback").upsert({
-                                                                                    analyse_id: analyseId,
-                                                                                    fund_id: fp.id,
+                                                                                    analyse_id: reviewId ?? analyseId,
+                                                                                    fund_id: fp.rule_code ?? fp.id,
                                                                                     fund_titel: fp.titel,
                                                                                     fund_svaerhedsgrad: fp.type,
                                                                                     fund_beskrivelse: fp.beskrivelse,

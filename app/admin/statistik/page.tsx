@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useI18n } from "@/lib/i18n";
 import { evaluateChartEligibility, recommendCharts, STATISTICS_CHART_TYPES, type StatisticsChartType } from "@/lib/statistics-chart-eligibility";
 import { EXPERIENCE_GROUPS } from "@/lib/experience-groups";
+import { ContractAdviceStatistics } from "@/components/admin/contract-advice-statistics";
 
 type YearRow = { year: number; memberCount: number; contractCount: number; validatedCount: number; draftCount: number; lowSample: boolean };
 type StatisticsPayload = {
@@ -41,6 +42,9 @@ const querySuggestions = [
   "Sammenlign pension og arbejdsuger for spillefilm og dokumentarfilm siden 2022.",
   "Hvor mange A-løns- og leverandørkontrakter er der registreret pr. år?",
   "Hvordan har andelen med Copydan- og streamingforbehold udviklet sig over alle år?",
+  "Hvor ofte mangler der en overenskomsthenvisning i kontraktrådgivningen?",
+  "Hvor stor en andel af pensionsproblemer bliver rettet i næste kontraktversion?",
+  "Hvad er median svartid for kontraktrådgivning?",
 ];
 const chartLabels: Record<StatisticsChartType, string> = { table: "Tabel", bar: "Søjlediagram", horizontal_bar: "Vandret søjlediagram", grouped_bar: "Grupperet søjlediagram", stacked_bar: "Stablet søjlediagram", pie: "Cirkeldiagram", donut: "Ringdiagram", stacked_100: "Stablet 100 %-søjlediagram", line: "Linjediagram", area: "Arealdiagram", histogram: "Histogram", box_plot: "Boksplot", scatter: "Prikdiagram", bubble: "Boblediagram" };
 const demoSalary = [
@@ -280,6 +284,8 @@ export default function AdminStatistikPage() {
         </div>}
       </CardContent>
     </Card>
+
+    <ContractAdviceStatistics />
 
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
       <Popover><PopoverTrigger asChild><Button variant="outline" className="w-full justify-start"><CalendarDays className="mr-2 h-4 w-4" />{years.length ? `${years.length} valgte år` : "Alle år"}</Button></PopoverTrigger><PopoverContent align="start" className="w-72 space-y-3">

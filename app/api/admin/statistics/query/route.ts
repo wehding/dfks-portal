@@ -20,10 +20,47 @@ import { buildStatisticsQuerySegments, describeStatisticsPlan } from "@/lib/stat
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
+import { getContractAdviceStatistics } from "@/lib/contract-advice-statistics";
 
 export const dynamic = "force-dynamic";
 
 type ProducerCandidate = { id: string; name: string; score: number };
+
+const adviceRuleWords: Array<[RegExp, string]> = [
+  [/pension/i, "pension"], [/copydan/i, "copydan"], [/(streaming|svod)/i, "svod"],
+  [/(tdm|data.?mining|ai.forbehold)/i, "tdm_ai"], [/krediter/i, "kreditering"],
+  [/opsig/i, "opsigelsesvarsel"], [/sygdom/i, "sygdom"], [/royalty/i, "royalty"],
+  [/(hybrid|blanding.*kontrakt)/i, "hybrid_kontrakt"], [/underskrift|signatur/i, "underskrift"],
+  [/overenskomst/i, "overenskomst"], [/feriepenge/i, "feriepenge"], [/beta/i, "beta_bidrag"],
+];
+
+function isAdviceQuestion(question: string) {
+  return /(rådgiv|gennemgang|ai.?fund|jurist|rettet|rettelse|mangler|problem|udkast|usigneret|underskrevet)/i.test(question)
+    && (adviceRuleWords.some(([pattern]) => pattern.test(question)) || /(sag|kontrakt)/i.test(question));
+}
+
+async function answerAdviceQuestion(orgId: string, question: string) {
+  const ruleCode = adviceRuleWords.find(([pattern]) => pattern.test(question))?.[1];
+  const statistics = await getContractAdviceStatistics(orgId, { ruleCodes: ruleCode ? [ruleCode] : [] });
+  if (statistics.suppressed) return NextResponse.json({ suppressed: true, minimum: statistics.minimum, interpretedBy: "rules", understoodAs: "Anonymiseret kontraktrådgivningsstatistik", explanation: "Datagrundlaget er under organisationens minimumsgrænse.", caveats: ["Små grupper returneres ikke."] });
+  const wantsCorrection = /(rettet|rettelse|ændret|ny version)/i.test(question);
+  const wantsResponseTime = /(svartid|behandlingstid|hvor lang|tid til svar)/i.test(question);
+  const issue = ruleCode ? statistics.issueFrequency?.find(row => row.ruleCode === ruleCode) : null;
+  const correction = ruleCode ? statistics.corrections?.find(row => row.ruleCode === ruleCode) : null;
+  const series = wantsResponseTime
+    ? [{ year: new Date().getFullYear(), value: Math.round((statistics.workflow?.medianResponseSeconds ?? 0) / 3600 * 10) / 10, contractCount: statistics.caseCount ?? 0, memberCount: statistics.memberCount ?? 0, lowSample: false, seriesKey: "advice_response_time", seriesLabel: "Median svartid", metric: "advice_response_time", metricLabel: "Median svartid", unit: "count" as const }]
+    : wantsCorrection && correction
+      ? [{ year: new Date().getFullYear(), value: correction.compared ? Math.round(correction.fixed / correction.compared * 100) : 0, contractCount: correction.compared, memberCount: statistics.memberCount ?? 0, lowSample: false, seriesKey: `advice_fix_share_${ruleCode}`, seriesLabel: correction.label, metric: "advice_fix_share", metricLabel: "Andel rettet", unit: "percent" as const }]
+      : [{ year: new Date().getFullYear(), value: issue?.count ?? statistics.caseCount ?? 0, contractCount: statistics.caseCount ?? 0, memberCount: statistics.memberCount ?? 0, lowSample: false, seriesKey: `advice_issue_${ruleCode ?? "all"}`, seriesLabel: issue?.label ?? "Rådgivningssager", metric: "advice_issue_count", metricLabel: issue ? "Antal fund" : "Antal rådgivningssager", unit: "count" as const }];
+  return NextResponse.json({
+    suppressed: false, minimum: statistics.minimum, interpretedBy: "rules", chart: "bar",
+    understoodAs: wantsCorrection ? "Rettelsesgrad i nye kontraktversioner" : wantsResponseTime ? "Median svartid for kontraktrådgivning" : ruleCode ? `Forekomst af ${issue?.label ?? ruleCode}` : "Antal kontraktrådgivningssager",
+    explanation: "Resultatet kommer fra det lukkede, anonymiserede rådgivningsfaktalag.",
+    plan: { metrics: [series[0].metric], compareBy: [], adjustForInflation: false },
+    metricMeta: [{ metric: series[0].metric, label: series[0].metricLabel, unit: series[0].unit, additive: !wantsCorrection }],
+    series, caveats: correction?.uncertain ? [`${correction.uncertain} versionssammenligninger er usikre og er ikke talt som dokumenterede rettelser.`] : [],
+  });
+}
 
 async function resolveProducerNames(names: string[]) {
   if (!names.length) return { resolved: [] as Array<{ id: string; name: string }>, ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
@@ -135,6 +172,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
   const question = typeof body.question === "string" ? body.question.trim().slice(0, 1000) : "";
   if (question.length < 5) return NextResponse.json({ error: "Skriv et statistikspørgsmål." }, { status: 400 });
+  if (isAdviceQuestion(question)) return answerAdviceQuestion(caller.orgId, question);
 
   const runId = await createAiUsageRun({
     orgId: caller.orgId, operationType: "statistics_query", entityType: "statistics_query",

@@ -3,7 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { STAFF_ROLE_RANK, isStaffRole, type StaffRole } from "@/lib/admin-roles";
 
-export type StaffModule = "rights_holders" | "contracts" | "messages" | "contract_reviews" | "statistics" | "users" | "payouts" | "organisation" | "works" | "producers";
+export type StaffModule = "rights_holders" | "contracts" | "messages" | "contract_reviews" | "statistics" | "advice_statistics" | "users" | "payouts" | "organisation" | "works" | "producers";
 export type StaffOperation = "read" | "write" | "validate" | "delete";
 export type StaffModulePermission = Record<StaffOperation, boolean>;
 
@@ -22,6 +22,7 @@ function modulePermissions(role: StaffRole): Record<StaffModule, StaffModulePerm
     messages: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
     contract_reviews: all ? FULL : legal ? WRITE : viewer ? READ : NONE,
     statistics: all ? READ : NONE,
+    advice_statistics: all || legal ? READ : NONE,
     users: all ? FULL : NONE,
     payouts: all ? FULL : NONE,
     organisation: all ? FULL : NONE,

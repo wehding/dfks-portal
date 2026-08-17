@@ -300,9 +300,14 @@ Returner KUN gyldig JSON uden markdown-backticks:
     "erLeverandoerkontrakt": "boolean",
     "honorarUge": "number or null — KUN for leverandørkontrakter"
   },
+  "document_stage": "draft|unsigned|signed|unknown — draft når dokumentet udtrykkeligt er et udkast; signed kun når underskrift er synlig; ellers unsigned eller unknown",
+  "agreement_status": "present|missing|unclear|not_applicable|unknown — om en relevant overenskomsthenvisning findes og kan identificeres",
+  "schema_version": "advice-v2",
+  "prompt_version": "contract-advice-2026-08-17",
   "feedbackpunkter": [
     {
       "id": "string (fp1, fp2...)",
+      "rule_code": "pension|copydan|svod|tdm_ai|promovering|kreditering|opsigelsesvarsel|sygdom|royalty|hybrid_kontrakt|underskrift|overenskomst|kontraktform|minimumsloen|feriepenge|beta_bidrag|producent_overenskomst — brug den nærmeste stabile kode",
       "type": "kritisk|advarsel|positiv|info",
       "titel": "string",
       "beskrivelse": "string (præcis juridisk forklaring, max 200 tegn)",

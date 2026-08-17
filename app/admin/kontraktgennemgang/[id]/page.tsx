@@ -37,6 +37,7 @@ import { useI18n } from "@/lib/i18n"
 
 interface FeedbackPoint {
     id: string
+    rule_code?: string
     type: "kritisk" | "advarsel" | "positiv" | "info"
     titel: string
     beskrivelse: string
@@ -89,6 +90,14 @@ const TYPE_CONFIG = {
     positiv:  { color: "text-emerald-600 dark:text-emerald-400", icon: CheckCircle2 },
     info:     { color: "text-muted-foreground", icon: Info },
 }
+
+const ADVICE_RULE_OPTIONS = [
+    ["pension", "Pension"], ["copydan", "Copydan-forbehold"], ["svod", "Streaming/SVOD"],
+    ["tdm_ai", "TDM/AI"], ["kreditering", "Kreditering"], ["opsigelsesvarsel", "Opsigelsesvarsel"],
+    ["sygdom", "Sygdomsbestemmelse"], ["royalty", "Royalty"], ["hybrid_kontrakt", "Blanding af kontraktformer"],
+    ["underskrift", "Underskrift"], ["overenskomst", "Overenskomsthenvisning"], ["minimumsloen", "Minimumsløn"],
+    ["feriepenge", "Feriepenge"], ["beta_bidrag", "BETA-bidrag"],
+] as const
 
 const PRODUCTION_TYPE_LABELS: Record<string, string> = {
     dokumentar:              "Dokumentarfilm",
@@ -218,10 +227,10 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
     const [activeFpId, setActiveFpId] = useState<string | null>(null)
     const [reanalysing, setReanalysing] = useState(false)
     const [orgId, setOrgId] = useState<string | null>(null)
-    const [analyseId] = useState(() => crypto.randomUUID())
     const [fundFeedback, setFundFeedback] = useState<Record<string, "good" | "bad">>({})
     const [fundKorrektioner, setFundKorrektioner] = useState<Record<string, string>>({})
     const [fundGemtFeedback, setFundGemtFeedback] = useState<Record<string, boolean>>({})
+    const [missedRule, setMissedRule] = useState("")
     const [pdfObjectUrl, setPdfObjectUrl] = useState<string | null>(null)
     const docRef = useRef<HTMLDivElement>(null)
 
@@ -485,6 +494,26 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                                 </SelectContent>
                             </Select>
                         )}
+                        <div className="border-t px-4 py-3 space-y-2">
+                            <p className="text-[11px] font-medium">Overså AI et problem?</p>
+                            <div className="flex flex-col gap-2 sm:flex-row">
+                                <Select value={missedRule} onValueChange={setMissedRule}>
+                                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg overset problem" /></SelectTrigger>
+                                    <SelectContent>{ADVICE_RULE_OPTIONS.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+                                </Select>
+                                <Button type="button" size="sm" variant="outline" disabled={!missedRule || !orgId} onClick={async () => {
+                                    const selected = ADVICE_RULE_OPTIONS.find(([value]) => value === missedRule)
+                                    if (!selected || !orgId) return
+                                    const { error } = await createClient().from("analysis_feedback").upsert({
+                                        analyse_id: id, fund_id: selected[0], fund_titel: selected[1], fund_svaerhedsgrad: "advarsel",
+                                        fund_beskrivelse: null, godkendt: false, assessment_type: "missed_finding", org_id: orgId,
+                                    }, { onConflict: "analyse_id,fund_id" })
+                                    if (error) { toast.error("Det oversete problem kunne ikke gemmes"); return }
+                                    setMissedRule("")
+                                    toast.success("Overset problem registreret")
+                                }}>Registrér overset problem</Button>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
@@ -618,7 +647,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                                                                         setFundFeedback(prev => ({ ...prev, [fp.id]: "good" }))
                                                                         const supabase = createClient()
                                                                         await supabase.from("analysis_feedback").upsert({
-                                                                            analyse_id: analyseId, fund_id: fp.id, fund_titel: fp.titel,
+                                                                            analyse_id: id, fund_id: fp.rule_code ?? fp.id, fund_titel: fp.titel,
                                                                             fund_svaerhedsgrad: fp.type, fund_beskrivelse: fp.beskrivelse,
                                                                             godkendt: true, org_id: orgId,
                                                                         }, { onConflict: "analyse_id,fund_id" })
@@ -656,7 +685,7 @@ export default function KontraktGennemgangDetailPage({ params }: { params: Promi
                                                                                 const ankerResultat = fp.citat && contractText ? resolveAnker(fp.citat, contractText) : null
                                                                                 const ankerPayload = ankerResultat ? bygFeedbackPayload(ankerResultat, false, fundKorrektioner[fp.id] ?? undefined) : {}
                                                                                 await supabase.from("analysis_feedback").upsert({
-                                                                                    analyse_id: analyseId, fund_id: fp.id, fund_titel: fp.titel,
+                                                                                    analyse_id: id, fund_id: fp.rule_code ?? fp.id, fund_titel: fp.titel,
                                                                                     fund_svaerhedsgrad: fp.type, fund_beskrivelse: fp.beskrivelse,
                                                                                     godkendt: false, korrektion_beskrivelse: fundKorrektioner[fp.id] ?? null,
                                                                                     org_id: orgId, ...ankerPayload,
