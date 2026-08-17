@@ -357,9 +357,12 @@ export async function DELETE(req: NextRequest) {
         const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
         const agreement_id = agr?.id ?? null
 
-        const chunksQuery = agreement_id
+        let chunksQuery = agreement_id
             ? supabase.from("knowledge_chunks").delete().eq("agreement_id", agreement_id).eq("gyldig_fra", gyldigFra)
             : supabase.from("knowledge_chunks").delete().eq("overenskomst", overenskomst).eq("gyldig_fra", gyldigFra)
+        if (!auth.global) {
+            chunksQuery = chunksQuery.or(`org_id.is.null,org_id.eq.${auth.orgId}`)
+        }
 
         const [chunksRes, uploadsRes] = await Promise.all([
             chunksQuery,

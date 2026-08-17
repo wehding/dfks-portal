@@ -219,6 +219,8 @@ export async function DELETE(req: NextRequest) {
             ? delQuery.eq("agreement_id", agreement_id)
             : delQuery.eq("overenskomst", overenskomst)
 
+        delQuery = delQuery.or(`org_id.is.null,org_id.eq.${auth.orgId}`)
+
         const { error } = await delQuery
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 })
