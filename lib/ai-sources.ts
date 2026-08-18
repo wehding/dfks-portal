@@ -110,26 +110,56 @@ export function validateClauseId(id: string | null | undefined, knownIds: Set<st
     return knownIds.has(id) ? id : null
 }
 
+/** Matcher [s1_c14] eller [p7] i starten af et citat-streng. */
+const CLAUSE_TAG_RE = /^\[([sp]\d+(?:_c\d+)?)\]\s*/
+
+/**
+ * Udtræk klausul-ID fra starten af et citat, hvis AI'en inkluderede tagget i citatteksten.
+ * "[s1_c14] A. Ugeløn..." → "s1_c14"
+ */
+function extractClauseIdFromCitation(s: string | null | undefined): string | null {
+    if (!s) return null
+    const m = s.match(CLAUSE_TAG_RE)
+    return m ? m[1] : null
+}
+
+/**
+ * Strip klausul-ID-tag fra starten af et citat.
+ * "[s1_c14] A. Ugeløn..." → "A. Ugeløn..."
+ */
+function stripClauseIdPrefix(s: string | null | undefined): string | null {
+    if (!s) return null
+    return s.replace(CLAUSE_TAG_RE, "")
+}
+
 /** Normalise raw _sources from AI response (clip headings on long passage fields).
  *  knownClauseIds: validerede IDs fra layout — AI-returnerede IDs der ikke findes heri kasseres. */
 export function normaliseSources(raw: Record<string, string | null>, knownClauseIds?: Set<string>): AiSources {
     const ids = knownClauseIds ?? new Set<string>()
     const validateId = (id: string | null | undefined) => knownClauseIds ? validateClauseId(id, ids) : (id ?? null)
+
+    // For hvert citat-felt: udtræk ID fra tagget hvis AI'en inkluderede det inline,
+    // og strip tagget fra selve citatteksten inden videre rensning.
+    const resolveId = (field: string, idField: string): string | null =>
+        validateId(raw[idField] ?? extractClauseIdFromCitation(raw[field]))
+
     return {
         ...raw,
-        salary: discardIfNoDigits(raw.salary),
-        salary_clause_id: validateId(raw.salary_clause_id),
-        pension: discardIfNoDkkAmount(raw.pension),
-        pension_clause_id: validateId(raw.pension_clause_id),
-        supplements: discardIfNoDkkAmount(raw.supplements),
-        supplements_clause_id: validateId(raw.supplements_clause_id),
-        dates_clause_id: validateId(raw.dates_clause_id),
-        copydan: clipSourceHeading(raw.copydan),
-        copydan_clause_id: validateId(raw.copydan_clause_id),
-        svod: clipSourceHeading(raw.svod),
-        svod_clause_id: validateId(raw.svod_clause_id),
-        royalty: discardIfBareNumber(clipSourceHeading(raw.royalty)),
-        royalty_clause_id: validateId(raw.royalty_clause_id),
-        prolongation_clause_id: validateId(raw.prolongation_clause_id),
+        salary: discardIfNoDigits(stripClauseIdPrefix(raw.salary)),
+        salary_clause_id: resolveId("salary", "salary_clause_id"),
+        pension: discardIfNoDkkAmount(stripClauseIdPrefix(raw.pension)),
+        pension_clause_id: resolveId("pension", "pension_clause_id"),
+        supplements: discardIfNoDkkAmount(stripClauseIdPrefix(raw.supplements)),
+        supplements_clause_id: resolveId("supplements", "supplements_clause_id"),
+        dates: stripClauseIdPrefix(raw.dates),
+        dates_clause_id: resolveId("dates", "dates_clause_id"),
+        copydan: clipSourceHeading(stripClauseIdPrefix(raw.copydan)),
+        copydan_clause_id: resolveId("copydan", "copydan_clause_id"),
+        svod: clipSourceHeading(stripClauseIdPrefix(raw.svod)),
+        svod_clause_id: resolveId("svod", "svod_clause_id"),
+        royalty: discardIfBareNumber(clipSourceHeading(stripClauseIdPrefix(raw.royalty))),
+        royalty_clause_id: resolveId("royalty", "royalty_clause_id"),
+        prolongation: stripClauseIdPrefix(raw.prolongation),
+        prolongation_clause_id: resolveId("prolongation", "prolongation_clause_id"),
     }
 }
