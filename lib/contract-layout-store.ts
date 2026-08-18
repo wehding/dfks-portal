@@ -112,15 +112,32 @@ export function matchCitationToClause(
     // langt nok til at være specifik, kort nok til at overleve PDF-split-varianter.
     const needleSlice = needle.slice(0, 60)
 
-    const matches: string[] = []
-    for (const clause of layout.clauses) {
-        if (norm(clause.text).includes(needleSlice)) {
-            matches.push(clause.id)
+    const matchIds = (haystacks: [string, string][]): string[] =>
+        haystacks.filter(([, h]) => h.includes(needleSlice)).map(([id]) => id)
+
+    // Trin 1: norm()-sammenligning (bevarer mellemrum — mest præcis)
+    const normHays: [string, string][] = layout.clauses.map(c => [c.id, norm(c.text)])
+    const normMatches = matchIds(normHays)
+    if (normMatches.length === 1) return normMatches[0]
+
+    // Trin 2: whitespace-fri sammenligning som fallback.
+    // De to tekstudtræks-pipelines (extractPdfText vs. extractPdfTextWithLayout)
+    // håndterer manglende mellemrum mellem PDF-fragmenter forskelligt — fx
+    // "pensionsbidrag(9,5%" vs. "pensionsbidrag (9,5 %". norm() løser ikke
+    // dette; fjern al whitespace og sammenlign på bare bogstaver+tegn i stedet.
+    if (normMatches.length === 0) {
+        const strip = (s: string) => norm(s).replace(/\s+/g, "")
+        const strippedNeedle = strip(citation).slice(0, 60)
+        if (strippedNeedle.length >= minLength) {
+            const stripMatches = layout.clauses
+                .filter(c => strip(c.text).includes(strippedNeedle))
+                .map(c => c.id)
+            if (stripMatches.length === 1) return stripMatches[0]
         }
     }
 
-    // Entydighed: præcis én match = returnér ID. Nul eller flere = returnér null.
-    return matches.length === 1 ? matches[0] : null
+    // Entydighed: nul matches eller mere end én → returnér null.
+    return null
 }
 
 /**
