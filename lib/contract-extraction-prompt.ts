@@ -1,4 +1,5 @@
 import { SOURCES_SCHEMA_PROMPT } from "@/lib/ai-sources"
+import type { ContractLayout } from "@/lib/contract-layout"
 import {
     CONTRACT_TYPE_RULE,
     COLLECTIVE_AGREEMENT_RULE,
@@ -91,9 +92,26 @@ Returner KUN JSON — ingen forklaringstekst.
 ${SOURCES_SCHEMA_PROMPT}
 }`
 
+/** Byg klausuloversigt til AI-prompten — max 120 tegn preview per klausul. */
+export function buildClauseListPrompt(layout: ContractLayout): string {
+    const lines = [
+        "══════════════════════════════════════",
+        "KLAUSULLISTE — brug ID'erne i _sources.*_clause_id felterne:",
+        "══════════════════════════════════════",
+    ]
+    for (const clause of layout.clauses) {
+        const preview = clause.text.replace(/\n/g, " ").slice(0, 120)
+        lines.push(`[${clause.id}] ${preview}`)
+    }
+    lines.push("══════════════════════════════════════")
+    lines.push("Brug KUN ID'er fra listen ovenfor. Et ID der ikke findes i listen er ugyldigt — returner null i stedet.")
+    return lines.join("\n")
+}
+
 export function buildContractExtractionPrompt(
     referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>,
     overenskomstChunks?: Array<{ kilde_titel: string; tekst: string; overenskomst: string | null; kategori: string | null }>,
+    layout?: ContractLayout | null,
 ) {
     let prompt = `${CONTRACT_EXTRACTION_SYSTEM_PROMPT}\n\n${CONTRACT_EXTRACTION_SCHEMA_PROMPT}`
 
@@ -121,6 +139,10 @@ export function buildContractExtractionPrompt(
                 prompt += `\n\n${chunk.kilde_titel}:\n${chunk.tekst}`
             }
         }
+    }
+
+    if (layout?.clauses?.length) {
+        prompt += "\n\n" + buildClauseListPrompt(layout)
     }
 
     return prompt

@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
                 .then(({ error }) => { if (error) console.error("[validate/extract] layout_data gem fejl:", error.message) })
         }
 
-        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null })
+        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null, layout })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked, layout })

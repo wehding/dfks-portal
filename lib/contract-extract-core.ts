@@ -53,6 +53,7 @@ export type ContractExtractionContext = {
     actorUserId?: string | null
     source?: "portal" | "admin" | "api" | "cron" | "import"
     pdfBuffer?: Buffer | null
+    layout?: import("@/lib/contract-layout").ContractLayout | null
     runtimeConfig?: AiRuntimeConfig | null
     promptVersion?: string
     schemaVersion?: string
@@ -229,7 +230,7 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             overenskomstQuery,
         ])
         console.log("[contract-extract] chunks hentet:", { count: overenskomstChunks?.length ?? 0, error: chunksError?.message ?? null, kategorier: overenskomstChunks?.map(c => c.kategori) })
-        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined)
+        systemPrompt = buildContractExtractionPrompt(refDocs ?? undefined, overenskomstChunks ?? undefined, context.layout ?? undefined)
     } catch (e) {
         console.warn("[contract-extract] Kunne ikke hente reference docs:", e)
     }
@@ -299,7 +300,10 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         }
     }
     if (extracted._sources && typeof extracted._sources === "object") {
-        extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>)
+        const knownIds = context.layout
+            ? new Set(context.layout.clauses.map(c => c.id))
+            : undefined
+        extracted._sources = normaliseSources(extracted._sources as Record<string, string | null>, knownIds)
     }
 
     try {
