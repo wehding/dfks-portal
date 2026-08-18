@@ -118,7 +118,7 @@ function AdminValideringPageInner() {
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
-    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string }[]>([])
+    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string; gender?: string | null }[]>([])
     const [rhSuggestions, setRhSuggestions] = useState<{ id: string; name: string; score: number }[]>([])
     const [selectedRhId, setSelectedRhId] = useState<string | null>(null)
     const [employerSuggestions, setEmployerSuggestions] = useState<{
@@ -180,7 +180,7 @@ function AdminValideringPageInner() {
         const supabase = createClient()
         supabase.from("employers").select("id, name, dfi_company_id").order("name")
             .then(({ data }) => { if (data) setEmployers(data) })
-        supabase.from("rettighedshavere").select("id, full_name").order("full_name")
+        supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
             .then(({ data }) => { if (data) setRettighedshavere(data) })
 
         // Hent overenskomster fra reference_docs katalog
@@ -268,6 +268,17 @@ function AdminValideringPageInner() {
             setSelectedRhId(matches[0].id)
         }
     }, [formData.rightsHolderName, rettighedshavere])
+
+    // Auto-udfyld gender fra rettighedshaverprofil når kobling sættes
+    useEffect(() => {
+        if (!selectedRhId) return
+        const rh = rettighedshavere.find(r => r.id === selectedRhId)
+        if (!rh?.gender) return
+        // Kun auto-udfyld hvis feltet ikke er manuelt redigeret
+        if (!brugerRedigerede.has("gender")) {
+            setField("gender", rh.gender)
+        }
+    }, [selectedRhId, rettighedshavere])
 
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
