@@ -160,7 +160,9 @@ export async function runContractExtraction(maskedText: string, context: Contrac
             system: `Du er en kontraktklassifikator. Læs kontrakten og returner KUN dette JSON-objekt uden forklaring:
 {"overenskomst": "<overenskomst-id eller ingen eller ukendt>", "contractDate": "<YYYY-MM-DD eller null>"}
 
-overenskomst: ${overenskomstListe} Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart eller ingen match.
+overenskomst: ${overenskomstListe}
+VIGTIGT: Flere overenskomster hedder begge "Fiktionsoverenskomsten" (fx både De4's og FAF's), men er indgået mellem forskellige parter. Afgør IKKE kun ud fra ordet "fiktion" — læs hvilken organisation overenskomsten konkret er indgået mellem Producentforeningen og (typisk angivet i overskriften, fx "Overenskomst mellem Producentforeningen og FAF" eller "...og De4"), og match derefter det korrekte id. "de4-fiktion" kræver at De4 (Dansk Filmfotograf Forbund/Dansk Filmklipperselskab/Danske Scenografer/Dansk Journalistforbund) er den navngivne modpart — ikke blot at ordet "fiktion" indgår.
+Returner "ingen" hvis kontrakten eksplicit afviser overenskomst. Returner "ukendt" hvis uklart eller ingen match.
 contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             userMessage: `---KONTRAKT START---\n${maskedText.slice(0, 2000)}\n\n---KONTRAKT SLUT---\n${maskedText.slice(-1500)}`,
             responseJson: true,
