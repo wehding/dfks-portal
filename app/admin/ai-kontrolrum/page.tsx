@@ -24,8 +24,9 @@ import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
     Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Wand2, RotateCcw,
-    RefreshCw, ChevronRight,
+    RefreshCw, ChevronRight, Copy, Check, Terminal,
 } from "lucide-react"
+import { PROMPT_REGISTRY, PROMPT_GROUPS } from "@/lib/prompt-registry"
 import { toast } from "sonner"
 import NoteringGuide from "@/components/notering-guide"
 import { AiUsageModelsTab } from "@/components/admin/ai-usage-models-tab"
@@ -2968,6 +2969,100 @@ function OverenskomsterTab() {
 // ─────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────
+// Fane — Prompter (læse-visning)
+// ─────────────────────────────────────────────────────────────
+
+function PrompterTab() {
+    const [search, setSearch] = useState("")
+    const [copiedId, setCopiedId] = useState<string | null>(null)
+    const [expandedId, setExpandedId] = useState<string | null>(null)
+
+    const q = search.trim().toLowerCase()
+    const filtered = PROMPT_REGISTRY.filter(e =>
+        !q || e.title.toLowerCase().includes(q) || e.description.toLowerCase().includes(q) || e.group.toLowerCase().includes(q)
+    )
+
+    const copy = async (entry: (typeof PROMPT_REGISTRY)[0]) => {
+        await navigator.clipboard.writeText(entry.prompt)
+        setCopiedId(entry.id)
+        setTimeout(() => setCopiedId(null), 2000)
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-center gap-3">
+                <Input
+                    placeholder="Søg i prompter..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    className="h-8 text-sm max-w-sm"
+                />
+                <span className="text-xs text-muted-foreground shrink-0">{filtered.length} prompter</span>
+            </div>
+
+            {PROMPT_GROUPS.map(group => {
+                const entries = filtered.filter(e => e.group === group)
+                if (!entries.length) return null
+                return (
+                    <div key={group} className="space-y-2">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{group}</p>
+                        {entries.map(entry => {
+                            const isExpanded = expandedId === entry.id
+                            return (
+                                <div key={entry.id} className="rounded-lg border overflow-hidden">
+                                    <div className="flex items-center justify-between gap-3 px-4 py-3">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                                <span className="text-sm font-medium">{entry.title}</span>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-0.5 ml-5">{entry.description}</p>
+                                            <p className="text-[10px] text-muted-foreground/50 mt-0.5 ml-5 font-mono">{entry.file}</p>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 text-xs gap-1.5"
+                                                onClick={() => copy(entry)}
+                                            >
+                                                {copiedId === entry.id
+                                                    ? <><Check className="h-3 w-3 text-emerald-500" />Kopieret</>
+                                                    : <><Copy className="h-3 w-3" />Kopiér</>
+                                                }
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 text-xs"
+                                                onClick={() => setExpandedId(isExpanded ? null : entry.id)}
+                                            >
+                                                {isExpanded ? "Skjul" : "Vis"}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    {isExpanded && (
+                                        <div className="border-t bg-muted/30 px-4 py-3">
+                                            <pre className="text-xs font-mono whitespace-pre-wrap break-words leading-relaxed text-foreground/80 max-h-96 overflow-y-auto">{entry.prompt}</pre>
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })}
+                    </div>
+                )
+            })}
+
+            {filtered.length === 0 && (
+                <div className="rounded-lg border border-dashed px-4 py-10 text-center">
+                    <p className="text-sm text-muted-foreground">Ingen prompter matcher søgningen.</p>
+                </div>
+            )}
+        </div>
+    )
+}
+
+// ─────────────────────────────────────────────────────────────
 // Hovedside
 // ─────────────────────────────────────────────────────────────
 
@@ -2999,6 +3094,9 @@ export default function AiKontrolrumPage() {
                     <TabsTrigger value="kvalitet" className="gap-1.5 text-xs whitespace-nowrap">
                         <FlaskConical className="h-3.5 w-3.5 shrink-0" />Kvalitet
                     </TabsTrigger>
+                    <TabsTrigger value="prompter" className="gap-1.5 text-xs whitespace-nowrap">
+                        <Terminal className="h-3.5 w-3.5 shrink-0" />Prompter
+                    </TabsTrigger>
                 </TabsList>
                 </div>
                 <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
@@ -3007,6 +3105,7 @@ export default function AiKontrolrumPage() {
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>
                 <TabsContent value="kvalitet" className="mt-4"><KvalitetTab /></TabsContent>
+                <TabsContent value="prompter" className="mt-4"><PrompterTab /></TabsContent>
             </Tabs>
         </div>
     )

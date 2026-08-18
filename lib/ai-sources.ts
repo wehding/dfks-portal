@@ -21,7 +21,7 @@ export const SOURCES_SCHEMA_PROMPT = `    "_sources": {
       "copydan": "Kopiér den KOMPLETTE tekstpassage der omhandler Copydan-forbehold eller lignende vederlagsbevarende rettighed — inkl. klausuler der bevarer vederlagsret via ophavsretslovens §§ (fx §§ 13, 17, 35) selv om Copydan ikke nævnes eksplicit. START fra afsnittets allerførste ord. Max 400 tegn. Null hvis ingen sådan klausul.",
       "svod": "Kopiér den KOMPLETTE tekstpassage der omhandler SVOD/streaming eller Create Denmark — START altid fra afsnittets allerførste ord. Inkluder hele afsnittet. Max 400 tegn. Null hvis ikke nævnes.",
       "royalty": "Kopiér den KOMPLETTE tekstpassage der omhandler royaltybetaling — inkl. indirekte formuleringer som 'Producenten afregner royalties til [overenskomst] jf. overenskomst' eller 'Leverandøren vil være berettiget til en andel af disse royalties'. KUN hvis adskilt fra SVOD/streaming-afsnittet. Max 400 tegn. Null hvis ikke relevant.",
-      "prolongation": "EKSAKT tekststreng der viser prolongations-/optionsklausulen — kopiér sætningen der nævner antal optionsuger og eventuel ferieperiode, fx 'op til 2 ugers prolongation' eller 'mulighed for forlængelse med 3 uger'. Max 120 tegn eller null."
+      "prolongation": "EKSAKT tekststreng der viser prolongations-/optionsklausulen — kopiér sætningen der nævner antal optionsuger/-dage og eventuel ferieperiode, fx 'op til 2 ugers prolongation', 'mulighed for forlængelse med 3 uger', eller 'mulighed for prolongation i ___4___ dage' (inkl. evt. understregninger/udfyldningslinjer omkring tallet, som de faktisk står i kontrakten). Max 120 tegn eller null."
     }`
 
 export type AiSources = {

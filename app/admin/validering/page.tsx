@@ -118,7 +118,7 @@ function AdminValideringPageInner() {
 
     // Producer matching
     const [employers, setEmployers] = useState<{ id: string; name: string; dfi_company_id: number | null }[]>([])
-    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string }[]>([])
+    const [rettighedshavere, setRettighedshavere] = useState<{ id: string; full_name: string; gender?: string | null }[]>([])
     const [rhSuggestions, setRhSuggestions] = useState<{ id: string; name: string; score: number }[]>([])
     const [selectedRhId, setSelectedRhId] = useState<string | null>(null)
     const [employerSuggestions, setEmployerSuggestions] = useState<{
@@ -131,6 +131,7 @@ function AdminValideringPageInner() {
     }[]>([])
     const [selectedParentId, setSelectedParentId] = useState<string | null>(null)
     const [selectedDfiParent, setSelectedDfiParent] = useState<{ id: number; name: string } | null>(null)
+    const [parentExplicitNone, setParentExplicitNone] = useState(false)
     const [overenskomster, setOverenskomster] = useState<{ value: string; label: string }[]>([
         { value: "de4-fiktion",   label: "De4 (fiktion)"    },
         { value: "faf",           label: "FAF (fiktion)"    },
@@ -179,7 +180,7 @@ function AdminValideringPageInner() {
         const supabase = createClient()
         supabase.from("employers").select("id, name, dfi_company_id").order("name")
             .then(({ data }) => { if (data) setEmployers(data) })
-        supabase.from("rettighedshavere").select("id, full_name").order("full_name")
+        supabase.from("rettighedshavere").select("id, full_name, gender").order("full_name")
             .then(({ data }) => { if (data) setRettighedshavere(data) })
 
         // Hent overenskomster fra reference_docs katalog
@@ -268,10 +269,21 @@ function AdminValideringPageInner() {
         }
     }, [formData.rightsHolderName, rettighedshavere])
 
+    // Auto-udfyld gender fra rettighedshaverprofil når kobling sættes
+    useEffect(() => {
+        if (!selectedRhId) return
+        const rh = rettighedshavere.find(r => r.id === selectedRhId)
+        if (!rh?.gender) return
+        // Kun auto-udfyld hvis feltet ikke er manuelt redigeret
+        if (!brugerRedigerede.has("gender")) {
+            setField("gender", rh.gender)
+        }
+    }, [selectedRhId, rettighedshavere])
+
     // Moderselskab: søg DFI + vis eksisterende parent når employer vælges
     useEffect(() => {
         const name = formData.producerName?.trim()
-        if (!name || name.length < 3) { setParentSuggestions([]); return }
+        if (!name || name.length < 3) { setParentSuggestions([]); setParentExplicitNone(false); return }
 
         // Eksisterende DB-forældre (ikke samme som employer)
         const dbParents = employers
@@ -557,13 +569,16 @@ function AdminValideringPageInner() {
             const contractType = formData.contractType === "leverandør-ref" ? "leverandør" : (formData.contractType ?? undefined)
             const overenskomstVal = formData.overenskomst === "ingen" ? null : (formData.overenskomst ?? undefined)
 
-            await supabase.from("contracts").update({
-                status: "valideret",
-                ...(resolvedEmployerId && { employer_id: resolvedEmployerId }),
-                ...(contractType && { type: contractType }),
-                ...(overenskomstVal !== undefined && { overenskomst: overenskomstVal }),
-                ...(selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id && { rights_holder_id: selectedRhId }),
-            }).eq("id", id)
+            const { error: contractError } = await supabase.rpc("admin_validate_contract", {
+                p_contract_id:      id,
+                p_status:           "valideret",
+                p_employer_id:      resolvedEmployerId ?? null,
+                p_type:             contractType ?? null,
+                p_overenskomst:     overenskomstVal ?? null,
+                p_rights_holder_id: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
+            })
+
+            if (contractError) throw new Error(`Kontraktstatus kunne ikke opdateres: ${contractError.message}`)
 
             leaveReview()
             window.dispatchEvent(new CustomEvent("contracts-updated"))
@@ -1078,20 +1093,29 @@ setActiveField(fieldId)
                                 </F>
 
                                 <F label="Moderselskab (valgfrit)">
-                                    <div className="relative">
-                                        <Input
-                                            value={selectedDfiParent?.name ?? (selectedParentId ? (employers.find(e => e.id === selectedParentId)?.name ?? "") : "")}
-                                            onChange={() => { setSelectedParentId(null); setSelectedDfiParent(null) }}
-                                            placeholder="Søges automatisk fra DB..."
-                                            className="text-xs"
-                                        />
-                                        {(selectedParentId || selectedDfiParent) && (
-                                            <button className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => { setSelectedParentId(null); setSelectedDfiParent(null) }}>
+                                    {parentExplicitNone ? (
+                                        <div className="flex items-center gap-2 rounded border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
+                                            <span className="flex-1">Ingen moderselskab</span>
+                                            <button type="button" className="hover:text-foreground" onClick={() => setParentExplicitNone(false)}>
                                                 <X className="h-3.5 w-3.5" />
                                             </button>
-                                        )}
-                                    </div>
-                                    {parentSuggestions.length > 0 && !selectedParentId && !selectedDfiParent && (
+                                        </div>
+                                    ) : (
+                                        <div className="relative">
+                                            <Input
+                                                value={selectedDfiParent?.name ?? (selectedParentId ? (employers.find(e => e.id === selectedParentId)?.name ?? "") : "")}
+                                                onChange={() => { setSelectedParentId(null); setSelectedDfiParent(null); setParentExplicitNone(false) }}
+                                                placeholder="Søges automatisk fra DB..."
+                                                className="text-xs"
+                                            />
+                                            {(selectedParentId || selectedDfiParent) && (
+                                                <button className="absolute right-2 top-2 text-muted-foreground hover:text-foreground" onClick={() => { setSelectedParentId(null); setSelectedDfiParent(null) }}>
+                                                    <X className="h-3.5 w-3.5" />
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                    {!parentExplicitNone && parentSuggestions.length > 0 && !selectedParentId && !selectedDfiParent && (
                                         <div className="mt-1 rounded-md border bg-background shadow-sm divide-y">
                                             {parentSuggestions.map((s, i) => (
                                                 <button key={i} type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 flex items-center justify-between gap-2"
@@ -1100,7 +1124,17 @@ setActiveField(fieldId)
                                                     <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${s.source === "db" ? "bg-blue-100 text-blue-700" : "bg-orange-100 text-orange-700"}`}>{s.source === "db" ? "DB" : "DFI"}</span>
                                                 </button>
                                             ))}
+                                            <button type="button" className="w-full text-left px-3 py-2 text-xs hover:bg-muted/50 text-muted-foreground italic"
+                                                onClick={() => { setParentExplicitNone(true); setParentSuggestions([]) }}>
+                                                Ingen moderselskab
+                                            </button>
                                         </div>
+                                    )}
+                                    {!parentExplicitNone && !selectedParentId && !selectedDfiParent && parentSuggestions.length === 0 && (
+                                        <button type="button" className="mt-1 text-[10px] text-muted-foreground underline hover:text-foreground"
+                                            onClick={() => { setParentExplicitNone(true); setParentSuggestions([]) }}>
+                                            Sæt til ingen moderselskab
+                                        </button>
                                     )}
                                 </F>
 

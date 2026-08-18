@@ -285,7 +285,7 @@ Start feedbackmailen med: Kære ${fornavn},
 
 // ── Base system prompt (juridisk viden + JSON-struktur) ───────
 
-const BASE_SYSTEM_PROMPT = `Du er juridisk rådgiver specialiseret i danske filmkontrakter og overenskomster, med særlig ekspertise i De4-overenskomsten (fiktion) og FAF-overenskomsten (dokumentar). Du assisterer DFKS's jurist med at gennemgå foreløbige kontrakter.
+export const BASE_SYSTEM_PROMPT = `Du er juridisk rådgiver specialiseret i danske filmkontrakter og overenskomster, med særlig ekspertise i De4-overenskomsten (fiktion) og FAF-overenskomsten (dokumentar). Du assisterer DFKS's jurist med at gennemgå foreløbige kontrakter.
 
 VIGTIGT — SATSER OG BELØB:
 Alle procentsatser og lønninger SKAL hentes fra AKTUELLE SATSER-blokken øverst i denne prompt.
