@@ -558,13 +558,16 @@ function AdminValideringPageInner() {
             const contractType = formData.contractType === "leverandør-ref" ? "leverandør" : (formData.contractType ?? undefined)
             const overenskomstVal = formData.overenskomst === "ingen" ? null : (formData.overenskomst ?? undefined)
 
-            await supabase.from("contracts").update({
-                status: "valideret",
-                ...(resolvedEmployerId && { employer_id: resolvedEmployerId }),
-                ...(contractType && { type: contractType }),
-                ...(overenskomstVal !== undefined && { overenskomst: overenskomstVal }),
-                ...(selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id && { rights_holder_id: selectedRhId }),
-            }).eq("id", id)
+            const { error: contractError } = await supabase.rpc("admin_validate_contract", {
+                p_contract_id:      id,
+                p_status:           "valideret",
+                p_employer_id:      resolvedEmployerId ?? null,
+                p_type:             contractType ?? null,
+                p_overenskomst:     overenskomstVal ?? null,
+                p_rights_holder_id: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
+            })
+
+            if (contractError) throw new Error(`Kontraktstatus kunne ikke opdateres: ${contractError.message}`)
 
             leaveReview()
             window.dispatchEvent(new CustomEvent("contracts-updated"))
