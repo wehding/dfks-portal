@@ -15,11 +15,13 @@ import { NextRequest, NextResponse } from "next/server"
 import { createServiceClient } from "@/lib/supabase/service"
 import { createClient as createSessionClient } from "@/lib/supabase/server"
 import { assertAdminRole } from "@/lib/supabase/assert-admin"
-import { extractPdfText } from "@/lib/pdf-parse"
-import { extractWordText } from "@/lib/word-text"
+import { extractPdfText, extractPdfTextWithLayout } from "@/lib/pdf-parse"
+import { extractWordText, extractWordTextWithLayout } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { isInternalWorkerSecret } from "@/lib/api-auth"
+import { buildPdfLayout, buildDocxLayout } from "@/lib/contract-layout"
+import type { ContractLayout } from "@/lib/contract-layout"
 
 async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null } | { internal: false; orgId: string } | null> {
     const authHeader = req.headers.get("authorization") ?? ""
@@ -68,20 +70,36 @@ export async function POST(req: NextRequest) {
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
         let text: string
+        let layout: ContractLayout | null = null
         if (ext === "pdf") {
             text = await extractPdfText(buffer)
+            // Lag 4: byg layout parallelt med tekstudtrækket
+            try {
+                const fragments = await extractPdfTextWithLayout(buffer)
+                layout = buildPdfLayout(fragments)
+            } catch { /* layout er best-effort */ }
         } else if (ext === "docx" || ext === "doc") {
             text = await extractWordText(buffer, storagePath)
+            try {
+                const docxLayout = await extractWordTextWithLayout(buffer, storagePath)
+                layout = buildDocxLayout(docxLayout)
+            } catch { /* layout er best-effort */ }
         } else {
             text = buffer.toString("utf-8")
         }
 
         const masked = maskPersonalData(text)
 
+        // Gem layout til contracts-tabellen (best-effort, blokerer ikke udtræk)
+        if (layout && contractId) {
+            admin.from("contracts").update({ layout_data: layout }).eq("id", contractId)
+                .then(({ error }) => { if (error) console.error("[validate/extract] layout_data gem fejl:", error.message) })
+        }
+
         const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
-        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked })
+        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked, layout })
     } catch (err: unknown) {
         console.error("[validate/extract]", err)
         return NextResponse.json({ error: "Kontrakten kunne ikke analyseres" }, { status: 500 })
