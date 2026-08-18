@@ -231,6 +231,25 @@ export function buildDocxLayout(layout: DocxLayout): ContractLayout {
     }
 }
 
+// ── Annoteret kontrakttekst til AI-input ────────────────────────────────────
+
+/**
+ * Bygger én sammenhængende kontrakttekst med klausul-ID'er indlejret inline.
+ * Hvert klausul præfikses med sit eget ID: "[s1_c14] A. Ugeløn. ..."
+ *
+ * Denne tekst erstatter extractPdfText()/extractWordText() som AI-input —
+ * AI'en læser nu den samme tekst som layout-strukturen er bygget af, og
+ * kan aflæse *_clause_id direkte fra linjen uden korrelation eller matching.
+ *
+ * PII-maskning: kør maskPersonalData() på output FØR brug — ID-tags
+ * ([sX_cY]/[pN]-format) påvirkes ikke af de eksisterende maskeringsregexes.
+ */
+export function buildAnnotatedContractText(layout: ContractLayout): string {
+    return layout.clauses
+        .map(c => `[${c.id}] ${c.text}`)
+        .join("\n")
+}
+
 // ── Formatteret output til review ────────────────────────────────────────────
 
 /** Kompakt tekstrepræsentation af layoutet til visning/godkendelse. */

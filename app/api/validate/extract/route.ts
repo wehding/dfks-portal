@@ -20,7 +20,7 @@ import { extractWordText, extractWordTextWithLayout } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
 import { runContractExtraction } from "@/lib/contract-extract-core"
 import { isInternalWorkerSecret } from "@/lib/api-auth"
-import { buildPdfLayout, buildDocxLayout } from "@/lib/contract-layout"
+import { buildPdfLayout, buildDocxLayout, buildAnnotatedContractText } from "@/lib/contract-layout"
 import type { ContractLayout } from "@/lib/contract-layout"
 import { enrichSourcesWithClauseIds } from "@/lib/contract-layout-store"
 
@@ -70,26 +70,31 @@ export async function POST(req: NextRequest) {
         const buffer = Buffer.from(await fileData.arrayBuffer())
         const ext = storagePath.split(".").pop()?.toLowerCase()
 
-        let text: string
+        // Byg layout (lag 1+2) — er den primære tekstkilde til AI-input.
+        // Annoteret tekst med inline [sX_cY]-tags erstatter extractPdfText() som AI-input
+        // så AI'en altid læser fra samme kilde som koordinaterne er bygget af.
         let layout: ContractLayout | null = null
+        let aiText: string
+
         if (ext === "pdf") {
-            text = await extractPdfText(buffer)
-            // Lag 4: byg layout parallelt med tekstudtrækket
             try {
                 const fragments = await extractPdfTextWithLayout(buffer)
                 layout = buildPdfLayout(fragments)
-            } catch { /* layout er best-effort */ }
+            } catch { /* layout best-effort — fallback til plain text */ }
+            aiText = layout
+                ? maskPersonalData(buildAnnotatedContractText(layout))
+                : maskPersonalData(await extractPdfText(buffer))
         } else if (ext === "docx" || ext === "doc") {
-            text = await extractWordText(buffer, storagePath)
             try {
                 const docxLayout = await extractWordTextWithLayout(buffer, storagePath)
                 layout = buildDocxLayout(docxLayout)
-            } catch { /* layout er best-effort */ }
+            } catch { /* layout best-effort — fallback til plain text */ }
+            aiText = layout
+                ? maskPersonalData(buildAnnotatedContractText(layout))
+                : maskPersonalData(await extractWordText(buffer, storagePath))
         } else {
-            text = buffer.toString("utf-8")
+            aiText = maskPersonalData(buffer.toString("utf-8"))
         }
-
-        const masked = maskPersonalData(text)
 
         // Gem layout til contracts-tabellen (best-effort, blokerer ikke udtræk)
         if (layout && contractId) {
@@ -97,16 +102,16 @@ export async function POST(req: NextRequest) {
                 .then(({ error }) => { if (error) console.error("[validate/extract] layout_data gem fejl:", error.message) })
         }
 
-        const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null, layout })
+        const result = await runContractExtraction(aiText, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null, layout })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
 
-        // Server-side klausul-ID korrelation: match tekst-citater deterministisk mod layout.
-        // Kører efter AI-udtræk — udfylder *_clause_id felter der AI'en ikke selv returnerede.
+        // Fallback: server-side klausul-ID korrelation for felter AI'en ikke returnerede et ID for.
+        // Primærvejen er nu at AI'en aflæser [sX_cY]-tagget direkte fra den annoterede tekst.
         if (result.data?._sources && layout) {
             result.data._sources = enrichSourcesWithClauseIds(result.data._sources as Record<string, string | null>, layout) as typeof result.data._sources
         }
 
-        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked, layout })
+        return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: aiText, layout })
     } catch (err: unknown) {
         console.error("[validate/extract]", err)
         return NextResponse.json({ error: "Kontrakten kunne ikke analyseres" }, { status: 500 })

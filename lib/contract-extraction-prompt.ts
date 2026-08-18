@@ -17,7 +17,12 @@ Returner KUN JSON — ingen forklaringstekst.
 VIGTIGT — Maskerede tokens: Kontraktteksten er forbehandlet og personoplysninger er erstattet med tokens:
 [CPR-NUMMER], [KONTONUMMER], [IBAN], [TELEFON], [EMAIL], [ADRESSE], [POSTNR-BY], [CVR-NUMMER].
 Disse tokens er IKKE de faktiske værdier — returner null for felter der kun indeholder et token uden anden kontekst.
-Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.`
+Navne (personnavne og firmanavne) maskeres IKKE og fremgår fuldt ud af teksten.
+
+KLAUSUL-ID'ER: Kontraktteksten er annoteret med klausul-ID'er indlejret direkte inline.
+Hvert klausul starter med et tag på formen [s1_c14] (PDF) eller [p7] (DOCX) efterfulgt af klausulteksten.
+Eksempel: "[s1_c14] A. Ugeløn. Medarbejderen modtager en grundløn på 14.637 DKK pr. uge."
+Til _sources.*_clause_id felterne: kopiér tagget fra begyndelsen af den linje du citerer — det er en direkte aflæsning, ikke en gætteopgave.`
 
 export const CONTRACT_EXTRACTION_SCHEMA_PROMPT = `Udtræk følgende data fra denne kontrakt og returner som JSON.
 Returner KUN JSON — ingen forklaringstekst.
@@ -141,9 +146,8 @@ export function buildContractExtractionPrompt(
         }
     }
 
-    if (layout?.clauses?.length) {
-        prompt += "\n\n" + buildClauseListPrompt(layout)
-    }
+    // buildClauseListPrompt() fjernet — ID'erne er nu indlejret direkte i kontraktteksten
+    // (buildAnnotatedContractText), så en separat opsummeringsliste er overflødig.
 
     return prompt
 }
