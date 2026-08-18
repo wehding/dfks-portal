@@ -237,7 +237,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         })
     }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
 
-    // Lag 5: naviger til klausulens side og scroll overlayets position ind i viewporten
+    // Lag 5: naviger til klausulens side ved activeClauseId-skift
     useEffect(() => {
         if (!activeClauseId || !layout) return
         const clause = layout.clauses.find(c => c.id === activeClauseId)
@@ -247,15 +247,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             setPageRendered(false)
             setPageNumber(targetPage)
         }
-        // Scroll containerRef så overlayets top-koordinat er synlig centreret
-        if (clause.pdfBbox && pageViewport && containerRef.current) {
-            const scaleY = pageViewport.renderedHeight / pageViewport.pdfHeight
-            const overlayTop = pageViewport.renderedHeight - (clause.pdfBbox.y + clause.pdfBbox.height) * scaleY
-            const containerH = containerRef.current.clientHeight
-            // p-4 = 16px padding i wrap-divven
-            containerRef.current.scrollTo({ top: Math.max(0, overlayTop + 16 - containerH / 2), behavior: "smooth" })
-        }
-    }, [activeClauseId, layout, pageViewport]) // eslint-disable-line
+    }, [activeClauseId, layout]) // eslint-disable-line
 
     // Lag 5: hent sidedimensioner fra pdfDoc via PDF-viewport * scale (ingen DOM-måling)
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
@@ -354,6 +346,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
                                 return (
                                     <div
+                                        ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
                                         style={{ ...style, background: "rgba(234,179,8,0.25)", border: "2px solid rgba(234,179,8,0.8)", borderRadius: 2, zIndex: 10 }}
                                         title={`Klausul ${activeClauseId}`}
                                     />
