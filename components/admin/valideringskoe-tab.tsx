@@ -3,9 +3,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Eye } from "lucide-react"
+import { Loader2, Eye, Search } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { createClient } from "@/lib/supabase/client"
 import { getContractImportStates } from "@/app/actions/contract-imports"
@@ -77,6 +78,7 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
     const [loading, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<"afventer" | "gennemgaede">("afventer")
     const [importFilter, setImportFilter] = useState<string>("all")
+    const [søgning, setSøgning] = useState("")
 
     const load = useCallback(async () => {
         const supabase = createClient()
@@ -121,12 +123,29 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
 
     useEffect(() => { onAfventerCount?.(afventer.length) }, [afventer.length, onAfventerCount])
 
+    // Fritekstsøgning på tværs af arbejdstitel, rettighedshaver og arbejdsgiver.
+    // Vigtigt for kontrakter, der endnu ikke er tilknyttet et værk — deres
+    // arbejdstitel kan være rodet, så en fuzzy manuel søgning er nødvendig
+    // fremfor at stole på automatisk titel-matching mod værksdatabasen.
+    const søgeord = søgning.trim().toLowerCase()
+    const matcherSøgning = useCallback((r: KøRow) => {
+        if (!søgeord) return true
+        return (
+            r.displayTitle.toLowerCase().includes(søgeord) ||
+            r.displayMember.toLowerCase().includes(søgeord) ||
+            (r.displayEmployer ?? "").toLowerCase().includes(søgeord)
+        )
+    }, [søgeord])
+
     // Filtrer og sortér afventer-listen
     const filteredAfventer = afventer
         .filter(r => importFilter === "all" || effectiveImportStatus(r) === importFilter)
+        .filter(matcherSøgning)
         .sort((a, b) => (importSortOrder[effectiveImportStatus(a)] ?? 9) - (importSortOrder[effectiveImportStatus(b)] ?? 9))
 
-    const visible = activeTab === "afventer" ? filteredAfventer : gennemgaede
+    const filteredGennemgaede = gennemgaede.filter(matcherSøgning)
+
+    const visible = activeTab === "afventer" ? filteredAfventer : filteredGennemgaede
 
     if (loading) return (
         <div className="flex items-center justify-center py-16 text-muted-foreground gap-2">
@@ -170,8 +189,17 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                     </button>
                 </div>
 
-                {activeTab === "afventer" && (
-                    <div className="pb-1">
+                <div className="flex items-end gap-2 pb-1">
+                    <div className="relative">
+                        <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input
+                            value={søgning}
+                            onChange={(e) => setSøgning(e.target.value)}
+                            placeholder="Søg på titel, rettighedshaver eller arbejdsgiver…"
+                            className="h-8 w-[280px] pl-7 text-xs"
+                        />
+                    </div>
+                    {activeTab === "afventer" && (
                         <Select value={importFilter} onValueChange={setImportFilter}>
                             <SelectTrigger className="h-8 w-[180px] text-xs">
                                 <SelectValue />
@@ -186,13 +214,15 @@ export function ValideringskøTab({ onAfventerCount }: { onAfventerCount?: (n: n
                                 <SelectItem value="no_ai_data">Mangler AI-data</SelectItem>
                             </SelectContent>
                         </Select>
-                    </div>
-                )}
+                    )}
+                </div>
             </div>
 
             {visible.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
-                    {activeTab === "afventer" ? "Ingen kontrakter matcher det valgte filter." : "Ingen gennemgåede kontrakter endnu."}
+                    {søgeord
+                        ? "Ingen kontrakter matcher søgningen."
+                        : activeTab === "afventer" ? "Ingen kontrakter matcher det valgte filter." : "Ingen gennemgåede kontrakter endnu."}
                 </p>
             ) : (
                 <div className="rounded-md border overflow-hidden">
