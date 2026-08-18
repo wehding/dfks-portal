@@ -20,7 +20,7 @@ export const SOURCES_SCHEMA_PROMPT = `    "_sources": {
       "collectiveAgreement": "EKSAKT tekststreng der omhandler overenskomst — kopiér den FULDE sætning uanset om kontrakten ER eller IKKE ER omfattet af overenskomst. Fx positiv: 'I øvrigt henvises til gældende Fiktionsoverenskomst...' Fx negativ: 'Kontrakten er ikke omfattet af kollektive overenskomster' eller 'Kontrakten reguleres ikke af overenskomst'. Max 200 tegn eller null.",
       "copydan": "Kopiér den KOMPLETTE tekstpassage der omhandler Copydan-forbehold eller lignende vederlagsbevarende rettighed — inkl. klausuler der bevarer vederlagsret via ophavsretslovens §§ (fx §§ 13, 17, 35) selv om Copydan ikke nævnes eksplicit. START fra afsnittets allerførste ord. Max 400 tegn. Null hvis ingen sådan klausul.",
       "svod": "Kopiér den KOMPLETTE tekstpassage der omhandler SVOD/streaming eller Create Denmark — START altid fra afsnittets allerførste ord. Inkluder hele afsnittet. Max 400 tegn. Null hvis ikke nævnes.",
-      "royalty": "Kopiér den KOMPLETTE tekstpassage der omhandler royaltybetaling — inkl. indirekte formuleringer som 'Producenten afregner royalties til [overenskomst] jf. overenskomst' eller 'Leverandøren vil være berettiget til en andel af disse royalties'. KUN hvis adskilt fra SVOD/streaming-afsnittet. Max 400 tegn. Null hvis ikke relevant.",
+      "royalty": "Kopiér den KOMPLETTE tekstpassage FRA KONTRAKTEN der omhandler royaltybetaling — inkl. indirekte formuleringer som 'Producenten afregner royalties til [overenskomst] jf. overenskomst' eller 'Leverandøren vil være berettiget til en andel af disse royalties'. KUN hvis adskilt fra SVOD/streaming-afsnittet. Max 400 tegn. VIGTIGT: hvis royaltyprocenten er UDLEDT fra overenskomstkonteksten uden at stå eksplicit i kontrakten, citér i stedet den sætning i kontrakten der henviser til/inkorporerer overenskomsten (fx 'ansættelsen sker i henhold til [overenskomst]') — SÆT ALDRIG selve procenttallet ind som citat, det er ikke en tekstpassage og kan ikke highlightes i dokumentet. Null hvis hverken royaltytekst eller overenskomst-henvisning findes.",
       "prolongation": "EKSAKT tekststreng der viser prolongations-/optionsklausulen — kopiér sætningen der nævner antal optionsuger/-dage og eventuel ferieperiode, fx 'op til 2 ugers prolongation', 'mulighed for forlængelse med 3 uger', eller 'mulighed for prolongation i ___4___ dage' (inkl. evt. understregninger/udfyldningslinjer omkring tallet, som de faktisk står i kontrakten). Max 120 tegn eller null."
     }`
 
@@ -49,12 +49,24 @@ export function clipSourceHeading(s: string | null | undefined): string | null {
     return s
 }
 
+/**
+ * Et citat der KUN er et tal/procentangivelse (fx "1%", "1,0 %") er ikke en
+ * tekstpassage fra kontrakten — det er en udledt værdi, AI'en fejlagtigt har
+ * sat ind som "kilde". Sådan et citat kan aldrig meningsfuldt highlightes
+ * (det matcher enten intet, eller et tilfældigt forekommende tal et andet
+ * sted i dokumentet). Mekanisk sikkerhedsnet, uafhængigt af prompt-instruks.
+ */
+export function discardIfBareNumber(s: string | null | undefined): string | null {
+    if (!s) return null
+    return /^\s*\d+([.,]\d+)?\s*%?\s*$/.test(s) ? null : s
+}
+
 /** Normalise raw _sources from AI response (clip headings on long passage fields). */
 export function normaliseSources(raw: Record<string, string | null>): AiSources {
     return {
         ...raw,
         copydan: clipSourceHeading(raw.copydan),
         svod: clipSourceHeading(raw.svod),
-        royalty: clipSourceHeading(raw.royalty),
+        royalty: discardIfBareNumber(clipSourceHeading(raw.royalty)),
     }
 }
