@@ -866,12 +866,23 @@ setActiveField(fieldId)
         const royaltyMeta = resolveWithMeta(sources.royalty)
         const caMeta = resolveWithMeta(sources.collectiveAgreement)
 
+        // Bare tal (uden AI-fundet kildesætning) er farlige som highlight-mål —
+        // uden omkringliggende kontekst kan resolveAnker() ikke skelne det
+        // tiltænkte beløb fra et vilkårligt andet forekommende tal i dokumentet
+        // (fx et postnummer). Brug kun det bare tal, hvis det rent faktisk er
+        // entydigt i dokumentet — ellers vis intet highlight frem for et forkert.
+        const safeNumberFallback = (value: unknown) => {
+            if (value === undefined || value === null || value === "") return undefined
+            const meta = resolveWithMeta(String(value))
+            return meta.forGenerisk ? undefined : meta.anker
+        }
+
         const prolongHl = resolve((sources as any).prolongation)
-        const salaryHl = salaryMeta.anker ?? (formData.salary ? String(formData.salary) : undefined)
+        const salaryHl = salaryMeta.anker ?? safeNumberFallback(formData.salary)
         const workTitleHl = resolve(sources.workTitle)
         const datesHl = resolve(sources.dates)
         const weeksHl = resolve(sources.workingWeeks)
-        const supplementsHl = resolve(sources.supplements) ?? (formData.personalSupplement ? String(formData.personalSupplement) : undefined)
+        const supplementsHl = resolve(sources.supplements) ?? safeNumberFallback(formData.personalSupplement)
         const svodSrc = svodMeta.anker ?? null
         const ca = caMeta.anker ?? null
         // Copydan/royalty: brug specifik kilde hvis AI fandt én, ellers fald tilbage til overenskomst-referencen
