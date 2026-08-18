@@ -7,6 +7,7 @@ import { getAiRuntimeConfig } from "@/lib/ai-runtime"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { extractWordText } from "@/lib/word-text"
 import { maskPersonalData } from "@/lib/mask-text"
+import { jsonrepair } from "jsonrepair"
 
 function sb() {
     return createClient(
@@ -215,19 +216,8 @@ ${maskPersonalData(kildetekst).slice(0, 150_000)}`,
         try {
             parsed = JSON.parse(clean)
         } catch {
-            // Forsøg at redde de kandidater der kom igennem ved at afkorte ved sidst komplette element
-            const arrStart = clean.indexOf("[")
-            if (arrStart === -1) {
-                return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
-            }
-            // Find sidst forekommende "},\n" eller "}," inden for arrayet
-            const lastComplete = Math.max(clean.lastIndexOf("},"), clean.lastIndexOf("}\n"))
-            if (lastComplete <= arrStart) {
-                return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
-            }
-            const salvaged = clean.slice(0, lastComplete + 1) + "]}"
             try {
-                parsed = JSON.parse(salvaged)
+                parsed = JSON.parse(jsonrepair(clean))
             } catch {
                 return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
             }
