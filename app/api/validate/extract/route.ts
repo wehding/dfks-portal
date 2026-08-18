@@ -22,6 +22,7 @@ import { runContractExtraction } from "@/lib/contract-extract-core"
 import { isInternalWorkerSecret } from "@/lib/api-auth"
 import { buildPdfLayout, buildDocxLayout } from "@/lib/contract-layout"
 import type { ContractLayout } from "@/lib/contract-layout"
+import { enrichSourcesWithClauseIds } from "@/lib/contract-layout-store"
 
 async function authorization(req: NextRequest): Promise<{ internal: true; orgId: null } | { internal: false; orgId: string } | null> {
     const authHeader = req.headers.get("authorization") ?? ""
@@ -98,6 +99,12 @@ export async function POST(req: NextRequest) {
 
         const result = await runContractExtraction(masked, { orgId, entityId: contractId, source: "admin", pdfBuffer: ext === "pdf" ? buffer : null, layout })
         if (!result.ok) return NextResponse.json({ error: result.error ?? "Udtræk fejlede" }, { status: 500 })
+
+        // Server-side klausul-ID korrelation: match tekst-citater deterministisk mod layout.
+        // Kører efter AI-udtræk — udfylder *_clause_id felter der AI'en ikke selv returnerede.
+        if (result.data?._sources && layout) {
+            result.data._sources = enrichSourcesWithClauseIds(result.data._sources as Record<string, string | null>, layout) as typeof result.data._sources
+        }
 
         return NextResponse.json({ ok: true, data: result.data, navneTjek: result.navneTjek, maskedText: masked, layout })
     } catch (err: unknown) {

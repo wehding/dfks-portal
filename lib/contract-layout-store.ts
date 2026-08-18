@@ -5,6 +5,8 @@ import { extractPdfTextWithLayout } from "@/lib/pdf-parse"
 import { extractWordTextWithLayout } from "@/lib/word-text"
 import { buildPdfLayout, buildDocxLayout } from "@/lib/contract-layout"
 import type { ContractLayout } from "@/lib/contract-layout"
+import { norm } from "@/lib/resolveAnker"
+import { discardIfNoDigits, discardIfNoDkkAmount, discardIfBareNumber } from "@/lib/ai-sources"
 
 /**
  * Henter layout_data for en kontrakt — bygger og gemmer det hvis det ikke findes endnu.
@@ -81,4 +83,82 @@ export function resolveClauseById(
 ): import("@/lib/contract-layout").LayoutClause | null {
     if (!layout || !clauseId) return null
     return layout.clauses.find(c => c.id === clauseId) ?? null
+}
+
+/**
+ * Server-side korrelation: find den klausul der matcher et tekst-citat.
+ *
+ * Bruger norm() fra resolveAnker.ts — samme normalisering som PDF-highlighting,
+ * så de to systemer aldrig kan give modstridende svar på samme kontrakttekst.
+ *
+ * Entydighed er et krav: hvis citatet forekommer i mere end én klausul returneres
+ * null — intet highlight er bedre end et forkert.
+ *
+ * @param citation  Renset tekst-citat fra AI (EFTER discardIf*-filtre)
+ * @param layout    Layout med klausuler og bounding boxes
+ * @param minLength Minimum normalised needle-length (default 10)
+ */
+export function matchCitationToClause(
+    citation: string | null | undefined,
+    layout: ContractLayout | null | undefined,
+    minLength = 10,
+): string | null {
+    if (!citation || !layout) return null
+
+    const needle = norm(citation)
+    if (needle.length < minLength) return null
+
+    // Brug op til 60 tegn af det normaliserede citat som søgestreng —
+    // langt nok til at være specifik, kort nok til at overleve PDF-split-varianter.
+    const needleSlice = needle.slice(0, 60)
+
+    const matches: string[] = []
+    for (const clause of layout.clauses) {
+        if (norm(clause.text).includes(needleSlice)) {
+            matches.push(clause.id)
+        }
+    }
+
+    // Entydighed: præcis én match = returnér ID. Nul eller flere = returnér null.
+    return matches.length === 1 ? matches[0] : null
+}
+
+/**
+ * Tilføj klausul-IDs til et _sources-objekt ved at korrelere tekst-citater mod layout.
+ *
+ * Sikkerhedsnet køres FØR matching: et tomt/bare-tal-citat kan give false positive
+ * mod en klausul der tilfældigvis indeholder samme mønster — filtrér det væk først.
+ * Felter der allerede har et (AI-returneret og valideret) klausul-ID røres ikke.
+ */
+export function enrichSourcesWithClauseIds(
+    sources: Record<string, string | null>,
+    layout: ContractLayout | null | undefined,
+): Record<string, string | null> {
+    if (!layout) return sources
+
+    const match = (citation: string | null | undefined) =>
+        matchCitationToClause(citation, layout)
+
+    return {
+        ...sources,
+        // Løn: kræver cifre (discardIfNoDigits) + ikke bare et tal (discardIfBareNumber)
+        salary_clause_id: sources.salary_clause_id ??
+            match(discardIfBareNumber(discardIfNoDigits(sources.salary))),
+        // Pension + tillæg: kræver konkret DKK-beløb — fanger ubrugte skabelon-klausuler
+        pension_clause_id: sources.pension_clause_id ??
+            match(discardIfNoDkkAmount(sources.pension)),
+        supplements_clause_id: sources.supplements_clause_id ??
+            match(discardIfNoDkkAmount(sources.supplements)),
+        // Øvrige: renset af normaliseSources før dette kald — send direkte
+        dates_clause_id: sources.dates_clause_id ??
+            match(discardIfBareNumber(sources.dates)),
+        copydan_clause_id: sources.copydan_clause_id ??
+            match(discardIfBareNumber(sources.copydan)),
+        svod_clause_id: sources.svod_clause_id ??
+            match(discardIfBareNumber(sources.svod)),
+        royalty_clause_id: sources.royalty_clause_id ??
+            match(discardIfBareNumber(sources.royalty)),
+        prolongation_clause_id: sources.prolongation_clause_id ??
+            match(discardIfBareNumber(sources.prolongation)),
+    }
 }
