@@ -6,6 +6,7 @@ import { Document, Page, pdfjs } from "react-pdf"
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { norm, buildNeedles as resolveNeedles } from "@/lib/resolveAnker"
+import type { ContractLayout } from "@/lib/contract-layout"
 import "react-pdf/dist/Page/AnnotationLayer.css"
 import "react-pdf/dist/Page/TextLayer.css"
 
@@ -23,6 +24,25 @@ interface PdfViewerProps {
     sectionHighlights?: string[]
     activeHighlight?: string | null
     pageNavigationHint?: string
+    // Lag 5: koordinatbaseret highlight
+    layout?: ContractLayout | null
+    activeClauseId?: string | null
+}
+
+type PageViewport = { pdfWidth: number; pdfHeight: number; renderedWidth: number; renderedHeight: number }
+
+/** Konverter PDF-bounding-box (y=0 ved bund) til CSS-position i en rendered side. */
+function bboxToScreenStyle(
+    bbox: { x: number; y: number; width: number; height: number },
+    vp: PageViewport,
+): React.CSSProperties {
+    const scaleX = vp.renderedWidth / vp.pdfWidth
+    const scaleY = vp.renderedHeight / vp.pdfHeight
+    const left = bbox.x * scaleX
+    const top = vp.renderedHeight - (bbox.y + bbox.height) * scaleY
+    const width = bbox.width * scaleX
+    const height = bbox.height * scaleY
+    return { position: "absolute", left, top, width, height, pointerEvents: "none" }
 }
 
 // norm() og buildNeedles importeret fra lib/resolveAnker.ts
@@ -178,13 +198,14 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
     const [error, setError] = useState(false)
     const [pageRendered, setPageRendered] = useState(false)
     const [pdfDoc, setPdfDoc] = useState<any>(null)
+    const [pageViewport, setPageViewport] = useState<PageViewport | null>(null)
     const containerRef = useRef<HTMLDivElement>(null)
 
     const activeHighlightRef = useRef(activeHighlight)
@@ -215,6 +236,34 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             }
         })
     }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
+
+    // Lag 5: naviger til klausulens side ved activeClauseId-skift
+    useEffect(() => {
+        if (!activeClauseId || !layout) return
+        const clause = layout.clauses.find(c => c.id === activeClauseId)
+        if (!clause) return
+        const targetPage = clause.page ?? 1
+        if (targetPage !== pageNumber) {
+            setPageRendered(false)
+            setPageNumber(targetPage)
+        }
+    }, [activeClauseId, layout]) // eslint-disable-line
+
+    // Lag 5: hent sidedimensioner fra pdfDoc når side ændres
+    useEffect(() => {
+        if (!pdfDoc || !pageRendered) return
+        pdfDoc.getPage(pageNumber).then((page: any) => {
+            const vp = page.getViewport({ scale: 1 })
+            const pageEl = containerRef.current?.querySelector(".react-pdf__Page") as HTMLElement | null
+            if (!pageEl) return
+            setPageViewport({
+                pdfWidth: vp.width,
+                pdfHeight: vp.height,
+                renderedWidth: pageEl.offsetWidth,
+                renderedHeight: pageEl.offsetHeight,
+            })
+        }).catch(() => {})
+    }, [pdfDoc, pageNumber, pageRendered, scale])
 
     const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
         setNumPages(numPages); setError(false)
@@ -283,9 +332,24 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
             <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30">
                 <div className="flex justify-center p-4">
                     <Document file={url} onLoadSuccess={onDocumentLoadSuccess} onLoadError={onDocumentLoadError} loading={Spinner}>
-                        <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
-                            renderTextLayer={true} renderAnnotationLayer={false}
-                            onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
+                        <div style={{ position: "relative", display: "inline-block" }}>
+                            <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
+                                renderTextLayer={true} renderAnnotationLayer={false}
+                                onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
+                            {/* Lag 5: koordinatbaseret overlay for activeClauseId */}
+                            {(() => {
+                                if (!activeClauseId || !layout || !pageViewport) return null
+                                const clause = layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)
+                                if (!clause?.pdfBbox) return null
+                                const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
+                                return (
+                                    <div
+                                        style={{ ...style, background: "rgba(234,179,8,0.25)", border: "2px solid rgba(234,179,8,0.8)", borderRadius: 2 }}
+                                        title={`Klausul ${activeClauseId}`}
+                                    />
+                                )
+                            })()}
+                        </div>
                     </Document>
                 </div>
             </div>

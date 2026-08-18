@@ -108,6 +108,7 @@ function AdminValideringPageInner() {
     const [brugerRedigerede, setBrugerRedigerede] = useState<Set<string>>(new Set())
     const [contractText, setContractText] = useState("")
     const [sources, setSources] = useState<Record<string, string | null>>({})
+    const [contractLayout, setContractLayout] = useState<import("@/lib/contract-layout").ContractLayout | null>(null)
     const [activeSource, setActiveSource] = useState<string | null>(null)   // quote til PDF-highlight
     const [activeField, setActiveField] = useState<string | null>(null)     // felt-ID til knap-highlight
     const [storedDocxText, setStoredDocxText] = useState<string | null>(null)
@@ -707,6 +708,7 @@ function AdminValideringPageInner() {
                 const json = await resp.json()
                 if (!resp.ok) throw new Error(json.error)
                 if (json.data?._sources) setSources(normaliseSources(json.data._sources))
+                if (json.layout) setContractLayout(json.layout)
                 if (json.maskedText) setContractText(json.maskedText)
                 overwriteWithAi(json.data)
                 toast.success("Felter opdateret fra AI-udtræk")
@@ -905,6 +907,19 @@ setActiveField(fieldId)
             royalty: [royaltySrc ? royaltySrc.slice(0, 40) : null, royaltySrc ? royaltySrc.slice(0, 20) : null, "afregner royalties", "royalties til"].filter(Boolean).join("||"),
             agreement: [ca ? ca.slice(0, 40) : null, "STANDARDKONTRAKT", "Standardkontrakt", "overenskomst", "ikke omfattet af kollektive"].filter(Boolean).join("||"),
         }
+        // Lag 5: map aktivt felt til klausul-ID fra sources (primær) — fallback til teksthighlight
+        const FIELD_TO_CLAUSE_ID: Record<string, string | null | undefined> = {
+            salary: sources.salary_clause_id,
+            pension: sources.pension_clause_id,
+            supplements: sources.supplements_clause_id,
+            dates: sources.dates_clause_id,
+            copydan: sources.copydan_clause_id,
+            svod: sources.svod_clause_id,
+            royalty: sources.royalty_clause_id,
+            prolongation: sources.prolongation_clause_id,
+        }
+        const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
+
         const resolvedActiveHighlight = activeField
             ? (rightsHighlightSource[activeField] || rightsPageSource[activeField] || activeSource)
             : null
@@ -970,6 +985,8 @@ setActiveField(fieldId)
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
+                                layout={contractLayout}
+                                activeClauseId={activeClauseId}
                             />
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">
