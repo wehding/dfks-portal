@@ -407,7 +407,7 @@ export default function OrganisationSettingsPage() {
           <Input
             id="statistics-minimum-group-size"
             type="number"
-            min={1}
+            min={3}
             max={100}
             value={form.statistics_minimum_group_size}
             onChange={event => setForm(current => ({ ...current, statistics_minimum_group_size: Number(event.target.value) }))}
@@ -415,7 +415,7 @@ export default function OrganisationSettingsPage() {
           <p className="text-xs text-muted-foreground">Standard er 5. Grænsen tæller forskellige rettighedshavere — ikke kontrakter — og bruges også i filtre, grafer, AI-svar og eksport.</p>
           {form.statistics_minimum_group_size < 5 && (
             <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
-              Grupper med færre end 5 personer giver svag eller ingen anonymitet. Ved grænsen 1 kan et resultat beskrive én person.
+              Grupper under standarden på 5 personer kræver særlig omtanke. Den ufravigelige diskretionsgrænse er 3 forskellige personer.
             </div>
           )}
         </div>

@@ -25,6 +25,8 @@ export interface DbOrganisation {
     invite_email_text: string | null
     invite_reminder_text: string | null
     statistics_minimum_group_size: number
+    statistics_dominance_limit: number
+    statistics_low_sample_threshold: number
 }
 
 export interface OrgBranding {

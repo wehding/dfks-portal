@@ -7,7 +7,8 @@ type EnvKey =
   | "TMDB_API_KEY"
   | "GOOGLE_SERVICE_ACCOUNT_CLIENT_EMAIL"
   | "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
-  | "GOOGLE_GMAIL_SENDER";
+  | "GOOGLE_GMAIL_SENDER"
+  | "STATISTICS_PSEUDONYM_SECRET";
 
 export function getRequiredEnv(key: EnvKey) {
   const value = process.env[key];

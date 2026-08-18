@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { AiProviderHttpError, callAi } from "@/lib/ai-client";
 import { getAiRuntimeConfig } from "@/lib/ai-runtime";
 import { createAiUsageRun, finishAiUsageRun } from "@/lib/ai-usage";
@@ -20,10 +21,34 @@ import { buildStatisticsQuerySegments, describeStatisticsPlan } from "@/lib/stat
 import { createServiceClient } from "@/lib/supabase/service";
 import { getAnnualCpi } from "@/lib/statistics-cpi";
 import { companyMatchScore, normalizeCompanyBaseName, type ProductionCompanyOption } from "@/lib/production-companies";
+import { sampleSizeBand } from "@/lib/statistics/privacy-guard";
+import { buildStatisticsVisualization } from "@/lib/statistics/visualization";
+import { consumeRateLimit } from "@/lib/server/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 type ProducerCandidate = { id: string; name: string; score: number };
+const STATISTICS_CALCULATION_VERSION = "union-stats-v1";
+
+async function recordStatisticsAudit(input: {
+  orgId: string;
+  actorUserId: string;
+  plan: unknown;
+  suppressionCount: number;
+  pointCount: number;
+  seriesCount: number;
+}) {
+  const fingerprint = createHash("sha256").update(JSON.stringify(input.plan)).digest("hex");
+  const { error } = await createServiceClient().rpc("record_statistics_query_audit", {
+    target_org_id: input.orgId,
+    target_actor_user_id: input.actorUserId,
+    target_query_fingerprint: fingerprint,
+    target_calculation_version: STATISTICS_CALCULATION_VERSION,
+    target_suppression_count: input.suppressionCount,
+    target_result_shape: { pointCount: input.pointCount, seriesCount: input.seriesCount },
+  });
+  if (error) throw new Error("Statistikforespørgslen kunne ikke revisionslogges sikkert.");
+}
 
 async function resolveProducerNames(names: string[]) {
   if (!names.length) return { resolved: [] as Array<{ id: string; name: string }>, ambiguous: null as null | { query: string; candidates: ProducerCandidate[] } };
@@ -77,7 +102,7 @@ function classifyStatisticsQueryError(error: unknown) {
       unsupported_grouping: ["Spørgsmålet kræver en gruppering, som statistikmotoren endnu ikke understøtter.", "Brug år og højst to sammenligninger som produktionstype, kontrakttype eller producent."],
       person_query_not_allowed: ["Statistikmodulet må ikke vise eller rangere identificerbare personers løn- eller kontraktdata.", "Spørg i stedet til en anonymiseret gruppe med organisationens minimumsgrundlag."],
       missing_comparison_values: ["Systemet kan se, hvad der skal sammenlignes, men mangler navnene på grupperne.", "Skriv de konkrete faggrupper, producenter eller producenttyper i spørgsmålet."],
-      too_many_series: ["Spørgsmålet giver for mange samtidige kombinationer til en overskuelig og sikker visning.", "Brug højst tre mål og to sammenligningsdimensioner, eller del spørgsmålet op."],
+      too_many_series: ["Spørgsmålet giver for mange samtidige kombinationer til en overskuelig og sikker visning.", "Brug højst fire mål og to sammenligningsdimensioner, eller gør grupperingen bredere."],
       missing_plan: ["Spørgsmålet indeholdt ikke nok oplysninger til at vælge et sikkert statistikmål.", "Skriv hvilket mål og eventuelt hvilken periode eller sammenligning du ønsker."],
     }[error.code];
     return { status: 422, errorCode: error.code, reason: details[0], suggestion: details[1] } as const;
@@ -132,6 +157,18 @@ export async function POST(request: NextRequest) {
   const session = await createClient();
   const caller = await assertAdminRole(session, USER_ADMIN_ROLES);
   if (!caller) return NextResponse.json({ error: "Ingen statistikadgang" }, { status: 403 });
+  const rateLimit = await consumeRateLimit({
+    bucket: "statistics-query",
+    identifier: createHash("sha256").update(`${caller.orgId}:${caller.userId}`).digest("hex"),
+    limit: 30,
+    windowMs: 60 * 60 * 1000,
+  });
+  if (!rateLimit.allowed) {
+    return NextResponse.json(
+      { error: "For mange statistikforespørgsler", reason: "Forespørgselsgrænsen beskytter små grupper mod differensangreb.", suggestion: "Prøv igen senere." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } },
+    );
+  }
   const body = await request.json().catch(() => ({}));
   const question = typeof body.question === "string" ? body.question.trim().slice(0, 1000) : "";
   if (question.length < 5) return NextResponse.json({ error: "Skriv et statistikspørgsmål." }, { status: 400 });
@@ -200,6 +237,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!allSeries.length) {
+      await recordStatisticsAudit({
+        orgId: caller.orgId, actorUserId: caller.userId, plan,
+        suppressionCount: suppressedSegments, pointCount: 0, seriesCount: 0,
+      });
       await finishAiUsageRun(runId, "succeeded");
       return NextResponse.json({
         suppressed: true, minimum, plan, interpretedBy,
@@ -220,7 +261,13 @@ export async function POST(request: NextRequest) {
         inflationUnavailable = true;
       }
     }
-    const comparison = applyInflation(allSeries, inflation);
+    const comparison = applyInflation(allSeries, inflation).map(row => ({ ...row, sampleBand: sampleSizeBand(row.memberCount) }));
+    const visualization = buildStatisticsVisualization(comparison, plan.chart);
+    await recordStatisticsAudit({
+      orgId: caller.orgId, actorUserId: caller.userId, plan,
+      suppressionCount: suppressedSegments, pointCount: comparison.length,
+      seriesCount: new Set(comparison.map(row => row.seriesKey)).size,
+    });
     await finishAiUsageRun(runId, "succeeded");
     const caveats = [
       ...(comparison.some(row => row.lowSample) ? ["Mindst ét datapunkt bygger på færre end fem forskellige personer og skal tolkes med forsigtighed."] : []),
@@ -239,6 +286,7 @@ export async function POST(request: NextRequest) {
       includeDrafts,
       lowSample: comparison.some(row => row.lowSample),
       series: comparison,
+      visualization,
       metricMeta: plan.metrics.map(metric => ({ metric, ...STATISTICS_METRIC_META[metric] })),
       caveats,
       explanation: `${comparison.length} aggregerede datapunkter i ${new Set(comparison.map(row => row.seriesKey)).size} serie(r). Hvert person-gennemsnit vægter én gang i løn-, pensions- og arbejdsugeberegninger.`,

@@ -1,5 +1,5 @@
 export const DEFAULT_STATISTICS_MINIMUM_GROUP_SIZE = 5;
-export const MIN_STATISTICS_MINIMUM_GROUP_SIZE = 1;
+export const MIN_STATISTICS_MINIMUM_GROUP_SIZE = 3;
 export const MAX_STATISTICS_MINIMUM_GROUP_SIZE = 100;
 export const LOW_SAMPLE_MEMBER_THRESHOLD = 5;
 
@@ -11,6 +11,8 @@ export function normalizeStatisticsMinimumGroupSize(value: unknown) {
     Math.max(MIN_STATISTICS_MINIMUM_GROUP_SIZE, parsed),
   );
 }
+
+export { sampleSizeBand } from "@/lib/statistics/privacy-guard";
 
 export function distinctStatisticsMembers<T extends { rightsHolderId: string }>(items: T[]) {
   return new Set(items.map(item => item.rightsHolderId).filter(Boolean)).size;

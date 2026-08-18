@@ -107,7 +107,7 @@ export const STATISTICS_QUERY_PLAN_SCHEMA: Record<string, unknown> = {
 export function statisticsQuerySystemPrompt(currentYear = new Date().getFullYear()) {
   return `Du oversætter danske statistikspørgsmål til en lukket JSON-plan.
 Returnér kun JSON med: metrics, groupBy, compareBy, filters, chart og adjustForInflation.
-metrics er et array med 1–3 af: median_monthly_salary, average_monthly_salary, average_pension, median_working_weeks, average_working_weeks, contract_count, contributions, copydan_share, streaming_share, royalty_share, ai_clause_share.
+metrics er et array med 1–4 af: median_monthly_salary, average_monthly_salary, average_pension, median_working_weeks, average_working_weeks, contract_count, contributions, copydan_share, streaming_share, royalty_share, ai_clause_share.
 Brug median_monthly_salary ved "medianløn" og average_monthly_salary ved "gennemsnitsløn". Ved løn uden præcisering bruges kun median_monthly_salary.
 groupBy skal være year. chart må være line, bar eller table.
 compareBy er et array med højst to af: category, contract_type, producer, gender, producer_type, membership_type, profession_type, experience_group.
@@ -250,7 +250,7 @@ export function predefinedStatisticsQueryPlan(question: string): StatisticsQuery
   if (includesAny(value, ["ai-forbehold", "ai forbehold", "data-mining", "datamining"])) addMetric("ai_clause_share");
   if (!metrics.length) return null;
 
-  const plan = emptyPlan(metrics.slice(0, 3));
+  const plan = emptyPlan(metrics.slice(0, 4));
   if (value.includes("spillefilm")) plan.filters.categories.push("feature");
   if (includesAny(value, ["dokumentarserie", "dokumentar-serie", "dok-serie", "dok serie"])) plan.filters.categories.push("docSeries");
   if (value.includes("dokumentarfilm") || (value.includes("dokumentar") && !plan.filters.categories.includes("docSeries"))) plan.filters.categories.push("documentary");
@@ -298,7 +298,7 @@ export function parseStatisticsQueryPlan(value: unknown): StatisticsQueryPlan {
   if (!value || typeof value !== "object") throw new StatisticsQueryPlanError("missing_plan", "AI-planen mangler.");
   const raw = value as Record<string, unknown>;
   const rawMetrics = Array.isArray(raw.metrics) ? raw.metrics : [raw.metric ?? raw.measure ?? raw.target];
-  const metrics = [...new Set(rawMetrics.map(normalizedMetric).filter((metric): metric is StatisticsMetric => Boolean(metric)))].slice(0, 3);
+  const metrics = [...new Set(rawMetrics.map(normalizedMetric).filter((metric): metric is StatisticsMetric => Boolean(metric)))].slice(0, 4);
   if (!metrics.length) throw new StatisticsQueryPlanError("unsupported_metric", "Spørgsmålet bruger et mål, som statistikmotoren ikke tillader.");
   const rawGroupBy = Array.isArray(raw.groupBy) ? raw.groupBy[0] : raw.groupBy ?? raw.group_by ?? "year";
   if (rawGroupBy !== "year" && rawGroupBy !== "år") throw new StatisticsQueryPlanError("unsupported_grouping", "Kun gruppering pr. år er understøttet endnu.");
