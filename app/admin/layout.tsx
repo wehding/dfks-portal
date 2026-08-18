@@ -192,7 +192,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             const orgId = context.orgId
 
             const [contractsRes, worksRes, contractMessagesRes, workMessagesRes, reviewsRes, screeningsRes] = await Promise.all([
-                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde").not("work_id", "is", null),
+                supabase.from("contracts").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "kladde"),
                 supabase.from("work_change_requests").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "pending"),
                 supabase.from("contract_comments").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("author_role", "member").is("admin_read_at", null),
                 supabase.from("work_change_request_comments").select("id, work_change_requests!inner(org_id)", { count: "exact", head: true }).eq("author_role", "member").is("admin_read_at", null).eq("work_change_requests.org_id", orgId),
