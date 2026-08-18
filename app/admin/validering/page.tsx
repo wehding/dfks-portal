@@ -912,10 +912,14 @@ setActiveField(fieldId)
         }
         // Lag 5: map aktivt felt til klausul-ID fra sources (primær) — fallback til teksthighlight
         const FIELD_TO_CLAUSE_ID: Record<string, string | null | undefined> = {
+            workTitle: sources.workTitle_clause_id,
             salary: sources.salary_clause_id,
             pension: sources.pension_clause_id,
             supplements: sources.supplements_clause_id,
+            otherSupplements: sources.otherSupplements_clause_id,
             dates: sources.dates_clause_id,
+            workingWeeks: sources.workingWeeks_clause_id,
+            agreement: sources.collectiveAgreement_clause_id,
             copydan: sources.copydan_clause_id,
             svod: sources.svod_clause_id,
             royalty: sources.royalty_clause_id,
