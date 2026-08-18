@@ -14,7 +14,7 @@ import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
-import { resolveAgreementsCode } from "@/lib/overenskomst-alias-map"
+import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
     CONTRACT_EXTRACTION_SCHEMA_VERSION,
@@ -189,18 +189,22 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
             .neq("kategori", "lønskema")
 
         if (detectedOverenskomst && detectedOverenskomst !== "ingen" && detectedOverenskomst !== "ukendt") {
-            // Oversæt kort kanonisk id (fx "de4-fiktion") til agreements.code (fx "de4-fiction-2022")
-            // via den autoritative alias-mapping — direkte strengmatch ville aldrig ramme pga. format-forskel.
-            const agreementsCode = resolveAgreementsCode(detectedOverenskomst) ?? detectedOverenskomst
-            const { data: agrRow } = await supabaseForIds
-                .from("agreements")
-                .select("id")
-                .eq("code", agreementsCode)
-                .maybeSingle()
-            if (agrRow?.id) {
-                overenskomstQuery = overenskomstQuery.eq("agreement_id", agrRow.id)
+            // Dato-bevidst opslag: find den overenskomstversion der var gyldig på kontraktdatoen.
+            const versionResult = await resolveAgreementByDate(detectedOverenskomst, detectedContractDate)
+            if (versionResult.found) {
+                // Hent agreements.id til direkte kobling mod knowledge_chunks.agreement_id
+                const { data: agrRow } = await supabaseForIds
+                    .from("agreements")
+                    .select("id")
+                    .eq("code", versionResult.code)
+                    .maybeSingle()
+                if (agrRow?.id) {
+                    overenskomstQuery = overenskomstQuery.eq("agreement_id", agrRow.id)
+                } else {
+                    overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
+                }
             } else {
-                // Ingen agreements-række fundet — søg direkte på overenskomst-streng
+                // Ingen dækkende version fundet — søg direkte på klassifikator-id'et
                 overenskomstQuery = overenskomstQuery.eq("overenskomst", detectedOverenskomst)
             }
         } else if (detectedOverenskomst === "ingen") {

@@ -20,7 +20,7 @@ import { FEW_SHOT_EXAMPLES, TONE_REGLER } from "@/lib/few-shot-examples"
 import { MAIL_FORMAT_PROMPT } from "@/lib/mail-format-prompt"
 import { findParentMember } from "@/lib/db/employers"
 import { errorMessage, logInfo, logWarn } from "@/lib/server-log"
-import { resolveAgreementsCode } from "@/lib/overenskomst-alias-map"
+import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import { getAgreementSatserForContext } from "@/lib/agreement-wage-server"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
 
@@ -60,6 +60,7 @@ export type Klassifikation = {
     kontrakttype: "a-loen" | "leverandoer" | "hybrid"
     er_overenskomst: boolean
     overenskomst_navn: string | null
+    kontraktdato: string | null
     membres_fornavn: string
     membres_efternavn: string
     aftalt_loen: number | null
@@ -97,6 +98,7 @@ Returnér JSON med disse felter:
   "kontrakttype": "a-loen" ELLER "leverandoer" ELLER "hybrid",
   "er_overenskomst": true/false (er producenten sandsynligvis overenskomstdækket via Producentforeningen?),
   "overenskomst_navn": "de4-fiktion" ELLER "faf" ELLER "faf-dokumentar" ELLER "dj" ELLER "metal" ELLER null,
+  "kontraktdato": "YYYY-MM-DD (kontraktens underskrifts- eller startdato) eller null",
   "membres_fornavn": "fornavn på klipperen/medarbejderen",
   "membres_efternavn": "efternavn",
   "aftalt_loen": tal (kun nummeret, fx 17500) eller null,
@@ -122,6 +124,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
         kontrakttype: "hybrid",
         er_overenskomst: false,
         overenskomst_navn: null,
+        kontraktdato: null,
         membres_fornavn: "",
         membres_efternavn: "",
         aftalt_loen: null,
@@ -152,6 +155,7 @@ Brug "ukendt" KUN hvis produktionen klart er sat i produktion men typen ikke kan
             kontrakttype: p.kontrakttype ?? "hybrid",
             er_overenskomst: p.er_overenskomst ?? false,
             overenskomst_navn: p.overenskomst_navn ?? null,
+            kontraktdato: typeof p.kontraktdato === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p.kontraktdato) ? p.kontraktdato : null,
             membres_fornavn: p.membres_fornavn ?? "",
             membres_efternavn: p.membres_efternavn ?? "",
             aftalt_loen: typeof p.aftalt_loen === "number" ? p.aftalt_loen : null,
@@ -560,13 +564,20 @@ export async function analyserKontrakt(input: AnalyseInput): Promise<AnalyseOutp
         logWarn("analyse", "Klassifikation fejlede, fortsætter uden", { error: errorMessage(e) })
     }
 
-    // ── Hent DB-satser baseret på klassifikation ──────────────
+    // ── Hent DB-satser baseret på klassifikation (dato-bevidst) ──
     let dbSatser: Array<{ beskrivelse: string; vaerdi: number; enhed: string }> = []
     try {
         const overenskomstNavn = klassifikation?.overenskomst_navn ?? "de4-fiktion"
-        const agreementsCode = resolveAgreementsCode(overenskomstNavn)
-        if (agreementsCode) {
-            dbSatser = await getAgreementSatserForContext(agreementsCode)
+        const kontraktdato = klassifikation?.kontraktdato ?? null
+        const versionResult = await resolveAgreementByDate(overenskomstNavn, kontraktdato)
+        if (versionResult.found) {
+            dbSatser = await getAgreementSatserForContext(versionResult.code)
+        } else {
+            logWarn("analyse", "Ingen overenskomstversion fundet til sats-hentning", {
+                overenskomst: overenskomstNavn,
+                kontraktdato,
+                reason: versionResult.reason,
+            })
         }
     } catch (e) {
         logWarn("analyse", "Sats-hentning fejlede", { error: errorMessage(e) })
