@@ -241,6 +241,8 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     useEffect(() => {
         if (!activeClauseId || !layout) return
         const clause = layout.clauses.find(c => c.id === activeClauseId)
+        // [LAG5-C] Trin 3: findes klausulen og har den pdfBbox?
+        console.log(`[LAG5-C] activeClauseId=${activeClauseId}, fundet=${!!clause}, pdfBbox=${clause?.pdfBbox ? JSON.stringify(clause.pdfBbox) : "MANGLER"}, pageViewport=${pageViewport ? `${pageViewport.renderedWidth}x${pageViewport.renderedHeight}` : "NULL"}`)
         if (!clause) return
         const targetPage = clause.page ?? 1
         if (targetPage !== pageNumber) {
