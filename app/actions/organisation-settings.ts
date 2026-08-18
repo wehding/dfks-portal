@@ -164,7 +164,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   if (!Number.isInteger(rawStatisticsMinimumGroupSize)
     || rawStatisticsMinimumGroupSize < MIN_STATISTICS_MINIMUM_GROUP_SIZE
     || rawStatisticsMinimumGroupSize > MAX_STATISTICS_MINIMUM_GROUP_SIZE) {
-    throw new Error("Statistikgrænsen skal være et helt tal mellem 1 og 100.");
+    throw new Error(`Statistikgrænsen skal være et helt tal mellem ${MIN_STATISTICS_MINIMUM_GROUP_SIZE} og ${MAX_STATISTICS_MINIMUM_GROUP_SIZE}.`);
   }
   const statisticsMinimumGroupSize = normalizeStatisticsMinimumGroupSize(rawStatisticsMinimumGroupSize);
   const statisticsProfileConfig = {
@@ -200,7 +200,7 @@ export async function updateOrganisationSettings(payload: OrganisationSettingsPa
   if (statisticsMinimumGroupSize < 5
     && statisticsMinimumGroupSize !== previousStatisticsMinimum
     && payload.confirm_low_statistics_threshold !== true) {
-    throw new Error("Bekræft, at en statistikgrænse under 5 kan gøre enkeltpersoner genkendelige.");
+    throw new Error("Bekræft, at en statistikgrænse under standarden på 5 kræver skærpet diskretion.");
   }
 
   const branding: OrgBranding = {

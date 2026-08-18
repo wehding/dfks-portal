@@ -117,6 +117,19 @@ test("rettighedsforbehold bliver selvstændige procentmål", () => {
   assert.deepEqual(plan?.metrics, ["copydan_share", "streaming_share"]);
 });
 
+test("løn, Copydan og streaming bevares som tre mål i ét spørgsmål", () => {
+  const plan = predefinedStatisticsQueryPlan("Hvordan har andelen med Copydan- og streamingforbehold udviklet sig over alle år sammenholdt med løn?");
+  assert.deepEqual(plan?.metrics, ["median_monthly_salary", "copydan_share", "streaming_share"]);
+});
+
+test("queryplan kan bevare fire målepunkter", () => {
+  const plan = parseStatisticsQueryPlan({
+    metrics: ["median_monthly_salary", "average_pension", "copydan_share", "streaming_share"],
+    groupBy: "year", compareBy: [], chart: "line", adjustForInflation: false, filters: {},
+  });
+  assert.equal(plan.metrics.length, 4);
+});
+
 test("fordeling uden konkrete faste værdier får sikre standardgrupper", () => {
   const plan = parseStatisticsQueryPlan({
     metrics: ["contract_count"], groupBy: "year", compareBy: ["contract_type"], chart: "bar", adjustForInflation: false, filters: {},

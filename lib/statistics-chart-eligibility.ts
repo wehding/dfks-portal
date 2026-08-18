@@ -1,6 +1,6 @@
 export const STATISTICS_CHART_TYPES = [
   "table", "bar", "horizontal_bar", "grouped_bar", "stacked_bar", "pie", "donut",
-  "stacked_100", "line", "area", "histogram", "box_plot", "scatter", "bubble",
+  "stacked_100", "line", "area", "composed", "indexed_line", "histogram", "box_plot", "scatter", "bubble",
 ] as const;
 
 export type StatisticsChartType = typeof STATISTICS_CHART_TYPES[number];
@@ -20,6 +20,8 @@ export function evaluateChartEligibility(chart: StatisticsChartType, shape: Char
   if (shape.pointCount < 1) return { eligible: false, score: 0, reason: "Resultatet indeholder ingen datapunkter." };
   if (chart === "table") return { eligible: true, score: 70 };
   if (chart === "line") return shape.timePointCount >= 2 ? { eligible: true, score: 100 } : { eligible: false, score: 0, reason: "Linjediagram kræver mindst to tidspunkter." };
+  if (chart === "composed") return shape.timePointCount >= 2 && shape.numericDimensions >= 2 ? { eligible: true, score: 100 } : { eligible: false, score: 0, reason: "Kombineret diagram kræver en fælles tidsakse og mindst to måleenheder." };
+  if (chart === "indexed_line") return shape.timePointCount >= 2 && shape.seriesCount >= 2 ? { eligible: true, score: 95 } : { eligible: false, score: 0, reason: "Indeksvisning kræver mindst to serier og to fælles tidspunkter." };
   if (chart === "area") return shape.timePointCount >= 2 && shape.additive ? { eligible: true, score: 75 } : { eligible: false, score: 0, reason: "Arealdiagram kræver en tidsserie med værdier, der kan summeres meningsfuldt." };
   if (chart === "bar" || chart === "horizontal_bar") return shape.categoryCount <= 20 ? { eligible: true, score: chart === "horizontal_bar" && shape.categoryCount > 6 ? 90 : 80 } : { eligible: false, score: 0, reason: "Søjlediagrammet har for mange kategorier." };
   if (chart === "grouped_bar") return shape.seriesCount >= 2 && shape.seriesCount <= 6 ? { eligible: true, score: 85 } : { eligible: false, score: 0, reason: "Grupperet søjlediagram kræver 2–6 sammenlignelige serier." };
