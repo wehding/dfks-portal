@@ -10,7 +10,7 @@ const enumText = (values: string[]) => nullable({ type: "string", enum: values }
 
 const sourceKeys = [
   "workTitle", "salary", "pension", "supplements", "otherSupplements", "dates",
-  "workingWeeks", "collectiveAgreement", "copydan", "svod", "royalty",
+  "workingWeeks", "collectiveAgreement", "copydan", "svod", "royalty", "prolongation",
 ] as const;
 
 const properties: Record<string, JsonSchema> = {
@@ -38,6 +38,8 @@ const properties: Record<string, JsonSchema> = {
   episodeNumbers: nullable({ type: "array", items: { type: "integer", minimum: 1 }, uniqueItems: true }),
   workingDays: number,
   workingWeeks: number,
+  prolongationWeeks: number,
+  prolongationNote: text,
   salary: number,
   salaryUnit: enumText(["weekly", "monthly", "daily", "total"]),
   salarySourceType: enumText(["weekly", "daily_converted", "hourly_converted", "lump_calculated", "invoice_line", "unknown"]),
