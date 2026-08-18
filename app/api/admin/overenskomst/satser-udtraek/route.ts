@@ -210,7 +210,28 @@ ${maskPersonalData(kildetekst).slice(0, 150_000)}`,
             return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
         }
         const clean = rawText.slice(first, last + 1).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")
-        const parsed = JSON.parse(clean)
+
+        let parsed: { kandidater?: unknown[] }
+        try {
+            parsed = JSON.parse(clean)
+        } catch {
+            // Forsøg at redde de kandidater der kom igennem ved at afkorte ved sidst komplette element
+            const arrStart = clean.indexOf("[")
+            if (arrStart === -1) {
+                return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
+            }
+            // Find sidst forekommende "},\n" eller "}," inden for arrayet
+            const lastComplete = Math.max(clean.lastIndexOf("},"), clean.lastIndexOf("}\n"))
+            if (lastComplete <= arrStart) {
+                return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
+            }
+            const salvaged = clean.slice(0, lastComplete + 1) + "]}"
+            try {
+                parsed = JSON.parse(salvaged)
+            } catch {
+                return NextResponse.json({ error: "AI-modellen returnerede et ugyldigt svar." }, { status: 502 })
+            }
+        }
 
         return NextResponse.json({
             kandidater: parsed.kandidater ?? [],
