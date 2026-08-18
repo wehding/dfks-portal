@@ -883,6 +883,7 @@ setActiveField(fieldId)
         }
 
         const prolongHl = resolve((sources as any).prolongation)
+        const creditHl = resolve(sources.creditedRoles)
         const salaryHl = salaryMeta.anker ?? safeNumberFallback(formData.salary)
         const workTitleHl = resolve(sources.workTitle)
         const datesHl = resolve(sources.dates)
@@ -924,6 +925,7 @@ setActiveField(fieldId)
             svod: sources.svod_clause_id,
             royalty: sources.royalty_clause_id,
             prolongation: sources.prolongation_clause_id,
+            creditedRoles: sources.creditedRoles_clause_id,
         }
         const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
         // [LAG5-DEBUG-B] Trin 2: er activeClauseId sat korrekt?
@@ -973,7 +975,7 @@ setActiveField(fieldId)
                         {/* Lokal DOCX-fil */}
                         {localPdfFile && (localPdfFile.name.endsWith(".docx") || localPdfFile.name.endsWith(".doc")) ? (
                             <TextViewer text={contractText} loading={textLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -982,7 +984,7 @@ setActiveField(fieldId)
                             <TextViewer
                                 text={storedDocxText ?? ""}
                                 loading={storedDocxLoading}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight} />
 
@@ -990,7 +992,7 @@ setActiveField(fieldId)
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[workTitleHl, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
@@ -1068,12 +1070,10 @@ setActiveField(fieldId)
                                     </F>
                                 )}
 
-                                {/* Portal-data fra klipper */}
-                                {formData.creditedRoles && (reviewingContract?.validation?.extracted_data as any)?.submittedByMember && (
-                                    <F src="klipper" label="★ Krediteret rolle (fra klipper)">
-                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
-                                    </F>
-                                )}
+                                {/* Kreditering */}
+                                <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
+                                    <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor, Supervising Editor..." />
+                                </F>
 
                                 <Separator />
 

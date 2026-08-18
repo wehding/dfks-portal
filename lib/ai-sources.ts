@@ -33,7 +33,9 @@ export const SOURCES_SCHEMA_PROMPT = `    "_sources": {
       "royalty": "Kopiér den KOMPLETTE tekstpassage FRA KONTRAKTEN der omhandler royaltybetaling — inkl. indirekte formuleringer som 'Producenten afregner royalties til [overenskomst] jf. overenskomst' eller 'Leverandøren vil være berettiget til en andel af disse royalties'. KUN hvis adskilt fra SVOD/streaming-afsnittet. Max 400 tegn. VIGTIGT: hvis royaltyprocenten er UDLEDT fra overenskomstkonteksten uden at stå eksplicit i kontrakten, citér i stedet den sætning i kontrakten der henviser til/inkorporerer overenskomsten (fx 'ansættelsen sker i henhold til [overenskomst]') — SÆT ALDRIG selve procenttallet ind som citat, det er ikke en tekstpassage og kan ikke highlightes i dokumentet. Null hvis hverken royaltytekst eller overenskomst-henvisning findes.",
       "royalty_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i royalty — direkte aflæsning. Null hvis ikke annoteret.",
       "prolongation": "EKSAKT tekststreng der viser prolongations-/optionsklausulen — kopiér sætningen der nævner antal optionsuger/-dage og eventuel ferieperiode, fx 'op til 2 ugers prolongation', 'mulighed for forlængelse med 3 uger', eller 'mulighed for prolongation i ___4___ dage' (inkl. evt. understregninger/udfyldningslinjer omkring tallet, som de faktisk står i kontrakten). Max 120 tegn eller null.",
-      "prolongation_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i prolongation — direkte aflæsning. Null hvis ikke annoteret."
+      "prolongation_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i prolongation — direkte aflæsning. Null hvis ikke annoteret.",
+      "creditedRoles": "EKSAKT tekststreng fra kontrakten der nævner klipperens/leverandørens kreditering — kopiér sætningen der beskriver hvilken titel/rolle personen krediteres med, fx 'krediteres som Klipper', 'Film Editor credit', 'kreditering: Supervising Editor' — max 120 tegn eller null",
+      "creditedRoles_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i creditedRoles — direkte aflæsning. Null hvis ikke annoteret."
     }`
 
 export type AiSources = {
@@ -61,6 +63,8 @@ export type AiSources = {
     royalty_clause_id?: string | null
     prolongation?: string | null
     prolongation_clause_id?: string | null
+    creditedRoles?: string | null
+    creditedRoles_clause_id?: string | null
 }
 
 /** Strip a source quote at the first heading boundary (camelCase or newline). */
@@ -177,5 +181,7 @@ export function normaliseSources(raw: Record<string, string | null>, knownClause
         royalty_clause_id: resolveId("royalty", "royalty_clause_id"),
         prolongation: stripClauseIdPrefix(raw.prolongation),
         prolongation_clause_id: resolveId("prolongation", "prolongation_clause_id"),
+        creditedRoles: stripClauseIdPrefix(raw.creditedRoles),
+        creditedRoles_clause_id: resolveId("creditedRoles", "creditedRoles_clause_id"),
     }
 }
