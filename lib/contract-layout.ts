@@ -125,11 +125,16 @@ function groupLinesToClauses(lines: PdfLine[]): LayoutClause[] {
         const id = `s${page}_c${clauseCountPerPage[page]}`
 
         // Bounding box: samlet Y-spand + X-spand
+        // PDF.js' y-værdier er grundlinjer (baseline), ikke bunden af glyferne.
+        // Tekst strækker sig ca. 75% af linjehøjden OVER grundlinjen (ascent)
+        // og 25% UNDER (descent) — brug medianHeight som repræsentativ linjehøjde.
         const ys = clauseLines.map(l => l.y)
         const xs = clauseLines.map(l => l.x)
         const rights = clauseLines.map(l => l.x + l.width)
-        const maxY = Math.max(...ys)
-        const minY = Math.min(...ys) - clauseLines[clauseLines.length - 1].height
+        const topBaseline    = Math.max(...ys)
+        const bottomBaseline = Math.min(...ys)
+        const bboxTop    = topBaseline    + medianHeight * 0.75   // over øverste grundlinje
+        const bboxBottom = bottomBaseline - medianHeight * 0.25   // under nederste grundlinje
         const minX = Math.min(...xs)
         const maxX = Math.max(...rights)
 
@@ -139,7 +144,7 @@ function groupLinesToClauses(lines: PdfLine[]): LayoutClause[] {
             text,
             bold: clauseLines[0].bold,
             numbered: NUMBERED_RE.test(text.trimStart()),
-            pdfBbox: { x: minX, y: minY, width: maxX - minX, height: maxY - minY },
+            pdfBbox: { x: minX, y: bboxBottom, width: maxX - minX, height: bboxTop - bboxBottom },
         })
         clauseLines = []
     }

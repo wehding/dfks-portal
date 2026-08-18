@@ -280,22 +280,28 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
 
     useEffect(() => {
         if (!containerRef.current || !pageRendered) return
+        // Lag 5 og tekst-søgning er gensidigt udelukkende:
+        // hvis koordinat-boksen dækker det aktive felt, undertrykkes den grønne ord-markering.
+        const hasCoordinateBox = !!(
+            activeClauseId && layout &&
+            layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)?.pdfBbox
+        )
+        const effectiveActiveHighlight = hasCoordinateBox ? null : activeHighlight
         let attempts = 0
         let timer: ReturnType<typeof setTimeout>
         const tryApply = () => {
             if (!containerRef.current) return
             const textLayer = containerRef.current.querySelector(".react-pdf__Page__textContent")
             const spans = textLayer ? Array.from(textLayer.querySelectorAll("span")) as HTMLElement[] : []
-            // If any regular highlight is on this page, OR no highlights exist, proceed
             const hasPageContent = spans.length > 10
             if (!hasPageContent) {
                 if (attempts++ < 15) { timer = setTimeout(tryApply, 200); return }
             }
-            applyHighlights(containerRef.current, highlights, activeHighlight, sectionHighlights)
+            applyHighlights(containerRef.current, highlights, effectiveActiveHighlight, sectionHighlights)
         }
         timer = setTimeout(tryApply, 300)
         return () => clearTimeout(timer)
-    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered])
+    }, [highlights, sectionHighlights, activeHighlight, pageNumber, pageRendered, activeClauseId, layout])
 
 
     if (error) {
