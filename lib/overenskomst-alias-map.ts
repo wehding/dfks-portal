@@ -20,8 +20,9 @@ export const OVERENSKOMST_ALIAS_MAP: Readonly<Record<string, string>> = {
 } as const
 
 /**
- * Slår et kort eller langt overenskomst-id op og returnerer agreements.code.
- * Returnerer null hvis id'et ikke kendes.
+ * @deprecated Brug resolveAgreementByDate() fra lib/agreement-version-resolver.ts i stedet.
+ * Denne funktion er statisk og dato-uafhængig — den returnerer altid nyeste version.
+ * Bevaret til reference og eventuel nødfallback.
  */
 export function resolveAgreementsCode(shortOrLong: string | null | undefined): string | null {
     if (!shortOrLong) return null
