@@ -11,7 +11,7 @@
 // Each field must be an EXACT quote from the contract so the PDF highlighter can locate it.
 export const SOURCES_SCHEMA_PROMPT = `    "_sources": {
       "workTitle": "EKSAKT tekststreng der nævner produktionens/filmens titel — kopiér sætningen med titlen, f.eks. 'produktionen 'MIN FILM'' eller 'arbejdet med serien \"TITLEN\"' — max 80 tegn eller null",
-      "salary": "EKSAKT tekststreng fra kontrakten der indeholder DET FAKTISKE, GÆLDENDE honorar — kopiér sætningen der nævner beløbet, f.eks. 'grundløn på __14.637__ DKK pr. uge' eller 'honorar på 45.000 kr. pr. måned' — max 120 tegn eller null. Kontrakten kan indeholde flere alternative lønformer i skabelonen (fx både en ugeløns-klausul og en klumpsum-klausul), hvor kun én er reelt udfyldt/afkrydset/gældende — citér ALTID den faktisk anvendte klausul, ikke en ubrugt alternativ betalingsform, selvom den også nævner et beløb eller ligner en lønklausul.",
+      "salary": "EKSAKT tekststreng fra kontrakten der indeholder DET FAKTISKE, GÆLDENDE honorar — kopiér sætningen der nævner beløbet, f.eks. 'grundløn på __14.637__ DKK pr. uge' eller 'honorar på 45.000 kr. pr. måned' — max 120 tegn eller null. VIGTIGT — skabeloner har ofte flere alternative betalingsklausuler (fx både A. Ugeløn og B. Klumpsum), hvor kun én er udfyldt: en klausul med KUN en streg/understregning og INGEN tal i beløbsfeltet (fx 'løn på _' eller 'løn på ___') er UBRUGT — citér ALDRIG en sådan klausul, uanset hvor tæt den ellers ligner en lønbestemmelse. Citér udelukkende den klausul, hvor der rent faktisk står et konkret tal.",
       "pension": "EKSAKT og UNIK tekststreng der kun findes i pensionsafsnittet — brug f.eks. procentsatsen med ord der omgiver den: '9,5 % af grundlønnen' eller 'pensionsbidrag (9,5 %' — vælg den korteste streng der KUN forekommer i pensionsafsnittet og ingen andre steder (max 60 tegn) eller null",
       "supplements": "EKSAKT tekststreng der indeholder afsnittet om personlige tillæg inkl. selve beløbet — kopiér fra 'personlige tillæg' og frem til beløbet, f.eks. 'personlige tillæg:___1.586' eller 'følgende personlige tillæg:' — max 60 tegn eller null",
       "otherSupplements": "EKSAKT tekststreng der indeholder afsnittet om andre tillæg (ikke personlige tillæg) — kopiér den sætning der nævner tillægget, f.eks. 'tillæg for særlige opgaver' eller 'øvrige tillæg: 500 kr.' — max 80 tegn eller null",
@@ -50,6 +50,17 @@ export function clipSourceHeading(s: string | null | undefined): string | null {
 }
 
 /**
+ * En sats-/beløbscitation uden et eneste ciffer kan pr. definition ikke være et
+ * udfyldt beløbsfelt — kun en ubrugt skabelon-klausul (fx "løn på ___" med kun
+ * en streg). Mekanisk sikkerhedsnet: kasser citatet uafhængigt af om AI'en
+ * fulgte instruksen om at undgå ubrugte alternative klausuler.
+ */
+export function discardIfNoDigits(s: string | null | undefined): string | null {
+    if (!s) return null
+    return /\d/.test(s) ? s : null
+}
+
+/**
  * Et citat der KUN er et tal/procentangivelse (fx "1%", "1,0 %") er ikke en
  * tekstpassage fra kontrakten — det er en udledt værdi, AI'en fejlagtigt har
  * sat ind som "kilde". Sådan et citat kan aldrig meningsfuldt highlightes
@@ -65,6 +76,7 @@ export function discardIfBareNumber(s: string | null | undefined): string | null
 export function normaliseSources(raw: Record<string, string | null>): AiSources {
     return {
         ...raw,
+        salary: discardIfNoDigits(raw.salary),
         copydan: clipSourceHeading(raw.copydan),
         svod: clipSourceHeading(raw.svod),
         royalty: discardIfBareNumber(clipSourceHeading(raw.royalty)),
