@@ -176,8 +176,8 @@ export function applyAgreementPension(
   const creditedFunction = input.creditedFunction ?? input.role ?? input.professionType;
   const candidates = rules.filter(rule =>
     rule.agreementCode === agreementCode
-    && rule.agreementStatus === "approved"
-    && rule.status === "approved"
+    && rule.agreementStatus !== "draft"
+    && rule.status !== "draft"
     && rule.employmentForm === employmentForm
   );
 

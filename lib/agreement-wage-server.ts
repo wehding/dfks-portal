@@ -44,8 +44,8 @@ export async function getApprovedAgreementWageRules(agreementCode?: string): Pro
   let query = db
     .from("agreement_wage_rules")
     .select("id,profession_role,wage_group,employment_form,rate_kind,amount,currency,unit,pension_included,valid_from,valid_to,source_title,source_url,source_section,source_note,status,agreements!inner(code,title,status,production_types,profession_roles)")
-    .eq("status", "approved")
-    .eq("agreements.status", "approved");
+    .in("status", ["approved", "archived"])
+    .in("agreements.status", ["approved", "archived"]);
 
   if (agreementCode) {
     query = query.eq("agreements.code", agreementCode);
@@ -108,12 +108,12 @@ export async function getAgreementSatserForContext(
     db
       .from("agreement_pension_rules")
       .select("employer_percent,employee_percent,basis,employment_form,agreements!inner(code)")
-      .eq("status", "approved")
+      .in("status", ["approved", "archived"])
       .eq("agreements.code", agreementCode),
     db
       .from("agreement_percentage_rules")
       .select("label,label_key,percent,basis,trigger_condition,category,section_reference,agreements!inner(code)")
-      .eq("status", "approved")
+      .in("status", ["approved", "archived"])
       .eq("agreements.code", agreementCode)
       .order("category")
       .order("label"),
