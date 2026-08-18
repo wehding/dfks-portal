@@ -5,14 +5,11 @@
  * Import this in the "Prompter" tab of the AI-kontrolrum for read-only inspection.
  */
 
-import { BASE_SYSTEM_PROMPT } from "@/lib/analyse"
+// Only import from pure (non-server-only) prompt files — this module is used by a client component.
 import { OVERENSKOMST_ANALYSE_SYSTEM_PROMPT } from "@/lib/overenskomst-analyse-prompt"
 import { SATSER_UDTRAEK_SYSTEM_PROMPT } from "@/lib/satser-udtraek-prompt"
 import { GENERER_NOTERING_SYSTEM_PROMPT } from "@/lib/generer-notering-prompt"
-import {
-    CONTRACT_EXTRACTION_SYSTEM_PROMPT,
-    CONTRACT_EXTRACTION_SCHEMA_PROMPT,
-} from "@/lib/contract-extraction-prompt"
+import { CONTRACT_EXTRACTION_SYSTEM_PROMPT } from "@/lib/contract-extraction-prompt"
 import { SOURCES_SCHEMA_PROMPT } from "@/lib/ai-sources"
 
 export type PromptEntry = {
@@ -29,8 +26,8 @@ export const PROMPT_REGISTRY: PromptEntry[] = [
         id: "base-system",
         title: "Kontraktgennemgang — base system prompt",
         group: "Kontraktgennemgang",
-        description: "Juridisk rådgiver-identitet og JSON-struktur for kontraktgennemgang. Bruges i alle analyser via buildSystemPrompt().",
-        prompt: BASE_SYSTEM_PROMPT,
+        description: "Juridisk rådgiver-identitet og JSON-struktur for kontraktgennemgang. Bruges i alle analyser via buildSystemPrompt() i lib/analyse.ts (server-only).",
+        prompt: "Se lib/analyse.ts → BASE_SYSTEM_PROMPT (server-only — kan ikke vises i browser)",
         file: "lib/analyse.ts",
     },
     {
@@ -39,14 +36,6 @@ export const PROMPT_REGISTRY: PromptEntry[] = [
         group: "Kontraktvalidering",
         description: "Instruktion til AI om at udtrække strukturerede data fra en kontrakt og returnere JSON.",
         prompt: CONTRACT_EXTRACTION_SYSTEM_PROMPT,
-        file: "lib/contract-extraction-prompt.ts",
-    },
-    {
-        id: "contract-extraction-schema",
-        title: "Kontraktvalidering — feltskema",
-        group: "Kontraktvalidering",
-        description: "Komplet JSON-skema med alle felter der udtrækkes fra kontrakten, inkl. AI-sources.",
-        prompt: CONTRACT_EXTRACTION_SCHEMA_PROMPT,
         file: "lib/contract-extraction-prompt.ts",
     },
     {
