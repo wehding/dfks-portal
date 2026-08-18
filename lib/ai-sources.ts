@@ -77,6 +77,22 @@ export function discardIfNoDigits(s: string | null | undefined): string | null {
 }
 
 /**
+ * Et pension- eller supplement-citat skal indeholde et konkret DKK/kr.-beløb —
+ * ikke blot en procentsats. Kontraktskabeloner gentager pensionsformuleringen i
+ * alternative klausuler (fx B. Klumpsum) men med tomt beløbsfelt: "9,5 % ... ___DKK".
+ * Begge forekomster indeholder et ciffer (procentsatsen), men kun den udfyldte har
+ * et tal UMIDDELBART INDEN "DKK" eller "kr." — uden mellemliggende streger.
+ * Kasser citatet hvis "DKK"/"kr." kun er forudgået af streger/mellemrum (tomt felt).
+ */
+export function discardIfNoDkkAmount(s: string | null | undefined): string | null {
+    if (!s) return null
+    // Kræver mindst ét ciffer direkte inden DKK/kr. (evt. adskilt af punktum/komma/mellemrum)
+    // men IKKE kun streger "_" inden DKK/kr.
+    // [\d.,\s-]* tillader "2500 ,-DKK" (dansk format) — \d i starten udelukker "___-DKK"
+    return /\d[\d.,\s-]*\s*(DKK|kr\.)/i.test(s) ? s : null
+}
+
+/**
  * Et citat der KUN er et tal/procentangivelse (fx "1%", "1,0 %") er ikke en
  * tekstpassage fra kontrakten — det er en udledt værdi, AI'en fejlagtigt har
  * sat ind som "kilde". Sådan et citat kan aldrig meningsfuldt highlightes
@@ -103,9 +119,9 @@ export function normaliseSources(raw: Record<string, string | null>, knownClause
         ...raw,
         salary: discardIfNoDigits(raw.salary),
         salary_clause_id: validateId(raw.salary_clause_id),
-        pension: discardIfNoDigits(raw.pension),
+        pension: discardIfNoDkkAmount(raw.pension),
         pension_clause_id: validateId(raw.pension_clause_id),
-        supplements: discardIfNoDigits(raw.supplements),
+        supplements: discardIfNoDkkAmount(raw.supplements),
         supplements_clause_id: validateId(raw.supplements_clause_id),
         dates_clause_id: validateId(raw.dates_clause_id),
         copydan: clipSourceHeading(raw.copydan),

@@ -241,6 +241,8 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     useEffect(() => {
         if (!activeClauseId || !layout) return
         const clause = layout.clauses.find(c => c.id === activeClauseId)
+        // [LAG5-DEBUG-C] Trin 3+4: findes klausulen og har den pdfBbox?
+        console.log(`[LAG5-C] activeClauseId=${activeClauseId}, fundet=${!!clause}, pdfBbox=${clause?.pdfBbox ? JSON.stringify(clause.pdfBbox) : "MANGLER"}, pageViewport=${pageViewport ? `${pageViewport.renderedWidth}x${pageViewport.renderedHeight}` : "NULL"}`)
         if (!clause) return
         const targetPage = clause.page ?? 1
         if (targetPage !== pageNumber) {
@@ -249,21 +251,23 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         }
     }, [activeClauseId, layout]) // eslint-disable-line
 
-    // Lag 5: hent sidedimensioner fra pdfDoc når side ændres
+    // Lag 5: hent sidedimensioner fra pdfDoc via PDF-viewport * scale (ingen DOM-måling)
+    // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
+    // (DOM-måling via offsetWidth var upålidelig og skabte race condition med pageRendered)
     useEffect(() => {
-        if (!pdfDoc || !pageRendered) return
+        if (!pdfDoc) return
         pdfDoc.getPage(pageNumber).then((page: any) => {
             const vp = page.getViewport({ scale: 1 })
-            const pageEl = containerRef.current?.querySelector(".react-pdf__Page") as HTMLElement | null
-            if (!pageEl) return
-            setPageViewport({
+            const newVp = {
                 pdfWidth: vp.width,
                 pdfHeight: vp.height,
-                renderedWidth: pageEl.offsetWidth,
-                renderedHeight: pageEl.offsetHeight,
-            })
-        }).catch(() => {})
-    }, [pdfDoc, pageNumber, pageRendered, scale])
+                renderedWidth: vp.width * scale,
+                renderedHeight: vp.height * scale,
+            }
+            console.log(`[LAG5-D] pageViewport sat: ${newVp.renderedWidth.toFixed(0)}x${newVp.renderedHeight.toFixed(0)}px (PDF: ${newVp.pdfWidth}x${newVp.pdfHeight}pt, scale=${scale})`)
+            setPageViewport(newVp)
+        }).catch((e: unknown) => console.warn("[LAG5-D] getPage fejl:", e))
+    }, [pdfDoc, pageNumber, scale])
 
     const onDocumentLoadSuccess = useCallback(({ numPages }: { numPages: number }) => {
         setNumPages(numPages); setError(false)

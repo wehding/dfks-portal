@@ -709,6 +709,9 @@ function AdminValideringPageInner() {
                 if (!resp.ok) throw new Error(json.error)
                 if (json.data?._sources) setSources(normaliseSources(json.data._sources))
                 if (json.layout) setContractLayout(json.layout)
+                // [LAG5-DEBUG-A] Trin 1: er layout modtaget og indeholder det clauses?
+                console.log("[LAG5-A] layout i svar:", json.layout ? `${json.layout.clauses?.length} klausuler, type=${json.layout.type}` : "MANGLER")
+                console.log("[LAG5-A] salary_clause_id fra sources:", json.data?._sources?.salary_clause_id ?? "null/undefined")
                 if (json.maskedText) setContractText(json.maskedText)
                 overwriteWithAi(json.data)
                 toast.success("Felter opdateret fra AI-udtræk")
@@ -919,6 +922,8 @@ setActiveField(fieldId)
             prolongation: sources.prolongation_clause_id,
         }
         const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
+        // [LAG5-DEBUG-B] Trin 2: er activeClauseId sat korrekt?
+        if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
 
         const resolvedActiveHighlight = activeField
             ? (rightsHighlightSource[activeField] || rightsPageSource[activeField] || activeSource)
