@@ -97,7 +97,7 @@ Returnér JSON med disse felter:
 {
   "kontrakttype": "a-loen" ELLER "leverandoer" ELLER "hybrid",
   "er_overenskomst": true/false (er producenten sandsynligvis overenskomstdækket via Producentforeningen?),
-  "overenskomst_navn": "de4-fiktion" ELLER "faf" ELLER "faf-dokumentar" ELLER "dj" ELLER "metal" ELLER null,
+  "overenskomst_navn": "de4-fiktion" ELLER "faf" ELLER "faf-dokumentar" ELLER "dj" ELLER "metal" ELLER null (BEMÆRK: både De4's og FAF's overenskomst hedder "Fiktionsoverenskomsten" — afgør ALDRIG kun ud fra ordet "fiktion". Læs hvilken organisation der konkret er navngivet som modpart til Producentforeningen i overenskomstens overskrift/indledning, fx "Overenskomst mellem Producentforeningen og FAF" → "faf", "...og De4" → "de4-fiktion"),
   "kontraktdato": "YYYY-MM-DD (kontraktens underskrifts- eller startdato) eller null",
   "membres_fornavn": "fornavn på klipperen/medarbejderen",
   "membres_efternavn": "efternavn",

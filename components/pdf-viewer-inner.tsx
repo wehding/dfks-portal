@@ -60,9 +60,13 @@ function ensureHighlightCSS() {
     const style = document.createElement("style")
     style.id = id
     style.textContent = `
-        .react-pdf__Page__textContent span[data-hl="active"] {
+        .react-pdf__Page__textContent span[data-hl="match"] {
             background: rgba(253,224,71,0.55) !important;
             box-shadow: 0 0 0 1px rgba(202,138,4,0.45) !important;
+        }
+        .react-pdf__Page__textContent span[data-hl="active"] {
+            background: rgba(74,222,128,0.55) !important;
+            box-shadow: 0 0 0 1px rgba(21,128,61,0.55) !important;
         }
     `
     document.head.appendChild(style)
@@ -147,7 +151,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                     const matched = spanMap.filter(({ start, end }) => start < snEnd && end > snIdx)
                     if (!matched.length) continue
                     matched.forEach(({ span }) => {
-                        if (isActive) span.setAttribute("data-hl", "active")
+                        span.setAttribute("data-hl", isActive ? "active" : "match")
                     })
                     if (isActive && matched[0]) {
                         matched[0].span.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -163,7 +167,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
                 const trimmed = matched.filter(({ start }) => start < matchEnd)
                 if (!trimmed.length) continue
                 trimmed.forEach(({ span }) => {
-                    if (isActive) span.setAttribute("data-hl", "active")
+                    span.setAttribute("data-hl", isActive ? "active" : "match")
                 })
                 if (isActive && trimmed[0]) {
                     trimmed[0].span.scrollIntoView({ behavior: "smooth", block: "center" })

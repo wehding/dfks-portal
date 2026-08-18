@@ -66,7 +66,7 @@ Returner KUN JSON — ingen forklaringstekst.
   "holidayPayRate": "${HOLIDAY_PAY_RATE_RULE}",
   "betaRate": "${BETA_RATE_RULE}",
 
-  "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
+  "svod": "har kontrakten en SPECIFIK SVOD-rettighedsklausul — fx en eksplicit henvisning til SVOD-rammeaftalen mellem Producentforeningen og kunstnerorganisationerne, Create Denmark, eller at produktionen er bestilt direkte til en streamingtjeneste? Svar IKKE true, blot fordi 'streamingtjenester' nævnes som ét blandt flere distributionsled i en generel/bred rettighedsoverdragelse (fx en opremsning af biograf, tv, streaming, on demand osv. som eksempler på udnyttelsesformer) — det er standard boilerplate-sprog, ikke en SVOD-aftale. (boolean)",
   "copydan": "true ved Copydan, aftalelicens, privatkopiering, kollektivt forvaltningsselskab, §§ 13, 13a, 17, 30a, 35, 39-46a, 50 stk. 2 eller lignende vederlagsforbehold. (boolean)",
   "royalty": "true hvis kontrakten eksplicit aftaler individuel royaltybetaling til medarbejderen, ELLER hvis kontrakten inkorporerer en overenskomst der indeholder royalty-bestemmelser — herunder formuleringer som 'afregner royalties til [overenskomst] jf. overenskomst' eller 'leverandøren vil være berettiget til en andel af disse royalties efter nærmere aftale'. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
   "royaltyPercent": "royaltyprocent som tal (number | null). Udled satsen fra overenskomstkonteksten hvis kontrakten refererer til gældende overenskomst og ikke angiver en eksplicit sats — fx 1,0% for De4-fiktion (spillefilm), 1,5% for FAF-dokumentar.",
