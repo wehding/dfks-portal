@@ -558,21 +558,16 @@ function AdminValideringPageInner() {
             const contractType = formData.contractType === "leverandør-ref" ? "leverandør" : (formData.contractType ?? undefined)
             const overenskomstVal = formData.overenskomst === "ingen" ? null : (formData.overenskomst ?? undefined)
 
-            const validateRes = await fetch("/api/admin/contracts/validate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    contractId:     id,
-                    employerId:     resolvedEmployerId ?? null,
-                    contractType:   contractType ?? null,
-                    overenskomst:   overenskomstVal ?? null,
-                    rightsHolderId: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
-                }),
+            const { error: contractError } = await supabase.rpc("admin_validate_contract", {
+                p_contract_id:      id,
+                p_status:           "valideret",
+                p_employer_id:      resolvedEmployerId ?? null,
+                p_type:             contractType ?? null,
+                p_overenskomst:     overenskomstVal ?? null,
+                p_rights_holder_id: (selectedRhId && selectedRhId !== reviewingContract?.rights_holder_id) ? selectedRhId : null,
             })
-            if (!validateRes.ok) {
-                const err = await validateRes.json().catch(() => ({}))
-                throw new Error(`Kontraktstatus kunne ikke opdateres: ${err.error ?? validateRes.status}`)
-            }
+
+            if (contractError) throw new Error(`Kontraktstatus kunne ikke opdateres: ${contractError.message}`)
 
             leaveReview()
             window.dispatchEvent(new CustomEvent("contracts-updated"))
