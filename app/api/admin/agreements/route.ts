@@ -171,7 +171,7 @@ export async function PATCH(req: NextRequest) {
         const supabase = sb()
 
         if (body.agreementId) {
-            const allowed = ["title", "parties", "valid_from", "valid_to", "notes", "source_url", "content_url"]
+            const allowed = ["title", "parties", "short_code", "valid_from", "valid_to", "notes", "source_url", "content_url"]
             const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
             for (const key of allowed) {
                 if (key in body) patch[key] = body[key] === "" ? null : body[key]
