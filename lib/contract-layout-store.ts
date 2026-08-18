@@ -166,6 +166,15 @@ export function enrichSourcesWithClauseIds(
             match(discardIfNoDkkAmount(sources.pension)),
         supplements_clause_id: sources.supplements_clause_id ??
             match(discardIfNoDkkAmount(sources.supplements)),
+        // Tekstuelle felter: ingen beløbsfilter, men discardIfBareNumber fjerner løse tal
+        workTitle_clause_id: sources.workTitle_clause_id ??
+            match(sources.workTitle),
+        otherSupplements_clause_id: sources.otherSupplements_clause_id ??
+            match(discardIfBareNumber(sources.otherSupplements)),
+        workingWeeks_clause_id: sources.workingWeeks_clause_id ??
+            match(discardIfBareNumber(sources.workingWeeks)),
+        collectiveAgreement_clause_id: sources.collectiveAgreement_clause_id ??
+            match(sources.collectiveAgreement),
         // Øvrige: renset af normaliseSources før dette kald — send direkte
         dates_clause_id: sources.dates_clause_id ??
             match(discardIfBareNumber(sources.dates)),
