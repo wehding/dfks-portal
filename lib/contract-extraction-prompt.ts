@@ -46,8 +46,8 @@ Returner KUN JSON — ingen forklaringstekst.
   "episodeNumbers": "sorteret liste af afsnitsnumre, kun når konkrete afsnit udtrykkeligt nævnes; ellers null. Listen er kun et AI-forslag og er ikke medlemsbekræftelse.",
   "workingDays": "antal arbejdsdage/klippedage som tal. Hvis kun uger fremgår, brug uger * 5. Hvis uklart, null. (number | null)",
   "workingWeeks": "antal arbejdsuger som tal. Dage divideres med 5, måneder multipliceres med 4,33. (number | null)",
-  "prolongationWeeks": "antal optionsuger/prolongationsuger som tal, hvis det fremgår eksplicit (number | null). Eksempel: 'op til 2 ugers prolongation' → 2.",
-  "prolongationNote": "kort beskrivelse af prolongationsvilkåret med eventuel ferieperiode eller andre betingelser, hvis nævnt (string | null)",
+  "prolongationWeeks": "antal optionsuger/prolongationsuger som tal, hvis det fremgår eksplicit (number | null). Bestemmelsen kan stå i uger ELLER dage — hvis den står i dage, divider med 5 og afrund til nærmeste tal. Værdien kan være udfyldt i en skabelon med linjer/understregninger omkring tallet (fx '___4___ dage') — se bort fra understregninger og udfyld ud fra selve tallet. Eksempler: 'op til 2 ugers prolongation' → 2. 'mulighed for prolongation i ___4___ dage' → 1 (4 dage / 5). 'prolongation i 10 arbejdsdage' → 2.",
+  "prolongationNote": "kort beskrivelse af prolongationsvilkåret med eventuel ferieperiode eller andre betingelser, hvis nævnt (string | null). Angiv den oprindelige enhed (dage eller uger), som den fremgår af kontrakten, uanset hvad der er udledt i prolongationWeeks.",
 
   "salary": "UGELØN som tal uden valuta (number | null). Regler: eksplicit ugepris vinder; dagssats * 5; timesats * 37 medmindre 40 timer/uge står tydeligt; lump sum kun hvis periode er tydelig; ignorer moms/subtotal/fakturatotal/feriepenge/sociale omkostninger; tillæg lægges ikke oven i grundløn.",
   "salaryUnit": "weekly hvis salary er en ugeløn. Brug kun monthly, daily eller total hvis ugeløn ikke kan beregnes. (string | null)",
