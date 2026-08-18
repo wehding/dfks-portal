@@ -41,8 +41,8 @@ export async function getApprovedAgreementPensionRules() {
   const { data: rows, error } = await db
     .from("agreement_pension_rules")
     .select("id,employment_form,employer_percent,employee_percent,basis,scheme_kind,valid_from,valid_to,section_reference,source_note,status,agreements!inner(code,title,status,source_url,production_types,profession_roles)")
-    .eq("status", "approved")
-    .eq("agreements.status", "approved");
+    .in("status", ["approved", "archived"])
+    .in("agreements.status", ["approved", "archived"]);
 
   if (error) {
     // Migrationen kan mangle i et lokalt miljø. AI-aflæsning skal stadig virke,

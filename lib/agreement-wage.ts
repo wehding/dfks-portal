@@ -123,8 +123,8 @@ export function applyAgreementWage(
 
   const candidates = rules.filter(rule =>
     rule.agreementCode === agreementCode
-    && rule.agreementStatus === "approved"
-    && rule.status === "approved"
+    && rule.agreementStatus !== "draft"
+    && rule.status !== "draft"
     && rule.employmentForm === employmentForm
     && rule.rateKind === "normalløn"
   );
@@ -172,7 +172,7 @@ export function wageRulesToSatser(
   rules: AgreementWageRule[],
 ): Array<{ beskrivelse: string; vaerdi: number; enhed: string }> {
   return rules
-    .filter(r => r.status === "approved")
+    .filter(r => r.status !== "draft")
     .map(r => ({
       beskrivelse: `${r.rateKind}: ${r.professionRole}${r.wageGroup ? ` (${r.wageGroup})` : ""}`,
       vaerdi: r.amount,

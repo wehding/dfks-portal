@@ -1386,9 +1386,9 @@ function OverenskomsterTab() {
     const [nyOverenskomst, setNyOverenskomst] = useState("")
 
     // Stamdata-redigering: agreement.id → form state
-    type StamdataForm = { title: string; parties: string; valid_from: string; valid_to: string; notes: string; source_url: string; content_url: string }
+    type StamdataForm = { title: string; parties: string; short_code: string; valid_from: string; valid_to: string; notes: string; source_url: string; content_url: string }
     const [editStamdata, setEditStamdata] = useState<string | null>(null) // agreement.id
-    const [stamdataForm, setStamdataForm] = useState<StamdataForm>({ title: "", parties: "", valid_from: "", valid_to: "", notes: "", source_url: "", content_url: "" })
+    const [stamdataForm, setStamdataForm] = useState<StamdataForm>({ title: "", parties: "", short_code: "", valid_from: "", valid_to: "", notes: "", source_url: "", content_url: "" })
     const [stamdataSaving, setStamdataSaving] = useState(false)
 
     // Løn- og pensionsregel-redigering / oprettelse
@@ -1998,6 +1998,22 @@ function OverenskomsterTab() {
                                             <Label className="text-xs">Parter (kommasepareret)</Label>
                                             <Input className="h-7 text-xs" value={stamdataForm.parties} onChange={e => setStamdataForm(f => ({ ...f, parties: e.target.value }))} />
                                         </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Versionsgruppe</Label>
+                                            <input
+                                                list="short-code-list"
+                                                className="flex h-7 w-full rounded-md border border-input bg-background px-3 py-1 text-xs font-mono shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                placeholder="Vælg eksisterende eller skriv ny…"
+                                                value={stamdataForm.short_code}
+                                                onChange={e => setStamdataForm(f => ({ ...f, short_code: e.target.value.toLowerCase().replace(/\s+/g, "-") }))}
+                                            />
+                                            <datalist id="short-code-list">
+                                                {[...new Set(agreementRegistry.flatMap(a => [(a as Record<string, unknown>).short_code as string].filter(Boolean)))].map(sc => (
+                                                    <option key={sc} value={sc} />
+                                                ))}
+                                            </datalist>
+                                            <p className="text-[10px] text-muted-foreground">Brug samme gruppe på alle versioner af samme overenskomst, så systemet kan finde den rigtige version ud fra kontraktdatoen. Fx bruger FAF Fiktionsoverenskomst 2020 og 2025 begge gruppen <span className="font-mono">faf-fiktion</span>.</p>
+                                        </div>
                                         <div className="grid grid-cols-2 gap-2">
                                             <div className="space-y-1">
                                                 <Label className="text-xs">Gyldig fra</Label>
@@ -2043,6 +2059,7 @@ function OverenskomsterTab() {
                                                 setStamdataForm({
                                                     title: agreement.title,
                                                     parties: agreement.parties.join(", "),
+                                                    short_code: ((agreement as Record<string, unknown>).short_code as string | null | undefined) ?? "",
                                                     valid_from: agreement.valid_from ?? "",
                                                     valid_to: agreement.valid_to ?? "",
                                                     notes: agreement.notes ?? "",
