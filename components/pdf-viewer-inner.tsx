@@ -237,19 +237,25 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
         })
     }, [activeHighlight, pageNavigationHint, pdfDoc, numPages]) // eslint-disable-line
 
-    // Lag 5: naviger til klausulens side ved activeClauseId-skift
+    // Lag 5: naviger til klausulens side og scroll overlayets position ind i viewporten
     useEffect(() => {
         if (!activeClauseId || !layout) return
         const clause = layout.clauses.find(c => c.id === activeClauseId)
-        // [LAG5-DEBUG-C] Trin 3+4: findes klausulen og har den pdfBbox?
-        console.log(`[LAG5-C] activeClauseId=${activeClauseId}, fundet=${!!clause}, pdfBbox=${clause?.pdfBbox ? JSON.stringify(clause.pdfBbox) : "MANGLER"}, pageViewport=${pageViewport ? `${pageViewport.renderedWidth}x${pageViewport.renderedHeight}` : "NULL"}`)
         if (!clause) return
         const targetPage = clause.page ?? 1
         if (targetPage !== pageNumber) {
             setPageRendered(false)
             setPageNumber(targetPage)
         }
-    }, [activeClauseId, layout]) // eslint-disable-line
+        // Scroll containerRef så overlayets top-koordinat er synlig centreret
+        if (clause.pdfBbox && pageViewport && containerRef.current) {
+            const scaleY = pageViewport.renderedHeight / pageViewport.pdfHeight
+            const overlayTop = pageViewport.renderedHeight - (clause.pdfBbox.y + clause.pdfBbox.height) * scaleY
+            const containerH = containerRef.current.clientHeight
+            // p-4 = 16px padding i wrap-divven
+            containerRef.current.scrollTo({ top: Math.max(0, overlayTop + 16 - containerH / 2), behavior: "smooth" })
+        }
+    }, [activeClauseId, layout, pageViewport]) // eslint-disable-line
 
     // Lag 5: hent sidedimensioner fra pdfDoc via PDF-viewport * scale (ingen DOM-måling)
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
@@ -348,7 +354,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                                 const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
                                 return (
                                     <div
-                                        style={{ ...style, background: "rgba(234,179,8,0.25)", border: "2px solid rgba(234,179,8,0.8)", borderRadius: 2 }}
+                                        style={{ ...style, background: "rgba(234,179,8,0.25)", border: "2px solid rgba(234,179,8,0.8)", borderRadius: 2, zIndex: 10 }}
                                         title={`Klausul ${activeClauseId}`}
                                     />
                                 )
