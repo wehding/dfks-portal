@@ -111,9 +111,12 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     }) ?? activeCandidates[0] ?? null
     const normActive = resolvedActive ? norm(resolvedActive) : null
 
-    // Kildehenvisninger markeres først, når brugeren aktivt klikker på lynet.
-    // `highlights` bruges fortsat til at finde siden, men males ikke permanent.
-    const allHighlights = activeCandidates
+    // Inkluder altid active-kandidater i allHighlights — ellers kan de aldrig markeres som isActive
+    const allHighlights = [
+        ...highlights,
+        ...sectionHighlights.flatMap(s => s.split("||").map(x => x.trim())),
+        ...activeCandidates.filter(c => c.length >= 2),
+    ]
 
     allHighlights.forEach((quote) => {
         if (!quote || quote.length < 2) return

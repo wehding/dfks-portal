@@ -23,7 +23,7 @@ import {
 import {
     CheckCircle2, Pencil, Plus, X, Loader2, BookOpen,
     Brain, ListChecks, FlaskConical, AlertCircle, AlertTriangle,
-    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Coins, Wand2, RotateCcw,
+    Info, TrendingUp, TrendingDown, Minus, FileUp, ScrollText, Wand2, RotateCcw,
     RefreshCw, ChevronRight,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -1022,14 +1022,43 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
     const [bilagFil, setBilagFil] = useState<File | null>(null)
     const [bilagType, setBilagType] = useState("")
     const [indekserer, setIndekserer] = useState(false)
-    const [, setIndekseredeBilag] = useState<{ type: string; antal: number; satser?: any }[]>([])
+    const [indekseredeBilag, setIndekseredeBilag] = useState<{ type: string; label: string; antal: number; satser?: any; chunks: { id: string; titel: string; tekst: string }[] }[]>([])
+    const [udvidetBilag, setUdvidetBilag] = useState<string | null>(null)
+    const [sletterBilag, setSletterBilag] = useState<string | null>(null)
+    const [visOkChunks, setVisOkChunks] = useState(false)
+    const [okChunks, setOkChunks] = useState<{ id: string; titel: string; tekst: string; kategori: string }[]>([])
+    const [henterOkChunks, setHenterOkChunks] = useState(false)
 
-    useEffect(() => {
-        fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
-            .then(r => r.json())
-            .then(d => setIndekseredeBilag(d.bilag ?? []))
-            .catch(() => {})
-    }, [ok, ver.gyldig_fra])
+    const hentOkChunks = async () => {
+        setHenterOkChunks(true)
+        try {
+            const r = await fetch(`/api/admin/overenskomst/chunks?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+            const d = await r.json()
+            setOkChunks(d.chunks ?? [])
+            setVisOkChunks(true)
+        } catch { toast.error("Kunne ikke hente chunks") }
+        finally { setHenterOkChunks(false) }
+    }
+
+    const hentBilag = async () => {
+        const r = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
+        const d = await r.json()
+        setIndekseredeBilag(d.bilag ?? [])
+    }
+
+    useEffect(() => { hentBilag().catch(() => {}) }, [ok, ver.gyldig_fra])
+
+    const sletBilag = async (type: string) => {
+        setSletterBilag(type)
+        try {
+            const res = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}&type=${type}`, { method: "DELETE" })
+            if (!res.ok) throw new Error((await res.json()).error)
+            toast.success("Bilag slettet")
+            await hentBilag()
+            if (udvidetBilag === type) setUdvidetBilag(null)
+        } catch (e: unknown) { toast.error(errorMessage(e)) }
+        finally { setSletterBilag(null) }
+    }
 
     const indekser = async () => {
         if (!bilagFil || !bilagType) return
@@ -1052,6 +1081,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                     overenskomst: ok,
                     gyldigFra: ver.gyldig_fra,
                     bilagType,
+                    bilagLabel: BILAG_TYPER.find(b => b.id === bilagType)?.label,
                     filnavn: bilagFil.name,
                 }),
             })
@@ -1059,10 +1089,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
             const data = await res.json()
             toast.success(`${bilagFil.name}: ${data.indekseret} chunks indekseret`)
             setBilagFil(null); setBilagType("")
-            // Refresh bilag-liste
-            const refresh = await fetch(`/api/admin/overenskomst/bilag?overenskomst=${ok}&gyldigFra=${ver.gyldig_fra}`)
-            const refreshData = await refresh.json()
-            setIndekseredeBilag(refreshData.bilag ?? [])
+            await hentBilag()
         } catch (e: unknown) { toast.error(errorMessage(e)) }
         finally { setIndekserer(false) }
     }
@@ -1073,13 +1100,75 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                 <div className="min-w-0">
                     <p className="text-xs font-medium">Gyldig fra {ver.gyldig_fra}</p>
                     <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                        {ver.antal} sektioner · {ver.kategorier.join(" · ")}
+                        <button onClick={hentOkChunks} disabled={henterOkChunks}
+                            className="hover:underline disabled:opacity-50 shrink-0">
+                            {henterOkChunks ? "Henter…" : `${ver.antal} sektioner`}
+                        </button>
+                        {ver.kategorier.length > 0 && <span className="truncate"> · {ver.kategorier.join(" · ")}</span>}
                     </p>
-                    {(ver.bilag ?? []).length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            Bilag: {(ver.bilag ?? []).map(b => BILAG_TYPER.find(t => t.id === b)?.label ?? b).join(" · ")}
-                        </p>
+                    {indekseredeBilag.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                            {indekseredeBilag.filter(b => b.type !== "lønskema-satser").map(b => (
+                                <button key={b.type}
+                                    onClick={() => setUdvidetBilag(b.type)}
+                                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors">
+                                    {b.label}
+                                    <span className="ml-1 opacity-50">{b.antal}</span>
+                                </button>
+                            ))}
+                        </div>
                     )}
+                    {/* Bilag-dialog */}
+                    {(() => {
+                        const b = indekseredeBilag.find(x => x.type === udvidetBilag)
+                        return (
+                            <Dialog open={!!b} onOpenChange={open => { if (!open) setUdvidetBilag(null) }}>
+                                <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                                    <DialogHeader>
+                                        <DialogTitle className="text-sm flex items-center justify-between pr-6">
+                                            <span>{b?.label ?? b?.type} — {b?.antal} chunks</span>
+                                            <button
+                                                onClick={() => b && sletBilag(b.type)}
+                                                disabled={sletterBilag === b?.type}
+                                                className="text-xs text-destructive hover:underline disabled:opacity-50 font-normal">
+                                                {sletterBilag === b?.type ? "Sletter…" : "Slet bilag"}
+                                            </button>
+                                        </DialogTitle>
+                                    </DialogHeader>
+                                    <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                        {b?.chunks.map((c, i) => (
+                                            <div key={c.id} className="rounded border p-3 space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    <Badge variant="outline" className="text-[10px] font-normal px-1.5 shrink-0">Chunk {i + 1}</Badge>
+                                                    <span className="text-xs font-medium">{c.titel}</span>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{c.tekst}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </DialogContent>
+                            </Dialog>
+                        )
+                    })()}
+                    {/* Overenskomst-chunks-dialog */}
+                    <Dialog open={visOkChunks} onOpenChange={setVisOkChunks}>
+                        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+                            <DialogHeader>
+                                <DialogTitle className="text-sm">{ok} — indekserede sektioner ({okChunks.length})</DialogTitle>
+                            </DialogHeader>
+                            <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                {okChunks.map((c, i) => (
+                                    <div key={c.id} className="rounded border p-3 space-y-2">
+                                        <div className="flex items-center gap-2">
+                                            <Badge variant="outline" className="text-[10px] font-normal px-1.5 shrink-0">{c.kategori}</Badge>
+                                            <span className="text-xs font-medium">{c.titel}</span>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">{c.tekst}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </DialogContent>
+                    </Dialog>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                     <Button variant="ghost" size="sm" className="h-7 text-xs gap-1"
@@ -1110,7 +1199,7 @@ function OverenskomstVersionRække({ ok, ver, onToggleArkiv, onSlet, onErstat }:
                     </DialogHeader>
                     <p className="text-sm text-muted-foreground">
                         Er du sikker? Dette fjerner alle <strong>{ver.antal} chunks</strong> for{" "}
-                        <strong>{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</strong> (gyldig fra {ver.gyldig_fra}).
+                        <strong>{ok}</strong> (gyldig fra {ver.gyldig_fra}).
                         Handlingen kan ikke fortrydes.
                     </p>
                     <div className="flex gap-2 justify-end pt-2">
@@ -1162,31 +1251,7 @@ const BILAG_TYPER = [
     { id: "bilag", label: "Andet bilag" },
 ]
 
-const OVERENSKOMST_TYPER = [
-    { id: "de4", label: "De4 (fiktion)" },
-    { id: "faf", label: "FAF (fiktion)" },
-    { id: "faf-dokumentar", label: "FAF (dokumentar)" },
-    { id: "dj", label: "DJ" },
-    { id: "metal", label: "Metal" },
-    { id: "de4-fiction-2022", label: "De4 Fiktionsoverenskomst 2022" },
-    { id: "faf-fiction-2025", label: "FAF Fiktion 2025–2027" },
-    { id: "faf-documentary", label: "FAF Kort- og dokumentarfilm" },
-    { id: "dj-tv-2024", label: "DJ TV 2024–2026" },
-    { id: "faf-tv-employee-2008", label: "FAF/DJ TV – ansatte" },
-    { id: "faf-tv-freelance-2008", label: "FAF/DJ TV – lønmodtagerfreelancere" },
-    { id: "dr-metal-2025", label: "DR og Dansk Metal 2025–2028" },
-]
 
-const KATEGORIER = [
-    { id: "helligdagsbetaling", label: "Helligdagsbetaling" },
-    { id: "beta-fond", label: "BETA-fond" },
-    { id: "copydan-forbehold", label: "Copydan-forbehold" },
-    { id: "streaming-forbehold", label: "Streaming-forbehold" },
-    { id: "royalty", label: "Royalty" },
-    { id: "pension", label: "Pension" },
-    { id: "opsigelse", label: "Opsigelse" },
-    { id: "andet", label: "Andet" },
-]
 
 type Sektion = {
     titel: string
@@ -1215,6 +1280,7 @@ type PensionRuleItem = {
     employer_percent: number
     employee_percent: number
     basis: string
+    scheme_kind: string
     valid_from: string
     valid_to: string | null
     section_reference: string
@@ -1242,6 +1308,25 @@ type WageRuleItem = {
     status: "draft" | "approved" | "archived"
 }
 
+type PercentageRuleItem = {
+    id: string
+    label: string
+    percent: number
+    basis: string
+    trigger_condition: string
+    category: string
+    profession_role: string | null
+    employment_form: string | null
+    section_reference: string | null
+    source_title: string | null
+    source_url: string | null
+    source_checked_at: string | null
+    source_note: string | null
+    valid_from: string
+    valid_to: string | null
+    status: "draft" | "approved" | "archived"
+}
+
 type AgreementRegistryItem = {
     id: string
     code: string
@@ -1258,6 +1343,7 @@ type AgreementRegistryItem = {
     notes: string | null
     agreement_pension_rules: PensionRuleItem[]
     agreement_wage_rules: WageRuleItem[]
+    agreement_percentage_rules: PercentageRuleItem[]
 }
 
 type PensionPreviewItem = {
@@ -1285,13 +1371,271 @@ function OverenskomsterTab() {
     const [versioner, setVersioner] = useState<Record<string, OkVersion[]>>({})
     const [agreementRegistry, setAgreementRegistry] = useState<AgreementRegistryItem[]>([])
     const [registryError, setRegistryError] = useState<string | null>(null)
+    const [kategorier, setKategorier] = useState<string[]>([])
     const [pensionPreview, setPensionPreview] = useState<PensionPreviewItem[] | null>(null)
     const [pensionPreviewLoading, setPensionPreviewLoading] = useState(false)
 
     // Ny fil-tilføjelse state
     const [nyFil, setNyFil] = useState<File | null>(null)
-    const [nyOverenskomst, setNyOverenskomst] = useState("")
     const [nyGyldigFra, setNyGyldigFra] = useState("")
+    const [uploadTarget, setUploadTarget] = useState<string | null>(null) // agreement.id
+    const [visOpretForm, setVisOpretForm] = useState(false)
+    const [opretForm, setOpretForm] = useState({ code: "", title: "", parties: "", valid_from: "" })
+    const [opretLoading, setOpretLoading] = useState(false)
+    const [nyOverenskomst, setNyOverenskomst] = useState("")
+
+    // Stamdata-redigering: agreement.id → form state
+    type StamdataForm = { title: string; parties: string; valid_from: string; valid_to: string; notes: string; source_url: string; content_url: string }
+    const [editStamdata, setEditStamdata] = useState<string | null>(null) // agreement.id
+    const [stamdataForm, setStamdataForm] = useState<StamdataForm>({ title: "", parties: "", valid_from: "", valid_to: "", notes: "", source_url: "", content_url: "" })
+    const [stamdataSaving, setStamdataSaving] = useState(false)
+
+    // Løn- og pensionsregel-redigering / oprettelse
+    type WageRuleForm = {
+        profession_role: string; wage_group: string; employment_form: string
+        rate_kind: string; amount: string; unit: string; pension_included: boolean
+        valid_from: string; valid_to: string
+        source_title: string; source_url: string; source_section: string; source_checked_at: string; source_note: string
+    }
+    type PensionRuleForm = {
+        employment_form: string; employer_percent: string; employee_percent: string
+        basis: string; scheme_kind: string; valid_from: string; valid_to: string
+        section_reference: string; source_note: string
+    }
+    const emptyWageForm = (): WageRuleForm => ({
+        profession_role: "", wage_group: "", employment_form: "a-løn", rate_kind: "normalløn",
+        amount: "", unit: "uge", pension_included: false, valid_from: "", valid_to: "",
+        source_title: "", source_url: "", source_section: "", source_checked_at: new Date().toISOString().slice(0, 10), source_note: "",
+    })
+    const emptyPensionForm = (): PensionRuleForm => ({
+        employment_form: "a-løn", employer_percent: "", employee_percent: "0",
+        basis: "normalløn", scheme_kind: "occupational_pension", valid_from: "", valid_to: "",
+        section_reference: "", source_note: "",
+    })
+    const [editWageRule, setEditWageRule] = useState<string | null>(null)
+    const [wageRuleForm, setWageRuleForm] = useState<WageRuleForm>(emptyWageForm())
+    const [editPensionRule, setEditPensionRule] = useState<string | null>(null)
+    const [pensionRuleForm, setPensionRuleForm] = useState<PensionRuleForm>(emptyPensionForm())
+    const [newWageAgreementId, setNewWageAgreementId] = useState<string | null>(null)
+    const [newWageForm, setNewWageForm] = useState<WageRuleForm & { rate_key: string }>(Object.assign(emptyWageForm(), { rate_key: "" }))
+    const [newPensionAgreementId, setNewPensionAgreementId] = useState<string | null>(null)
+    const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
+    const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
+    const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "" })
+    const [ruleSaving, setRuleSaving] = useState(false)
+
+    // ── AI-udtræk af satser ────────────────────────────────────
+    type SatsKandidat = {
+        _id: string
+        type: "wage" | "pension" | "percentage"
+        checked: boolean
+        // løn
+        profession_role: string
+        wage_group: string
+        employment_form: string
+        rate_kind: string
+        amount: string
+        unit: string
+        pension_included: boolean
+        // pension
+        employer_percent: string
+        employee_percent: string
+        basis: string
+        scheme_kind: string
+        // procent
+        label: string
+        percent: string
+        trigger_condition: string
+        category: string
+        // fælles
+        valid_from: string
+        section_reference: string
+        citation: string
+        confidence: "høj" | "lav"
+        // kilde (sættes fra dialog)
+        source_title: string
+        source_url: string
+        source_checked_at: string
+    }
+    const [satserUdtraekAgreementId, setSatserUdtraekAgreementId] = useState<string | null>(null)
+    const [satserPhase, setSatserPhase] = useState<"input" | "kandidater">("input")
+    const [satserInputMode, setSatserInputMode] = useState<"upload" | "bilag">("upload")
+    const [satserFil, setSatserFil] = useState<File | null>(null)
+    const [satserKildeTitel, setSatserKildeTitel] = useState("")
+    const [satserKildeUrl, setSatserKildeUrl] = useState("")
+    const [satserKildeCheckedAt, setSatserKildeCheckedAt] = useState(new Date().toISOString().slice(0, 10))
+    const [satserBilagValg, setSatserBilagValg] = useState("")
+    const [tilgaengeligeBilag, setTilgaengeligeBilag] = useState<{ overenskomst: string; gyldigFra: string; bilagType: string; label: string }[]>([])
+    const [satserUdtraekker, setSatserUdtraekker] = useState(false)
+    const [satserKandidater, setSatserKandidater] = useState<SatsKandidat[]>([])
+    const [satserOpretter, setSatserOpretter] = useState(false)
+
+    const åbnSatserUdtraek = async (agreementId: string) => {
+        setSatserUdtraekAgreementId(agreementId)
+        setSatserPhase("input")
+        setSatserInputMode("upload")
+        setSatserFil(null)
+        setSatserKildeTitel("")
+        setSatserKildeUrl("")
+        setSatserBilagValg("")
+        setSatserKandidater([])
+        // Hent eksisterende lønskema-bilag for denne overenskomst
+        try {
+            const r = await fetch(`/api/admin/overenskomst/satser-udtraek?agreementId=${agreementId}`)
+            const d = await r.json()
+            setTilgaengeligeBilag(d.bilag ?? [])
+        } catch { setTilgaengeligeBilag([]) }
+    }
+
+    const udtraekSatser = async (agreementId: string) => {
+        setSatserUdtraekker(true)
+        try {
+            const body: Record<string, unknown> = {
+                agreementId,
+                kildeTitel: satserKildeTitel,
+                kildeUrl: satserKildeUrl,
+            }
+            if (satserInputMode === "upload" && satserFil) {
+                const buf = await satserFil.arrayBuffer()
+                const bytes = new Uint8Array(buf)
+                let binary = ""
+                for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
+                body.pdfBase64 = btoa(binary)
+                body.filnavn = satserFil.name
+                if (!satserKildeTitel) body.kildeTitel = satserFil.name
+            } else if (satserInputMode === "bilag" && satserBilagValg) {
+                const ref = JSON.parse(satserBilagValg)
+                body.bilagOverenskomst = ref.overenskomst
+                body.bilagGyldigFra = ref.gyldigFra
+                body.bilagType = ref.bilagType
+                if (!satserKildeTitel) body.kildeTitel = ref.label
+            } else {
+                toast.error("Vælg en fil eller et eksisterende bilag")
+                return
+            }
+            const res = await fetch("/api/admin/overenskomst/satser-udtraek", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            })
+            const raw = await res.json()
+            if (!res.ok) {
+                const msg = raw?.error ?? `Serverfejl ${res.status}`
+                toast.error(`Udtræk fejlede: ${msg}`)
+                return
+            }
+            const data = raw
+            const now = new Date().toISOString().slice(0, 10)
+            const kildenavn = (body.kildeTitel as string) || (data.kildeTitel ?? "")
+            const kildelink = (body.kildeUrl as string) || (data.kildeUrl ?? "")
+            const mapped: SatsKandidat[] = (data.kandidater ?? []).map((k: Record<string, unknown>, i: number) => ({
+                _id: `k-${i}`,
+                type: (["wage","pension","percentage"].includes(k.type as string) ? k.type : "wage") as "wage"|"pension"|"percentage",
+                checked: k.confidence === "høj",
+                profession_role: String(k.profession_role ?? ""),
+                wage_group: String(k.wage_group ?? ""),
+                employment_form: String(k.employment_form ?? "a-løn"),
+                rate_kind: String(k.rate_kind ?? "normalløn"),
+                amount: k.amount != null ? String(k.amount) : "",
+                unit: String(k.unit ?? "uge"),
+                pension_included: !!k.pension_included,
+                employer_percent: k.employer_percent != null ? String(k.employer_percent) : "",
+                employee_percent: k.employee_percent != null ? String(k.employee_percent) : "0",
+                basis: String(k.basis ?? "normalløn"),
+                scheme_kind: String(k.scheme_kind ?? "occupational_pension"),
+                label: String(k.label ?? ""),
+                percent: k.percent != null ? String(k.percent) : "",
+                trigger_condition: String(k.trigger_condition ?? ""),
+                category: String(k.category ?? "andet"),
+                valid_from: String(k.valid_from ?? ""),
+                section_reference: String(k.section_reference ?? ""),
+                citation: String(k.citation ?? ""),
+                confidence: (k.confidence === "høj" ? "høj" : "lav") as "høj" | "lav",
+                source_title: kildenavn,
+                source_url: kildelink,
+                source_checked_at: now,
+            }))
+            setSatserKandidater(mapped)
+            setSatserPhase("kandidater")
+        } catch (e: unknown) { toast.error(errorMessage(e)) }
+        finally { setSatserUdtraekker(false) }
+    }
+
+    const opretValgte = async (agreementId: string) => {
+        const valgte = satserKandidater.filter(k => k.checked)
+        if (valgte.length === 0) { toast.error("Ingen kandidater valgt"); return }
+        setSatserOpretter(true)
+        let ok = 0; let fejl = 0
+        const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
+        for (const k of valgte) {
+            try {
+                const today = new Date().toISOString().slice(0, 10)
+                const body = k.type === "wage"
+                    ? {
+                        wageRule: {
+                            agreementId,
+                            rate_key: `${slugify(k.profession_role || "regel")}-${slugify(k.wage_group || k.rate_kind || "")}-${slugify(k.employment_form)}-${k.valid_from || "ukendt"}`,
+                            profession_role: k.profession_role,
+                            wage_group: k.wage_group || null,
+                            employment_form: k.employment_form,
+                            rate_kind: k.rate_kind,
+                            amount: k.amount !== "" ? Number(k.amount) : null,
+                            unit: k.unit || null,
+                            pension_included: k.pension_included,
+                            valid_from: k.valid_from || today,
+                            source_title: k.source_title,
+                            source_url: k.source_url,
+                            source_section: k.section_reference,
+                            source_checked_at: k.source_checked_at,
+                            source_note: k.citation || null,
+                        },
+                    }
+                    : k.type === "pension"
+                    ? {
+                        pensionRule: {
+                            agreementId,
+                            employment_form: k.employment_form,
+                            employer_percent: Number(k.employer_percent),
+                            employee_percent: Number(k.employee_percent),
+                            basis: k.basis,
+                            scheme_kind: k.scheme_kind,
+                            valid_from: k.valid_from || today,
+                            section_reference: k.section_reference,
+                            source_note: k.citation || null,
+                        },
+                    }
+                    : {
+                        percentageRule: {
+                            agreementId,
+                            rate_key: `${slugify(k.label || "regel")}-${k.valid_from || "ukendt"}`,
+                            label: k.label,
+                            percent: Number(k.percent),
+                            basis: k.basis,
+                            trigger_condition: k.trigger_condition,
+                            category: k.category,
+                            employment_form: k.employment_form || null,
+                            section_reference: k.section_reference || null,
+                            source_title: k.source_title || null,
+                            source_url: k.source_url || null,
+                            source_checked_at: k.source_checked_at || null,
+                            source_note: k.citation || null,
+                            valid_from: k.valid_from || today,
+                        },
+                    }
+                const res = await fetch("/api/admin/agreements", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                })
+                if (res.ok) { ok++ } else { fejl++ }
+            } catch { fejl++ }
+        }
+        setSatserOpretter(false)
+        if (ok > 0) toast.success(`${ok} regel${ok > 1 ? "r" : ""} oprettet som kladde`)
+        if (fejl > 0) toast.error(`${fejl} regel${fejl > 1 ? "r" : ""} fejlede (duplikat eller manglende felter)`)
+        setSatserUdtraekAgreementId(null)
+        if (ok > 0) refreshAktive()
+    }
 
     const refreshAktive = () => {
         fetch("/api/admin/overenskomst")
@@ -1300,6 +1644,7 @@ function OverenskomsterTab() {
                 setVersioner(d.versioner ?? {})
                 setAgreementRegistry(d.agreementRegistry ?? [])
                 setRegistryError(d.registryError ?? null)
+                setKategorier(d.kategorier ?? [])
             })
             .catch(() => {})
     }
@@ -1363,21 +1708,22 @@ function OverenskomsterTab() {
     }
 
     const erstatVersion = (overenskomst: string) => {
-        // Præ-udfyld upload-formularen med den aktuelle overenskomst-type
+        const agreement = agreementRegistry.find(a => a.code === overenskomst)
+        if (agreement) {
+            setUploadTarget(agreement.id)
+        }
         setNyOverenskomst(overenskomst)
         setNyGyldigFra("")
         setNyFil(null)
-        // Scroll til toppen
-        window.scrollTo({ top: 0, behavior: "smooth" })
-        toast("Upload ny version i formularen øverst")
     }
 
-    const tilføjTilKø = () => {
-        if (!nyFil || !nyOverenskomst || !nyGyldigFra) return
+    const tilføjTilKø = (agreementCode?: string) => {
+        const overenskomst = agreementCode ?? nyOverenskomst
+        if (!nyFil || !overenskomst || !nyGyldigFra) return
         setKø(prev => [...prev, {
             id: crypto.randomUUID(),
             fil: nyFil,
-            overenskomst: nyOverenskomst,
+            overenskomst,
             gyldigFra: nyGyldigFra,
             status: "afventer",
             sektioner: [],
@@ -1385,9 +1731,27 @@ function OverenskomsterTab() {
         setNyFil(null)
         setNyOverenskomst("")
         setNyGyldigFra("")
-        // Reset file input
-        const input = document.getElementById("ok-fil-input") as HTMLInputElement
+        setUploadTarget(null)
+        const input = document.getElementById(`ok-fil-input-${overenskomst}`) as HTMLInputElement
         if (input) input.value = ""
+    }
+
+    const opretOverenskomst = async () => {
+        if (!opretForm.code || !opretForm.title) return
+        setOpretLoading(true)
+        const parties = opretForm.parties.split(",").map(s => s.trim()).filter(Boolean)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...opretForm, parties }),
+        })
+        const data = await res.json()
+        setOpretLoading(false)
+        if (!res.ok) return toast.error(data.error ?? "Kunne ikke oprette overenskomst")
+        toast.success("Overenskomst oprettet")
+        setVisOpretForm(false)
+        setOpretForm({ code: "", title: "", parties: "", valid_from: "" })
+        refreshAktive()
     }
 
     const analyserItem = async (id: string) => {
@@ -1457,8 +1821,138 @@ function OverenskomsterTab() {
             : i))
     }
 
+    const gemStamdata = async (agreementId: string) => {
+        setStamdataSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ agreementId, ...stamdataForm }),
+        })
+        setStamdataSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Stamdata gemt")
+        setEditStamdata(null)
+        refreshAktive()
+    }
+
+    const gemWageRule = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId, ...wageRuleForm }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Lønregel gemt")
+        setEditWageRule(null)
+        refreshAktive()
+    }
+
+    const gemPensionRule = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId, ...pensionRuleForm }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke gemme")
+        toast.success("Pensionsregel gemt")
+        setEditPensionRule(null)
+        refreshAktive()
+    }
+
+    const opretWageRule = async () => {
+        if (!newWageAgreementId) return
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRule: { agreementId: newWageAgreementId, ...newWageForm } }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke oprette")
+        toast.success("Lønregel oprettet som kladde")
+        setNewWageAgreementId(null)
+        setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" }))
+        refreshAktive()
+    }
+
+    const opretPensionRule = async () => {
+        if (!newPensionAgreementId) return
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRule: { agreementId: newPensionAgreementId, ...newPensionForm } }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke oprette")
+        toast.success("Pensionsregel oprettet som kladde")
+        setNewPensionAgreementId(null)
+        setNewPensionForm(emptyPensionForm())
+        refreshAktive()
+    }
+
+    const sletWageRule = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke slette")
+        toast.success("Lønregel slettet/arkiveret")
+        refreshAktive()
+    }
+
+    const sletPensionRule = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke slette")
+        toast.success("Pensionsregel slettet/arkiveret")
+        refreshAktive()
+    }
+
+    const godkendWageRule = async (wageRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wageRuleId, status: "approved" }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke godkende")
+        toast.success("Lønregel godkendt juridisk")
+        refreshAktive()
+    }
+
+    const godkendPensionRule = async (pensionRuleId: string) => {
+        setRuleSaving(true)
+        const res = await fetch("/api/admin/agreements", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pensionRuleId, status: "approved" }),
+        })
+        setRuleSaving(false)
+        if (!res.ok) return toast.error((await res.json()).error ?? "Kunne ikke godkende")
+        toast.success("Pensionsregel godkendt juridisk")
+        refreshAktive()
+    }
+
     const afventende = kø.filter(i => i.status === "afventer").length
     const klarTilIndeksering = kø.filter(i => i.status === "klar")
+
+    // Beregn hvilke versioner der IKKE er koblet til et registerkort
+    const linkedCodes = new Set(agreementRegistry.map(a => a.code))
+    const unlinkedKeys = Object.keys(versioner).filter(k => !linkedCodes.has(k))
 
     return (
         <div className="space-y-6">
@@ -1486,132 +1980,832 @@ function OverenskomsterTab() {
                 </div>}
                 {registryError && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">Registeret er ikke klar endnu. Kør den tilhørende databasemigration.</p>}
                 <div className="grid gap-3 lg:grid-cols-2">
-                    {agreementRegistry.map(agreement => (
-                        <div key={agreement.id} className="rounded-md border p-3 space-y-3">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <p className="text-sm font-medium">{agreement.title}</p>
-                                        <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
-                                    </div>
-                                    <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
-                                </div>
-                                <div className="flex gap-2">
-                                    {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
-                                    {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <details className="group rounded-md border bg-background" open>
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Aktuel minimumsløn</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-2 border-t p-3">
-                                        {agreement.agreement_wage_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret et kontrolleret lønskema.</p>}
-                                        {agreement.agreement_wage_rules
-                                            .slice()
-                                            .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
-                                            .map(rule => (
-                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
-                                                    {rule.amount !== null && rule.unit ? (
-                                                        <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
-                                                    ) : (
-                                                        <p className="font-medium">Ingen verificeret aktuel sats</p>
-                                                    )}
-                                                    <p className="text-muted-foreground">
-                                                        {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
-                                                        {rule.status !== "approved" ? " · skal bekræftes juridisk" : " · kilde kontrolleret"}
-                                                    </p>
-                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
-                                                </div>
-                                            ))}
-                                    </div>
-                                </details>
-
-                                <details className="group rounded-md border bg-background">
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Pension</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-2 border-t p-3">
-                                        {agreement.agreement_pension_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret en pensionsregel.</p>}
-                                        {agreement.agreement_pension_rules
-                                            .slice()
-                                            .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
-                                            .map(rule => (
-                                                <div key={rule.id} className="rounded bg-muted/40 px-3 py-2 text-xs">
-                                                    <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
-                                                    <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status !== "approved" ? " · skal bekræftes juridisk" : ""}</p>
-                                                    {rule.source_note && <p className="mt-1 text-muted-foreground">{rule.source_note}</p>}
-                                                </div>
-                                            ))}
-                                    </div>
-                                </details>
-
-                                <details className="group rounded-md border bg-background">
-                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
-                                        <span>Kilder og brug i kontraktgennemgang</span>
-                                        <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
-                                    </summary>
-                                    <div className="space-y-3 border-t p-3 text-xs text-muted-foreground">
-                                        <p>
-                                            Kilderne giver AI’en et kontrolleret sammenligningsgrundlag. De beviser ikke i sig selv, at en kontrakt er omfattet. AI’en skal også kontrollere kontraktens henvisning, produktionstype, funktion, dato og ansættelsesform og vise usikkerhed for administratoren.
-                                        </p>
+                    {agreementRegistry.map(agreement => {
+                        const agreementVersions = versioner[agreement.code] ?? []
+                        const isUploadOpen = uploadTarget === agreement.id
+                        return (
+                            <div key={agreement.id} className="rounded-md border p-3 space-y-3">
+                                {/* Stamdata-redigeringsform — fuld bredde når åben */}
+                                {editStamdata === agreement.id ? (
+                                    <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                                        <p className="text-xs font-medium">Redigér stamdata</p>
                                         <div className="space-y-1">
-                                            {agreement.source_url && <p><span className="font-medium text-foreground">Officiel oversigt: </span><a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Producentforeningens eller organisationens kildeside</a></p>}
-                                            {agreement.content_url && <p><span className="font-medium text-foreground">Aftaletekst: </span><a href={agreement.content_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Åbn den registrerede overenskomst</a></p>}
-                                            {Array.from(new Map(agreement.agreement_wage_rules.map(rule => [rule.source_url, rule])).values()).map(rule => (
-                                                <p key={rule.source_url}><span className="font-medium text-foreground">Lønskema: </span><a href={rule.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{rule.source_title}</a> · kontrolleret {rule.source_checked_at}</p>
-                                            ))}
+                                            <Label className="text-xs">Titel</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.title} onChange={e => setStamdataForm(f => ({ ...f, title: e.target.value }))} />
                                         </div>
-                                        <p>Funktioner i registeret: {agreement.profession_roles.join(", ") || "ikke angivet"}</p>
-                                        {agreement.notes && <p><span className="font-medium text-foreground">Bemærkning: </span>{agreement.notes}</p>}
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Parter (kommasepareret)</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.parties} onChange={e => setStamdataForm(f => ({ ...f, parties: e.target.value }))} />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Gyldig fra</Label>
+                                                <Input type="date" className="h-7 text-xs" value={stamdataForm.valid_from} onChange={e => setStamdataForm(f => ({ ...f, valid_from: e.target.value }))} />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <Label className="text-xs">Gyldig til</Label>
+                                                <Input type="date" className="h-7 text-xs" value={stamdataForm.valid_to} onChange={e => setStamdataForm(f => ({ ...f, valid_to: e.target.value }))} />
+                                            </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Officiel kildeside (URL)</Label>
+                                            <Input className="h-7 text-xs" placeholder="https://..." value={stamdataForm.source_url} onChange={e => setStamdataForm(f => ({ ...f, source_url: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Aftaletekst (URL)</Label>
+                                            <Input className="h-7 text-xs" placeholder="https://..." value={stamdataForm.content_url} onChange={e => setStamdataForm(f => ({ ...f, content_url: e.target.value }))} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <Label className="text-xs">Bemærkning</Label>
+                                            <Input className="h-7 text-xs" value={stamdataForm.notes} onChange={e => setStamdataForm(f => ({ ...f, notes: e.target.value }))} />
+                                        </div>
+                                        <div className="flex gap-2 pt-1">
+                                            <Button size="sm" className="flex-1" disabled={stamdataSaving} onClick={() => gemStamdata(agreement.id)}>
+                                                {stamdataSaving ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}Gem
+                                            </Button>
+                                            <Button size="sm" variant="ghost" onClick={() => setEditStamdata(null)}>Annullér</Button>
+                                        </div>
                                     </div>
-                                </details>
+                                ) : (
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                        <div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <p className="text-sm font-medium">{agreement.title}</p>
+                                                <Badge variant={agreement.status === "approved" ? "default" : agreement.status === "draft" ? "outline" : "secondary"}>{agreement.status === "approved" ? "Godkendt" : agreement.status === "draft" ? "Kladde" : "Arkiveret"}</Badge>
+                                            </div>
+                                            <p className="mt-1 text-xs text-muted-foreground">{agreement.parties.join(" · ")} · {agreement.valid_from ?? "ukendt dato"}{agreement.valid_to ? ` – ${agreement.valid_to}` : ""}</p>
+                                            <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{agreement.code}</p>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => {
+                                                setEditStamdata(agreement.id)
+                                                setStamdataForm({
+                                                    title: agreement.title,
+                                                    parties: agreement.parties.join(", "),
+                                                    valid_from: agreement.valid_from ?? "",
+                                                    valid_to: agreement.valid_to ?? "",
+                                                    notes: agreement.notes ?? "",
+                                                    source_url: agreement.source_url ?? "",
+                                                    content_url: agreement.content_url ?? "",
+                                                })
+                                            }}>Redigér</Button>
+                                            {agreement.status !== "approved" && <Button size="sm" variant="outline" onClick={() => setAgreementStatus(agreement.id, "approved")}>Godkend</Button>}
+                                            {agreement.status === "approved" && <Button size="sm" variant="ghost" onClick={() => setAgreementStatus(agreement.id, "archived")}>Arkivér</Button>}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="space-y-2">
+                                    {/* ── Lønregler ── */}
+                                    <details className="group rounded-md border bg-background" open>
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Lønsatser</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {agreement.agreement_wage_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret et kontrolleret lønskema.</p>}
+                                            {agreement.agreement_wage_rules
+                                                .slice()
+                                                .sort((a, b) => b.valid_from.localeCompare(a.valid_from))
+                                                .map(rule => (
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-1 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                {rule.amount !== null && rule.unit ? (
+                                                                    <p className="font-medium">{rule.profession_role}: {Number(rule.amount).toLocaleString("da-DK")} kr. pr. {rule.unit}</p>
+                                                                ) : (
+                                                                    <p className="font-medium">{rule.profession_role} — {rule.rate_kind}</p>
+                                                                )}
+                                                                <p className="text-muted-foreground">
+                                                                    {[rule.wage_group, rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance", `fra ${rule.valid_from}`, rule.valid_to ? `til ${rule.valid_to}` : null].filter(Boolean).join(" · ")}
+                                                                    {rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}
+                                                                </p>
+                                                            </div>
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={() => godkendWageRule(rule.id)}>godkend</button>}
+                                                                <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
+                                                                    setEditWageRule(rule.id)
+                                                                    setWageRuleForm({
+                                                                        profession_role: rule.profession_role, wage_group: rule.wage_group ?? "",
+                                                                        employment_form: rule.employment_form, rate_kind: rule.rate_kind,
+                                                                        amount: rule.amount != null ? String(rule.amount) : "", unit: rule.unit ?? "uge",
+                                                                        pension_included: rule.pension_included, valid_from: rule.valid_from, valid_to: rule.valid_to ?? "",
+                                                                        source_title: rule.source_title ?? "", source_url: rule.source_url ?? "",
+                                                                        source_section: rule.source_section ?? "", source_checked_at: rule.source_checked_at ?? "",
+                                                                        source_note: rule.source_note ?? "",
+                                                                    })
+                                                                }}>redigér</button>
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={() => sletWageRule(rule.id)}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {editWageRule === rule.id && (
+                                                            <div className="space-y-1.5 pt-2 border-t mt-1">
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Funktion</Label><Input className="h-6 text-xs" value={wageRuleForm.profession_role} onChange={e => setWageRuleForm(f => ({ ...f, profession_role: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Løngruppe</Label><Input className="h-6 text-xs" value={wageRuleForm.wage_group} onChange={e => setWageRuleForm(f => ({ ...f, wage_group: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Ansættelsesform</Label>
+                                                                        <Select value={wageRuleForm.employment_form} onValueChange={v => setWageRuleForm(f => ({ ...f, employment_form: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Satstype</Label>
+                                                                        <Select value={wageRuleForm.rate_kind} onValueChange={v => setWageRuleForm(f => ({ ...f, rate_kind: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent>
+                                                                                <SelectItem value="normalløn">Normalløn</SelectItem>
+                                                                                <SelectItem value="minimum">Minimum</SelectItem>
+                                                                                <SelectItem value="source_requires_review">Kræver juridisk review</SelectItem>
+                                                                                <SelectItem value="individual_or_classified">Individuel/klassificeret</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Beløb (DKK)</Label><Input type="number" className="h-6 text-xs" value={wageRuleForm.amount} onChange={e => setWageRuleForm(f => ({ ...f, amount: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Enhed</Label>
+                                                                        <Select value={wageRuleForm.unit} onValueChange={v => setWageRuleForm(f => ({ ...f, unit: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Gyldig fra</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.valid_from} onChange={e => setWageRuleForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.valid_to} onChange={e => setWageRuleForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-6 text-xs" value={wageRuleForm.source_title} onChange={e => setWageRuleForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                                <div><Label className="text-[10px]">Kilde-URL</Label><Input className="h-6 text-xs" value={wageRuleForm.source_url} onChange={e => setWageRuleForm(f => ({ ...f, source_url: e.target.value }))} /></div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Afsnit/paragraf</Label><Input className="h-6 text-xs" value={wageRuleForm.source_section} onChange={e => setWageRuleForm(f => ({ ...f, source_section: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Kontrolleret dato</Label><Input type="date" className="h-6 text-xs" value={wageRuleForm.source_checked_at} onChange={e => setWageRuleForm(f => ({ ...f, source_checked_at: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Note</Label><Input className="h-6 text-xs" value={wageRuleForm.source_note} onChange={e => setWageRuleForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemWageRule(rule.id)}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditWageRule(null)}>✕</Button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            <div className="flex gap-1.5 mt-1">
+                                                <Button size="sm" variant="outline" className="flex-1 h-7 text-xs gap-1" onClick={() => { setNewWageAgreementId(agreement.id); setNewWageForm(Object.assign(emptyWageForm(), { rate_key: "" })) }}>
+                                                    <Plus className="h-3.5 w-3.5" />Tilføj lønregel
+                                                </Button>
+                                                <Button size="sm" variant="ghost" className="h-7 text-xs gap-1 text-muted-foreground" onClick={() => åbnSatserUdtraek(agreement.id)}>
+                                                    <Wand2 className="h-3.5 w-3.5" />AI-udtræk
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </details>
+
+                                    {/* ── Dialog: ny lønregel ── */}
+                                    <Dialog open={newWageAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewWageAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny lønregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div><Label className="text-[10px]">Rate key (unikt ID, fx "editor-normallon-2026")</Label><Input className="h-7 text-xs" value={newWageForm.rate_key} onChange={e => setNewWageForm(f => ({ ...f, rate_key: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Funktion *</Label><Input className="h-7 text-xs" value={newWageForm.profession_role} onChange={e => setNewWageForm(f => ({ ...f, profession_role: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Løngruppe</Label><Input className="h-7 text-xs" value={newWageForm.wage_group} onChange={e => setNewWageForm(f => ({ ...f, wage_group: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Ansættelsesform *</Label>
+                                                        <Select value={newWageForm.employment_form} onValueChange={v => setNewWageForm(f => ({ ...f, employment_form: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Satstype *</Label>
+                                                        <Select value={newWageForm.rate_kind} onValueChange={v => setNewWageForm(f => ({ ...f, rate_kind: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="normalløn">Normalløn</SelectItem>
+                                                                <SelectItem value="minimum">Minimum</SelectItem>
+                                                                <SelectItem value="source_requires_review">Kræver juridisk review</SelectItem>
+                                                                <SelectItem value="individual_or_classified">Individuel/klassificeret</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Beløb (DKK)</Label><Input type="number" className="h-7 text-xs" value={newWageForm.amount} onChange={e => setNewWageForm(f => ({ ...f, amount: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Enhed</Label>
+                                                        <Select value={newWageForm.unit} onValueChange={v => setNewWageForm(f => ({ ...f, unit: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newWageForm.valid_from} onChange={e => setNewWageForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-7 text-xs" value={newWageForm.valid_to} onChange={e => setNewWageForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Kilde-titel *</Label><Input className="h-7 text-xs" value={newWageForm.source_title} onChange={e => setNewWageForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Kilde-URL *</Label><Input className="h-7 text-xs" value={newWageForm.source_url} onChange={e => setNewWageForm(f => ({ ...f, source_url: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Afsnit/paragraf</Label><Input className="h-7 text-xs" value={newWageForm.source_section} onChange={e => setNewWageForm(f => ({ ...f, source_section: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Kontrolleret dato *</Label><Input type="date" className="h-7 text-xs" value={newWageForm.source_checked_at} onChange={e => setNewWageForm(f => ({ ...f, source_checked_at: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Note</Label><Input className="h-7 text-xs" value={newWageForm.source_note} onChange={e => setNewWageForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                <p className="text-muted-foreground text-[10px]">Oprettes som kladde — kræver juridisk godkendelse inden AI anvender satsen.</p>
+                                            </div>
+                                            <DialogFooter>
+                                                <Button variant="outline" size="sm" onClick={() => setNewWageAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={opretWageRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Dialog: AI-udtræk af satser ── */}
+                                    <Dialog open={satserUdtraekAgreementId === agreement.id} onOpenChange={open => { if (!open) setSatserUdtraekAgreementId(null) }}>
+                                        <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+                                            <DialogHeader>
+                                                <DialogTitle className="text-sm flex items-center gap-2">
+                                                    <Wand2 className="h-4 w-4" />
+                                                    AI-udtræk af satser — {agreement.title}
+                                                </DialogTitle>
+                                            </DialogHeader>
+
+                                            {satserPhase === "input" ? (
+                                                <div className="space-y-4 overflow-y-auto flex-1">
+                                                    {/* Inputkilde */}
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" variant={satserInputMode === "upload" ? "default" : "outline"} className="text-xs h-7" onClick={() => setSatserInputMode("upload")}>Upload fil</Button>
+                                                        <Button size="sm" variant={satserInputMode === "bilag" ? "default" : "outline"} className="text-xs h-7" disabled={tilgaengeligeBilag.length === 0} onClick={() => setSatserInputMode("bilag")}>
+                                                            Eksisterende bilag {tilgaengeligeBilag.length === 0 && "(ingen)"}
+                                                        </Button>
+                                                    </div>
+
+                                                    {satserInputMode === "upload" ? (
+                                                        <div
+                                                            className="rounded border-2 border-dashed p-4 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
+                                                            onClick={() => document.getElementById(`satser-fil-${agreement.id}`)?.click()}
+                                                        >
+                                                            <input id={`satser-fil-${agreement.id}`} type="file" accept=".pdf,.docx,.doc" className="hidden" onChange={e => setSatserFil(e.target.files?.[0] ?? null)} />
+                                                            {satserFil ? (
+                                                                <p className="text-xs font-medium">{satserFil.name}</p>
+                                                            ) : (
+                                                                <>
+                                                                    <FileUp className="mx-auto h-5 w-5 text-muted-foreground/50 mb-1" />
+                                                                    <p className="text-xs text-muted-foreground">Klik for at vælge lønskema/bilag (PDF, DOCX, DOC)</p>
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <Select value={satserBilagValg} onValueChange={setSatserBilagValg}>
+                                                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg indekseret bilag…" /></SelectTrigger>
+                                                            <SelectContent>
+                                                                {tilgaengeligeBilag.map(b => (
+                                                                    <SelectItem key={`${b.gyldigFra}-${b.bilagType}`} value={JSON.stringify(b)}>{b.label}</SelectItem>
+                                                                ))}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    )}
+
+                                                    {/* Kildeinfo (bruges som source_title/url på de oprettede regler) */}
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kilde-titel (til reglernes kildefelt)</Label>
+                                                        <Input className="h-7 text-xs" placeholder="fx Lønoversigt De4 2022" value={satserKildeTitel} onChange={e => setSatserKildeTitel(e.target.value)} />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kilde-URL</Label>
+                                                        <Input className="h-7 text-xs" placeholder="https://pro-f.dk/…" value={satserKildeUrl} onChange={e => setSatserKildeUrl(e.target.value)} />
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs">Kontrolleret dato</Label>
+                                                        <Input type="date" className="h-7 text-xs" value={satserKildeCheckedAt} onChange={e => setSatserKildeCheckedAt(e.target.value)} />
+                                                    </div>
+                                                    <p className="text-[10px] text-muted-foreground">AI-udtræk opretter kandidater som <strong>kladder</strong> — kræver juridisk godkendelse inden de bruges.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {satserKandidater.length} kandidater fundet. Markerede oprettes som kladder. Ret felter direkte inden oprettelse.
+                                                    </p>
+
+                                                    {/* Lønkandidater */}
+                                                    {satserKandidater.filter(k => k.type === "wage").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Lønsatser ({satserKandidater.filter(k => k.type === "wage").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "wage").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Funktion</Label><Input className="h-5 text-[10px]" value={k.profession_role} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, profession_role: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Løngruppe</Label><Input className="h-5 text-[10px]" value={k.wage_group} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, wage_group: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Beløb (DKK)</Label><Input type="number" className="h-5 text-[10px]" value={k.amount} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, amount: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Enhed</Label>
+                                                                                    <Select value={k.unit} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, unit: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="uge">uge</SelectItem><SelectItem value="dag">dag</SelectItem><SelectItem value="time">time</SelectItem><SelectItem value="måned">måned</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Ansættelsesform</Label>
+                                                                                    <Select value={k.employment_form} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employment_form: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Freelance</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                            {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Pensionskandidater */}
+                                                    {satserKandidater.filter(k => k.type === "pension").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Pensionssatser ({satserKandidater.filter(k => k.type === "pension").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "pension").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Ansættelsesform</Label>
+                                                                                    <Select value={k.employment_form} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employment_form: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Freelance</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Grundlag</Label>
+                                                                                    <Select value={k.basis} onValueChange={v => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: v } : c))}>
+                                                                                        <SelectTrigger className="h-5 text-[10px]"><SelectValue /></SelectTrigger>
+                                                                                        <SelectContent><SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem><SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem><SelectItem value="honorar">Honorar</SelectItem></SelectContent>
+                                                                                    </Select>
+                                                                                </div>
+                                                                                <div><Label className="text-[9px]">Arbejdsgiver %</Label><Input type="number" step="0.001" className="h-5 text-[10px]" value={k.employer_percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employer_percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Medarbejder %</Label><Input type="number" step="0.001" className="h-5 text-[10px]" value={k.employee_percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, employee_percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Paragraf</Label><Input className="h-5 text-[10px]" value={k.section_reference} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, section_reference: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Procentkandidater */}
+                                                    {satserKandidater.filter(k => k.type === "percentage").length > 0 && (
+                                                        <div className="space-y-1.5">
+                                                            <p className="text-xs font-medium">Procentsatser og tillæg ({satserKandidater.filter(k => k.type === "percentage").length})</p>
+                                                            {satserKandidater.filter(k => k.type === "percentage").map(k => (
+                                                                <div key={k._id} className={`rounded border p-2.5 text-xs space-y-1.5 ${k.checked ? "bg-muted/30" : "opacity-50"}`}>
+                                                                    <div className="flex items-start gap-2">
+                                                                        <input type="checkbox" className="mt-0.5 shrink-0 accent-primary" checked={k.checked} onChange={e => setSatserKandidater(prev => prev.map(c => c._id === k._id ? { ...c, checked: e.target.checked } : c))} />
+                                                                        <div className="flex-1 space-y-1.5">
+                                                                            <div className="flex gap-1.5 items-center flex-wrap">
+                                                                                <Badge variant={k.confidence === "høj" ? "default" : "outline"} className="text-[9px] px-1.5 py-0">{k.confidence} tillid</Badge>
+                                                                                <Badge variant="outline" className="text-[9px] px-1.5 py-0">{k.category}</Badge>
+                                                                                {k.citation && <span className="text-[10px] text-muted-foreground italic">"{k.citation}"</span>}
+                                                                            </div>
+                                                                            <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
+                                                                            <div className="grid grid-cols-2 gap-1">
+                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Procent</Label><Input type="number" step="0.01" className="h-5 text-[10px]" value={k.percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, percent: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                            </div>
+                                                                            {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+
+                                                    {satserKandidater.length === 0 && (
+                                                        <p className="text-xs text-muted-foreground py-4 text-center">AI fandt ingen satser i dokumentet.</p>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <DialogFooter className="pt-2 border-t gap-2 flex-wrap">
+                                                {satserPhase === "kandidater" && (
+                                                    <Button size="sm" variant="outline" className="text-xs" onClick={() => setSatserPhase("input")}>
+                                                        ← Tilbage
+                                                    </Button>
+                                                )}
+                                                <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSatserUdtraekAgreementId(null)}>Luk</Button>
+                                                {satserPhase === "input" ? (
+                                                    <Button size="sm" className="text-xs gap-1" disabled={satserUdtraekker || (satserInputMode === "upload" ? !satserFil : !satserBilagValg)} onClick={() => udtraekSatser(agreement.id)}>
+                                                        {satserUdtraekker ? <><Loader2 className="h-3 w-3 animate-spin" />Udtrækker…</> : <><Wand2 className="h-3 w-3" />Udtræk satser</>}
+                                                    </Button>
+                                                ) : (
+                                                    <Button size="sm" className="text-xs gap-1" disabled={satserOpretter || satserKandidater.filter(k => k.checked).length === 0} onClick={() => opretValgte(agreement.id)}>
+                                                        {satserOpretter ? <><Loader2 className="h-3 w-3 animate-spin" />Opretter…</> : `Opret valgte (${satserKandidater.filter(k => k.checked).length})`}
+                                                    </Button>
+                                                )}
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Pensionsregler ── */}
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Pension</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {agreement.agreement_pension_rules.length === 0 && <p className="text-xs text-muted-foreground">Der er endnu ikke registreret en pensionsregel.</p>}
+                                            {agreement.agreement_pension_rules
+                                                .slice()
+                                                .sort((a, b) => a.valid_from.localeCompare(b.valid_from))
+                                                .map(rule => (
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-1 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                <p className="font-medium">{rule.employment_form === "a-løn" ? "A-løn" : "Lønmodtagerfreelance"}: arbejdsgiver {Number(rule.employer_percent).toLocaleString("da-DK")}%{Number(rule.employee_percent) > 0 ? ` + medarbejder ${Number(rule.employee_percent).toLocaleString("da-DK")}%` : ""}</p>
+                                                                <p className="text-muted-foreground">Beregnes af {rule.basis} · {rule.section_reference} · fra {rule.valid_from}{rule.valid_to ? ` til ${rule.valid_to}` : ""}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
+                                                            </div>
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={() => godkendPensionRule(rule.id)}>godkend</button>}
+                                                                <button type="button" className="text-[10px] text-muted-foreground underline hover:text-foreground" onClick={() => {
+                                                                    setEditPensionRule(rule.id)
+                                                                    setPensionRuleForm({
+                                                                        employment_form: rule.employment_form,
+                                                                        employer_percent: String(rule.employer_percent),
+                                                                        employee_percent: String(rule.employee_percent),
+                                                                        basis: rule.basis, scheme_kind: rule.scheme_kind ?? "occupational_pension",
+                                                                        valid_from: rule.valid_from, valid_to: rule.valid_to ?? "",
+                                                                        section_reference: rule.section_reference,
+                                                                        source_note: rule.source_note ?? "",
+                                                                    })
+                                                                }}>redigér</button>
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={() => sletPensionRule(rule.id)}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                        {editPensionRule === rule.id && (
+                                                            <div className="space-y-1.5 pt-2 border-t mt-1">
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Ansættelsesform</Label>
+                                                                        <Select value={pensionRuleForm.employment_form} onValueChange={v => setPensionRuleForm(f => ({ ...f, employment_form: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Ordningstype</Label>
+                                                                        <Select value={pensionRuleForm.scheme_kind} onValueChange={v => setPensionRuleForm(f => ({ ...f, scheme_kind: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent><SelectItem value="occupational_pension">Erhvervspension</SelectItem><SelectItem value="pension_savings">Pensionsopsparing</SelectItem></SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Arbejdsgiver %</Label><Input type="number" step="0.001" className="h-6 text-xs" value={pensionRuleForm.employer_percent} onChange={e => setPensionRuleForm(f => ({ ...f, employer_percent: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Medarbejder %</Label><Input type="number" step="0.001" className="h-6 text-xs" value={pensionRuleForm.employee_percent} onChange={e => setPensionRuleForm(f => ({ ...f, employee_percent: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Beregningsgrundlag</Label>
+                                                                        <Select value={pensionRuleForm.basis} onValueChange={v => setPensionRuleForm(f => ({ ...f, basis: v }))}>
+                                                                            <SelectTrigger className="h-6 text-xs"><SelectValue /></SelectTrigger>
+                                                                            <SelectContent>
+                                                                                <SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem>
+                                                                                <SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem>
+                                                                                <SelectItem value="honorar">Honorar</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                    </div>
+                                                                    <div><Label className="text-[10px]">Paragraf</Label><Input className="h-6 text-xs" value={pensionRuleForm.section_reference} onChange={e => setPensionRuleForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    <div><Label className="text-[10px]">Gyldig fra</Label><Input type="date" className="h-6 text-xs" value={pensionRuleForm.valid_from} onChange={e => setPensionRuleForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-6 text-xs" value={pensionRuleForm.valid_to} onChange={e => setPensionRuleForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                                </div>
+                                                                <div><Label className="text-[10px]">Note</Label><Input className="h-6 text-xs" value={pensionRuleForm.source_note} onChange={e => setPensionRuleForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                                <div className="flex gap-1.5">
+                                                                    <Button size="sm" className="h-6 text-xs flex-1" disabled={ruleSaving} onClick={() => gemPensionRule(rule.id)}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem</Button>
+                                                                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setEditPensionRule(null)}>✕</Button>
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => { setNewPensionAgreementId(agreement.id); setNewPensionForm(emptyPensionForm()) }}>
+                                                <Plus className="h-3.5 w-3.5" />Tilføj pensionsregel
+                                            </Button>
+                                        </div>
+                                    </details>
+
+                                    {/* ── Dialog: ny pensionsregel ── */}
+                                    <Dialog open={newPensionAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewPensionAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny pensionsregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Ansættelsesform *</Label>
+                                                        <Select value={newPensionForm.employment_form} onValueChange={v => setNewPensionForm(f => ({ ...f, employment_form: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="a-løn">A-løn</SelectItem><SelectItem value="lønmodtager-freelance">Lønmodtagerfreelance</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Ordningstype *</Label>
+                                                        <Select value={newPensionForm.scheme_kind} onValueChange={v => setNewPensionForm(f => ({ ...f, scheme_kind: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent><SelectItem value="occupational_pension">Erhvervspension</SelectItem><SelectItem value="pension_savings">Pensionsopsparing</SelectItem></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Arbejdsgiver % *</Label><Input type="number" step="0.001" className="h-7 text-xs" value={newPensionForm.employer_percent} onChange={e => setNewPensionForm(f => ({ ...f, employer_percent: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Medarbejder % *</Label><Input type="number" step="0.001" className="h-7 text-xs" value={newPensionForm.employee_percent} onChange={e => setNewPensionForm(f => ({ ...f, employee_percent: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Beregningsgrundlag *</Label>
+                                                        <Select value={newPensionForm.basis} onValueChange={v => setNewPensionForm(f => ({ ...f, basis: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="normalløn">Normalløn</SelectItem><SelectItem value="minimumsløn">Minimumsløn</SelectItem>
+                                                                <SelectItem value="grundløn">Grundløn</SelectItem><SelectItem value="alle-løndele">Alle løndele</SelectItem>
+                                                                <SelectItem value="honorar">Honorar</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                    <div><Label className="text-[10px]">Paragraf *</Label><Input className="h-7 text-xs" value={newPensionForm.section_reference} onChange={e => setNewPensionForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newPensionForm.valid_from} onChange={e => setNewPensionForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Gyldig til</Label><Input type="date" className="h-7 text-xs" value={newPensionForm.valid_to} onChange={e => setNewPensionForm(f => ({ ...f, valid_to: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Note</Label><Input className="h-7 text-xs" value={newPensionForm.source_note} onChange={e => setNewPensionForm(f => ({ ...f, source_note: e.target.value }))} /></div>
+                                                <p className="text-muted-foreground text-[10px]">Oprettes som kladde — kræver juridisk godkendelse.</p>
+                                            </div>
+                                            <DialogFooter>
+                                                <Button variant="outline" size="sm" onClick={() => setNewPensionAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={opretPensionRule}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Procentsatser og tillæg ── */}
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Procentsatser og tillæg</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-2 border-t p-3">
+                                            {(agreement.agreement_percentage_rules ?? []).length === 0 && <p className="text-xs text-muted-foreground">Ingen procentsatser registreret endnu.</p>}
+                                            {(agreement.agreement_percentage_rules ?? [])
+                                                .slice()
+                                                .sort((a, b) => a.category.localeCompare(b.category) || a.label.localeCompare(b.label))
+                                                .map(rule => (
+                                                    <div key={rule.id} className={`rounded px-3 py-2 text-xs space-y-0.5 ${rule.status === "archived" ? "opacity-50 bg-muted/20" : "bg-muted/40"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div>
+                                                                <p className="font-medium">{rule.label}: {Number(rule.percent).toLocaleString("da-DK")}%</p>
+                                                                <p className="text-muted-foreground">Af {rule.basis} · {rule.trigger_condition}</p>
+                                                                <p className="text-muted-foreground">{rule.section_reference && `${rule.section_reference} · `}fra {rule.valid_from}{rule.status === "approved" ? " · godkendt" : rule.status === "archived" ? " · arkiveret" : " · afventer godkendelse"}</p>
+                                                            </div>
+                                                            <div className="flex gap-1 shrink-0">
+                                                                {rule.status === "draft" && (
+                                                                    <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={async () => {
+                                                                        setRuleSaving(true)
+                                                                        await fetch("/api/admin/agreements", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ percentageRuleId: rule.id, status: "approved" }) })
+                                                                        setRuleSaving(false)
+                                                                        refreshAktive()
+                                                                    }}>godkend</button>
+                                                                )}
+                                                                <button type="button" className="text-[10px] text-destructive underline hover:opacity-80" disabled={ruleSaving} onClick={async () => {
+                                                                    setRuleSaving(true)
+                                                                    await fetch("/api/admin/agreements", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ percentageRuleId: rule.id }) })
+                                                                    setRuleSaving(false)
+                                                                    refreshAktive()
+                                                                }}>
+                                                                    {rule.status === "draft" || rule.status === "archived" ? "slet" : "arkivér"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            <Button size="sm" variant="outline" className="w-full h-7 text-xs mt-1 gap-1" onClick={() => setNewPctAgreementId(agreement.id)}>
+                                                <Plus className="h-3.5 w-3.5" />Tilføj procentregel
+                                            </Button>
+                                        </div>
+                                    </details>
+
+                                    {/* ── Dialog: ny procentregel ── */}
+                                    <Dialog open={newPctAgreementId === agreement.id} onOpenChange={open => { if (!open) setNewPctAgreementId(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Ny procentregel — {agreement.title}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Procent *</Label><Input type="number" step="0.01" className="h-7 text-xs" placeholder="25" value={newPctForm.percent} onChange={e => setNewPctForm(f => ({ ...f, percent: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Kategori *</Label>
+                                                        <Select value={newPctForm.category} onValueChange={v => setNewPctForm(f => ({ ...f, category: v }))}>
+                                                            <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="overarbejde">Overarbejde</SelectItem>
+                                                                <SelectItem value="weekend-helligdag">Weekend/helligdag</SelectItem>
+                                                                <SelectItem value="royalty">Royalty</SelectItem>
+                                                                <SelectItem value="fond">Fond</SelectItem>
+                                                                <SelectItem value="kort-engagement">Kort engagement</SelectItem>
+                                                                <SelectItem value="lønregulering">Lønregulering</SelectItem>
+                                                                <SelectItem value="erstatning">Erstatning</SelectItem>
+                                                                <SelectItem value="andet">Andet</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                    </div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Beregningsgrundlag *</Label><Input className="h-7 text-xs" placeholder="fx normaltimeløn, ferieberettiget løn" value={newPctForm.basis} onChange={e => setNewPctForm(f => ({ ...f, basis: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Hvornår gælder den *</Label><Input className="h-7 text-xs" placeholder="fx varslet overarbejde, 1. time" value={newPctForm.trigger_condition} onChange={e => setNewPctForm(f => ({ ...f, trigger_condition: e.target.value }))} /></div>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    <div><Label className="text-[10px]">Gyldig fra *</Label><Input type="date" className="h-7 text-xs" value={newPctForm.valid_from} onChange={e => setNewPctForm(f => ({ ...f, valid_from: e.target.value }))} /></div>
+                                                    <div><Label className="text-[10px]">Paragraf</Label><Input className="h-7 text-xs" placeholder="§ 4, stk. 2" value={newPctForm.section_reference} onChange={e => setNewPctForm(f => ({ ...f, section_reference: e.target.value }))} /></div>
+                                                </div>
+                                                <div><Label className="text-[10px]">Kilde-titel</Label><Input className="h-7 text-xs" value={newPctForm.source_title} onChange={e => setNewPctForm(f => ({ ...f, source_title: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Kendt begreb (valgfrit — sikrer korrekt nøgleordsmatching)</Label>
+                                                    <Select value={newPctForm.label_key} onValueChange={v => setNewPctForm(f => ({ ...f, label_key: v }))}>
+                                                        <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Ingen (de fleste regler)" /></SelectTrigger>
+                                                        <SelectContent>
+                                                            <SelectItem value="">Ingen</SelectItem>
+                                                            <SelectItem value="beta_pulje">BETA-puljen</SelectItem>
+                                                            <SelectItem value="helligdagsbetaling">Helligdagsbetaling</SelectItem>
+                                                            <SelectItem value="feriepenge">Feriepenge/ferietillæg</SelectItem>
+                                                        </SelectContent>
+                                                    </Select>
+                                                </div>
+                                            </div>
+                                            <DialogFooter className="pt-2 gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setNewPctAgreementId(null)}>Annuller</Button>
+                                                <Button size="sm" disabled={ruleSaving} onClick={async () => {
+                                                    if (!newPctForm.label || !newPctForm.percent || !newPctForm.basis || !newPctForm.trigger_condition || !newPctForm.valid_from) {
+                                                        toast.error("Udfyld alle obligatoriske felter"); return
+                                                    }
+                                                    setRuleSaving(true)
+                                                    const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9æøå]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
+                                                    const res = await fetch("/api/admin/agreements", {
+                                                        method: "POST",
+                                                        headers: { "Content-Type": "application/json" },
+                                                        body: JSON.stringify({ percentageRule: { agreementId: agreement.id, rate_key: `${slugify(newPctForm.label)}-${newPctForm.valid_from}`, ...newPctForm, percent: Number(newPctForm.percent), label_key: newPctForm.label_key || null } }),
+                                                    })
+                                                    setRuleSaving(false)
+                                                    if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }
+                                                    else { toast.error((await res.json()).error ?? "Fejl") }
+                                                }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    <details className="group rounded-md border bg-background">
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Kilder og brug i kontraktgennemgang</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="space-y-3 border-t p-3 text-xs text-muted-foreground">
+                                            <p>
+                                                Kilderne giver AI’en et kontrolleret sammenligningsgrundlag. De beviser ikke i sig selv, at en kontrakt er omfattet. AI’en skal også kontrollere kontraktens henvisning, produktionstype, funktion, dato og ansættelsesform og vise usikkerhed for administratoren.
+                                            </p>
+                                            <div className="space-y-1">
+                                                {agreement.source_url && <p><span className="font-medium text-foreground">Officiel oversigt: </span><a href={agreement.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Producentforeningens eller organisationens kildeside</a></p>}
+                                                {agreement.content_url && <p><span className="font-medium text-foreground">Aftaletekst: </span><a href={agreement.content_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">Åbn den registrerede overenskomst</a></p>}
+                                                {Array.from(new Map(agreement.agreement_wage_rules.map(rule => [rule.source_url, rule])).values()).map(rule => (
+                                                    <p key={rule.source_url}><span className="font-medium text-foreground">Lønskema: </span><a href={rule.source_url} target="_blank" rel="noreferrer" className="underline underline-offset-2">{rule.source_title}</a> · kontrolleret {rule.source_checked_at}</p>
+                                                ))}
+                                            </div>
+                                            <p>Funktioner i registeret: {agreement.profession_roles.join(", ") || "ikke angivet"}</p>
+                                            {agreement.notes && <p><span className="font-medium text-foreground">Bemærkning: </span>{agreement.notes}</p>}
+                                        </div>
+                                    </details>
+
+                                    {/* Indekserede versioner + upload */}
+                                    <details className="group rounded-md border bg-background" open={agreementVersions.length === 0 || isUploadOpen}>
+                                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-sm font-medium">
+                                            <span>Indekserede versioner {agreementVersions.length > 0 ? `(${agreementVersions.length})` : ""}</span>
+                                            <ChevronRight className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90" />
+                                        </summary>
+                                        <div className="border-t">
+                                            {agreementVersions.length === 0 && !isUploadOpen && (
+                                                <p className="px-3 py-3 text-xs text-muted-foreground">Ingen indekserede versioner endnu.</p>
+                                            )}
+                                            {agreementVersions.length > 0 && (
+                                                <div className="divide-y">
+                                                    {agreementVersions.map(ver => (
+                                                        <OverenskomstVersionRække
+                                                            key={ver.gyldig_fra}
+                                                            ok={agreement.code}
+                                                            ver={ver}
+                                                            onToggleArkiv={() => toggleArkiv(agreement.code, ver.gyldig_fra, !ver.aktiv)}
+                                                            onSlet={() => sletVersion(agreement.code, ver.gyldig_fra)}
+                                                            onErstat={() => { setUploadTarget(agreement.id); setNyGyldigFra(""); setNyFil(null) }}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {/* Inline upload form */}
+                                            {isUploadOpen ? (
+                                                <div className="p-3 space-y-3 border-t">
+                                                    <p className="text-xs font-medium">Tilføj ny version til {agreement.code}</p>
+                                                    <div
+                                                        className="rounded border-2 border-dashed p-3 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
+                                                        onClick={() => document.getElementById(`ok-fil-input-${agreement.id}`)?.click()}
+                                                    >
+                                                        <input
+                                                            id={`ok-fil-input-${agreement.id}`}
+                                                            type="file"
+                                                            accept=".pdf"
+                                                            className="hidden"
+                                                            onChange={e => setNyFil(e.target.files?.[0] ?? null)}
+                                                        />
+                                                        {nyFil ? (
+                                                            <p className="text-xs font-medium">{nyFil.name}</p>
+                                                        ) : (
+                                                            <>
+                                                                <FileUp className="mx-auto h-4 w-4 text-muted-foreground/50 mb-1" />
+                                                                <p className="text-xs text-muted-foreground">Klik for at vælge PDF</p>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        <Label className="text-xs">Gyldig fra</Label>
+                                                        <Input type="date" className="h-8 text-xs" value={nyGyldigFra} onChange={e => setNyGyldigFra(e.target.value)} />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <Button size="sm" className="flex-1 gap-1" onClick={() => tilføjTilKø(agreement.code)} disabled={!nyFil || !nyGyldigFra}>
+                                                            <Plus className="h-3 w-3" />Tilføj til kø
+                                                        </Button>
+                                                        <Button size="sm" variant="ghost" onClick={() => { setUploadTarget(null); setNyFil(null); setNyGyldigFra("") }}>
+                                                            Annullér
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="p-2">
+                                                    <Button size="sm" variant="ghost" className="w-full gap-1.5 text-xs"
+                                                        onClick={() => { setUploadTarget(agreement.id); setNyGyldigFra(""); setNyFil(null) }}>
+                                                        <Plus className="h-3 w-3" />Tilføj version
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </details>
+                                </div>
+                            </div>
+                        )
+                    })}
+
+                    {/* Opret ny overenskomst-kort */}
+                    {visOpretForm ? (
+                        <div className="rounded-md border p-3 space-y-3">
+                            <p className="text-sm font-medium">Opret overenskomst</p>
+                            <div className="space-y-2">
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Overenskomst-id (code)</Label>
+                                    <Input className="h-8 text-xs font-mono" placeholder="fx de4-fiction-2022" value={opretForm.code} onChange={e => setOpretForm(f => ({ ...f, code: e.target.value.toLowerCase().replace(/\s+/g, "-") }))} />
+                                    <p className="text-[10px] text-muted-foreground">Bruges som nøgle i RAG — brug bindestreg, ikke mellemrum</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Titel</Label>
+                                    <Input className="h-8 text-xs" placeholder="De4 Fiktionsoverenskomst 2022" value={opretForm.title} onChange={e => setOpretForm(f => ({ ...f, title: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Parter (kommasepareret)</Label>
+                                    <Input className="h-8 text-xs" placeholder="DFKS, De4" value={opretForm.parties} onChange={e => setOpretForm(f => ({ ...f, parties: e.target.value }))} />
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-xs">Gyldig fra</Label>
+                                    <Input type="date" className="h-8 text-xs" value={opretForm.valid_from} onChange={e => setOpretForm(f => ({ ...f, valid_from: e.target.value }))} />
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button size="sm" className="flex-1" disabled={!opretForm.code || !opretForm.title || opretLoading} onClick={opretOverenskomst}>
+                                    {opretLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}Opret
+                                </Button>
+                                <Button size="sm" variant="ghost" onClick={() => { setVisOpretForm(false); setOpretForm({ code: "", title: "", parties: "", valid_from: "" }) }}>Annullér</Button>
                             </div>
                         </div>
-                    ))}
-                </div>
-            </div>
-            {/* Sektion A — Tilføj til kø */}
-            <div className="rounded-lg border p-4 space-y-4">
-                <p className="text-sm font-medium">Tilføj overenskomst</p>
-                <div className="space-y-3">
-                    <div
-                        className="rounded-lg border-2 border-dashed p-4 text-center cursor-pointer hover:border-muted-foreground/40 transition-colors"
-                        onClick={() => document.getElementById("ok-fil-input")?.click()}
-                    >
-                        <input id="ok-fil-input" type="file" accept=".pdf" className="hidden"
-                            onChange={e => setNyFil(e.target.files?.[0] ?? null)} />
-                        {nyFil ? (
-                            <p className="text-sm font-medium">{nyFil.name}</p>
-                        ) : (
-                            <>
-                                <FileUp className="mx-auto h-5 w-5 text-muted-foreground/50 mb-1" />
-                                <p className="text-xs text-muted-foreground">Klik for at vælge PDF</p>
-                            </>
-                        )}
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="space-y-1">
-                            <Label className="text-xs">Overenskomst</Label>
-                            <Select value={nyOverenskomst} onValueChange={setNyOverenskomst}>
-                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Vælg..." /></SelectTrigger>
-                                <SelectContent>
-                                    {OVERENSKOMST_TYPER.map(o => <SelectItem key={o.id} value={o.id}>{o.label}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </div>
-                        <div className="space-y-1">
-                            <Label className="text-xs">Gyldig fra</Label>
-                            <Input type="date" className="h-8 text-xs" value={nyGyldigFra} onChange={e => setNyGyldigFra(e.target.value)} />
-                        </div>
-                    </div>
-                    <Button className="w-full gap-1.5" onClick={tilføjTilKø}
-                        disabled={!nyFil || !nyOverenskomst || !nyGyldigFra}>
-                        <Plus className="h-3.5 w-3.5" />Tilføj til kø
-                    </Button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setVisOpretForm(true)}
+                            className="rounded-md border border-dashed p-3 flex flex-col items-center justify-center gap-2 min-h-[120px] hover:border-muted-foreground/40 hover:bg-muted/20 transition-colors w-full text-left"
+                        >
+                            <Plus className="h-5 w-5 text-muted-foreground/50" />
+                            <p className="text-xs text-muted-foreground">Opret overenskomst</p>
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -1630,12 +2824,11 @@ function OverenskomsterTab() {
                     <div className="space-y-2">
                         {kø.map(item => (
                             <div key={item.id} className="rounded-lg border">
-                                {/* Header */}
                                 <div className="flex items-center justify-between px-4 py-3 border-b gap-3">
                                     <div className="min-w-0">
                                         <p className="text-sm font-medium truncate">{item.fil.name}</p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {OVERENSKOMST_TYPER.find(t => t.id === item.overenskomst)?.label} · {item.gyldigFra}
+                                        <p className="text-xs text-muted-foreground font-mono">
+                                            {item.overenskomst} · {item.gyldigFra}
                                         </p>
                                     </div>
                                     <div className="flex items-center gap-2 shrink-0">
@@ -1676,7 +2869,6 @@ function OverenskomsterTab() {
                                     </div>
                                 </div>
 
-                                {/* Bekræftelsespanel */}
                                 {aktivItem === item.id && item.sektioner.length > 0 && (
                                     <div className="p-4 space-y-3">
                                         <p className="text-xs text-muted-foreground">
@@ -1701,12 +2893,15 @@ function OverenskomsterTab() {
                                                     <p className="text-xs text-muted-foreground line-clamp-2">{s.tekst}</p>
                                                     <div className="flex items-center gap-2">
                                                         <Label className="text-xs shrink-0">Kategori:</Label>
-                                                        <Select value={s.kategori} onValueChange={v => opdaterSektion(item.id, i, { kategori: v })}>
-                                                            <SelectTrigger className="h-6 text-xs flex-1"><SelectValue /></SelectTrigger>
-                                                            <SelectContent>
-                                                                {KATEGORIER.map(k => <SelectItem key={k.id} value={k.id}>{k.label}</SelectItem>)}
-                                                            </SelectContent>
-                                                        </Select>
+                                                        <Input
+                                                            list="ok-kategorier-list"
+                                                            className="h-6 text-xs flex-1"
+                                                            value={s.kategori}
+                                                            onChange={e => opdaterSektion(item.id, i, { kategori: e.target.value })}
+                                                        />
+                                                        <datalist id="ok-kategorier-list">
+                                                            {kategorier.map(k => <option key={k} value={k} />)}
+                                                        </datalist>
                                                     </div>
                                                 </div>
                                             ))}
@@ -1721,7 +2916,6 @@ function OverenskomsterTab() {
                         ))}
                     </div>
 
-                    {/* Indeksér alle klare */}
                     {klarTilIndeksering.length > 1 && (
                         <Button variant="outline" className="w-full gap-1.5"
                             onClick={() => klarTilIndeksering.forEach(i => indekserItem(i.id))}>
@@ -1731,19 +2925,22 @@ function OverenskomsterTab() {
                 </div>
             )}
 
-            {/* Sektion C — Indekserede overenskomster */}
-            {Object.keys(versioner).length > 0 && (
+            {/* Ældre indekserede versioner der ikke er koblet til et registerkort */}
+            {unlinkedKeys.length > 0 && (
                 <div className="space-y-3">
                     <Separator />
-                    <p className="text-sm font-medium">Indekserede overenskomster</p>
+                    <div>
+                        <p className="text-sm font-medium">Ældre indekserede versioner</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Disse versioner er ikke koblet til et registerkort. Upload ny version via det relevante registerkort for at opdatere.</p>
+                    </div>
                     <div className="space-y-2">
-                        {Object.entries(versioner).map(([ok, vers]) => (
+                        {unlinkedKeys.map(ok => (
                             <div key={ok} className="rounded-lg border">
                                 <div className="px-4 py-2.5 border-b bg-muted/30">
-                                    <p className="text-sm font-medium">{OVERENSKOMST_TYPER.find(t => t.id === ok)?.label ?? ok}</p>
+                                    <p className="text-sm font-medium font-mono">{ok}</p>
                                 </div>
                                 <div className="divide-y">
-                                    {vers.map(ver => (
+                                    {versioner[ok].map(ver => (
                                         <OverenskomstVersionRække
                                             key={ver.gyldig_fra}
                                             ok={ok}
@@ -1770,226 +2967,6 @@ function OverenskomsterTab() {
 // Satser-fane
 // ─────────────────────────────────────────────────────────────
 
-type Sats = {
-    id: string
-    overenskomst: string
-    kategori: string
-    beskrivelse: string
-    vaerdi: number
-    enhed: string
-    gyldig_fra: string
-    gyldig_til: string | null
-}
-
-const OVERENSKOMST_LABELS: Record<string, string> = {
-    "de4-fiktion": "De4 Fiktionsoverenskomst",
-    "dokumentar": "FAF Dokumentaroverenskomst",
-    "dj": "DJ",
-    "metal": "Metal",
-}
-
-const ENHED_OPTIONS = ["kr/uge", "kr/dag", "kr/time", "%"]
-
-function SatserTab() {
-    const [valgtOverenskomst, setValgtOverenskomst] = useState("de4-fiktion")
-    const [satser, setSatser] = useState<Sats[]>([])
-    const [loading, setLoading] = useState(false)
-    const [visNyDialog, setVisNyDialog] = useState(false)
-    const [visRundeDialog, setVisRundeDialog] = useState(false)
-    const [nyForm, setNyForm] = useState({ beskrivelse: "", kategori: "", vaerdi: "", enhed: "kr/uge", gyldig_fra: new Date().toISOString().slice(0, 10) })
-    const [rundeGyldigFra, setRundeGyldigFra] = useState(new Date().toISOString().slice(0, 10))
-    const [rundeSatser, setRundeSatser] = useState<Omit<Sats, "id" | "overenskomst" | "gyldig_til">[]>([])
-    const [gemmer, setGemmer] = useState(false)
-
-    async function hentSatser(ov: string) {
-        setLoading(true)
-        try {
-            const res = await fetch(`/api/admin/satser?overenskomst=${ov}`)
-            const data = await res.json()
-            setSatser(Array.isArray(data) ? data : [])
-        } catch {
-            toast.error("Kunne ikke hente satser")
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    useEffect(() => { hentSatser(valgtOverenskomst) }, [valgtOverenskomst])
-
-    async function gemNySats() {
-        setGemmer(true)
-        try {
-            const res = await fetch("/api/admin/satser", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ overenskomst: valgtOverenskomst, ...nyForm, vaerdi: parseFloat(nyForm.vaerdi) }),
-            })
-            if (!res.ok) throw new Error((await res.json()).error)
-            toast.success("Sats tilføjet")
-            setVisNyDialog(false)
-            setNyForm({ beskrivelse: "", kategori: "", vaerdi: "", enhed: "kr/uge", gyldig_fra: new Date().toISOString().slice(0, 10) })
-            hentSatser(valgtOverenskomst)
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
-        } finally {
-            setGemmer(false)
-        }
-    }
-
-    async function gemNyRunde() {
-        setGemmer(true)
-        try {
-            const res = await fetch("/api/admin/satser", {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ overenskomst: valgtOverenskomst, satser: rundeSatser, gyldig_fra: rundeGyldigFra }),
-            })
-            if (!res.ok) throw new Error((await res.json()).error)
-            toast.success("Ny overenskomstrunde gemt")
-            setVisRundeDialog(false)
-            hentSatser(valgtOverenskomst)
-        } catch (e: unknown) {
-            toast.error(errorMessage(e))
-        } finally {
-            setGemmer(false)
-        }
-    }
-
-    function åbnRundeDialog() {
-        // Forudfyld med aktuelle satser
-        setRundeSatser(satser.map(s => ({ overenskomst: s.overenskomst, kategori: s.kategori, beskrivelse: s.beskrivelse, vaerdi: s.vaerdi, enhed: s.enhed, gyldig_fra: rundeGyldigFra })))
-        setVisRundeDialog(true)
-    }
-
-    function formatSats(vaerdi: number, enhed: string) {
-        if (enhed === "%") return `${vaerdi.toLocaleString("da-DK", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} %`
-        return `${vaerdi.toLocaleString("da-DK")} ${enhed}`
-    }
-
-    return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
-                <Select value={valgtOverenskomst} onValueChange={setValgtOverenskomst}>
-                    <SelectTrigger className="w-64 h-8 text-xs">
-                        <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                        {Object.entries(OVERENSKOMST_LABELS).map(([id, label]) => (
-                            <SelectItem key={id} value={id}>{label}</SelectItem>
-                        ))}
-                    </SelectContent>
-                </Select>
-                <div className="flex gap-2">
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={åbnRundeDialog}>
-                        <Plus className="h-3.5 w-3.5 mr-1" />Ny overenskomstrunde
-                    </Button>
-                    <Button size="sm" className="text-xs h-7" onClick={() => setVisNyDialog(true)}>
-                        <Plus className="h-3.5 w-3.5 mr-1" />Tilføj sats
-                    </Button>
-                </div>
-            </div>
-
-            {loading ? (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground py-4">
-                    <Loader2 className="h-4 w-4 animate-spin" />Henter satser...
-                </div>
-            ) : satser.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-4">Ingen satser fundet. Kør SQL-migration og seed i Supabase.</p>
-            ) : (
-                <div className="max-w-full overflow-x-auto rounded-md border">
-                    <table className="w-full text-xs">
-                        <thead>
-                            <tr className="border-b bg-muted/40">
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Beskrivelse</th>
-                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Sats</th>
-                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Gyldig fra</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {satser.map(s => (
-                                <tr key={s.id} className="border-b last:border-0 hover:bg-muted/20">
-                                    <td className="px-3 py-2">
-                                        <span className="font-medium">{s.beskrivelse}</span>
-                                        <span className="ml-2 text-muted-foreground">({s.kategori})</span>
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-mono tabular-nums">
-                                        {formatSats(s.vaerdi, s.enhed)}
-                                    </td>
-                                    <td className="px-3 py-2 text-right text-muted-foreground">
-                                        {new Date(s.gyldig_fra).toLocaleDateString("da-DK", { day: "2-digit", month: "2-digit", year: "numeric" })}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* Ny sats dialog */}
-            <Dialog open={visNyDialog} onOpenChange={setVisNyDialog}>
-                <DialogContent>
-                    <DialogHeader><DialogTitle className="text-sm">Tilføj ny sats</DialogTitle></DialogHeader>
-                    <div className="space-y-3">
-                        <div><Label className="text-xs">Beskrivelse</Label>
-                            <Input className="h-8 text-xs mt-1" value={nyForm.beskrivelse} onChange={e => setNyForm(f => ({ ...f, beskrivelse: e.target.value }))} /></div>
-                        <div><Label className="text-xs">Kategori (internt ID)</Label>
-                            <Input className="h-8 text-xs mt-1" placeholder="fx normallon, pension, royalty" value={nyForm.kategori} onChange={e => setNyForm(f => ({ ...f, kategori: e.target.value }))} /></div>
-                        <div className="flex gap-2">
-                            <div className="flex-1"><Label className="text-xs">Værdi</Label>
-                                <Input className="h-8 text-xs mt-1" type="number" value={nyForm.vaerdi} onChange={e => setNyForm(f => ({ ...f, vaerdi: e.target.value }))} /></div>
-                            <div><Label className="text-xs">Enhed</Label>
-                                <Select value={nyForm.enhed} onValueChange={v => setNyForm(f => ({ ...f, enhed: v }))}>
-                                    <SelectTrigger className="h-8 text-xs mt-1 w-28"><SelectValue /></SelectTrigger>
-                                    <SelectContent>{ENHED_OPTIONS.map(e => <SelectItem key={e} value={e}>{e}</SelectItem>)}</SelectContent>
-                                </Select></div>
-                        </div>
-                        <div><Label className="text-xs">Gyldig fra</Label>
-                            <Input className="h-8 text-xs mt-1" type="date" value={nyForm.gyldig_fra} onChange={e => setNyForm(f => ({ ...f, gyldig_fra: e.target.value }))} /></div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" size="sm" onClick={() => setVisNyDialog(false)}>Annuller</Button>
-                        <Button size="sm" onClick={gemNySats} disabled={gemmer}>
-                            {gemmer && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Gem
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Ny overenskomstrunde dialog */}
-            <Dialog open={visRundeDialog} onOpenChange={setVisRundeDialog}>
-                <DialogContent className="max-w-xl">
-                    <DialogHeader>
-                        <DialogTitle className="text-sm">Ny overenskomstrunde — {OVERENSKOMST_LABELS[valgtOverenskomst]}</DialogTitle>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Alle aktuelle satser lukkes (gyldig_til = i dag) og nye oprettes med nedenståede værdier.
-                        </p>
-                    </DialogHeader>
-                    <div className="space-y-3">
-                        <div><Label className="text-xs">Ny gyldig_fra</Label>
-                            <Input className="h-8 text-xs mt-1" type="date" value={rundeGyldigFra} onChange={e => setRundeGyldigFra(e.target.value)} /></div>
-                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {rundeSatser.map((s, i) => (
-                                <div key={i} className="flex gap-2 items-center">
-                                    <span className="text-xs text-muted-foreground w-40 truncate">{s.beskrivelse}</span>
-                                    <Input className="h-7 text-xs w-24" type="number" value={s.vaerdi}
-                                        onChange={e => setRundeSatser(rs => rs.map((r, j) => j === i ? { ...r, vaerdi: parseFloat(e.target.value) } : r))} />
-                                    <span className="text-xs text-muted-foreground">{s.enhed}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    <DialogFooter>
-                        <Button variant="outline" size="sm" onClick={() => setVisRundeDialog(false)}>Annuller</Button>
-                        <Button size="sm" onClick={gemNyRunde} disabled={gemmer}>
-                            {gemmer && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}Gem ny runde
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-        </div>
-    )
-}
-
 // ─────────────────────────────────────────────────────────────
 // Hovedside
 // ─────────────────────────────────────────────────────────────
@@ -2010,9 +2987,6 @@ export default function AiKontrolrumPage() {
                     <TabsTrigger value="overenskomster" className="gap-1.5 text-xs whitespace-nowrap">
                         <ScrollText className="h-3.5 w-3.5 shrink-0" />Overenskomster
                     </TabsTrigger>
-                    <TabsTrigger value="satser" className="gap-1.5 text-xs whitespace-nowrap">
-                        <Coins className="h-3.5 w-3.5 shrink-0" />Satser
-                    </TabsTrigger>
                     <TabsTrigger value="videnbase" className="gap-1.5 text-xs whitespace-nowrap">
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />Videnbase
                     </TabsTrigger>
@@ -2029,7 +3003,6 @@ export default function AiKontrolrumPage() {
                 </div>
                 <TabsContent value="forbrug" className="mt-4"><AiUsageModelsTab /></TabsContent>
                 <TabsContent value="overenskomster" className="mt-4"><OverenskomsterTab /></TabsContent>
-                <TabsContent value="satser" className="mt-4"><SatserTab /></TabsContent>
                 <TabsContent value="videnbase" className="mt-4"><VidenbaseTab /></TabsContent>
                 <TabsContent value="noteringer" className="mt-4"><NoteringerTab /></TabsContent>
                 <TabsContent value="moenstre" className="mt-4"><LaerteMoenstreTab /></TabsContent>

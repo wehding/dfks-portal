@@ -5,6 +5,7 @@ import { getEmbedding } from "@/lib/embedding-provider"
 import { extractPdfText } from "@/lib/pdf-parse"
 import { requireStaffModuleApi } from "@/lib/api-auth"
 import { extractWordText } from "@/lib/word-text"
+import { errorMessage } from "@/lib/error-message"
 
 function sb() {
     return createClient(
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
     try {
         const auth = await requireStaffModuleApi("contract_reviews", "write")
         if (!auth.ok) return auth.response
-        const { pdfBase64, pdfTekst, overenskomst, gyldigFra, bilagType, filnavn } = await req.json()
+        const { pdfBase64, pdfTekst, overenskomst, gyldigFra, bilagType, bilagLabel, filnavn } = await req.json()
         if (!pdfTekst || !overenskomst || !gyldigFra || !bilagType) {
             return NextResponse.json({ error: "pdfTekst, overenskomst, gyldigFra og bilagType er påkrævet" }, { status: 400 })
         }
@@ -92,6 +93,10 @@ export async function POST(req: NextRequest) {
         const supabase = sb()
         let indekseret = 0
         let lønskemaSatser = null
+
+        // Slå agreement_id op — sættes på alle chunks så fremtidige opslag er konsistente
+        const { data: agrRow } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id: string | null = agrRow?.id ?? null
 
         // Udtræk tekst server-side baseret på filtype
         let faktiskPdfTekst = pdfTekst
@@ -122,16 +127,18 @@ export async function POST(req: NextRequest) {
         // Chunk dokumentet
         const prefix = `${overenskomst} ${bilagType} ${gyldigFra}: `
         const chunks = chunkDokument(faktiskPdfTekst, { størrelse: 400, overlap: 40, prefix })
+        // Filnavn-slug bruges i kilde_id så flere filer af samme type kan sameksistere
+        const filSlug = (filnavn ?? "").toLowerCase().replace(/\.[^.]+$/, "").replace(/[^a-z0-9]+/g, "-").slice(0, 40)
 
         for (let i = 0; i < chunks.length; i++) {
-            const kilde_id = `${auth.orgId}:${sourcePart(overenskomst)}-${sourcePart(bilagType)}-${gyldigFra}-${i}`
+            const kilde_id = `${auth.orgId}:${sourcePart(overenskomst)}-${sourcePart(bilagType)}-${filSlug ? filSlug + "-" : ""}${gyldigFra}-${i}`
             const embedding = await getEmbedding(chunks[i], true)
 
             await supabase.from("knowledge_chunks").upsert({
                 org_id: auth.orgId,
                 kilde_id,
                 kilde_type: "overenskomst-bilag",
-                kilde_titel: `${overenskomst} — ${BILAG_LABELS[bilagType] ?? bilagType} (${i + 1}/${chunks.length})`,
+                kilde_titel: `${overenskomst} — ${bilagLabel ?? bilagType}${filSlug ? ` [${filnavn}]` : ""} (${i + 1}/${chunks.length})`,
                 tekst: chunks[i],
                 metadata: {
                     overenskomst,
@@ -142,6 +149,7 @@ export async function POST(req: NextRequest) {
                 },
                 embedding,
                 overenskomst: overenskomst.toLowerCase(),
+                agreement_id,
                 kategori: bilagType,
                 gyldig_fra: gyldigFra,
                 aktiv: true,
@@ -165,6 +173,7 @@ export async function POST(req: NextRequest) {
                 metadata: { overenskomst, gyldig_fra: gyldigFra, bilag_type: "lønskema", satser: lønskemaSatser },
                 embedding,
                 overenskomst: overenskomst.toLowerCase(),
+                agreement_id,
                 kategori: "lønskema-satser",
                 gyldig_fra: gyldigFra,
                 aktiv: true,
@@ -180,11 +189,46 @@ export async function POST(req: NextRequest) {
     }
 }
 
-const BILAG_LABELS: Record<string, string> = {
-    "lønskema": "Lønskema",
-    "standardkontrakt-aloen": "Standardkontrakt (A-løn)",
-    "standardkontrakt-leverandoer": "Standardkontrakt (leverandør)",
-    "bilag": "Bilag",
+// ── DELETE — slet alle chunks for én bilag-type ──────────────
+
+export async function DELETE(req: NextRequest) {
+    try {
+        const auth = await requireStaffModuleApi("contract_reviews", "write")
+        if (!auth.ok) return auth.response
+        const { searchParams } = new URL(req.url)
+        const overenskomst = searchParams.get("overenskomst")
+        const gyldigFra = searchParams.get("gyldigFra")
+        const type = searchParams.get("type")
+        if (!overenskomst || !gyldigFra || !type) {
+            return NextResponse.json({ error: "overenskomst, gyldigFra og type er påkrævet" }, { status: 400 })
+        }
+
+        const supabase = sb()
+        const typer = type === "lønskema" ? ["lønskema", "lønskema-satser"] : [type]
+
+        const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+        const agreement_id = agr?.id ?? null
+
+        let delQuery = supabase
+            .from("knowledge_chunks")
+            .delete()
+            .eq("gyldig_fra", gyldigFra)
+            .eq("kilde_type", "overenskomst-bilag")
+            .in("kategori", typer)
+
+        delQuery = agreement_id
+            ? delQuery.eq("agreement_id", agreement_id)
+            : delQuery.eq("overenskomst", overenskomst)
+
+        delQuery = delQuery.or(`org_id.is.null,org_id.eq.${auth.orgId}`)
+
+        const { error } = await delQuery
+
+        if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+        return NextResponse.json({ ok: true })
+    } catch (e: unknown) {
+        return NextResponse.json({ error: errorMessage(e) }, { status: 500 })
+    }
 }
 
 // ── GET — hent bilag for en overenskomst ──────────────────────
@@ -198,26 +242,55 @@ export async function GET(req: NextRequest) {
     if (!overenskomst || !gyldigFra) return NextResponse.json({ bilag: [] })
 
     const supabase = sb()
-    const { data, error } = await supabase
+
+    // Slå agreement_id op via agreements.code — bruges til at finde chunks der er migreret fra gamle id'er
+    const { data: agr } = await supabase.from("agreements").select("id").eq("code", overenskomst).maybeSingle()
+    const agreement_id = agr?.id ?? null
+
+    let query = supabase
         .from("knowledge_chunks")
-        .select("kategori, kilde_id, metadata, aktiv")
+        .select("kategori, kilde_id, kilde_titel, tekst, metadata, aktiv")
         .or(`org_id.is.null,org_id.eq.${auth.orgId}`)
-        .eq("overenskomst", overenskomst)
         .eq("gyldig_fra", gyldigFra)
-        .in("kategori", ["lønskema", "lønskema-satser", "standardkontrakt-aloen", "standardkontrakt-leverandoer", "bilag"])
+        .eq("kilde_type", "overenskomst-bilag")
+        .neq("kategori", "lønskema-satser")
         .order("kilde_id")
-    if (error) {
-        console.error("[overenskomst-bilag] read failed", error.code)
-        return NextResponse.json({ error: "Bilagene kunne ikke hentes." }, { status: 500 })
+
+    if (agreement_id) {
+        // Hent alle overenskomst-strings der er mappet til dette agreement (til at finde bilag med NULL agreement_id)
+        const { data: aliases } = await supabase
+            .from("knowledge_chunks")
+            .select("overenskomst")
+            .eq("agreement_id", agreement_id)
+            .eq("kilde_type", "overenskomst")
+            .not("overenskomst", "is", null)
+        const strings = [...new Set((aliases ?? []).map(r => r.overenskomst as string))]
+
+        if (strings.length > 0) {
+            query = query.or(`agreement_id.eq.${agreement_id},overenskomst.in.(${strings.join(",")})`)
+        } else {
+            query = query.eq("agreement_id", agreement_id)
+        }
+    } else {
+        query = query.eq("overenskomst", overenskomst)
     }
 
-    // Gruppér per bilag-type
-    const bilag: Record<string, { type: string; antal: number; satser?: any }> = {}
+    const { data } = await query
+
+    // Gruppér per bilag-type — label udledes fra første chunks kilde_titel
+    const bilag: Record<string, { type: string; label: string; antal: number; satser?: any; chunks: { id: string; titel: string; tekst: string }[] }> = {}
     for (const c of data ?? []) {
         const type = c.kategori!
-        if (!bilag[type]) bilag[type] = { type, antal: 0 }
+        if (!bilag[type]) {
+            // Udtræk label fra "overenskomst — Label (1/N)" → "Label"
+            const raw = c.kilde_titel ?? type
+            const afterDash = raw.includes(" — ") ? raw.split(" — ").slice(1).join(" — ") : raw
+            const label = afterDash.replace(/\s*\(\d+\/\d+\)\s*$/, "").trim()
+            bilag[type] = { type, label, antal: 0, chunks: [] }
+        }
         bilag[type].antal++
-        if (type === "lønskema-satser" && (c.metadata as any)?.satser) {
+        bilag[type].chunks.push({ id: c.kilde_id ?? "", titel: c.kilde_titel ?? "", tekst: c.tekst ?? "" })
+        if ((c.metadata as any)?.satser) {
             bilag[type].satser = (c.metadata as any).satser
         }
     }

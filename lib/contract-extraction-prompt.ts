@@ -46,6 +46,8 @@ Returner KUN JSON — ingen forklaringstekst.
   "episodeNumbers": "sorteret liste af afsnitsnumre, kun når konkrete afsnit udtrykkeligt nævnes; ellers null. Listen er kun et AI-forslag og er ikke medlemsbekræftelse.",
   "workingDays": "antal arbejdsdage/klippedage som tal. Hvis kun uger fremgår, brug uger * 5. Hvis uklart, null. (number | null)",
   "workingWeeks": "antal arbejdsuger som tal. Dage divideres med 5, måneder multipliceres med 4,33. (number | null)",
+  "prolongationWeeks": "antal optionsuger/prolongationsuger som tal, hvis det fremgår eksplicit (number | null). Eksempel: 'op til 2 ugers prolongation' → 2.",
+  "prolongationNote": "kort beskrivelse af prolongationsvilkåret med eventuel ferieperiode eller andre betingelser, hvis nævnt (string | null)",
 
   "salary": "UGELØN som tal uden valuta (number | null). Regler: eksplicit ugepris vinder; dagssats * 5; timesats * 37 medmindre 40 timer/uge står tydeligt; lump sum kun hvis periode er tydelig; ignorer moms/subtotal/fakturatotal/feriepenge/sociale omkostninger; tillæg lægges ikke oven i grundløn.",
   "salaryUnit": "weekly hvis salary er en ugeløn. Brug kun monthly, daily eller total hvis ugeløn ikke kan beregnes. (string | null)",
@@ -66,8 +68,8 @@ Returner KUN JSON — ingen forklaringstekst.
 
   "svod": "har kontrakten SVOD/streaming-rettigheder? (boolean)",
   "copydan": "true ved Copydan, aftalelicens, privatkopiering, kollektivt forvaltningsselskab, §§ 13, 13a, 17, 30a, 35, 39-46a, 50 stk. 2 eller lignende vederlagsforbehold. (boolean)",
-  "royalty": "ALDRIG true automatisk. Kun true hvis kontrakten eksplicit aftaler individuel royaltybetaling i procent eller kr. til medarbejderen personligt. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
-  "royaltyPercent": "royaltyprocent som tal (number | null)",
+  "royalty": "true hvis kontrakten eksplicit aftaler individuel royaltybetaling til medarbejderen, ELLER hvis kontrakten inkorporerer en overenskomst der indeholder royalty-bestemmelser — herunder formuleringer som 'afregner royalties til [overenskomst] jf. overenskomst' eller 'leverandøren vil være berettiget til en andel af disse royalties efter nærmere aftale'. Copydan og Create Denmark/SVOD tæller ikke som royalty. (boolean)",
+  "royaltyPercent": "royaltyprocent som tal (number | null). Udled satsen fra overenskomstkonteksten hvis kontrakten refererer til gældende overenskomst og ikke angiver en eksplicit sats — fx 1,0% for De4-fiktion (spillefilm), 1,5% for FAF-dokumentar.",
   "aiDataMiningClause": "har kontrakten AI/data mining-forbehold? (boolean)",
   "futureRightsReservation": "har kontrakten forbehold for fremtidige udnyttelsesformer/data/AI-rettigheder der ikke er erhvervet af producenten? (boolean)",
   "rightsOverview": "kort JSON-venlig oversigt med nøglerne overenskomst, kreditering, copydanforbehold, streamingforbehold. Værdier: ja, nej, implicit via overenskomst eller uklart.",
@@ -89,8 +91,12 @@ Returner KUN JSON — ingen forklaringstekst.
 ${SOURCES_SCHEMA_PROMPT}
 }`
 
-export function buildContractExtractionPrompt(referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>) {
+export function buildContractExtractionPrompt(
+    referenceDocs?: Array<{ title: string; doc_subtype: string | null; content_text: string | null }>,
+    overenskomstChunks?: Array<{ kilde_titel: string; tekst: string; overenskomst: string | null; kategori: string | null }>,
+) {
     let prompt = `${CONTRACT_EXTRACTION_SYSTEM_PROMPT}\n\n${CONTRACT_EXTRACTION_SCHEMA_PROMPT}`
+
     if (referenceDocs?.length) {
         prompt += "\n\n──────────────────────────────────────\nREFERENCEDOKUMENTER — BRUG SOM BAGGRUNDSVIDEN:\n──────────────────────────────────────"
         for (const doc of referenceDocs) {
@@ -98,5 +104,24 @@ export function buildContractExtractionPrompt(referenceDocs?: Array<{ title: str
             prompt += `\n\n${doc.doc_subtype ?? doc.title}:\n${doc.content_text}`
         }
     }
+
+    if (overenskomstChunks?.length) {
+        prompt += "\n\n══════════════════════════════════════\nOVEREENSKOMSTER — BRUG NÅR KONTRAKTEN REFERERER TIL GÆLDENDE OVERENSKOMST:\n══════════════════════════════════════"
+        prompt += "\nNår en leverandørkontrakt inkorporerer overenskomstens vilkår ved reference, gælder følgende regler fra den relevante overenskomst:"
+        // Gruppér chunks per overenskomst
+        const grouped = new Map<string, typeof overenskomstChunks>()
+        for (const chunk of overenskomstChunks) {
+            const key = chunk.overenskomst ?? "ukendt"
+            if (!grouped.has(key)) grouped.set(key, [])
+            grouped.get(key)!.push(chunk)
+        }
+        for (const [ov, chunks] of grouped) {
+            prompt += `\n\n── ${ov.toUpperCase()} ──`
+            for (const chunk of chunks) {
+                prompt += `\n\n${chunk.kilde_titel}:\n${chunk.tekst}`
+            }
+        }
+    }
+
     return prompt
 }
