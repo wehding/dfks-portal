@@ -928,8 +928,30 @@ setActiveField(fieldId)
             creditedRoles: sources.creditedRoles_clause_id,
         }
         const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
-        // [LAG5-DEBUG-B] Trin 2: er activeClauseId sat korrekt?
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
+
+        // Alle gyldige klausul-ID'er på tværs af felter — bruges til koordinat-bokse og filtrering af tekst-highlights
+        const allClauseIds = Object.values(FIELD_TO_CLAUSE_ID).filter((id): id is string => !!id)
+        const inactiveClauseIds = allClauseIds.filter(id => id !== activeClauseId)
+
+        // Hjælper: har feltet en koordinat-boks tilgængelig i det aktuelle layout?
+        const hasCoord = (clauseId: string | null | undefined): boolean =>
+            !!clauseId && !!contractLayout?.clauses.find(c => c.id === clauseId)?.pdfBbox
+
+        // PDF-highlights: tekst-søgning kun for felter UDEN koordinat-dækning.
+        // Felter med et gyldigt clause_id + pdfBbox vises som koordinat-boks — ingen dobbelt-markering.
+        const pdfHighlights = [
+            hasCoord(sources.workTitle_clause_id)       ? null : workTitleHl,
+            hasCoord(sources.creditedRoles_clause_id)   ? null : creditHl,
+            hasCoord(sources.salary_clause_id)          ? null : salaryHl,
+            hasCoord(sources.pension_clause_id)         ? null : sources.pension,
+            hasCoord(sources.supplements_clause_id)     ? null : supplementsHl,
+            hasCoord(sources.otherSupplements_clause_id)? null : sources.otherSupplements,
+            hasCoord(sources.dates_clause_id)           ? null : datesHl,
+            hasCoord(sources.workingWeeks_clause_id)    ? null : weeksHl,
+            hasCoord(sources.prolongation_clause_id)    ? null : prolongHl,
+        ].filter(Boolean) as string[]
+
 
         const resolvedActiveHighlight = activeField
             ? (rightsHighlightSource[activeField] || rightsPageSource[activeField] || activeSource)
@@ -992,12 +1014,13 @@ setActiveField(fieldId)
                             /* PDF */
                             <PdfViewer
                                 url={pdfUrl}
-                                highlights={[workTitleHl, creditHl ?? null, salaryHl, sources.pension ?? null, supplementsHl ?? null, sources.otherSupplements ?? null, datesHl, weeksHl, prolongHl ?? null].filter(Boolean) as string[]}
+                                highlights={pdfHighlights}
                                 sectionHighlights={activeSectionHighlights}
                                 activeHighlight={resolvedActiveHighlight}
                                 pageNavigationHint={resolvedPageSource ?? undefined}
                                 layout={contractLayout}
                                 activeClauseId={activeClauseId}
+                                inactiveClauseIds={inactiveClauseIds}
                             />
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">

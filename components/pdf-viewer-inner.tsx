@@ -27,6 +27,8 @@ interface PdfViewerProps {
     // Lag 5: koordinatbaseret highlight
     layout?: ContractLayout | null
     activeClauseId?: string | null
+    // Koordinat-bokse for alle ikke-aktive felter med kendte klausul-ID'er
+    inactiveClauseIds?: string[]
 }
 
 type PageViewport = { pdfWidth: number; pdfHeight: number; renderedWidth: number; renderedHeight: number }
@@ -198,7 +200,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId, inactiveClauseIds = [] }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
@@ -346,14 +348,24 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                             <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
-                            {/* Lag 5: koordinatbaseret overlay for activeClauseId */}
-                            {(() => {
-                                if (!activeClauseId || !layout || !pageViewport) return null
+                            {/* Lag 5: koordinatbaserede overlays — gul for inaktive, grøn for aktiv */}
+                            {pageViewport && layout && inactiveClauseIds.map(clauseId => {
+                                const clause = layout.clauses.find(c => c.id === clauseId && c.page === pageNumber)
+                                if (!clause?.pdfBbox) return null
+                                const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
+                                return (
+                                    <div key={clauseId}
+                                        style={{ ...style, background: "rgba(253,224,71,0.2)", border: "1.5px solid rgba(202,138,4,0.5)", borderRadius: 2, zIndex: 8 }}
+                                        title={`Klausul ${clauseId}`}
+                                    />
+                                )
+                            })}
+                            {pageViewport && layout && activeClauseId && (() => {
                                 const clause = layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)
                                 if (!clause?.pdfBbox) return null
                                 const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
                                 return (
-                                    <div
+                                    <div key={activeClauseId}
                                         ref={(el) => { if (el) el.scrollIntoView({ block: "center", behavior: "smooth" }) }}
                                         style={{ ...style, background: "rgba(74,222,128,0.25)", border: "2px solid rgba(21,128,61,0.8)", borderRadius: 2, zIndex: 10 }}
                                         title={`Klausul ${activeClauseId}`}
