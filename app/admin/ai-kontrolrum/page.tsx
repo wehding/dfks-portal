@@ -1424,6 +1424,8 @@ function OverenskomsterTab() {
     const [newPensionForm, setNewPensionForm] = useState<PensionRuleForm>(emptyPensionForm())
     const [newPctAgreementId, setNewPctAgreementId] = useState<string | null>(null)
     const [newPctForm, setNewPctForm] = useState({ label: "", percent: "", basis: "", trigger_condition: "", category: "overarbejde", valid_from: "", section_reference: "", source_title: "", label_key: "", fortolkningsnote: "" })
+    const [editingPctRule, setEditingPctRule] = useState<PercentageRuleItem | null>(null)
+    const [editPctNote, setEditPctNote] = useState("")
     const [ruleSaving, setRuleSaving] = useState(false)
 
     // ── AI-udtræk af satser ────────────────────────────────────
@@ -2599,6 +2601,7 @@ function OverenskomsterTab() {
                                                         {rule.fortolkningsnote && <p className="mt-1 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 rounded px-2 py-1">⚠ {rule.fortolkningsnote}</p>}
                                                             </div>
                                                             <div className="flex gap-1 shrink-0">
+                                                                <button type="button" className="text-[10px] text-blue-600 underline hover:text-blue-700" onClick={() => { setEditingPctRule(rule); setEditPctNote(rule.fortolkningsnote ?? "") }}>rediger</button>
                                                                 {rule.status === "draft" && (
                                                                     <button type="button" className="text-[10px] text-green-600 underline hover:text-green-700" disabled={ruleSaving} onClick={async () => {
                                                                         setRuleSaving(true)
@@ -2689,6 +2692,39 @@ function OverenskomsterTab() {
                                                     if (res.ok) { toast.success("Procentregel oprettet som kladde"); setNewPctAgreementId(null); refreshAktive() }
                                                     else { toast.error((await res.json()).error ?? "Fejl") }
                                                 }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Opret kladde</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
+                                    {/* ── Dialog: rediger procentregel ── */}
+                                    <Dialog open={editingPctRule?.id != null && agreement.agreement_percentage_rules.some(r => r.id === editingPctRule?.id)} onOpenChange={open => { if (!open) setEditingPctRule(null) }}>
+                                        <DialogContent className="max-w-lg">
+                                            <DialogHeader><DialogTitle className="text-sm">Rediger procentregel — {editingPctRule?.label}</DialogTitle></DialogHeader>
+                                            <div className="space-y-2 text-xs">
+                                                {editingPctRule && (editingPctRule.status === "approved" || editingPctRule.status === "archived") ? (
+                                                    <>
+                                                        <p className="text-muted-foreground">Godkendte regler kan kun ændres i fortolkningsnoten. Øvrige felter kræver arkivering og ny oprettelse.</p>
+                                                        <div><Label className="text-[10px]">Fortolkningsnote (vises som advarsel på valideringssiden)</Label><textarea className="w-full rounded-md border bg-background px-2 py-1.5 text-xs min-h-[80px] resize-y" value={editPctNote} onChange={e => setEditPctNote(e.target.value)} /></div>
+                                                    </>
+                                                ) : editingPctRule ? (
+                                                    <p className="text-muted-foreground text-center py-4">Kladde-regler redigeres ved at slette og oprette en ny.</p>
+                                                ) : null}
+                                            </div>
+                                            <DialogFooter className="pt-2 gap-2">
+                                                <Button variant="outline" size="sm" onClick={() => setEditingPctRule(null)}>Annuller</Button>
+                                                {editingPctRule && (editingPctRule.status === "approved" || editingPctRule.status === "archived") && (
+                                                    <Button size="sm" disabled={ruleSaving} onClick={async () => {
+                                                        setRuleSaving(true)
+                                                        const res = await fetch("/api/admin/agreements", {
+                                                            method: "PATCH",
+                                                            headers: { "Content-Type": "application/json" },
+                                                            body: JSON.stringify({ percentageRuleId: editingPctRule.id, fortolkningsnote: editPctNote || null }),
+                                                        })
+                                                        setRuleSaving(false)
+                                                        if (res.ok) { toast.success("Note gemt"); setEditingPctRule(null); refreshAktive() }
+                                                        else { toast.error((await res.json()).error ?? "Fejl") }
+                                                    }}>{ruleSaving && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}Gem note</Button>
+                                                )}
                                             </DialogFooter>
                                         </DialogContent>
                                     </Dialog>

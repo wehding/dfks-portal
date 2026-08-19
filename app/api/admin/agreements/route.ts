@@ -236,7 +236,7 @@ export async function PATCH(req: NextRequest) {
                 "label", "label_key", "percent", "basis", "trigger_condition", "category",
                 "profession_role", "employment_form", "section_reference",
                 "source_title", "source_url", "source_checked_at", "source_note",
-                "valid_from", "valid_to", "status",
+                "fortolkningsnote", "valid_from", "valid_to", "status",
             ]
             const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
             for (const key of allowed) {
