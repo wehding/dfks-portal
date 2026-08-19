@@ -1438,6 +1438,9 @@ setActiveField(fieldId)
                                         {formData.royaltyResolutionReason === "no_matching_distribution_type" && (
                                             <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">Overenskomstens royalty-regel gælder ikke for denne distributionskanal — reglen er ikke anvendt. Bekræft manuelt om royalty er relevant for denne kontrakt.</p>
                                         )}
+                                        {!formData.royalty && formData.royaltySourceType === "not_found" && formData.royaltyResolutionReason !== "distribution_type_unknown" && formData.royaltyResolutionReason !== "no_matching_distribution_type" && (
+                                            <p className="text-[10px] text-amber-600 dark:text-amber-400 -mt-1 px-0.5">{formData.royaltyResolutionReason === "agreement_ambiguous" ? "Overenskomsten kunne ikke fastslås automatisk, så royalty er ikke undersøgt via overenskomstsats. Tjek manuelt om der er en royaltyrettighed." : "Royalty er ikke fundet hverken i kontrakten eller den tilhørende overenskomst. Tjek manuelt om der alligevel er en rettighed, der ikke er fanget automatisk."}</p>
+                                        )}
                                     </div>
                                 </div>
                                 <Separator />

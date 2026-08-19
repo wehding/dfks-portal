@@ -336,6 +336,14 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
     try {
         const royalty = await applyApprovedAgreementRoyalty(extracted)
         extracted = royalty.data
+        // Persistér reason, så UI kan vise årsag til "fra" — herunder "not_found" når alle trin er gennemgået
+        if (!royalty.data.royalty && !royalty.data.royaltySourceType) {
+            extracted = {
+                ...extracted,
+                royaltySourceType: "not_found",
+                royaltyResolutionReason: royalty.reason,
+            }
+        }
     } catch (error) {
         console.warn("[contract-extract] Royaltyregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
