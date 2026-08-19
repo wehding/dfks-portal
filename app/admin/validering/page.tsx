@@ -946,7 +946,10 @@ setActiveField(fieldId)
             agreement: sources.collectiveAgreement_clause_id,
             copydan: sources.copydan_clause_id,
             svod: sources.svod_clause_id,
-            royalty: sources.royalty_clause_id,
+            // Royalty er ofte deterministisk udledt fra overenskomsten, ikke fundet i selve
+            // kontraktteksten — falder da tilbage til overenskomst-henvisningens klausul-ID,
+            // i stedet for at falde helt tilbage til den gamle, upræcise tekst-søgning.
+            royalty: sources.royalty_clause_id ?? sources.collectiveAgreement_clause_id,
             prolongation: sources.prolongation_clause_id,
             creditedRoles: sources.creditedRoles_clause_id,
         }

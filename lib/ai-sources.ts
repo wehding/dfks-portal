@@ -34,7 +34,7 @@ export const SOURCES_SCHEMA_PROMPT = `    "_sources": {
       "royalty_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i royalty — direkte aflæsning. Null hvis ikke annoteret.",
       "prolongation": "EKSAKT tekststreng der viser prolongations-/optionsklausulen — kopiér sætningen der nævner antal optionsuger/-dage og eventuel ferieperiode, fx 'op til 2 ugers prolongation', 'mulighed for forlængelse med 3 uger', eller 'mulighed for prolongation i ___4___ dage' (inkl. evt. understregninger/udfyldningslinjer omkring tallet, som de faktisk står i kontrakten). Max 120 tegn eller null.",
       "prolongation_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i prolongation — direkte aflæsning. Null hvis ikke annoteret.",
-      "creditedRoles": "EKSAKT tekststreng fra kontrakten der nævner klipperens/leverandørens kreditering — kopiér sætningen der beskriver hvilken titel/rolle personen krediteres med, fx 'krediteres som Klipper', 'Film Editor credit', 'kreditering: Supervising Editor' — max 120 tegn eller null",
+      "creditedRoles": "EKSAKT tekststreng fra kontrakten der nævner klipperens/leverandørens kreditering — kopiér HELE sætningen, uanset formulering. Almindelige varianter: 'Der er aftalt følgende vedrørende kreditering: NAVN - ROLLE', 'krediteres som Klipper', 'Film Editor credit', 'kreditering: Supervising Editor'. Citér altid den fulde sætning, selvom den blot lister navn og rolle uden en beskrivende sætning omkring — max 150 tegn eller null",
       "creditedRoles_clause_id": "Kopiér tagget fra begyndelsen af den linje du citerer i creditedRoles — direkte aflæsning. Null hvis ikke annoteret."
     }`
 
