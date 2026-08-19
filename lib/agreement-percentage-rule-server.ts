@@ -112,3 +112,11 @@ export function applyApprovedHolidayPay(data: Record<string, unknown>) {
 export function applyApprovedBetaContribution(data: Record<string, unknown>) {
   return applyRule(data, "beta_pulje", "betaRate", "beta", "BETA-fond");
 }
+
+export function applyApprovedSvod(data: Record<string, unknown>) {
+  return applyRule(data, "svod", "svodRate", "svod", "SVOD-tillæg");
+}
+
+export function applyApprovedCopydan(data: Record<string, unknown>) {
+  return applyRule(data, "copydan", "copydanRate", "copydan", "Copydan");
+}
