@@ -27,8 +27,6 @@ interface PdfViewerProps {
     // Lag 5: koordinatbaseret highlight
     layout?: ContractLayout | null
     activeClauseId?: string | null
-    // Koordinat-bokse for alle ikke-aktive felter med kendte klausul-ID'er
-    inactiveClauseIds?: string[]
 }
 
 type PageViewport = { pdfWidth: number; pdfHeight: number; renderedWidth: number; renderedHeight: number }
@@ -200,7 +198,7 @@ function applyHighlights(container: HTMLElement, highlights: string[], activeHig
     })
 }
 
-export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId, inactiveClauseIds = [] }: PdfViewerProps) {
+export default function PdfViewer({ url, highlights = [], sectionHighlights = [], activeHighlight = null, pageNavigationHint, layout, activeClauseId }: PdfViewerProps) {
     const [numPages, setNumPages] = useState(0)
     const [pageNumber, setPageNumber] = useState(1)
     const [scale, setScale] = useState(1.0)
@@ -257,6 +255,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
     // Kører når pdfDoc skifter ELLER side/scale ændres — kræver IKKE pageRendered
     // (DOM-måling via offsetWidth var upålidelig og skabte race condition med pageRendered)
     useEffect(() => {
+        setPageViewport(null) // ryd stale viewport straks — undgår hængende bokse ved sideskift
         if (!pdfDoc) return
         pdfDoc.getPage(pageNumber).then((page: any) => {
             const vp = page.getViewport({ scale: 1 })
@@ -335,7 +334,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                 <span className="text-xs tabular-nums text-muted-foreground min-w-[40px] text-center">{Math.round(scale * 100)}%</span>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(s => Math.min(2.5, s + 0.2))}><ZoomIn className="h-3.5 w-3.5" /></Button>
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setScale(1.0)}><Maximize2 className="h-3.5 w-3.5" /></Button>
-                {activeHighlight && (
+                {activeHighlight && !activeClauseId && (
                     <span className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-yellow-50 dark:bg-yellow-950 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800">
                         Aktiv kilde markeres med gul
                     </span>
@@ -348,18 +347,7 @@ export default function PdfViewer({ url, highlights = [], sectionHighlights = []
                             <Page pageNumber={pageNumber} scale={scale} className="shadow-sm"
                                 renderTextLayer={true} renderAnnotationLayer={false}
                                 onRenderSuccess={onPageRenderSuccess} loading={Spinner} />
-                            {/* Lag 5: koordinatbaserede overlays — gul for inaktive, grøn for aktiv */}
-                            {pageViewport && layout && inactiveClauseIds.map(clauseId => {
-                                const clause = layout.clauses.find(c => c.id === clauseId && c.page === pageNumber)
-                                if (!clause?.pdfBbox) return null
-                                const style = bboxToScreenStyle(clause.pdfBbox, pageViewport)
-                                return (
-                                    <div key={clauseId}
-                                        style={{ ...style, background: "rgba(253,224,71,0.2)", border: "1.5px solid rgba(202,138,4,0.5)", borderRadius: 2, zIndex: 8 }}
-                                        title={`Klausul ${clauseId}`}
-                                    />
-                                )
-                            })}
+                            {/* Lag 5: koordinatbaseret overlay — kun aktiv klausul (grøn) */}
                             {pageViewport && layout && activeClauseId && (() => {
                                 const clause = layout.clauses.find(c => c.id === activeClauseId && c.page === pageNumber)
                                 if (!clause?.pdfBbox) return null

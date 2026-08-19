@@ -944,10 +944,6 @@ setActiveField(fieldId)
         const activeClauseId = activeField ? (FIELD_TO_CLAUSE_ID[activeField] ?? null) : null
         if (activeField) console.log(`[LAG5-B] activeField=${activeField} → activeClauseId=${activeClauseId ?? "null"}, layout=${contractLayout ? contractLayout.clauses.length + " klausuler" : "NULL"}`)
 
-        // Alle gyldige klausul-ID'er på tværs af felter — bruges til koordinat-bokse og filtrering af tekst-highlights
-        const allClauseIds = Object.values(FIELD_TO_CLAUSE_ID).filter((id): id is string => !!id)
-        const inactiveClauseIds = allClauseIds.filter(id => id !== activeClauseId)
-
         // Hjælper: har feltet en koordinat-boks tilgængelig i det aktuelle layout?
         const hasCoord = (clauseId: string | null | undefined): boolean =>
             !!clauseId && !!contractLayout?.clauses.find(c => c.id === clauseId)?.pdfBbox
@@ -1034,7 +1030,6 @@ setActiveField(fieldId)
                                 pageNavigationHint={resolvedPageSource ?? undefined}
                                 layout={contractLayout}
                                 activeClauseId={activeClauseId}
-                                inactiveClauseIds={inactiveClauseIds}
                             />
                         ) : (
                             <div className="flex flex-1 h-full items-center justify-center text-sm text-muted-foreground">
