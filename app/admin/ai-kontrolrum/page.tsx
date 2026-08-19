@@ -1451,6 +1451,7 @@ function OverenskomsterTab() {
         percent: string
         trigger_condition: string
         category: string
+        label_key: string
         // fælles
         valid_from: string
         section_reference: string
@@ -1460,6 +1461,17 @@ function OverenskomsterTab() {
         source_title: string
         source_url: string
         source_checked_at: string
+    }
+
+    function suggestLabelKey(label: string): string {
+        const l = label.toLowerCase()
+        if (l.includes("royalty")) return "royalty"
+        if (l.includes("beta")) return "beta_pulje"
+        if (l.includes("helligdag")) return "helligdagsbetaling"
+        if (l.includes("svod")) return "svod"
+        if (l.includes("copydan")) return "copydan"
+        if (l.includes("ferie")) return "feriepenge"
+        return ""
     }
     const [satserUdtraekAgreementId, setSatserUdtraekAgreementId] = useState<string | null>(null)
     const [satserPhase, setSatserPhase] = useState<"input" | "kandidater">("input")
@@ -1551,6 +1563,7 @@ function OverenskomsterTab() {
                 percent: k.percent != null ? String(k.percent) : "",
                 trigger_condition: String(k.trigger_condition ?? ""),
                 category: String(k.category ?? "andet"),
+                label_key: suggestLabelKey(String(k.label ?? "")),
                 valid_from: String(k.valid_from ?? ""),
                 section_reference: String(k.section_reference ?? ""),
                 citation: String(k.citation ?? ""),
@@ -1623,6 +1636,7 @@ function OverenskomsterTab() {
                             source_url: k.source_url || null,
                             source_checked_at: k.source_checked_at || null,
                             source_note: k.citation || null,
+                            label_key: k.label_key || null,
                             valid_from: k.valid_from || today,
                         },
                     }
@@ -2402,10 +2416,21 @@ function OverenskomsterTab() {
                                                                             </div>
                                                                             <p className="text-[10px] text-muted-foreground">Af: {k.basis} · Gælder: {k.trigger_condition}</p>
                                                                             <div className="grid grid-cols-2 gap-1">
-                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value } : c))} /></div>
+                                                                                <div><Label className="text-[9px]">Betegnelse</Label><Input className="h-5 text-[10px]" value={k.label} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label: e.target.value, label_key: suggestLabelKey(e.target.value) } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Procent</Label><Input type="number" step="0.01" className="h-5 text-[10px]" value={k.percent} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, percent: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Beregningsgrundlag</Label><Input className="h-5 text-[10px]" value={k.basis} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, basis: e.target.value } : c))} /></div>
                                                                                 <div><Label className="text-[9px]">Gyldig fra</Label><Input type="date" className="h-5 text-[10px]" value={k.valid_from} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, valid_from: e.target.value } : c))} /></div>
+                                                                                <div className="col-span-2"><Label className="text-[9px]">Nøgleord (til automatisk opslag)</Label>
+                                                                                    <select className="w-full h-5 rounded border bg-background text-[10px] px-1" value={k.label_key} onChange={e => setSatserKandidater(p => p.map(c => c._id === k._id ? { ...c, label_key: e.target.value } : c))}>
+                                                                                        <option value="">Ingen (rent informativ)</option>
+                                                                                        <option value="royalty">royalty</option>
+                                                                                        <option value="beta_pulje">beta_pulje</option>
+                                                                                        <option value="helligdagsbetaling">helligdagsbetaling</option>
+                                                                                        <option value="svod">svod</option>
+                                                                                        <option value="copydan">copydan</option>
+                                                                                        <option value="feriepenge">feriepenge</option>
+                                                                                    </select>
+                                                                                </div>
                                                                             </div>
                                                                             {k.section_reference && <p className="text-[9px] text-muted-foreground">§ {k.section_reference}</p>}
                                                                         </div>
@@ -2633,7 +2658,7 @@ function OverenskomsterTab() {
                                         <DialogContent className="max-w-lg">
                                             <DialogHeader><DialogTitle className="text-sm">Ny procentregel — {agreement.title}</DialogTitle></DialogHeader>
                                             <div className="space-y-2 text-xs">
-                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value }))} /></div>
+                                                <div><Label className="text-[10px]">Betegnelse *</Label><Input className="h-7 text-xs" placeholder="fx Overarbejdstillæg, 1. time" value={newPctForm.label} onChange={e => setNewPctForm(f => ({ ...f, label: e.target.value, label_key: f.label_key || suggestLabelKey(e.target.value) }))} /></div>
                                                 <div className="grid grid-cols-2 gap-1.5">
                                                     <div><Label className="text-[10px]">Procent *</Label><Input type="number" step="0.01" className="h-7 text-xs" placeholder="25" value={newPctForm.percent} onChange={e => setNewPctForm(f => ({ ...f, percent: e.target.value }))} /></div>
                                                     <div><Label className="text-[10px]">Kategori *</Label>
