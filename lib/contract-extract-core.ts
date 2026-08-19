@@ -14,6 +14,7 @@ import { getAiRuntimeConfig, type AiRuntimeConfig } from "@/lib/ai-runtime"
 import { createAiUsageRun, finishAiUsageRun, type AiTokenUsage } from "@/lib/ai-usage"
 import { detectPdfSignature } from "@/lib/pdf-signature-detection"
 import { applyApprovedAgreementPension } from "@/lib/agreement-pension-server"
+import { applyApprovedAgreementRoyalty } from "@/lib/agreement-royalty-server"
 import { resolveAgreementByDate } from "@/lib/agreement-version-resolver"
 import {
     CONTRACT_EXTRACTION_MIN_TEXT_CHARS,
@@ -311,6 +312,13 @@ contractDate: kontraktens underskriftsdato eller startdato, YYYY-MM-DD format.`,
         extracted = pension.data
     } catch (error) {
         console.warn("[contract-extract] Pensionsregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
+    }
+
+    try {
+        const royalty = await applyApprovedAgreementRoyalty(extracted)
+        extracted = royalty.data
+    } catch (error) {
+        console.warn("[contract-extract] Royaltyregel kunne ikke anvendes:", error instanceof Error ? error.message : "ukendt fejl")
     }
 
     const meta: ContractExtractionMetadata = {

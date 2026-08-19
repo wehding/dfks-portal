@@ -1193,39 +1193,39 @@ setActiveField(fieldId)
                                     )}
                                 </F>
 
-                                {formData.rightsHolderName !== undefined && (
-                                    <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
-                                        <Input
-                                            value={String(formData.rightsHolderName ?? "")}
-                                            onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
-                                            placeholder="Klipperens fulde navn..."
-                                        />
-                                        {selectedRhId && (
-                                            <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
-                                                <span>✓ Koblet til rettighedshaver</span>
-                                                <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
-                                            </div>
-                                        )}
-                                        {!selectedRhId && rhSuggestions.length > 0 && (
-                                            <div className="mt-1.5 space-y-1">
-                                                {rhSuggestions.map(s => (
-                                                    <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
-                                                        onClick={() => setSelectedRhId(s.id)}>
-                                                        {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
-                                            <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
-                                        )}
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {formData.rightsHolderName !== undefined && (
+                                        <F src={fieldSrc("rightsHolderName")} label="Medarbejder / Klipper" locked={isLocked("rightsHolderName")}>
+                                            <Input
+                                                value={String(formData.rightsHolderName ?? "")}
+                                                onChange={(e) => { setField("rightsHolderName", e.target.value); setSelectedRhId(null) }}
+                                                placeholder="Klipperens fulde navn..."
+                                            />
+                                            {selectedRhId && (
+                                                <div className="mt-1.5 flex items-center gap-2 text-xs text-green-700 font-medium">
+                                                    <span>✓ Koblet til rettighedshaver</span>
+                                                    <button type="button" className="underline text-muted-foreground" onClick={() => setSelectedRhId(null)}>Fjern</button>
+                                                </div>
+                                            )}
+                                            {!selectedRhId && rhSuggestions.length > 0 && (
+                                                <div className="mt-1.5 space-y-1">
+                                                    {rhSuggestions.map(s => (
+                                                        <button key={s.id} type="button" className="w-full text-left px-3 py-1.5 rounded border text-xs hover:bg-muted transition-colors"
+                                                            onClick={() => setSelectedRhId(s.id)}>
+                                                            {s.name} <span className="text-muted-foreground">({Math.round(s.score * 100)}% match)</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {!selectedRhId && formData.rightsHolderName && rhSuggestions.length === 0 && (formData.rightsHolderName as string).length > 2 && (
+                                                <p className="mt-1 text-xs text-amber-600">Ikke fundet i rettighedshavere</p>
+                                            )}
+                                        </F>
+                                    )}
+                                    <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
+                                        <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor..." />
                                     </F>
-                                )}
-
-                                {/* Kreditering — placeret ved siden af medarbejder/klipper */}
-                                <F src={fieldSrc("creditedRoles")} label={<>Kreditering{creditHl && <SourceBtn quote={creditHl} active={activeField === "creditedRoles"} onClick={() => activateSource("creditedRoles", creditHl)} />}</>}>
-                                    <Input value={String(formData.creditedRoles ?? "")} onChange={(e) => setField("creditedRoles", e.target.value)} placeholder="Klipper, Film Editor, Supervising Editor..." />
-                                </F>
+                                </div>
 
                                 <Separator />
 

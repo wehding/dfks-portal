@@ -60,6 +60,7 @@ const properties: Record<string, JsonSchema> = {
   copydan: boolean,
   royalty: boolean,
   royaltyPercent: number,
+  creditedRoles: text,
   aiDataMiningClause: boolean,
   futureRightsReservation: boolean,
   rightsOverview: {
